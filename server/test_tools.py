@@ -4186,7 +4186,7 @@ R1_FLAGS = ("CRM_FEATURE_STANDARD", "CRM_FEATURE_SOURCES")
 R1_USER_ONLY = ('data-acct="send"', 'data-acct="mine"', 'data-acct="privacy"', 'data-acct="names"',
                 'id="acct-names"', 'id="desk-dlg"', 'id="desk-form"', 'id="desk-list"', "구조 이름 공유")
 R1_GONE = ('id="desk"', '<section class="wrap desk"', 'data-acct="desk"', 'id="acct-desk"', "문의 섹션", "deskPeek", "/api/desk-visibility")   # Q1b — 둘 다
-R1_ADMIN_ONLY = ('id="acct-console"', '<a class="btn" href="/admin" id="acct-console">운영 콘솔</a>')
+R1_ADMIN_ONLY = ('id="acct-console"', '<a class="btn" href="/admin" id="acct-console" hidden>운영 콘솔</a>')
 
 
 async def test_r1_flags_off():
@@ -5790,7 +5790,7 @@ async def test_q45_user():
 # ── 23) PR A 운영 Setup — 왼쪽 메뉴 · Quick Find · Setup Home · Object Manager(서비스 표준 조회) ─────────
 PRA = {k: f"pra{k}@example.com" for k in ("a", "u", "m")}   # a 관리자 · u 일반 사용자 · m 금지 값 표식 사용자
 TEST_EMAILS += tuple(PRA.values())
-PRA_SVG_SHA = "d5b973693f88d324c0fc255191340b753cfbfaafa1dee68d952cdb4be2f18d1c"   # 사용자 DMO SVG(contract 예제 × 수신자) — PR ①-b(2026-10-22) 「내 글」 후 바이트(전: d33ed383… PR① · c005852b… PR A 전)
+PRA_SVG_SHA = "8ab07d36a138fbeac30a76bc1b913a6a67b55153d9028262f2ab6a520af0ac6d"   # 사용자 DMO SVG(contract 예제 × 수신자) — UI 정렬(2026-10-28) 폰트·표시 범주 변경 후 바이트; 좌표·앵커·보호 불변(전: d5b97369…)
 PRA_STD_SHA = "c08007a2db55f219d7f5b16b5aa518e2b2081f95e1a3adfee52240d1380d00bf"   # templates/std@1.json 동결
 PRA_OBJECTS = ("core-question", "core-record", "core-candidate", "core-ticket", "core-source", "core-me", "core-person", "core-reflection",
                "core-activity", "std-axis", "std-decision", "std-principle")   # PR B: 코어 5 → 8(나·사람·출처 요약/반응) · board 이전 9(활동)

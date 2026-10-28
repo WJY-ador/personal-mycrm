@@ -12,9 +12,24 @@
   운영자 비동의 응답엔 label 이 없으니 자리표·편입된 표준명뿐이다. id 는 쓰지 않고 링크는 순번 앵커(node_anchor·rel_anchor)뿐.
 """
 import html
+import json
 import math
 
-ORIGIN_TEXT = {"core": "코어", "standard": "표준", "template": "커스텀", "custom": "커스텀"}   # 명세 §9 구분 표시 용어 = app.html ORIGIN_CHIP(시험이 대조)
+# 표시만 두 범주로 묶는다. contract의 origin·locked는 변경하지 않는다.
+ORIGIN_CATEGORY = {"core": "standard", "standard": "standard", "template": "template", "custom": "template"}
+CATEGORY_TEXT = {"standard": "표준", "template": "커스텀"}
+ORIGIN_TEXT = {origin: CATEGORY_TEXT[category] for origin, category in ORIGIN_CATEGORY.items()}
+
+
+def fill_origin_labels(page: str) -> str:
+    """앱 칩과 그래프·운영 화면이 같은 표시 정의를 쓴다. CSP 해시는 치환 뒤 계산한다."""
+    for name, values in (("origin-text", ORIGIN_TEXT), ("origin-category", ORIGIN_CATEGORY)):
+        page = page.replace("/*{{" + name + "}}*/ {}", json.dumps(values, ensure_ascii=True))
+    return page
+
+
+def legend_origins(origins=ORIGIN_CATEGORY) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(ORIGIN_CATEGORY.get(origin, "template") for origin in origins))
 CORE_TEXT = {"record": "내 글", "candidate": "검토할 판단", "person": "사람", "source": "출처", "activity": "활동"}   # 뒤 셋 = board 이전 reference 대상
 LOCK_TEXT = "표준 정의 보호"
 
@@ -148,7 +163,7 @@ def render(resp: dict, node_href: dict | None = None) -> str:
     drawn = [r for r in rels if r["a"] is not None and r["b"] is not None]
     line, ink, muted = _var("--dmo-line"), _var("--dmo-ink"), _var("--dmo-muted")
     out = [f'<svg class="dmo-svg" viewBox="0 0 {_n(size)} {_n(size)}" xmlns="http://www.w3.org/2000/svg" role="img" '
-           f'aria-label="구조 그래프 — 자료 종류 {k}개 · 관계 {len(rels)}개" font-family="system-ui,sans-serif">'
+           f'aria-label="구조 그래프 — 자료 종류 {k}개 · 관계 {len(rels)}개" font-family="&quot;Noto Sans KR&quot;,system-ui,sans-serif">'
            f'<title>구조 그래프 — 자료 종류 {k}개 · 관계 {len(rels)}개</title>']
     pairs = {}
     for r in drawn:
@@ -185,7 +200,7 @@ def render(resp: dict, node_href: dict | None = None) -> str:
                        f'<line {seg} stroke="transparent" stroke-width="12"/></a>')
     for i, nd in enumerate(nodes):
         x, y = pos[i]
-        o = nd["origin"] if nd["origin"] in ORIGIN_TEXT else "custom"
+        o = ORIGIN_CATEGORY.get(nd["origin"], "template")
         bg, st = _var(f"--dmo-{o}-bg"), _var(f"--dmo-{o}-line")
         t = _esc(_node_text(nd))
         href = _esc(node_href[nd["anchor"]]) if nd["anchor"] in node_href else f'#{nd["anchor"]}'
