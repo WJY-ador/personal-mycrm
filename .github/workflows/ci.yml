@@ -119,6 +119,9 @@ jobs:
               c.execute("CREATE DATABASE crm_test_web_home")
           PY
 
+      - name: "④-ui UI 표시·탐색 회귀 시험"
+        run: python server/test_ui_alignment.py
+
       - name: "④-d 「나」 홈 시험 (test_web_home.py)"
         env:
           DATABASE_URL: postgresql://postgres:crm@localhost:5432/crm_test_web_home

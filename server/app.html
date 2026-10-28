@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>대시보드</title>
 <script src="{{asset:theme.js}}"></script>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&display=swap" referrerpolicy="no-referrer">
 <style>
 /* 「보드」 — 로컬 보드(checkpoint_board)·360·지도 칸반 구조를 옮긴 넓은 화면. 주색(--accent)은 조작·확정에만.
    형광펜(--mark)은 근거 구절과 그 인용에만. 상태색: 내 판단 --mine · 아직 안 정함 --warn · AI --ai · 메모 --memo. */
@@ -16,7 +17,7 @@
   --ai: #5B4FB5; --ai-bg: #F1EFFA; --cand-bg: #FBFBFD; --cand-line: #D9D6EE;
   --memo: #6B7280; --memo-bg: #F3F4F6; --mine: #186A4B; --mine-bg: #EAF3EE; --fail: #B42318; --fail-bg: #FEF3F2;
   --mark: #FFE98A; --mark-ink: #1F2937; --shadow: none; --paper-border: 1px solid var(--line);
-  --serif: Georgia, "Noto Serif KR", "Apple SD Gothic Neo", serif;
+  --serif: "Noto Sans KR", -apple-system, "Apple SD Gothic Neo", sans-serif;
   --mono: ui-monospace, Menlo, "Apple SD Gothic Neo", monospace;
 }
 /* 어두운 화면 — 헤더 ☀/☾ 토글(/assets/theme.js)이 켤 때만. OS 다크 설정은 따르지 않는다(기본은 밝은 화면). */
@@ -31,7 +32,7 @@
 [hidden] { display: none !important; }
 html, body { margin: 0; }
 body { background: var(--paper); color: var(--ink); overflow-wrap: anywhere; word-break: keep-all;
-  font: 14px/1.55 -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; -webkit-font-smoothing: antialiased; }
+  font: 14px/1.55 "Noto Sans KR", -apple-system, "Apple SD Gothic Neo", sans-serif; -webkit-font-smoothing: antialiased; }
 a { color: var(--accent); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
 .wrap { max-width: 1240px; margin: 0 auto; padding: 0 1.4rem; }
@@ -83,7 +84,7 @@ button.refresh { border: 1px solid var(--line); background: var(--card); border-
   font-size: .72rem; color: var(--muted); font-weight: 500; }
 button.refresh:hover { border-color: var(--accent); color: var(--accent); }
 button.theme-toggle { min-width: 28px; justify-content: center; font-size: .82rem; }
-a.setup-gear { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; border: 1px solid var(--line); background: var(--card); border-radius: 6px; padding: .15rem .5rem;
+a.setup-gear { display: inline-flex; align-items: center; justify-content: center; min-width: 32px; min-height: 32px; flex-shrink: 0; border: 1px solid var(--line); background: var(--card); border-radius: 6px; padding: .15rem .5rem;
   font-size: .9rem; color: var(--muted); font-weight: 500; text-decoration: none; line-height: 1.25; }
 a.setup-gear[hidden] { display: none; }
 a.setup-gear:hover { border-color: var(--accent); color: var(--accent); }
@@ -897,7 +898,7 @@ body.chat-open { padding-right: 380px; }
     <div class="axislegend" id="legend"></div></div>
   <div class="who"><details class="acct" id="acct"><summary><span class="sr">계정 메뉴 </span><span id="who"></span><span class="caret" aria-hidden="true">▾</span></summary>
     <div class="acct-menu" id="acct-menu">
-      <!--admin--><a class="btn" href="/admin" id="acct-console">운영 콘솔</a>
+      <!--admin--><a class="btn" href="/admin" id="acct-console" hidden>운영 콘솔</a>
       <hr><!--/admin-->
       <!--user--><p class="acct-group" id="acct-help-h" hidden>문의 및 개인정보</p>
       <button type="button" class="acct-sub" data-acct="send" aria-haspopup="dialog">문의 보내기</button>
@@ -915,7 +916,7 @@ body.chat-open { padding-right: 380px; }
       <hr>
       <button type="button" data-acct="logout" id="logout">로그아웃</button>
       <p class="acct-msg" id="acct-msg" role="status"></p>
-    </div></details><button class="refresh" id="reload" title="불러온 시각이 아래에 있어요">새로 고침</button><a class="refresh setup-gear" id="setup-link" href="/admin/setup" hidden title="관리 Setup" aria-label="관리 Setup">⚙</a><button type="button" class="refresh theme-toggle" data-theme-toggle hidden aria-pressed="false" aria-label="어두운 화면">☾</button></div>
+    </div></details><button class="refresh" id="reload" title="불러온 시각이 아래에 있어요">새로 고침</button><a class="refresh setup-gear" id="setup-link" href="#_setup" title="설정" aria-label="설정">⚙</a><button type="button" class="refresh theme-toggle" data-theme-toggle hidden aria-pressed="false" aria-label="어두운 화면">☾</button></div>
 </div></header>
 <nav class="tabs" id="nav" aria-label="내 탭"></nav>
 <p class="wrap chatnote-m" id="chat-note-m" role="note" hidden></p>
@@ -984,8 +985,8 @@ body.chat-open { padding-right: 380px; }
   <p id="nav-dlg-lead">화면을 이렇게 바꿔요.</p>
   <ul>
     <li>첫 화면이 「나」 홈이 돼요 — 요약과 기준·결정·축·커스텀·사람·출처를 하위 탭으로 보고, 고른 데이터의 연결을 같이 봐요.</li>
-    <li>탭 줄이 「나 · 오늘 · Setup」이 돼요 — 들어온 것은 「오늘」에서, 「자료 종류」·연결 장치·문의는 「Setup」에서 찾아요.</li>
-    <li>「구조 정의」는 Setup 의 「내 구조 설정」이 돼요.</li>
+    <li>탭 줄이 「나 · 오늘」이 돼요 — 들어온 것은 「오늘」에서, 「자료 종류」·연결 장치·문의는 오른쪽 위 「설정」에서 찾아요.</li>
+    <li>「구조 정의」는 설정의 「내 구조 설정」이 돼요.</li>
   </ul>
   <p class="stay">데이터는 바뀌지 않아요. 기록·후보·판단·구조 정의·표준 편입 상태가 그대로예요.</p>
   <p class="fnote">한 번 바꾸면 되돌릴 수 없어요.</p>
@@ -1015,7 +1016,7 @@ const TX = (n, o) => navNew() ? n : o;
 const NEWTERM = {"기록": "내 글", "후보": "검토할 판단", "내 판단": "확정한 판단", "검토 대기": "확인 전", "검토 완료": "확인했어요",
   "출처 요약/반응": "읽고 든 생각", "요약/반응": "읽고 든 생각", "승인 대기": "저장 승인 대기", "오브젝트": "자료 종류",
   "사용자 정의": "커스텀", "선택 템플릿": "커스텀", "직접 추가": "커스텀"};
-const NT = w => (navNew() && NEWTERM[w]) || w;
+const NT = w => w === "오브젝트" ? "자료 종류" : (navNew() && NEWTERM[w]) || w;
 const LBL = k => NT(LABELS[k]);
 
 // ── 날짜·이름 ─────────────────────────────────────────
@@ -1121,7 +1122,7 @@ const NAVTAB = {
   _inbox: {id: "_inbox", label: "저장 승인 대기", view: "inbox", blocks: []},
   // PR ①-b 탭 3: 「나」 · 「오늘」 · Setup(B1). 자료 종류·지도·내 구조 설정·연결 장치는 Setup 안으로(옛 링크는 그대로 열린다)
   _today: {id: "_today", label: "오늘", view: "today2", blocks: []},
-  _setup: {id: "_setup", label: "Setup", view: "setup", blocks: []},
+  _setup: {id: "_setup", label: "설정", view: "setup", blocks: []},
 };
 const navNew = () => !!(S && S.user && S.user.nav === "new");
 const needName = () => !!(S && S.user && "display_name" in S.user && !S.user.display_name);
@@ -1133,7 +1134,7 @@ function userTabs() {
 function tabsList() {
   const user = ok("tabs") ? (S.tabs || []) : [];
   const mine = userTabs();
-  if (navNew()) return [NAVTAB._me, NAVTAB._today, NAVTAB._setup];
+  if (navNew()) return [NAVTAB._me, NAVTAB._today];
   if (!user.length) return [BASE.today, BASE.q, BASE.journal, BASE.structure, BASE.map];
   return mine.concat([Object.assign({}, BASE.structure, {maplink: true}), BASE.map]);
 }
@@ -1144,7 +1145,7 @@ function route() {
 // 첫 조각이 기본 탭 이름이면 기본 탭(탭 줄에 같은 ID 가 있으면 그 탭), 아니면 사용자 정의 탭 ID. 옛 home 은 today. 모르면 첫 탭.
 function pickTab(R, tabs) {
   const id = R.tab === "home" && !tabs.some(t => t.id === "home") ? "today" : R.tab;
-  return tabs.find(t => t.id === id) || (navNew() && userTabs().find(t => t.id === id)) || BASE[id] || (navNew() && NAVTAB[id]) || tabs[0];
+  return tabs.find(t => t.id === id) || (navNew() && userTabs().find(t => t.id === id)) || BASE[id] || ((navNew() || ["_setup", "_obj", "_me"].includes(id)) && NAVTAB[id]) || tabs[0];
 }
 // 새 탐색에서 탭 줄에 없는 화면이 켤 탭 — 오늘은 「나」, 항목 보기는 「오브젝트」
 // PR①: 질문·기록·사용자 탭 화면은 「자료 종류」를 켠다
@@ -1179,7 +1180,6 @@ function render() {
   $("who").textContent = S.user && S.user.email ? S.user.email : "";
   $("who").title = S.user && S.user.email ? S.user.email : "";   // 말줄임 — 전체 이메일은 title
   acctApply();
-  $("setup-link").hidden = !(S.user && S.user.admin);
   mast(tabs);
   subnav("");
   $("foot").textContent = navNew() ? (loadedAt ? `불러온 시각 ${loadedAt}.` : "")
@@ -1209,7 +1209,7 @@ function render() {
   else if (tab.view === "inbox") renderInbox(R.a);
   else renderQuestionTab(tab, R.a);
   // Setup 안 화면(자료 종류의 상세·옛 항목 보기 포함)엔 Setup 페이지 줄 — 각 화면이 subnav("") 로 비운 뒤 얹는다
-  if (navNew() && navOn(tab) === "_setup" && tab.view !== "question") subnav(setupNav(tab.id === "_setup" ? setupAt : "objects"), "Setup");
+  if ((tab.view === "setup" || (!navNew() && ["_obj", "_me"].includes(tab.id)) || (navNew() && navOn(tab) === "_setup")) && tab.view !== "question") subnav(setupNav(tab.id === "_setup" ? setupAt : "objects"), "설정");
   coreFlashShow();
 }
 let setupAt = "layout";
@@ -1473,7 +1473,11 @@ function assetCard(tab, c) {
 
 // ── 구조 정의 (Q5) — S.structure(서버 contract.respond 본인 응답)만 그린다. origin·locked·cardinality 를 여기서 다시 판정하지 않는다.
 // 편집은 연결한 AI 대화에서 — 이 화면에서 쓰는 것은 표준 편입 선택(보류·거절·편입)뿐이다.
-const ORIGIN_CHIP = {standard: ["o-std", "표준"], template: ["o-tpl", "커스텀"], custom: ["o-tpl", "커스텀"], core: ["o-core", "코어"]};
+// structure_svg의 공통 표시 정의를 서버가 삽입한다. 내부 origin은 그대로다.
+const ORIGIN_TEXT = /*{{origin-text}}*/ {};
+const ORIGIN_CATEGORY = /*{{origin-category}}*/ {};
+const ORIGIN_CHIP = Object.fromEntries(Object.keys(ORIGIN_TEXT).map(k => [k,
+  [ORIGIN_CATEGORY[k] === "standard" ? "o-std" : "o-tpl", ORIGIN_TEXT[k]]]));
 const originChip = o => { const x = ORIGIN_CHIP[o] || ["", o]; return `<span class="chip ${navNew() && o === "custom" ? "o-tpl" : x[0]}">${esc(NT(x[1]))}</span>`; };
 const LOCK_TIP = "편입된 표준 정의예요. key·종류·표준 필드 모양은 바꿀 수 없고, label 은 바꿀 수 있어요.";
 const lockChip = on => on ? `<span class="chip lock" title="${esc(LOCK_TIP)}">표준 정의 보호</span>` : "";
@@ -1483,7 +1487,7 @@ const CORE_LABEL = {record: LABELS.record, candidate: LABELS.candidate};
 // 목록/그래프 전환 — PR①: 새 탐색은 기본 그래프(옛 탐색은 기본 목록 그대로). 라우트(해시)를 쓰지 않는다: 해시를 바꾸면 render → scrollTo(0,0) 과
 // 편입 미리보기 재요청이 돈다. 고른 보기는 그 화면에 머무는 동안만(영속 없음) — 다른 화면에 갔다 오면 기본으로
 let defsMode = "graph", defsAt = "";
-const DMO_ORIGIN = ["core", "standard", "template", "custom"];
+const DMO_ORIGIN = [...new Set(Object.values(ORIGIN_CATEGORY))];
 const josa = (w, a, b) => { const c = String(w).slice(-1).charCodeAt(0) - 0xAC00; return c < 0 || c > 11171 || c % 28 === 0 ? b : a; };   // 받침 있으면 a
 function renderDefs(tab) {
   subnav("");
@@ -1495,7 +1499,7 @@ function renderDefs(tab) {
   }
   const objs = st.objects, rels = st.relations || [];
   const oById = id => objs.find(o => o.id === id);
-  const tgt = r => r.target_kind === "item" ? (oById(r.target_object_id) || {}).label || TX("찾을 수 없는 자료 종류", "찾을 수 없는 오브젝트") : NT(CORE_LABEL[r.target_kind] || r.target_kind);
+  const tgt = r => r.target_kind === "item" ? (oById(r.target_object_id) || {}).label || "찾을 수 없는 자료 종류" : NT(CORE_LABEL[r.target_kind] || r.target_kind);
   const relOf = (oid, fk) => rels.find(r => r.object_id === oid && r.field_key === fk);
   const nItems = id => (S.items || []).filter(it => it.object_id === id).length;
   const fieldRow = (o, f) => {
@@ -1520,19 +1524,19 @@ function renderDefs(tab) {
   const svg = typeof S.structure_svg === "string" ? S.structure_svg : "";
   const mode = m => `<button type="button" data-dmode="${m}" aria-pressed="${defsMode === m}">${m === "list" ? "목록" : "그래프"}</button>`;
   $("view").innerHTML = structViews(tab, "defs") + `<div class="paper"><div class="eyebrow">${tab.settings ? "내 구조 설정" : "구조 정의"}</div>
-    <p class="hint" style="margin:.3rem 0 .9rem">${TX("정의를 바꾸는 일은 연결한 AI 대화에서 해요.", "내 오브젝트·필드와 관계예요. 정의를 바꾸는 일은 연결한 AI 대화에서 해요. 여기서는 표준 편입만 고를 수 있어요.")}</p>
+    <p class="hint" style="margin:.3rem 0 .9rem">${TX("정의를 바꾸는 일은 연결한 AI 대화에서 해요.", "내 자료 종류·필드와 관계예요. 정의를 바꾸는 일은 연결한 AI 대화에서 해요. 여기서는 표준 편입만 고를 수 있어요.")}</p>
     <div class="dmode" role="group" aria-label="구조 정의 보기 방식">${mode("list")}${mode("graph")}</div>
     <div id="dlist"${defsMode === "list" ? "" : " hidden"}>
     <section class="sec"><h3>${NT("오브젝트")}<span class="count">${objs.length}</span></h3>
-      ${objs.length ? `<div class="sdef">${objs.map(objCard).join("")}</div>` : `<div class="empty">${TX("아직 자료 종류가 없어요.", "아직 오브젝트가 없어요.")}</div>`}</section>
+      ${objs.length ? `<div class="sdef">${objs.map(objCard).join("")}</div>` : `<div class="empty">${TX("아직 자료 종류가 없어요.", "아직 자료 종류가 없어요.")}</div>`}</section>
     <section class="sec"><h3>관계<span class="count">${rels.length}</span></h3>
       ${rels.length ? `<ul class="srel">${rels.map(relRow).join("")}</ul>` : `<div class="empty">참조 필드가 없어요.</div>`}
       ${core.length ? `<p class="hint" style="margin:.6rem 0 0">${originChip("core")} 공통으로 쓰는 ${core.map(x => `<b id="dmo-core-${esc(x.kind)}">${esc(NT(CORE_LABEL[x.kind] || x.kind))}</b>`).join("·")}${josa(NT(CORE_LABEL[core[core.length - 1].kind] || ""), "을", "를")} 가리키는 관계가 있어요.</p>` : ""}</section></div>
     <section class="sec" id="dgraph"${defsMode === "graph" ? "" : " hidden"} aria-label="구조 그래프">
-      <div class="dlegend">${DMO_ORIGIN.filter(k => k !== "custom").map(k => `<span><i class="o-${k}"></i>${esc(NT((ORIGIN_CHIP[k] || ["", k])[1]))}</span>`).join("")}
+      <div class="dlegend">${DMO_ORIGIN.map(k => `<span><i class="o-${k}"></i>${esc(NT((ORIGIN_CHIP[k] || ["", k])[1]))}</span>`).join("")}
         <span>점선 고리 = 표준 정의 보호</span><span>선 = 관계(화살표 없음) · 세 갈래 = 여러(N) · 두 줄 = 하나(1) · 참조를 가진 쪽이 N</span></div>
       ${svg ? `<div class="dmo">${svg}</div>` : `<div class="empty">그래프를 읽지 못했어요. 목록으로 보세요. ${esc(FIXHINT)}</div>`}
-      <p class="hint" style="margin:.6rem 0 0">${TX("원을 누르면 목록의 그 자료 종류로, 선을 누르면 그 관계로 가요.", "원을 누르면 목록의 그 오브젝트로, 선을 누르면 그 관계로 가요. 대상 오브젝트를 정하지 않은 관계는 선이 없어요.")}</p></section>
+      <p class="hint" style="margin:.6rem 0 0">${TX("원을 누르면 목록의 그 자료 종류로, 선을 누르면 그 관계로 가요.", "원을 누르면 목록의 그 자료 종류로, 선을 누르면 그 관계로 가요. 대상 자료 종류를 정하지 않은 관계는 선이 없어요.")}</p></section>
     ${tab.settings && $("acct-names") ? namesBox() : ""}
     ${tab.settings ? `<details class="fold" id="std-adv"${stdAdvOpen ? " open" : ""}><summary>고급</summary>` : ""}
     <section class="sec" aria-labelledby="std-pv-title"><h3 id="std-pv-title">${TX("공통 구조 적용 검토", "표준 편입 미리보기")}</h3>
@@ -1586,17 +1590,17 @@ function defsJump(id) {
 const STD_STATE = {seeded: ["st-mine", "처음부터 표준"], incorporated: ["st-mine", "편입함"], deferred: ["st-wait", "보류"],
   refused: ["st-off", "거절"], none: ["", "아직 고르지 않음"]};
 const STD_READY = ["seeded", "incorporated"];
-const STRUCT_TEXT = {match: "일치 — 표준과 같은 모양", extend: "확장 — 표준 + 내가 더한 필드", missing: "누락 — 같은 key 오브젝트가 없어요",
+const STRUCT_TEXT = {match: "일치 — 표준과 같은 모양", extend: "확장 — 표준 + 내가 더한 필드", missing: "누락 — 같은 key 자료 종류가 없어요",
   conflict: "충돌 — 표준과 모양이 달라요"};
 const STD_CONFLICT = {
-  key_draft_only: () => "같은 key 오브젝트가 아직 적용 전 초안이에요. 대화에서 초안을 적용하거나 key 를 바꾼 뒤 다시 보세요",
-  key_archived: () => "같은 key 오브젝트가 보관돼 있어요",
-  kind: () => "오브젝트 종류(semantic_kind)가 표준과 달라요",
+  key_draft_only: () => "같은 key 자료 종류가 아직 적용 전 초안이에요. 대화에서 초안을 적용하거나 key 를 바꾼 뒤 다시 보세요",
+  key_archived: () => "같은 key 자료 종류가 보관돼 있어요",
+  kind: () => "자료 종류의 의미 유형(semantic_kind)가 표준과 달라요",
   field_missing: f => `표준 필드 ${f} 가 없어요`,
   field_archived: f => `표준 필드 ${f} 가 보관돼 있어요`,
   field_value_type: f => `필드 ${f} 의 값 종류가 표준과 달라요`,
   field_target_kind: f => `필드 ${f} 가 가리키는 종류가 표준과 달라요`,
-  field_target: f => `필드 ${f} 가 표준 대상 오브젝트를 가리키지 않아요`,
+  field_target: f => `필드 ${f} 가 표준 대상 자료 종류를 가리키지 않아요`,
   field_multiple: f => `필드 ${f} 의 여러 개 허용이 표준과 달라요`,
   field_required: f => `필드 ${f} 의 필수 여부가 표준과 달라요`,
   field_options: f => `필드 ${f} 에 표준 선택지가 빠져 있어요`,
@@ -1604,10 +1608,10 @@ const STD_CONFLICT = {
 const BLOCK_TEXT = {already: "이미 표준으로 쓰고 있어요.", conflict: "구조가 표준과 달라요. 대화로 정의를 표준 모양에 맞춘 뒤 다시 보세요.",
   needs_target: "참조 대상 표준을 먼저 편입해야 해요."};
 // 편입하면 막히는 변경 — 서버 contract.LOCKED_CHANGES 코드와 같은 뜻
-const LOCK_TEXT = {archive: "오브젝트 삭제·보관", key: "오브젝트 key 바꾸기", semantic_kind: "오브젝트 종류(semantic_kind) 바꾸기",
+const LOCK_TEXT = {archive: "자료 종류 삭제·보관", key: "자료 종류 key 바꾸기", semantic_kind: "자료 종류의 의미 유형(semantic_kind) 바꾸기",
   std_id: "표준 식별자 떼기·바꾸기 — 보류·거절로 되돌리기 포함", field_remove: "표준 필드 빼기",
   field_shape: "표준 필드의 key·값 종류·대상·여러 개·필수 바꾸기", option_remove: "표준 선택지 빼기·값 바꾸기"};
-const STD_DONE = {deferred: "보류로 남겼어요. 다른 기능은 그대로예요.", refused: "거절로 남겼어요. 기존 오브젝트와 링크는 그대로예요.",
+const STD_DONE = {deferred: "보류로 남겼어요. 다른 기능은 그대로예요.", refused: "거절로 남겼어요. 기존 자료 종류와 링크는 그대로예요.",
   incorporated: "편입했어요. 이 정의는 이제 「표준 정의 보호」를 받아요."};
 const STD_ERR = {
   "DEF-INVALID": "지금 구조로는 편입할 수 없어요. 미리보기를 다시 불러왔어요 — 사유를 확인해 주세요.",
@@ -1628,7 +1632,7 @@ function pvCard(o) {
       ${o.can_incorporate ? `<button class="primary" type="button" data-std="incorporated" data-key="${esc(o.std_key)}" aria-haspopup="dialog">편입…</button>` : ""}</div>
     ${o.can_incorporate ? "" : `<p class="blocked">편입할 수 없어요 — ${(o.blocked || []).map(b => esc(BLOCK_TEXT[b] || "지금은 편입할 수 없어요.")).join(" ")}</p>`}`;
   return `<article class="spvc" aria-labelledby="spv-${esc(o.std_key)}"><h4 id="spv-${esc(o.std_key)}">표준 「${esc(o.std_name)}」<span class="chip ${stc[0]}">${esc(stc[1])}</span></h4>
-    <dl><dt>${TX("내 자료 종류", "내 오브젝트")}</dt><dd>${obj ? `${esc(obj.label)} <span class="tech">${esc(obj.key)} · r${esc(obj.revision)}${obj.archived ? " · 보관됨" : ""}</span>` : "없음 — 편입하면 표준 정의를 새로 넣어요"}</dd>
+    <dl><dt>${"내 자료 종류"}</dt><dd>${obj ? `${esc(obj.label)} <span class="tech">${esc(obj.key)} · r${esc(obj.revision)}${obj.archived ? " · 보관됨" : ""}</span>` : "없음 — 편입하면 표준 정의를 새로 넣어요"}</dd>
       <dt>구조</dt><dd>${esc(STRUCT_TEXT[o.structure] || o.structure)}${(o.conflicts || []).length ? `<ul>${o.conflicts.map(x =>
         `<li>${esc((STD_CONFLICT[x.code] || (() => "표준과 다른 곳이 있어요"))(x.field || ""))}</li>`).join("")}</ul>` : ""}</dd>
       ${o.meaning_check ? `<dt>뜻 확인</dt><dd>key 가 같아도 뜻이 같다는 보장은 없어요. 편입할 때 같은 뜻으로 쓰는지 확인해요.</dd>` : ""}
@@ -1658,14 +1662,14 @@ async function loadPreview() {
     if (b.dataset.std === "incorporated") stdConfirm(o); else stdChoose(o, b.dataset.std);
   };
 }
-// 편입 확인 — 「이 오브젝트를 표준 ○○ 와 같은 뜻으로 쓴다」 + 잠금 영향. 체크해야 편입 버튼이 켜진다(confirmed_meaning=true)
+// 편입 확인 — 「이 자료 종류를 표준 ○○ 와 같은 뜻으로 쓴다」 + 잠금 영향. 체크해야 편입 버튼이 켜진다(confirmed_meaning=true)
 function stdConfirm(o) {
   stdAsk = o;
   const nm = o.std_name, obj = o.object;
   $("std-dlg-title").textContent = `표준 「${nm}」${roJosa(nm)} 편입하기`;
-  $("std-dlg-lead").textContent = obj ? `내 오브젝트 「${obj.label}」(key ${obj.key})에 표준 식별자를 달아요. 데이터·항목은 그대로예요.`
-                                      : `같은 key 오브젝트가 없어 표준 「${nm}」 정의를 새로 넣어요.`;
-  $("std-dlg-oktext").textContent = obj ? `이 오브젝트를 표준 「${nm}」${josa(nm, "과", "와")} 같은 뜻으로 쓴다. 아래 잠금 영향을 확인했다.`
+  $("std-dlg-lead").textContent = obj ? `내 자료 종류 「${obj.label}」(key ${obj.key})에 표준 식별자를 달아요. 데이터·항목은 그대로예요.`
+                                      : `같은 key 자료 종류가 없어 표준 「${nm}」 정의를 새로 넣어요.`;
+  $("std-dlg-oktext").textContent = obj ? `이 자료 종류를 표준 「${nm}」${josa(nm, "과", "와")} 같은 뜻으로 쓴다. 아래 잠금 영향을 확인했다.`
                                         : `표준 「${nm}」 정의를 새로 넣는다. 아래 잠금 영향을 확인했다.`;
   const lock = o.lock || {changes: [], fields: []};
   $("std-dlg-lock").replaceChildren(...lock.changes.map(ch => { const li = document.createElement("li"); li.textContent = LOCK_TEXT[ch] || ch; return li; }));
@@ -2298,7 +2302,6 @@ function renderNameGate() {
   $("who").textContent = S.user && S.user.email ? S.user.email : "";
   $("who").title = S.user && S.user.email ? S.user.email : "";
   acctApply();
-  $("setup-link").hidden = !(S.user && S.user.admin);
   const now = new Date();
   $("date").textContent = `${now.getMonth() + 1}월 ${now.getDate()}일 ${DOW[now.getDay()]}요일`;
   $("axistop").hidden = true;
@@ -2917,7 +2920,7 @@ function meTabCount(t) {
 function meSubtabs(cur) {
   return `<nav class="mesub" aria-label="「나」 하위 탭">${meLayout().tabs.map(t => {
     const n = meTabCount(t), on = t === cur;
-    return `<a href="#_me/${t}"${on ? ' aria-current="page" class="on"' : ""}>${esc(ME_TAB_LABEL[t])}${ME_LOCKED.has(t) ? `<span class="lk" title="기본" aria-label="기본">🔒</span>` : ""}${n === null ? "" : `<span class="n">${esc(n)}</span>`}</a>`;
+    return `<a href="#_me/${t}"${on ? ' aria-current="page" class="on"' : ""}>${esc(ME_TAB_LABEL[t])}${ME_LOCKED.has(t) ? `<span class="lk" title="표준" aria-label="표준">🔒</span>` : ""}${n === null ? "" : `<span class="n">${esc(n)}</span>`}</a>`;
   }).join("")}</nav>`;
 }
 // 한 행의 연결 수(목록 오른쪽 숫자 · 연결 최다 진입) — 저장된 관계만. 축 = 통계 n, 사람 = 그 사람을 가리키는 항목, 출처 = 글 + 읽고 든 생각
@@ -2998,7 +3001,7 @@ function meListHtml(tab, rows, sel) {
         <span class="hk">${[tab === "custom" ? "" : r.meta, n === null ? "" : `${tab === "axis" ? "항목·글" : "연결"} ${n}`].filter(Boolean).map(esc).join(" · ")}</span></a></li>`;
     }).join("")}</ul>`;
   }
-  return `<section class="hlist mlist" id="home-list" aria-labelledby="me-list-h"><div class="htools"><h3 id="me-list-h">${esc(label)}${ME_LOCKED.has(tab) ? ' <span class="lk" aria-label="기본">🔒</span>' : ""}</h3><span class="count">${n}</span></div>${body}</section>`;
+  return `<section class="hlist mlist" id="home-list" aria-labelledby="me-list-h"><div class="htools"><h3 id="me-list-h">${esc(label)}${ME_LOCKED.has(tab) ? ' <span class="lk" aria-label="표준">🔒</span>' : ""}</h3><span class="count">${n}</span></div>${body}</section>`;
 }
 const meBack = tab => homeMobile() ? `<p class="hback"><button class="secondary" type="button" data-home-back data-to="#_me/${esc(tab)}">목록</button></p>` : "";
 // 가운데 — 고른 데이터. 항목이면 PR① 상세(제목·필드·동작) + 연결 그래프(상한·생략), 사람·출처는 머리 + 연결
@@ -3150,7 +3153,7 @@ function meKinds(st) {
   const k = st && st.kinds;
   if (!k) return meBlk("half", "종류별 건수", "", `<p class="hint mfail">${ME_STATS_FAIL}</p>`);
   const max = ME_KINDS.reduce((m, [key]) => Math.max(m, k[key] || 0), 0);
-  const rows = ME_KINDS.map(([key, label, href]) => { const n = k[key] || 0, lab = `${esc(label)}${ME_KIND_LOCK.has(key) ? ' <span class="lk" aria-label="기본">🔒</span>' : ""}`;
+  const rows = ME_KINDS.map(([key, label, href]) => { const n = k[key] || 0, lab = `${esc(label)}${ME_KIND_LOCK.has(key) ? ' <span class="lk" aria-label="표준">🔒</span>' : ""}`;
     return `<li class="${n ? "" : "zero"}">${href ? `<a href="${href}">${lab}</a>` : `<span>${lab}</span>`}<span class="mbar" aria-hidden="true">${n ? `<i style="width:${(n / max * 100).toFixed(2)}%"></i>` : ""}</span><b>${esc(n)}</b></li>`; }).join("");
   return meBlk("half", "종류별 건수", "", `<ul class="mkinds">${rows}</ul>`);
 }
@@ -3207,7 +3210,8 @@ function navReplace(R) {
 // 휴지통 페이지는 스위치 켜짐(trashOn — 휴지통 절)일 때만 줄에 선다. 꺼짐이면 #_setup/trash 는 레이아웃으로 돌린다
 const setupPages = () => trashOn() ? SETUP_PAGES.concat([["trash", "휴지통"]]) : SETUP_PAGES;
 function setupNav(cur) {
-  return setupPages().map(([p, l]) => `<a href="#_setup/${p}" class="${p === cur ? "on" : ""}"${p === cur ? ' aria-current="page"' : ""}>${esc(l)}</a>`).join("");
+  const admin = S.user && S.user.admin ? `<a href="/admin/setup">운영 관리</a><a href="/admin">운영 콘솔</a>` : "";
+  return setupPages().map(([p, l]) => `<a href="#_setup/${p}" class="${p === cur ? "on" : ""}"${p === cur ? ' aria-current="page"' : ""}>${esc(l)}</a>`).join("") + admin;
 }
 function renderSetup(tab, R) {
   const page = setupPages().some(p => p[0] === R.a) ? R.a : "layout";
@@ -3593,9 +3597,9 @@ function renderObjects(tab, a, b, c) {
   const std = st.filter(o => o.origin === "standard"), mine = st.filter(o => o.origin !== "standard");
   const grp = (title, cards, empty) => `<section class="objgrp"><h3>${esc(title)}<span class="count">${cards.length}</span></h3>
     ${cards.length ? `<div class="objgrid">${cards.join("")}</div>` : `<div class="empty">${esc(empty)}</div>`}</section>`;
-  // 사용자 화면 구분 = 「기본 🔒 / 커스텀」 2단(v9 B3) — 코어·표준은 한 묶음 「기본 🔒」. 코어·표준 구분은 내 구조 설정(그래프·목록)에만
+  // 사용자 표시 구분 = 표준 / 커스텀. 내부 origin·표준 정의 보호는 그대로 유지한다.
   $("view").innerHTML = `<div class="paper">${msgLine()}<h2 class="title">자료 종류</h2>
-    ${grp("기본 🔒", core.map(x => card(x[0], x[1], x[2], x[3], "")).concat(std.map(o => card(o.label, o.key, `#structure/${o.id}`, `항목 ${nItems(o.id)}`, ""))), "")}
+    ${grp("표준 🔒", core.map(x => card(x[0], x[1], x[2], x[3], "")).concat(std.map(o => card(o.label, o.key, `#structure/${o.id}`, `항목 ${nItems(o.id)}`, ""))), "")}
     ${navNew() && userTabs().length ? grp("내 탭", userTabs().map(t => card(t.label, t.view === "record" ? "글 탭" : "질문 탭", `#${t.id}`, "열기", "")), "") : ""}
     ${grp("커스텀", mine.map(defCard), "아직 내가 만든 자료 종류가 없어요.")}</div>`;
 }
@@ -4594,10 +4598,13 @@ $("logout").onclick = async () => {
 function acctApply() {
   // PR B: 표시 이름 바꾸기(이름 입력 화면에선 숨김) · 새 탐색으로 바꾸기(미수락만) · 내 구조 설정(수락만). 관리자 응답에도 있다(구간 밖)
   const gate = needName();
+  // 이름 입력 전에도 기존 관리자 운영 경로는 톱니 하나에서 열린다. 이름 gate는 그대로다.
+  $("setup-link").href = gate && S && S.user && S.user.admin ? "/admin/setup" : "#_setup";
   $("acct-name").hidden = gate || !(S && S.user && "display_name" in S.user);
   $("acct-nav").hidden = gate || !(S && S.user && S.user.nav === "old");
-  $("acct-settings").hidden = gate || !navNew();
-  $("acct-devices").hidden = gate || !navNew();
+  // 설정 하위 화면은 오른쪽 위 톱니에서만 연다. 옛 라우트는 유지한다.
+  $("acct-settings").hidden = true;
+  $("acct-devices").hidden = true;
   // PR① 새 탐색 메뉴 6 — 저장 승인 대기 (N): N = S.inbox.pending, 0·못 읽음(null)이면 숫자 없음. 이름 공유 동의는 내 구조 설정 화면으로
   $("acct-menu").classList.toggle("navnew", !gate && navNew());
   $("acct-inbox").hidden = gate || !navNew();

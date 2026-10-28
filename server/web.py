@@ -788,7 +788,7 @@ def _om_link(oid, names: dict, tid=None, text=None) -> str:
 
 
 def _om_legend(origins=("core", "standard")) -> str:
-    return ('<div class="legend">' + "".join(f'<span><i class="o-{k}"></i>{_esc(structure_svg.ORIGIN_TEXT[k])}</span>' for k in origins)
+    return ('<div class="legend">' + "".join(f'<span><i class="o-{k}"></i>{_esc(structure_svg.ORIGIN_TEXT[k])}</span>' for k in structure_svg.legend_origins(origins))
             + f'<span>점선 고리 = {_esc(structure_svg.LOCK_TEXT)}(정의상 잠금)</span>'
             + '<span>선 = 관계(화살표 없음) · 세 갈래 = 여러(N) · 두 줄 = 하나(1) · 참조를 가진 쪽이 N</span></div>')
 
@@ -945,9 +945,9 @@ def render_userview(u: dict, opaque: str, named: bool, resp: dict, st: dict, tic
                f'{" · 삭제됨" if u.get("status") == "deleted" else ""}</dd>'
                f'<dt>구조 이름 공유</dt><dd>{"동의 — 현재 이름을 함께 보여요" if named else "동의 없음 — 자리표와 편입된 표준명만 보여요"}</dd>'
                f'<dt>불투명 id</dt><dd>{_esc(opaque)}</dd>'
-               f'<dt>구조</dt><dd>오브젝트 {_esc(cnt["objects"])} · 필드 {_esc(cnt["fields"])} · 관계 {_esc(cnt["relations"])} · '
+               f'<dt>구조</dt><dd>자료 종류 {_esc(cnt["objects"])} · 필드 {_esc(cnt["fields"])} · 관계 {_esc(cnt["relations"])} · '
                f'그중 연결 있음 {_esc(m)} · 출처 {_esc(cnt["sources"])}</dd></dl>')
-    legend = ('<div class="legend">' + "".join(f'<span><i class="o-{k}"></i>{_esc(v)}</span>' for k, v in structure_svg.ORIGIN_TEXT.items())
+    legend = ('<div class="legend">' + "".join(f'<span><i class="o-{k}"></i>{_esc(v)}</span>' for k, v in structure_svg.CATEGORY_TEXT.items())
               + f'<span>점선 고리 = {_esc(structure_svg.LOCK_TEXT)}</span>'
               + '<span>선 = 관계(화살표 없음) · 세 갈래 = 여러(N) · 두 줄 = 하나(1) · 참조를 가진 쪽이 N</span></div>')
     rrows = []
@@ -974,7 +974,7 @@ def render_userview(u: dict, opaque: str, named: bool, resp: dict, st: dict, tic
     erows.append(f'<tr><td>{_esc(admin_db.UNCHECKED)}</td><td>검사 불가(정상으로 세지 않음)</td><td class="num">{_esc(sum(e["n"] for e in un))}</td>'
                  f'<td class="long">{where or "—"}</td></tr>')
     std = resp["std"]
-    std_t = _table(['<th>표준 오브젝트</th><th>상태</th>'],
+    std_t = _table(['<th>표준 자료 종류</th><th>상태</th>'],
                    [f'<tr><td class="nm">{_esc(k)}</td><td>{_esc(v)}</td></tr>' for k, v in std["objects"].items()])
     items = []
     for i, o in enumerate(resp["objects"]):
@@ -994,16 +994,16 @@ def render_userview(u: dict, opaque: str, named: bool, resp: dict, st: dict, tic
                  for r in tickets], "문의 없음")
     return (f'<p><a href="/admin/users">← 사용자 목록</a></p><h1>사용자 — {_esc(u["email"])}</h1>{summary}'
             f'<h2>DMO 그래프</h2>{legend}<div class="dmo">{structure_svg.render(resp)}</div>'
-            f'<p class="note">원을 누르면 구조 트리의 그 오브젝트로, 선을 누르면 관계 집계 행으로 가요. 대상이 없는 관계(오브젝트 미지정·대상 정의 없음)는 선이 없어요.</p>'
+            f'<p class="note">원을 누르면 구조 트리의 그 자료 종류로, 선을 누르면 관계 집계 행으로 가요. 대상이 없는 관계(자료 종류 미지정·대상 정의 없음)는 선이 없어요.</p>'
             f'<h2>관계별 집계</h2><p class="note">관계 = 참조 필드 하나. 연결 = 살아 있는 항목에서 출발한 정상 연결 수(오류·검사 불가 제외). '
             f'기록에서 출발하는 분류 연결은 관계가 아니라 세지 않아요.</p>'
             + _table(['<th class="num">#</th><th>출발</th><th>필드</th><th>대상</th><th>카디널리티</th><th>구분</th><th>보호</th>'
                       '<th class="num">연결</th><th class="num">오류</th><th class="num">검사 불가</th>'], rrows, "관계 없음")
             + '<h2>무결성</h2><p class="note">검사 불가는 정상이 아니에요 — 정의만으로는 맞는지 볼 수 없는 연결이에요.</p>'
             + _table(['<th>코드</th><th>검사</th><th class="num">건</th><th>위치</th>'], erows)
-            + f'<h2>표준 상태</h2><p class="note">설치 버전·표식 상태·표준 오브젝트별 상태 코드.</p>'
+            + f'<h2>표준 상태</h2><p class="note">설치 버전·표식 상태·표준 자료 종류별 상태 코드.</p>'
             f'<p><span class="nm">{_esc(std["version"] or "—")}</span> · 표식 {_esc(std["state"] or "—")}</p>{std_t}'
-            f'<h2>구조 트리</h2><ul class="tree">{"".join(items) or "<li class=muted>적용된 오브젝트 없음</li>"}</ul>'
+            f'<h2>구조 트리</h2><ul class="tree">{"".join(items) or "<li class=muted>적용된 자료 종류 없음</li>"}</ul>'
             f'<h2>문의 요약</h2><p class="note">원문은 <a href="/admin/tickets">문의 화면</a>에서만 봐요.</p>{tk}')
 
 
@@ -1125,7 +1125,7 @@ class Web:
         uid = await self.uid_of(request)
         if uid is None:
             return RedirectResponse("/", status_code=302)
-        html = _fill_assets(APP_HTML.read_text(encoding="utf-8"))   # 요청마다 읽는다 — 헤더 해시와 본문이 같은 내용에서 나온다
+        html = structure_svg.fill_origin_labels(_fill_assets(APP_HTML.read_text(encoding="utf-8")))   # 요청마다 읽는다 — 헤더 해시와 본문이 같은 내용에서 나온다
         # Q1: 관리자는 <!--user-->(문의·이름 공유 메뉴·문의 섹션)를, 그 밖은 <!--admin-->(운영 콘솔)를 보내지 않는다. 표식도 남기지 않는다
         drop, keep = ("user", "admin") if getattr(request.state, "role", None) == "admin" else ("admin", "user")
         html = re.sub(rf"<!--{drop}-->.*?<!--/{drop}-->", "", html, flags=re.S).replace(f"<!--{keep}-->", "").replace(f"<!--/{keep}-->", "")

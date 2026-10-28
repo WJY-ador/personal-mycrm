@@ -13,6 +13,7 @@ import datetime as _dt
 
 import contract
 import db
+import structure_svg
 
 VIEWER_ADMIN = "admin"
 
@@ -341,13 +342,15 @@ _ORDERED_DIMS = frozenset({"day", "week", "month", "signup_month", "signup_week"
 OBJECT_BUCKETS = ((0, 0, "0"), (1, 1, "1"), (2, 5, "2–5"), (6, 10, "6–10"), (11, None, "11+"))
 FIELD_BUCKETS = ((0, 0, "0"), (1, 10, "1–10"), (11, 30, "11–30"), (31, 60, "31–60"), (61, None, "61+"))
 # 값 표시 이름(열거 값 → 화면 글자). 없는 값은 그대로 보인다.
+_ORIGIN_LABELS = {key: structure_svg.ORIGIN_TEXT["custom" if key == "user" else key]
+                  for key in ("standard", "template", "user")}
 VALUE_LABELS = {
     "names": {"yes": "동의", "no": "안 함"},
     "blocked": {"yes": "차단", "no": "아님"}, "active14": {"yes": "활동", "no": "없음"},
     "role": {"user": "사용자", "admin": "관리자"},
     "result": {"ok": "정상", "error": "오류"}, "linked": {"yes": "연결", "no": "미연결"},
-    "origin": {"standard": "표준", "template": "커스텀", "user": "커스텀"},   # 앱 구분 용어(structure_svg.ORIGIN_TEXT, user = custom)
-    "field_origin": {"standard": "표준", "template": "커스텀", "user": "커스텀"},
+    "origin": _ORIGIN_LABELS,   # 앱 구분 용어(structure_svg.ORIGIN_TEXT, user = custom)
+    "field_origin": _ORIGIN_LABELS,
     "required": {"yes": "필수", "no": "선택"}, "multiple": {"yes": "다중", "no": "단일"}, "archived": {"yes": "보관", "no": "사용 중"},
     "target": {"item": "항목", "record": "기록", "candidate": "후보", "none": "관계 아님"},
     "kind": {"bug": "버그", "request": "요청", "question": "질문", "privacy": "개인정보 요청"},

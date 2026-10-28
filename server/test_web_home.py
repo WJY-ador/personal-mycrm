@@ -209,7 +209,7 @@ def test_static():
     assert not re.search(r"localStorage\.setItem\([^)]*defs", js)
     # PR ①-b S2 — 탭 3 · 하위 탭 7(기본 레이아웃 = 계약 §3 JSON) · 서버 접점 한 곳(GET 만, 실패는 폴백) · 축 색 · 렌즈 · 추정 연결 0
     v9 = home[home.index("// ── 「나」 v9 (PR ①-b)"):]
-    assert "if (navNew()) return [NAVTAB._me, NAVTAB._today, NAVTAB._setup];" in js, "탭 나·오늘·Setup"
+    assert "if (navNew()) return [NAVTAB._me, NAVTAB._today];" in js, "탭 나·오늘 — 설정은 톱니"
     for w in ('const ME_TABS = ["summary", "principle", "decision", "axis", "custom", "person", "source"];',
               'const ME_BLOCKS = ["heatmap", "kinds", "waiting", "recent"];', "const ME_LAYOUT_DEFAULT = {v: 1, tabs: ME_TABS.slice(), blocks: {summary: ME_BLOCKS.slice()}};",
               'getJSON("/api/me/layout"), getJSON("/api/me/stats")', "const meLayout = () => ME.layout || ME_LAYOUT_DEFAULT;",
@@ -752,10 +752,10 @@ def test_static_moved():
     for gone in ("admin-band", "deskBand", "deskAdmin", "/api/feedback/status", "/api/feedback/note", "admin_tickets", "admin_note",
                  "desk-admin", "DESK_NOTE_MAX", "j.admin"):
         assert gone not in html, ("app.html 에 관리자 문의함 흔적", gone)
-    # ⚙ Setup 링크: 기본 hidden · /admin/setup · 상태가 admin 일 때만 hidden 해제
+    # 설정은 모든 역할에서 우측 상단 톱니 하나. 관리자 권한은 서버가 지킨다.
     gear = re.search(r'<a\b[^>]*\bid="setup-link"[^>]*>', html)
-    assert gear and re.search(r"\shidden(\s|>)", gear.group(0)) and 'href="/admin/setup"' in gear.group(0), gear
-    assert '$("setup-link").hidden = !(S.user && S.user.admin);' in html
+    assert gear and not re.search(r"\shidden(\s|>)", gear.group(0)) and 'href="#_setup"' in gear.group(0), gear
+    assert '$("setup-link").hidden' not in html
 
     # A2 계정 메뉴 — 메뉴 항목 · ⚙ 메뉴 밖 · #who 말줄임 · 문의 숨기기 흔적 0 (/app 응답 CSP 해시는 test_tools 에 남는다)
     menu = html[html.index('<details class="acct" id="acct">'):html.index("</details>")]
@@ -808,8 +808,10 @@ def test_static_moved():
         "dmo-o1", "dmo-r1", "dmo-core-record"), "app.html 의 id 꼴 = structure_svg 앵커"
     assert tokens in html and "prefers-color-scheme" not in tokens and "prefers-color-scheme" not in html, "토큰 = 테마 토글(data-theme)만"
     assert '[data-theme="dark"]' in tokens
-    chip = html[html.index("const ORIGIN_CHIP = {"):html.index("};", html.index("const ORIGIN_CHIP = {"))]
-    assert dict(re.findall(r'(\w+): \["[^"]*", "([^"]+)"\]', chip)) == structure_svg.ORIGIN_TEXT, "구분 용어 — 그래프 = 목록 칩"
+    rendered = structure_svg.fill_origin_labels(html)
+    assert "/*{{origin-text}}*/ {}" not in rendered
+    assert 'const ORIGIN_CHIP = Object.fromEntries(Object.keys(ORIGIN_TEXT)' in rendered, "칩은 그래프와 같은 표시 정의"
+
     assert '<th scope="col">출처</th>' not in html and '<th scope="col">구분</th><th scope="col">보호</th>' in html, "필드 표 열 머리 = 구분(정의 구분 뜻의 '출처' 0)"
     sv = html[html.index("function structViews("):html.index("\n}", html.index("function structViews("))]   # 구조 탭 순서: 보기 전환 → 오브젝트 필(항목 보기만)
     assert sv.index('aria-label="구조 보기"') < sv.index("+ sub;") and 'subnav("");\n  const sub = `<nav class="pills sobjs" aria-label="구조 고르기">' in html \
@@ -825,7 +827,7 @@ def test_static_moved():
               "실명이 아니어도 돼요. 다른 사람에게 보이지 않고 운영자 화면에도 나오지 않아요.",
               '"/api/nav/accept"', '"/api/me/name"', '"/api/people', '"/api/reflections',
               'id: "_me"', 'id: "_obj"', 'id: "_settings"',
-              "if (navNew()) return [NAVTAB._me, NAVTAB._today, NAVTAB._setup];",   # PR ①-b 탭 3: 나 · 오늘 · Setup(B1)
+              "if (navNew()) return [NAVTAB._me, NAVTAB._today];",   # PR ①-b 탭 3: 나 · 오늘 · Setup(B1)
               'if (R.tab === "_settings") return "#_setup/structure";', "function axisChips",
               "출처를 접한 뒤 내가 한 생각만 적어요. 다른 사람의 말·경험·생각을 옮기는 곳이 아니에요.",
               "별칭도 그 사람을 알아볼 수 있으면 개인정보예요.", "삭제 완료"):
