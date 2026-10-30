@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import subprocess
 import sys
 from build_agent import ROOT, smoke
 
@@ -21,6 +22,11 @@ def verify(directory):
         raise ValueError("bundled source allowlist/version/protocol mismatch")
     binary = info_path.parent / ("mycrm-agent.exe" if sys.platform == "win32" else "mycrm-agent")
     smoke(binary, version)
+    if sys.platform == "darwin":
+        # Ad-hoc signature must cover the whole app; a partial (linker-only) signature reads as "damaged".
+        app = info_path.parents[3]
+        subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True)
+        print("codesign verified: " + app.name)
     extension = ".exe" if sys.platform == "win32" else ".dmg"
     artifacts = [p for p in directory.glob("*" + extension) if version in p.name]
     if not artifacts:

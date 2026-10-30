@@ -7,6 +7,9 @@ test('external destinations reject injection, credentials, redirects and foreign
 test('semver comparison rejects prereleases and never offers downgrade',()=>{
  assert(newerVersion('v0.1.10','0.1.9'));assert(!newerVersion('v0.1.1-beta','0.1.0'));assert(!newerVersion('v0.1.0','0.1.1'));assert(!newerVersion('0.1.1','0.1.1'));
 });
+test('release tag equal to the installed version is not an update; the next patch is',()=>{
+ assert(!newerVersion('v0.1.1','0.1.1'));assert(newerVersion('v0.1.2','0.1.1'));
+});
 test('agent home remains outside install directory across upgrades',()=>{
  assert.equal(agentHome('darwin',{},'/Users/test'),'/Users/test/Library/Application Support/my-crm-agent');
  assert.equal(agentHome('win32',{APPDATA:'/user/appdata'},'/user'),path.win32.join('/user/appdata','my-crm-agent'));
