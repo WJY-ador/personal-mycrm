@@ -79,10 +79,6 @@ async function initialize(){
   win.webContents.on('will-navigate',e=>e.preventDefault());
   win.webContents.session.setPermissionRequestHandler((_wc,_p,callback)=>callback(false));
   win.on('close',event=>{if(!quitting){event.preventDefault();win.hide();}});
-  await win.loadFile(path.join(__dirname,'index.html'));
-  const icon=nativeImage.createFromDataURL('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAIElEQVR42mNkYPj/n4ECwESJ5lEDRg0YNWDUgFEDBg0AADMSAh/0xSqxAAAAAElFTkSuQmCC');
-  tray=new Tray(icon);tray.setToolTip('MyCRM');tray.setContextMenu(Menu.buildFromTemplate([{label:'MyCRM 열기',click:show},{label:'대시보드 열기',click:()=>external(HOSTED).catch(()=>{})},{type:'separator'},{label:'연결 장치 중지',click:()=>exclusively(()=>supervisor.stopAll()).catch(()=>{})},{label:'종료',click:()=>app.quit()}]));tray.on('double-click',show);tray.on('click',show);
-  Menu.setApplicationMenu(Menu.buildFromTemplate([{label:'MyCRM',submenu:[{label:'MyCRM 열기',click:show},{label:'종료',accelerator:process.platform==='darwin'?'Command+Q':'Alt+F4',click:()=>app.quit()}]},{role:'editMenu'}]));
   register('status',()=>snapshot());
   register('dashboard',()=>external(HOSTED));
   register('logs',()=>shell.openPath(path.join(userData,'logs')));
@@ -125,4 +121,8 @@ async function initialize(){
     const pending=[...commands].map(child=>new Promise(resolve=>child.once('close',resolve)));
     Promise.all([supervisor.stopAll({closing:true}),...pending]).finally(()=>{tray?.destroy();app.quit();});
   });
+  await win.loadFile(path.join(__dirname,'index.html'));
+  const icon=nativeImage.createFromDataURL('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAIElEQVR42mNkYPj/n4ECwESJ5lEDRg0YNWDUgFEDBg0AADMSAh/0xSqxAAAAAElFTkSuQmCC');
+  tray=new Tray(icon);tray.setToolTip('MyCRM');tray.setContextMenu(Menu.buildFromTemplate([{label:'MyCRM 열기',click:show},{label:'대시보드 열기',click:()=>external(HOSTED).catch(()=>{})},{type:'separator'},{label:'연결 장치 중지',click:()=>exclusively(()=>supervisor.stopAll()).catch(()=>{})},{label:'종료',click:()=>app.quit()}]));tray.on('double-click',show);tray.on('click',show);
+  Menu.setApplicationMenu(Menu.buildFromTemplate([{label:'MyCRM',submenu:[{label:'MyCRM 열기',click:show},{label:'종료',accelerator:process.platform==='darwin'?'Command+Q':'Alt+F4',click:()=>app.quit()}]},{role:'editMenu'}]));
 }

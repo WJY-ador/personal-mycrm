@@ -151,8 +151,9 @@ jobs:
       - name: Draft must carry exactly the four assets
         run: |
           expected=$(printf '%s\n' MyCRM-mac-arm64.dmg MyCRM-mac-x64.dmg MyCRM-win-x64.exe SHA256SUMS.txt | sort)
-          actual=$(gh release view "$TAG" --json assets -q '.assets[].name' | sort)
-          if [ "$actual" != "$expected" ]; then
+          # Read the draft from the release list; tag lookups may not return drafts.
+          actual=$(gh api "repos/$GH_REPO/releases?per_page=30" --jq ".[] | select(.tag_name == \"$TAG\" and .draft) | .assets[].name" | sort)
+          if [ -z "$actual" ] || [ "$actual" != "$expected" ]; then
             echo "::error::draft assets differ from the expected four"
             echo "$actual"
             exit 1
