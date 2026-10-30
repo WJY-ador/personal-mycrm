@@ -23,9 +23,11 @@ def main(argv=None):
     from agent import cli
     from _desktop_build import APP_VERSION
     args = list(sys.argv[1:] if argv is None else argv)
+    # Windows pipes default to the ANSI code page (e.g. cp1252) and fail on Korean text.
+    # The desktop shell decodes child output as UTF-8.
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
-            stream.reconfigure(line_buffering=True)
+            stream.reconfigure(encoding="utf-8", line_buffering=True)
     if args == ["--desktop-info"]:
         print(json.dumps({"app_version": APP_VERSION, "agent_version": agent.AGENT_VERSION, "protocol": 1}))
         return 0
