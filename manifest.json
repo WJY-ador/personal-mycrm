@@ -10,7 +10,7 @@
     },
     "windows-native": {
       "core": "미검증 — 코드 대응만",
-      "optional": "로컬 에이전트: 미검증 — 자격 증명 저장소 미구현이라 연결·업로드 불가, 계약 검증·원문 보기만. 예약·알림 없음"
+      "optional": "로컬 에이전트: 미검증 — 자격 증명 저장소(Credential Manager)·예약(Task Scheduler) 코드 있음, 단위 시험(모의 API·모의 schtasks)만 통과, 실제 Windows 에서 연결·업로드·예약 미확인. 알림 없음"
     },
     "windows-wsl": {
       "core": "미검증·미결정",
