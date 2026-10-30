@@ -64,7 +64,12 @@ def _parser() -> argparse.ArgumentParser:
 
     sub.add_parser("status", help="연결·대기·격리·예약 상태")
 
-    s = sub.add_parser("schedule", help="launchd 예약")
+    cc = sub.add_parser("configure-cli", help="구독 CLI 실행 파일 경로 설정")
+    choice = cc.add_mutually_exclusive_group(required=True)
+    choice.add_argument("--path", help="설치된 Claude 실행 파일 절대 경로")
+    choice.add_argument("--clear", action="store_true", help="저장된 CLI 경로만 지움")
+
+    s = sub.add_parser("schedule", help="현재 사용자 예약(1시간마다)")
     s.add_argument("action", choices=("install", "remove"))
 
     sv = sub.add_parser("serve", help="원문 뷰어(127.0.0.1) · --jobs = 작업 실행(상주)")
@@ -272,8 +277,12 @@ def cmd_status(ctx: Ctx, a) -> int:
     en = [n for n, s in (cfg.get("adapters") or {}).items() if s.get("enabled")]
     ctx.say("켜진 어댑터: " + (", ".join(en) if en else "없음"))
     ctx.say("무인 요약: " + ("켜짐" if (cfg.get("summary") or {}).get("enabled") else "꺼짐"))
-    if osutil.IS_MAC:
-        ctx.say("예약: " + ("등록됨" if schedule.installed(ctx.launch_agents_dir) else "없음"))
+    if osutil.IS_MAC or osutil.IS_WINDOWS:
+        try:
+            is_installed = schedule.installed(ctx.launch_agents_dir, runner=ctx.schedule_runner)
+            ctx.say("예약: " + ("등록됨" if is_installed else "없음"))
+        except schedule.ScheduleError:
+            ctx.say("예약: 확인 실패")
     if os.path.exists(ctx.paths.db):
         st = _store.Store(ctx.paths)
         try:
@@ -285,6 +294,30 @@ def cmd_status(ctx: Ctx, a) -> int:
                 ctx.say("멈춤 범위: " + ", ".join(c["halts"]))
         finally:
             st.close()
+    return EXIT_OK
+
+
+def cmd_configure_cli(ctx: Ctx, a) -> int:
+    selected = None
+    if not a.clear:
+        selected = a.path
+        if not selected or not os.path.isabs(selected) or not os.path.isfile(selected):
+            ctx.say("CLI 경로는 설치된 실행 파일의 절대 경로여야 합니다.")
+            return EXIT_ERR
+        selected = os.path.realpath(selected)
+        if not os.access(selected, os.X_OK) or (osutil.IS_WINDOWS and not selected.lower().endswith(".exe")):
+            ctx.say("실행 가능한 CLI 파일을 선택해 주세요(Windows는 .exe).")
+            return EXIT_ERR
+    ctx.paths.ensure()
+    try:
+        with osutil.FileLock(ctx.paths.lock("config")):
+            cfg = _config.load(ctx.paths)
+            cfg["summary"]["cli_path"] = selected
+            _config.save(ctx.paths, cfg)
+    except osutil.LockBusy:
+        ctx.say("다른 설정 저장이 진행 중입니다. 잠시 후 다시 시도해 주세요.")
+        return EXIT_ERR
+    ctx.say("CLI 경로를 지웠어요." if a.clear else "CLI 실행 파일 경로를 저장했어요.")
     return EXIT_OK
 
 
@@ -443,7 +476,8 @@ def cmd_disconnect(ctx: Ctx, a) -> int:
 
 
 COMMANDS = {"connect": cmd_connect, "validate": cmd_validate, "run-once": cmd_run_once, "status": cmd_status,
-            "schedule": cmd_schedule, "serve": cmd_serve, "disconnect": cmd_disconnect}
+            "schedule": cmd_schedule, "serve": cmd_serve, "disconnect": cmd_disconnect,
+            "configure-cli": cmd_configure_cli}
 
 
 def main(argv=None, **ctx_kw) -> int:
