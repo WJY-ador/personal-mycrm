@@ -140,6 +140,19 @@ jobs:
           PY
           python server/test_trash_flow.py
 
+      # 설치 페이지(2026-10-30) — 공개 /download(CRM_DOWNLOAD_PUBLIC 플래그·UA 순서·CSP)·start.html·「연결 장치」 링크.
+      # DB 는 쓰지 않지만 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
+      - name: "④-f 설치 페이지 시험 (test_download.py)"
+        env:
+          DATABASE_URL: postgresql://postgres:crm@localhost:5432/crm_test_download
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:crm@localhost:5432/crm", autocommit=True) as c:
+              c.execute("CREATE DATABASE crm_test_download")
+          PY
+          python server/test_download.py
+
       # 이전 CLI 시험 가드는 DB 이름을 crm_test_bi_mig 하나로 고정한다(test_migrate_cli.ALLOWED_DBS)
       - name: "④-c board 이전 CLI 시험 (test_migrate_cli.py)"
         env:

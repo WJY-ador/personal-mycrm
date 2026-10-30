@@ -3955,6 +3955,7 @@ function renderAxis(id) {
 function renderDevices() {
   $("view").innerHTML = `<div class="paper sheet">${crumbs(["#_me", "나"], ["", "연결 장치"])}${msgLine()}<h2 class="title">연결 장치</h2>
     <p class="hint">PC의 로컬 에이전트를 이 계정에 연결해요. 원문·실명·주소는 PC에 남고, 서버엔 행동·날짜·별칭·출처 종류 같은 구조화 정보와 내가 승인할 글만 와요.</p>
+    <p class="hint"><a href="/download">PC 앱 설치</a></p>
     <div id="dev-body">${LOADING}</div></div>`;
   fill("dev-body", "/api/devices", devHtml, "연결 장치");
 }
