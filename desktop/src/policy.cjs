@@ -20,10 +20,11 @@ function newerVersion(remote, local) {
   return false;
 }
 function agentHome(platform=process.platform, env=process.env, home=os.homedir()) {
-  if (env.MYCRM_AGENT_HOME) return path.resolve(env.MYCRM_AGENT_HOME.replace(/^~(?=$|[\\/])/, home));
-  if (platform === 'darwin') return path.join(home,'Library','Application Support','my-crm-agent');
-  if (platform === 'win32') return path.join(env.APPDATA || home,'my-crm-agent');
-  return path.join(home,'.local','share','my-crm-agent');
+  const p = platform === 'win32' ? path.win32 : path.posix; // target OS separators, not the host's
+  if (env.MYCRM_AGENT_HOME) return p.resolve(env.MYCRM_AGENT_HOME.replace(/^~(?=$|[\\/])/, home));
+  if (platform === 'darwin') return p.join(home,'Library','Application Support','my-crm-agent');
+  if (platform === 'win32') return p.join(env.APPDATA || home,'my-crm-agent');
+  return p.join(home,'.local','share','my-crm-agent');
 }
 function checkUpdate(current) {
   return new Promise((resolve,reject) => {

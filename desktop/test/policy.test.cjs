@@ -9,6 +9,6 @@ test('semver comparison rejects prereleases and never offers downgrade',()=>{
 });
 test('agent home remains outside install directory across upgrades',()=>{
  assert.equal(agentHome('darwin',{},'/Users/test'),'/Users/test/Library/Application Support/my-crm-agent');
- assert.equal(agentHome('win32',{APPDATA:'/user/appdata'},'/user'),path.join('/user/appdata','my-crm-agent'));
+ assert.equal(agentHome('win32',{APPDATA:'/user/appdata'},'/user'),path.win32.join('/user/appdata','my-crm-agent'));
  assert.equal(agentHome('darwin',{MYCRM_AGENT_HOME:'~/existing'},'/Users/test'),'/Users/test/existing');
 });
