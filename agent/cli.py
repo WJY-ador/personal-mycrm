@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import codecs
 import getpass
 import json
 import os
@@ -480,7 +481,18 @@ COMMANDS = {"connect": cmd_connect, "validate": cmd_validate, "run-once": cmd_ru
             "configure-cli": cmd_configure_cli}
 
 
+def _utf8_stdio():
+    # Windows 콘솔·파이프는 기본 cp1252 라 한국어 출력이 UnicodeEncodeError 로 죽는다.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if hasattr(stream, "reconfigure") and codecs.lookup(stream.encoding or "ascii").name != "utf-8":
+                stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
 def main(argv=None, **ctx_kw) -> int:
+    _utf8_stdio()
     p = _parser()
     a = p.parse_args(argv)
     if not a.cmd:

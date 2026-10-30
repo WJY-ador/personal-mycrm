@@ -207,5 +207,17 @@ class ConfigureCliTest(unittest.TestCase):
             self.assertEqual(config.load(home.paths)["device_label"], "keep me")
 
 
+class Utf8OutputTest(unittest.TestCase):
+    def test_cp1252_pipe_prints_korean_help(self):
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        env = dict(os.environ, PYTHONIOENCODING="cp1252")
+        env.pop("PYTHONUTF8", None)
+        proc = subprocess.run([sys.executable, "-m", "agent", "--help"], cwd=root, env=env,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr.decode("utf-8", "replace"))
+        out = proc.stdout.decode("utf-8")
+        self.assertTrue(any("\uac00" <= ch <= "\ud7a3" for ch in out), out)
+
+
 if __name__ == "__main__":
     unittest.main()
