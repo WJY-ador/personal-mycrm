@@ -1,3 +1,5 @@
+import contextlib
+import io
 from pathlib import Path
 import importlib.util
 import sys
@@ -31,7 +33,8 @@ class InstallSmokeTests(unittest.TestCase):
             (directory / ("MyCRM-" + version + "-mac-arm64.dmg")).write_bytes(b"dmg")
             runners = {"win32": lambda i, v: calls.append(("win", i.name, v)),
                        "darwin": lambda i, v: calls.append(("mac", i.name, v))}
-            with mock.patch.dict(smoke.RUNNERS, runners, clear=True):
+            # Fake installers: keep their progress lines out of the CI log of the real smoke.
+            with mock.patch.dict(smoke.RUNNERS, runners, clear=True), contextlib.redirect_stdout(io.StringIO()):
                 smoke.main(directory, platform="win32")
                 smoke.main(directory, platform="darwin")
                 with self.assertRaises(smoke.SmokeError):
