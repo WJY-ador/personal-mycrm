@@ -49,14 +49,20 @@ def smoke(binary, version):
         env.pop("PYTHONHOME", None)
         env.pop("MYCRM_DESKTOP_CONTROL", None)
         env["MYCRM_AGENT_HOME"] = str(home)
-        info = subprocess.run([str(binary), "--desktop-info"], cwd=scratch, env=env, check=True,
-                              capture_output=True, text=True, timeout=30)
+        def run(*args):
+            # Keep stderr in the failure so CI logs show the cause.
+            result = subprocess.run([str(binary), *args], cwd=scratch, env=env, check=False,
+                                    capture_output=True, text=True, encoding="utf-8",
+                                    errors="replace", timeout=30)
+            if result.returncode != 0:
+                raise ValueError("sidecar smoke " + " ".join(args) + " exited " + str(result.returncode)
+                                 + ": " + (result.stderr or "")[-800:])
+            return result
+        info = run("--desktop-info")
         if json.loads(info.stdout) != {"app_version": version, "agent_version": "0.1.0", "protocol": 1}:
             raise ValueError("unexpected sidecar protocol/version")
-        subprocess.run([str(binary), "--help"], cwd=scratch, env=env, check=True,
-                       capture_output=True, timeout=30)
-        subprocess.run([str(binary), "--home", str(home), "status"], cwd=scratch, env=env,
-                       check=True, capture_output=True, timeout=30)
+        run("--help")
+        run("--home", str(home), "status")
 
 
 def build(output, version):

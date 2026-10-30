@@ -27,7 +27,7 @@ def main(argv=None):
     # The desktop shell decodes child output as UTF-8.
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8", line_buffering=True)
+            stream.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
     if args == ["--desktop-info"]:
         print(json.dumps({"app_version": APP_VERSION, "agent_version": agent.AGENT_VERSION, "protocol": 1}))
         return 0
