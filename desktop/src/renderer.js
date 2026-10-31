@@ -16,7 +16,7 @@ function state(s){
   if(!s.ready){$('start').disabled=true;$('sync').disabled=true;say('연결 장치 실행 파일이 없습니다. 공식 설치 패키지로 다시 설치해 주세요.');}
   if(!s.connection.connected){$('start').disabled=true;$('sync').disabled=true;$('disconnect').disabled=true;}
 }
-async function act(fn,success){try{const r=await fn();if(!r.ok){say(r.error);return;}if(r.value?.code!==undefined&&r.value.code!==0){say('작업이 완료되지 않았어요 (코드 '+r.value.code+'). 토큰·네트워크·Claude 로그인 상태를 확인해 주세요.');return;}if(success)say(success);await refresh();return r.value;}catch{say('앱과 통신하지 못했어요. 다시 시도해 주세요.');}}
+async function act(fn,success){try{const r=await fn();if(!r.ok){say(r.error);return;}if(r.value?.code!==undefined&&r.value.code!==0){say(r.value.detail?'작업이 완료되지 않았어요: '+r.value.detail:'작업이 완료되지 않았어요 (코드 '+r.value.code+'). 토큰·네트워크·Claude 로그인 상태를 확인해 주세요.');return;}if(success)say(success);await refresh();return r.value;}catch{say('앱과 통신하지 못했어요. 다시 시도해 주세요.');}}
 async function refresh(){const r=await window.mycrm.status();if(r.ok)state(r.value);}
 $('dashboard').onclick=()=>act(()=>window.mycrm.dashboard());
 $('connect-form').onsubmit=event=>{event.preventDefault();const token=$('token').value;$('token').value='';act(()=>window.mycrm.connect(token),'이 PC를 연결했어요. 시작을 눌러 실행하세요.');};

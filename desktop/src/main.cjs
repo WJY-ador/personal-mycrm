@@ -6,8 +6,9 @@ const path = require('node:path');
 const {pathToFileURL} = require('node:url');
 const {HOSTED,RELEASES,safeExternal,agentHome,checkUpdate} = require('./policy.cjs');
 const {Supervisor,diagnosticLog} = require('./supervisor.cjs');
+const {OutputTail,failureLine,hasLiveProcess} = require('./sidecar.cjs');
 let win,tray,supervisor,log,prefs={},binary,home,settingsFile,quitting=false,ready=false;
-let busy=false; const commands=new Set();
+let busy=false,trayLive=null; const commands=new Set();
 const PAGE=pathToFileURL(path.join(__dirname,'index.html')).href;
 if(!app.requestSingleInstanceLock()) app.quit();
 else {
@@ -29,7 +30,9 @@ function connection() {
   } catch {return {connected:false,cliConfigured:false,expires:null};}
 }
 function snapshot() {return {version:app.getVersion(),ready,busy,allowCli:prefs.allowCli===true,autoStart:app.isPackaged&&app.getLoginItemSettings().openAtLogin,connection:connection(),processes:supervisor?.snapshot()||{}};}
-function changed(){if(win&&!win.isDestroyed())win.webContents.send('status',snapshot());}
+function changed(){if(win&&!win.isDestroyed())win.webContents.send('status',snapshot());refreshTray();}
+function trayMenu(live){return Menu.buildFromTemplate([{label:'MyCRM 열기',click:show},{label:'대시보드 열기',click:()=>external(HOSTED).catch(()=>{})},{type:'separator'},{label:'연결 장치 중지',enabled:live,click:()=>exclusively(()=>supervisor.stopAll()).catch(()=>{})},{label:'종료',click:()=>app.quit()}]);}
+function refreshTray(){if(!tray||tray.isDestroyed())return;const live=hasLiveProcess(supervisor?.snapshot());if(live===trayLive)return;trayLive=live;tray.setContextMenu(trayMenu(live));}
 function show(){if(win){win.show();win.focus();}}
 async function external(url){if(!safeExternal(url))throw new Error('url');await shell.openExternal(url);}
 function command(args,input) {
@@ -37,10 +40,11 @@ function command(args,input) {
     const env={...process.env,PYTHONNOUSERSITE:'1',PYTHONDONTWRITEBYTECODE:'1'};
     delete env.MYCRM_JOBS_ALLOW_REAL_CLI;
     const child=spawn(binary,['--home',home,...args],{env,shell:false,windowsHide:true,stdio:['pipe','pipe','pipe']});
-    commands.add(child);let done=false;
-    const finish=(err,code)=>{if(done)return;done=true;clearTimeout(timer);commands.delete(child);err?reject(new Error(err)):resolve(code);};
+    commands.add(child);let done=false;const output=new OutputTail();
+    // The detail is returned to the window only; desktop.log keeps exit codes, never sidecar text.
+    const finish=(err,code)=>{if(done)return;done=true;clearTimeout(timer);commands.delete(child);err?reject(new Error(err)):resolve({code,detail:failureLine(code,output.text())});};
     const timer=setTimeout(()=>{child.kill('SIGTERM');finish('command-timeout');},args[0]==='run-once'?600000:45000);
-    child.stdout.on('data',()=>{});child.stderr.on('data',()=>{});child.stdin.on('error',()=>{});
+    child.stdout.on('data',chunk=>output.push(chunk));child.stderr.on('data',chunk=>output.push(chunk));child.stdin.on('error',()=>{});
     child.once('error',()=>finish('agent-unavailable'));child.once('close',code=>finish(null,code));
     child.stdin.end(input ? input+'\n' : '');
   });
@@ -85,15 +89,15 @@ async function initialize(){
   register('connect',token=>exclusively(async()=>{
     if(!ready||typeof token!=='string'||token.length<16||token.length>1024||/[\r\n\x00]/.test(token))throw new Error('token');
     await supervisor.stopAll();
-    const code=await command(['connect','--server',HOSTED,'--token-stdin'],token);
-    log('connect','completed',code);return {code};
+    const {code,detail}=await command(['connect','--server',HOSTED,'--token-stdin'],token);
+    log('connect','completed',code);return {code,detail};
   }));
   register('choose-cli',()=>exclusively(async()=>{
     const result=await dialog.showOpenDialog(win,{title:'Claude CLI 실행 파일 선택',properties:['openFile']});
     if(result.canceled)return {canceled:true};
     const target=result.filePaths[0];
     if(!path.isAbsolute(target)||!fs.statSync(target).isFile())throw new Error('path');
-    const code=await command(['configure-cli','--path',target]);return {code};
+    const {code,detail}=await command(['configure-cli','--path',target]);return {code,detail};
   }));
   register('allow-cli',value=>exclusively(async()=>{
     if(typeof value!=='boolean')throw new Error('input');
@@ -111,8 +115,8 @@ async function initialize(){
     return snapshot();
   }));
   register('stop',()=>exclusively(async()=>{await supervisor.stopAll();return snapshot();}));
-  register('sync',()=>exclusively(async()=>{if(!ready||!connection().connected)throw new Error('not-connected');const code=await command(['run-once']);log('sync','completed',code);return {code};}));
-  register('disconnect',()=>exclusively(async()=>{await supervisor.stopAll();const code=await command(['disconnect']);log('disconnect','completed',code);return {code};}));
+  register('sync',()=>exclusively(async()=>{if(!ready||!connection().connected)throw new Error('not-connected');const {code,detail}=await command(['run-once']);log('sync','completed',code);return {code,detail};}));
+  register('disconnect',()=>exclusively(async()=>{await supervisor.stopAll();const {code,detail}=await command(['disconnect']);log('disconnect','completed',code);return {code,detail};}));
   register('update',()=>checkUpdate(app.getVersion()));
   register('download',url=>external(url));
   app.on('activate',show);
@@ -123,6 +127,6 @@ async function initialize(){
   });
   await win.loadFile(path.join(__dirname,'index.html'));
   const icon=nativeImage.createFromDataURL('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAIElEQVR42mNkYPj/n4ECwESJ5lEDRg0YNWDUgFEDBg0AADMSAh/0xSqxAAAAAElFTkSuQmCC');
-  tray=new Tray(icon);tray.setToolTip('MyCRM');tray.setContextMenu(Menu.buildFromTemplate([{label:'MyCRM 열기',click:show},{label:'대시보드 열기',click:()=>external(HOSTED).catch(()=>{})},{type:'separator'},{label:'연결 장치 중지',click:()=>exclusively(()=>supervisor.stopAll()).catch(()=>{})},{label:'종료',click:()=>app.quit()}]));tray.on('double-click',show);tray.on('click',show);
+  tray=new Tray(icon);tray.setToolTip('MyCRM');refreshTray();tray.on('double-click',show);tray.on('click',show);
   Menu.setApplicationMenu(Menu.buildFromTemplate([{label:'MyCRM',submenu:[{label:'MyCRM 열기',click:show},{label:'종료',accelerator:process.platform==='darwin'?'Command+Q':'Alt+F4',click:()=>app.quit()}]},{role:'editMenu'}]));
 }
