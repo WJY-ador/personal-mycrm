@@ -3823,6 +3823,9 @@ TRASH_PURGE_SECONDS = 20.0       # 한 회차 시간 상한(초) — 넘으면 �
 TRASH_STMT_TIMEOUT = "5s"        # 대상 하나 정리 트랜잭션의 문장 시간 상한
 TRASH_BATCH = 20                 # 한 번에 집는 대상 수
 _TNOW = "COALESCE(%(now)s::timestamptz, now())"
+# 잠금 뒤 판정(복원 가능?)용 「지금」 — now() 는 트랜잭션 시작 시각이라, 잠금을 기다리는 사이 다른 요청이 커밋한 purge_at(그쪽 시작 시각)보다
+# 이를 수 있다(복원·영구 삭제 동시 요청이 둘 다 성공하던 경합). 판정·전이 조건은 실제 시각, SET 값은 한 문장 안 같은 시각인 _TNOW 그대로
+_TNOW_CHECK = "COALESCE(%(now)s::timestamptz, clock_timestamp())"
 
 
 def trash_on() -> bool:
@@ -3849,8 +3852,8 @@ def _not_in_trash():
 _TRASH_SETS = {
     "move": (f"trashed_at={_TNOW}, last_trashed_at={_TNOW}, purge_at={_TNOW} + make_interval(hours => {TRASH_HOURS})",
              "trashed_at IS NULL"),
-    "restore": ("trashed_at=NULL, purge_at=NULL", f"trashed_at IS NOT NULL AND purge_at > {_TNOW}"),
-    "purge": (f"purge_at={_TNOW}", f"trashed_at IS NOT NULL AND purge_at > {_TNOW}")}
+    "restore": ("trashed_at=NULL, purge_at=NULL", f"trashed_at IS NOT NULL AND purge_at > {_TNOW_CHECK}"),
+    "purge": (f"purge_at={_TNOW}", f"trashed_at IS NOT NULL AND purge_at > {_TNOW_CHECK}")}
 
 
 def _trash_rows(c, uid, table, ids, op) -> int:
@@ -3867,7 +3870,7 @@ def _trash_rows(c, uid, table, ids, op) -> int:
 
 
 def _trash_restorable(r):
-    """잠근 행 r 이 지금 복원 가능한가 — r["now"] 는 같은 SELECT 의 지금(TRASH_CLOCK 또는 now())."""
+    """잠근 행 r 이 지금 복원 가능한가 — r["now"] 는 같은 SELECT 의 지금(TRASH_CLOCK 또는 clock_timestamp(), _TNOW_CHECK)."""
     return r["trashed_at"] is not None and r["purge_at"] > r["now"]
 
 
@@ -3885,7 +3888,7 @@ def _trash_lock(c, uid, kind, tid):
     """대상 행 잠금 — 없거나 남의 것·지운 기록(deleted_at)·사람 표식 = NOT-FOUND. 적용 전 항목 제안(revision 0)은 PR-2. 반환 행(+now)."""
     t = _trash_kind(kind)
     cols = "id,trashed_at,purge_at,last_trashed_at" + (",revision" if kind in TRASH_REV_KINDS else "")
-    r = _one(c, f"SELECT {cols},{_TNOW} AS now FROM {t} WHERE user_id=%(uid)s AND id=%(id)s{_TRASH_LOCK_EXTRA.get(kind, '')} FOR UPDATE",
+    r = _one(c, f"SELECT {cols},{_TNOW_CHECK} AS now FROM {t} WHERE user_id=%(uid)s AND id=%(id)s{_TRASH_LOCK_EXTRA.get(kind, '')} FOR UPDATE",
              {"now": TRASH_CLOCK, "uid": uid, "id": str(tid or "")})
     if not r:
         raise _nf(_TRASH_NAMES[kind])

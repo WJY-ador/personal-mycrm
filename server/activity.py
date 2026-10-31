@@ -386,7 +386,7 @@ def _source_rows(c, uid, activity_id):
              (uid, activity_id))
     if not e:
         raise _nf("그 활동")
-    rows = _all(c, f"SELECT id, trashed_at, purge_at, deleted_at, {db._TNOW} AS now FROM activities WHERE user_id=%(uid)s AND id IN "
+    rows = _all(c, f"SELECT id, trashed_at, purge_at, deleted_at, {db._TNOW_CHECK} AS now FROM activities WHERE user_id=%(uid)s AND id IN "
                    "(SELECT target_activity_id FROM import_entries WHERE user_id=%(uid)s AND stream_id=%(s)s AND original_id=%(o)s "
                    "AND target_activity_id IS NOT NULL) ORDER BY received_at, id FOR UPDATE",
                 {"now": db.TRASH_CLOCK, "uid": uid, "s": e["stream_id"], "o": e["original_id"]})

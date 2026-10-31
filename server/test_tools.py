@@ -9947,21 +9947,22 @@ def test_trash_core():
         assert _trash_row("records", S["r1"]) is not None, "물리 제거는 정리 회차"
         expect("RECORD-MISSING", db.record_get, U, S["r1"])
         # ── 복원 / 영구 삭제 경합: 하나만 바꾼다 ──
+        # 30회 · 스레드 풀 하나 재사용(스레드 생성 지연을 빼 두 요청이 실제로 겹칠 확률을 올린다 — 복원 tx 가 먼저 시작해 잠금을 기다리는 꼴)
         db.trash_restore(U, "person", S["p_plain"])
-        for _ in range(3):
-            db.trash_move(U, "person", S["p_plain"], rp)
 
-            def go(fn):
-                try:
-                    return fn(U, "person", S["p_plain"])["changed"]
-                except db.CrmError as e:
-                    return e.code
-            with concurrent.futures.ThreadPoolExecutor(2) as ex:
+        def go(fn):
+            try:
+                return fn(U, "person", S["p_plain"])["changed"]
+            except db.CrmError as e:
+                return e.code
+        with concurrent.futures.ThreadPoolExecutor(2) as ex:
+            for _ in range(30):
+                db.trash_move(U, "person", S["p_plain"], rp)
                 res = list(ex.map(go, (db.trash_restore, db.trash_purge)))
-            assert sorted(map(str, res)) in (["NOT-IN-TRASH", "True"], ["TRASH-EXPIRED", "True"]), res
-            p = _trash_row("people", S["p_plain"])
-            if p["trashed_at"] is not None:   # 영구 삭제가 이겼다 — 다음 반복을 위해 시험이 되돌린다
-                _sql("UPDATE people SET trashed_at=NULL, purge_at=NULL WHERE id=%s", (S["p_plain"],))
+                assert sorted(map(str, res)) in (["NOT-IN-TRASH", "True"], ["TRASH-EXPIRED", "True"]), res
+                p = _trash_row("people", S["p_plain"])
+                if p["trashed_at"] is not None:   # 영구 삭제가 이겼다 — 다음 반복을 위해 시험이 되돌린다
+                    _sql("UPDATE people SET trashed_at=NULL, purge_at=NULL WHERE id=%s", (S["p_plain"],))
         # ── 항목: revision 필수 · ACTION-RETIRED · 축 AXIS-IN-POLICY · 직접 쓰기 IN-TRASH ──
         P = db.item_get(U, S["P"])
         hist = len(P["history"])
