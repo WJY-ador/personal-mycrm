@@ -1,0 +1,163 @@
+name: Desktop installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - 'packaging/**'
+      - 'agent/**'
+      - '.github/workflows/desktop-release.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-installers-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  installer:
+    name: installer-${{ matrix.platform }}-${{ matrix.arch }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: mac
+            arch: arm64
+          - runner: macos-15-intel
+            platform: mac
+            arch: x64
+          - runner: windows-2022
+            platform: win
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    env:
+      # Until distribution certificates are configured, these are unsigned beta artifacts.
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      # mac uses explicit ad-hoc signing (desktop/package.json mac.identity "-"); electron-builder skips
+      # signing on pull_request runs unless this is set. No secrets are available to this job.
+      CSC_FOR_PULL_REQUEST: 'true'
+      GH_TOKEN: ''
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Read app version
+        id: app
+        shell: bash
+        run: echo "version=$(node -p "require('./desktop/package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Tag must match app version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          APP_VERSION: ${{ steps.app.outputs.version }}
+        run: |
+          if [ "$GITHUB_REF_NAME" != "v$APP_VERSION" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match desktop/package.json version v$APP_VERSION"
+            exit 1
+          fi
+      - name: Install pinned build tools
+        run: python -m pip install -r packaging/requirements-build.txt
+      - name: Verify staging and checksums
+        run: python -m unittest discover -s packaging/tests -v
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+      - name: Desktop lifecycle and update checks
+        working-directory: desktop
+        run: npm test
+      - name: Build and smoke-test native agent
+        run: python packaging/build_agent.py --app-version ${{ steps.app.outputs.version }}
+      - name: Create native installer
+        working-directory: desktop
+        run: npm run dist -- --${{ matrix.platform }} --${{ matrix.arch }} --publish never
+      - name: Verify final installed-bundle sidecar
+        run: python packaging/verify_bundle.py
+      - name: Install, launch and uninstall on this clean runner
+        # Windows: silent per-user NSIS install/uninstall, user data kept. macOS: DMG copy, codesign, 5s launch.
+        run: python packaging/install_smoke.py release/desktop
+      - name: Scrub owner values from unpacked bundle
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          CRM_SCRUB_EXTRA: ${{ secrets.CRM_SCRUB_EXTRA }}
+        run: python packaging/scrub_bundle.py release/desktop
+      - name: Checksums
+        run: python packaging/checksums.py release/desktop
+      - name: Upload installers only
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: MyCRM-${{ matrix.platform }}-${{ matrix.arch }}-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            release/desktop/*.dmg
+            release/desktop/*.exe
+            release/desktop/*.blockmap
+            release/desktop/*.yml
+            release/desktop/SHA256SUMS.txt
+
+  release:
+    name: release-draft
+    needs: installer
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Tagged commit must be on main
+        run: |
+          commit=$(git rev-parse "$GITHUB_SHA^{commit}")
+          if ! git merge-base --is-ancestor "$commit" origin/main; then
+            echo "::error::$TAG ($commit) is not on origin/main"
+            exit 1
+          fi
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: MyCRM-*-${{ github.sha }}
+          path: dist
+      - name: Rename to fixed download names and checksum
+        run: |
+          version=$(node -p "require('./desktop/package.json').version")
+          mkdir upload
+          cp "dist/MyCRM-mac-arm64-$GITHUB_SHA/MyCRM-$version-mac-arm64.dmg" upload/MyCRM-mac-arm64.dmg
+          cp "dist/MyCRM-mac-x64-$GITHUB_SHA/MyCRM-$version-mac-x64.dmg" upload/MyCRM-mac-x64.dmg
+          cp "dist/MyCRM-win-x64-$GITHUB_SHA/MyCRM-$version-win-x64.exe" upload/MyCRM-win-x64.exe
+          python3 packaging/checksums.py upload
+          cat upload/SHA256SUMS.txt
+      - name: Create draft release
+        run: |
+          gh release create "$TAG" --draft --verify-tag \
+            --title "MyCRM $TAG (베타)" --notes-file packaging/release-notes.md \
+            upload/MyCRM-mac-arm64.dmg upload/MyCRM-mac-x64.dmg upload/MyCRM-win-x64.exe upload/SHA256SUMS.txt
+      - name: Draft must carry exactly the four assets
+        run: |
+          expected=$(printf '%s\n' MyCRM-mac-arm64.dmg MyCRM-mac-x64.dmg MyCRM-win-x64.exe SHA256SUMS.txt | sort)
+          # Read the draft from the release list; tag lookups may not return drafts.
+          actual=$(gh api "repos/$GH_REPO/releases?per_page=30" --jq ".[] | select(.tag_name == \"$TAG\" and .draft) | .assets[].name" | sort)
+          if [ -z "$actual" ] || [ "$actual" != "$expected" ]; then
+            echo "::error::draft assets differ from the expected four"
+            echo "$actual"
+            exit 1
+          fi

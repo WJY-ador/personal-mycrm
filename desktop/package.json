@@ -1,0 +1,24 @@
+{
+  "name": "mycrm-desktop",
+  "version": "0.1.1",
+  "private": true,
+  "description": "MyCRM desktop connection device",
+  "main": "src/main.cjs",
+  "author": "MyCRM",
+  "license": "UNLICENSED",
+  "scripts": {"start":"electron .", "test":"node --test test/*.test.cjs", "dist":"electron-builder --publish never"},
+  "devDependencies": {"electron":"45.1.0", "electron-builder":"26.18.0"},
+  "build": {
+    "appId":"io.mycrm.desktop",
+    "productName":"MyCRM",
+    "directories":{"output":"../release/desktop"},
+    "files":["src/**/*", "package.json"],
+    "extraResources":[{"from":"../release/agent", "to":"agent", "filter":["**/*"]}],
+    "asar":true,
+    "artifactName":"MyCRM-${version}-${os}-${arch}.${ext}",
+    "mac":{"category":"public.app-category.productivity", "target":["dmg"], "hardenedRuntime":true, "identity":"-"},
+    "win":{"target":[{"target":"nsis","arch":["x64"]}]},
+    "nsis":{"oneClick":false,"perMachine":false,"allowToChangeInstallationDirectory":false,"deleteAppDataOnUninstall":false,"createDesktopShortcut":true,"createStartMenuShortcut":true},
+    "publish":null
+  }
+}

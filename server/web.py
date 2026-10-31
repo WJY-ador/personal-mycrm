@@ -108,7 +108,7 @@ def _unb64(s: str) -> bytes:
     return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
 
 
-# 웹 HTML 응답(/, /app, /help, /privacy, _page)에만 붙인다. MCP·/health·JSON API·리다이렉트는 그대로.
+# 웹 HTML 응답(/, /app, /help, /privacy, /download, _page)에만 붙인다. MCP·/health·JSON API·리다이렉트는 그대로.
 # script-src 'self' — 외부(self) theme.js 만. /app 은 응답 본문의 인라인 스크립트 1개 해시를 더한다(app_csp).
 # 'unsafe-inline'·'unsafe-eval' 은 어떤 경우에도 넣지 않는다. style-src·default-src 는 아직 없다(인라인 style).
 CSP_BASE = "frame-ancestors 'none'; base-uri 'none'; object-src 'none'; script-src 'self'"
@@ -324,11 +324,12 @@ _HELP_CSS = """
 THEME_TOGGLE = '<button type="button" class="theme-toggle" data-theme-toggle hidden aria-pressed="false" aria-label="어두운 화면">\u263E</button>'
 
 
-def _doc_page(title: str, toc_html: str, body_html: str, foot: str) -> str:
-    """/help·/privacy 공통 껍데기. 맨 위 링크 자리는 <!--nav--> — 요청마다 세션 보고 바꾼다. 토큰·글꼴은 start.html 의 :root 블록을 그대로 쓴다.
-    title·foot 은 우리 상수(HTML 조각), toc_html·body_html 은 md_to_html 결과(escape 끝난 것)."""
+def _doc_page(title: str, toc_html: str, body_html: str, foot: str, extra_css: str = "") -> str:
+    """/help·/privacy·/download 공통 껍데기. 맨 위 링크 자리는 <!--nav--> — 요청마다 세션 보고 바꾼다. 토큰·글꼴은 start.html 의 :root 블록을 그대로 쓴다.
+    title·foot 은 우리 상수(HTML 조각), toc_html·body_html 은 md_to_html 결과(escape 끝난 것). toc_html 이 비면 목차 칸을 그리지 않는다."""
     style = START_HTML.read_text(encoding="utf-8").split("<style>", 1)[1]
     css = style.split(".bands {", 1)[0]   # 주석·:root 토큰(라이트·다크 토글)·기본(body·a·focus·.wrap·☀/☾)까지 — 배경·데모(start 전용)는 안 온다
+    toc = f'  <nav class="toc" aria-label="목차">{toc_html}</nav>\n' if toc_html else ""
     return f"""<!doctype html>
 <html lang="ko">
 <head>
@@ -336,13 +337,12 @@ def _doc_page(title: str, toc_html: str, body_html: str, foot: str) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>대시보드 — {title}</title>
 <script src="{asset_url("theme.js")}"></script>
-<style>{css}{_HELP_CSS}</style>
+<style>{css}{_HELP_CSS}{extra_css}</style>
 </head>
 <body>
 <div class="wrap">
   <header class="top"><div class="name"><a href="/">대시보드</a> <span>— {title}</span></div><div class="top-r">{THEME_TOGGLE}<!--nav--></div></header>
-  <nav class="toc" aria-label="목차">{toc_html}</nav>
-  <main>
+{toc}  <main>
 {body_html}
   </main>
   <p class="foot">{foot}</p>
@@ -372,6 +372,76 @@ def render_privacy(md: str) -> str:
     body, toc, h1 = md_to_html(md, "privacy", _PRIVACY_ANCHORS)
     return _doc_page("개인정보 처리방침", _toc_block("privacy", toc, h1, _PRIVACY_ANCHORS),
                      f'<section class="doc" id="privacy">{body}</section>', '<a href="/help">도움말</a>')
+
+
+# ── PC 앱 설치 /download (2026-10-30 설치 페이지 가안 A) ─────────────────────
+# 파일은 GitHub Release asset 에서만 받는다 — 서버는 링크만 내고 GitHub API 를 부르지 않는다.
+# env CRM_DOWNLOAD_PUBLIC == "1" 일 때만 직링크를 보인다(첫 Release publish 뒤 켠다). 요청마다 읽는다.
+# 설치 경고 절차의 정본은 Release 본문(packaging/release-notes.md) 하나 — 이 페이지엔 한 줄과 링크만 둔다.
+RELEASES_LATEST = "https://github.com/WJY-ador/personal-mycrm/releases/latest"
+DOWNLOAD_FILES = {"win": "MyCRM-win-x64.exe", "mac-arm64": "MyCRM-mac-arm64.dmg", "mac-x64": "MyCRM-mac-x64.dmg"}
+
+
+def download_url(key: str) -> str:
+    return f"{RELEASES_LATEST}/download/{DOWNLOAD_FILES[key]}"
+
+
+def ua_os(ua: str | None) -> str:
+    """User-Agent → "win" · "mac" · ""(모름). Windows·Mac 만 본다 — 칩(arm64·x64)은 판정하지 않는다.
+    iPhone·iPad 의 UA 에도 "like Mac OS X" 가 들어 있어 "Macintosh" 로만 Mac 을 가린다."""
+    ua = ua or ""
+    if "Windows NT" in ua:
+        return "win"
+    if "Macintosh" in ua and "iPhone" not in ua and "iPad" not in ua:
+        return "mac"
+    return ""
+
+
+_DOWNLOAD_CSS = """
+.dl-lead { color: var(--muted); margin: 0 0 .2rem; }
+.dl-os { border: 1px solid var(--line); border-radius: 8px; padding: .9rem 1.1rem; margin: .9rem 0; }
+.dl-os.pick { border-color: var(--accent); background: var(--accent-soft); }
+.dl-os h2 { border-top: 0; margin: 0 0 .6rem; padding-top: 0; display: flex; align-items: center; gap: .5rem; }
+.dl-tag { font-size: .72rem; font-weight: 600; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: .05rem .5rem; }
+.dl-btns { display: flex; flex-wrap: wrap; gap: .5rem; }
+.dl-os .note { color: var(--muted); font-size: .8rem; margin: .6rem 0 0; }
+.dl-warn { font-size: .86rem; }
+@media (max-width: 640px) { .dl-btns .btn { flex: 1 1 100%; justify-content: center; } }
+"""
+
+
+def render_download(public: bool, os_: str) -> str:
+    """설치 페이지 전체. public=False 면 「준비 중」만(파일·Release 링크 없음). os_ = ua_os 결과 — 그 OS 칸을 먼저·강조, 모르면 같은 비중."""
+    if not public:
+        body = ('<section class="doc" id="download"><h1>PC 앱 설치</h1>'
+                '<p>PC 앱은 준비 중이에요. 공개 일정은 아직 정하지 않았어요.</p></section>')
+        return _doc_page("PC 앱 설치", "", body, '<a href="/help">도움말</a> · <a href="/privacy">개인정보 처리방침</a>', _DOWNLOAD_CSS)
+
+    def btn(key: str, label: str, pick: bool) -> str:
+        return f'<a class="btn{" primary" if pick else ""}" href="{download_url(key)}">{label}</a>'
+
+    def section(name: str) -> str:
+        pick = os_ in ("", name)   # 모르면 두 칸 모두 같은 모양
+        tag = '<span class="dl-tag">지금 쓰는 PC</span>' if os_ == name else ""
+        cls = "dl-os pick" if os_ == name else "dl-os"
+        if name == "win":
+            return (f'<div class="{cls}" id="dl-win"><h2>Windows {tag}</h2>'
+                    f'<div class="dl-btns">{btn("win", "Windows용 받기", pick)}</div></div>')
+        return (f'<div class="{cls}" id="dl-mac"><h2>Mac {tag}</h2>'
+                f'<div class="dl-btns">{btn("mac-arm64", "Apple 칩용 받기", pick)}{btn("mac-x64", "Intel 칩용 받기", pick)}</div>'
+                '<p class="note">칩 확인: Apple 메뉴 &gt; 이 Mac에 관하여 — Apple M1 이상이면 Apple 칩, Intel 이면 Intel 칩이에요.</p></div>')
+
+    order = ("mac", "win") if os_ == "mac" else ("win", "mac")
+    body = ('<section class="doc" id="download"><h1>PC 앱 설치</h1>'
+            '<p class="dl-lead">PC 앱을 설치하고 「연결 장치」에서 이 계정에 연결해요.</p>'
+            + "".join(section(n) for n in order)
+            + '<p class="dl-warn">베타 — 서명이 없어 첫 실행 때 OS 경고가 떠요. '
+            f'<a href="{RELEASES_LATEST}">설치 경고 안내·체크섬</a></p>'
+            '<h2 id="download-after">설치한 뒤</h2><ol>'
+            '<li>대시보드에 로그인해요.</li>'
+            '<li>「연결 장치」에서 새 장치를 연결하고 토큰을 받아요.</li>'
+            '<li>PC 앱에 토큰을 붙여 넣고 시작해요.</li></ol></section>')
+    return _doc_page("PC 앱 설치", "", body, '<a href="/help">도움말</a> · <a href="/privacy">개인정보 처리방침</a>', _DOWNLOAD_CSS)
 
 
 def read_consent_versions(d: Path, dev: bool) -> dict:
@@ -1163,8 +1233,13 @@ class Web:
             return _page("처리방침을 찾지 못했어요", "<p>서버에 처리방침 문서(guides/11-privacy.md)가 없어요. 운영자에게 알려 주세요.</p>", 503)
         return _html_resp(self.privacy_html.replace("<!--nav-->", self._nav(request), 1), headers={"cache-control": "no-store"})
 
+    async def download(self, request):
+        """PC 앱 설치. /help 와 같다 — 로그인 불필요, DB 를 건드리지 않는다. 플래그·UA 마다 달라서 그때그때 그린다."""
+        html = render_download(env("DOWNLOAD_PUBLIC", "") == "1", ua_os(request.headers.get("user-agent")))
+        return _html_resp(html.replace("<!--nav-->", self._nav(request), 1), headers={"cache-control": "no-store"})
+
     def _nav(self, request) -> str:
-        """/help·/privacy 맨 위 버튼. 세션은 쿠키 서명만 본다(DEV 는 dev_user 가 있으면 세션으로 친다)."""
+        """/help·/privacy·/download 맨 위 버튼. 세션은 쿠키 서명만 본다(DEV 는 dev_user 가 있으면 세션으로 친다)."""
         s = self.unsign(request.cookies.get(SESSION_COOKIE))
         signed_in = bool(s and s.get("uid")) or bool(self.dev and self.dev_user)
         return '<a class="btn" href="/app">대시보드로</a>' if signed_in else '<a class="btn primary" href="/login">로그인</a>'
@@ -2594,6 +2669,7 @@ class Web:
             Route("/app", self.app),
             Route("/help", self.help),
             Route("/privacy", self.privacy),
+            Route("/download", self.download),
             Route("/consent", self.consent),
             Route("/assets/{name}", self.asset),
             Route("/login", self.login),

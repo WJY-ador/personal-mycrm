@@ -75,7 +75,8 @@ class KeychainTest(unittest.TestCase):
         with self.assertRaises(keystore.KeyStoreError):
             keystore.MacKeychain("bad service")
 
-    def test_windows_adapter_not_implemented(self):
+    @unittest.skipIf(osutil.IS_WINDOWS, "native store is available on Windows")
+    def test_windows_adapter_unavailable_off_windows(self):
         w = keystore.WindowsCredentialStore("my-crm-agent")
         for fn in (lambda: w.get("a"), lambda: w.set("a", "b" * 20), lambda: w.delete("a")):
             with self.assertRaises(keystore.KeyStoreUnavailable):

@@ -1,0 +1,22 @@
+[
+  "agent/__init__.py",
+  "agent/adapters/__init__.py",
+  "agent/adapters/base.py",
+  "agent/adapters/likes.py",
+  "agent/adapters/skeletons.py",
+  "agent/cli.py",
+  "agent/config.py",
+  "agent/contract.py",
+  "agent/hmacid.py",
+  "agent/jcs.py",
+  "agent/jobs.py",
+  "agent/keystore.py",
+  "agent/osutil.py",
+  "agent/runner.py",
+  "agent/schedule.py",
+  "agent/stack.py",
+  "agent/store.py",
+  "agent/summary.py",
+  "agent/uploader.py",
+  "agent/viewer.py"
+]

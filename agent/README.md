@@ -3,7 +3,7 @@
 내 PC 를 호스팅 판 계정에 「연결 장치」로 붙이는 프로그램입니다. 수집기 산출물을 활동으로 바꿔 서버에 보내고, 다른 사람의 원문은 PC 에 둡니다. 서버엔 행동·날짜·별칭·HMAC 식별자·관계 같은 구조화 정보와 내가 승인할 글만 갑니다.
 
 - Python ≥3.9, 표준 라이브러리만. 키트 루트(이 `agent/` 폴더의 상위)에서 `python3 -m agent …` 로 돌립니다.
-- macOS: 자격 증명은 Keychain(`security` CLI), 예약은 launchd. Windows: 자격 증명 저장소가 아직 없어 `connect`·`run-once` 를 쓸 수 없습니다(아래 「Windows」).
+- macOS: 자격 증명은 Keychain(`security` CLI), 예약은 launchd. Windows: 자격 증명은 Credential Manager, 예약은 Task Scheduler. Windows 는 실제 PC 에서 아직 검증하지 않았습니다(아래 「Windows」).
 - 무엇을 보내고 무엇을 PC 에 두는지는 [처리방침](../guides/11-privacy.md) 2절 「연결 장치와 PC 원문」. 화면 용어는 [말 뜻](../guides/10-words.md) 「연결 장치와 활동」.
 
 ## 1. 명령
@@ -22,7 +22,9 @@ python3 -m agent [--home 경로] <명령>
 | `run-once --resume <범위>` | 멈춘 범위(`auth`·`config`·`account`·`policy`·`forbidden`·`summary`)를 내가 조치한 뒤 풉니다 |
 | `run-once --scheduled` | 예약이 부르는 꼴(0~5분 지연, 무인 실행으로 신고). 손으로 쓰지 않습니다 |
 | `status` | 연결·토큰·키 유무, 켜진 어댑터, 무인 요약, 예약, 건수(이벤트·대기·접수·멈춤·충돌·거절·삭제됨·격리·사람), 오늘 요약 시도, 멈춤 범위 |
-| `schedule install` · `schedule remove` | launchd 예약 등록(1시간마다)·해제. 둘 다 여러 번 해도 같습니다. 해제는 원문·대응표를 지우지 않습니다 |
+| `configure-cli --path <절대경로>` | 무인 요약이 부를 구독 CLI 실행 파일 경로를 `config.json` 에 저장합니다. 절대 경로·있는 파일·실행 가능해야 하고(Windows 는 `.exe`), 아니면 아무것도 바꾸지 않고 종료 코드 1로 끝납니다. 무인 요약을 켜지 않습니다 |
+| `configure-cli --clear` | 저장된 CLI 경로만 지웁니다. 다른 설정은 그대로입니다 |
+| `schedule install` · `schedule remove` | 현재 사용자 예약 등록(1시간마다)·해제. macOS 는 launchd, Windows 는 Task Scheduler. 둘 다 여러 번 해도 같습니다. 해제는 원문·대응표를 지우지 않습니다 |
 | `serve [--port N]` | 원문 보기(127.0.0.1 전용, 기본 포트 8790). Ctrl+C 로 끕니다 |
 | `serve --jobs` | 작업 실행 상주(11절, 준비 중 · 기본 꺼짐). 끝내기 = Ctrl+C·SIGTERM, 실행 중 작업은 최대 30초 기다립니다 |
 | `disconnect` | 순서대로 ① 서버 토큰 폐기(`POST /api/imports/device/revoke`) ② 로컬 업로드 토큰 제거. 서버가 장애·네트워크 오류면 로컬 토큰을 그대로 두고 종료 코드 1로 멈춥니다(다시 시도). 토큰이 이미 폐기·만료됐으면 서버는 「이미 무효」로 보고 로컬만 지웁니다. 결과는 서버·로컬·HMAC 키를 따로 보여 줍니다. HMAC 키는 지우지 않습니다 |
@@ -127,7 +129,7 @@ python3 -m agent [--home 경로] <명령>
 - `state.sqlite` = 수집 이벤트 ↔ 불투명 원본 ID·개정·원문 ID·사람 HMAC 대응표와 전송 상태.
 - Keychain: 서비스 `my-crm-agent`, 항목 `upload-token:<입력원 ID>`(업로드 토큰) · `hmac-key:<키 공간 ID>`(HMAC 키, 256비트). 평문 파일로 대신 저장하지 않습니다.
 - **HMAC** = `HMAC-SHA256(PC 키, JCS(["person/1", 제공자 코드, 계정 식별자]))`. 표시 이름만으로 사람을 정하지 않고, 제공자가 다르면 같은 사람으로 합치지 않습니다. 키를 잃으면 서버의 HMAC 으로 원래 사람을 되살릴 수 없습니다. 여러 PC 에서 같은 사람을 유지하려면 같은 키와 대응표를 내가 안전하게 옮겨야 합니다.
-- **예약**: `~/Library/LaunchAgents/local.mycrm.agent.plist`(현재 사용자 LaunchAgent 하나, 1시간마다). plist·명령줄·환경변수에 토큰이 없습니다. 실행 폴더는 등록할 때의 키트 위치와 Python 으로 고정되므로, 키트를 옮기거나 Python 을 바꾸면 `schedule install` 을 다시 합니다. PC 가 잠들거나 꺼져 있으면 돌지 않습니다.
+- **예약**: `~/Library/LaunchAgents/local.mycrm.agent.plist`(현재 사용자 LaunchAgent 하나, 1시간마다). plist·명령줄·환경변수에 토큰이 없습니다. 실행 폴더는 등록할 때의 키트 위치와 Python 으로 고정되므로, 키트를 옮기거나 Python 을 바꾸면 `schedule install` 을 다시 합니다. 설치 패키지의 실행 파일(frozen)로 등록하면 실행 폴더는 키트 위치 대신 그 실행 파일의 폴더입니다. PC 가 잠들거나 꺼져 있으면 돌지 않습니다.
 
 ## 8. 백업과 지우기
 
@@ -136,7 +138,11 @@ python3 -m agent [--home 경로] <명령>
 
 ## 9. Windows
 
-자격 증명 저장소(Windows 자격 증명 관리자) 어댑터가 아직 없어 `connect` 가 토큰을 저장하지 못하고 멈춥니다(평문으로 대신 저장하지 않습니다). 그래서 `run-once` 도 돌지 않습니다. 쓸 수 있는 것은 `validate`(계약 검증)와 `serve`(원문 보기)입니다. 예약 도우미는 Phase 2 입니다.
+**실제 Windows PC 에서는 아직 검증하지 않았습니다.** 아래 동작은 단위 시험(모의 Credential Manager API·모의 `schtasks`)으로만 확인했습니다.
+
+- **자격 증명**: Credential Manager 의 현재 사용자 generic credential 에 둡니다. 대상 이름은 `my-crm-agent:<항목>`(항목은 7절 Keychain 과 같은 `upload-token:<입력원 ID>`·`hmac-key:<키 공간 ID>`)입니다. 저장한 뒤 다시 읽어 같은지 확인합니다. 저장소를 못 쓰면 멈추고, 평문 파일로 대신 저장하지 않습니다.
+- **예약**: `schedule install` 이 Task Scheduler 에 현재 사용자 작업 하나를 등록합니다(1시간마다, 로그온한 동안·최소 권한, 겹치면 새 실행을 건너뜀). 작업 정의 XML 은 `%APPDATA%\my-crm-agent\schedule\agent-task.xml`(홈을 바꿨으면 `<홈>\schedule\agent-task.xml`)에 둡니다. XML·명령줄에 토큰·암호가 없습니다. `schedule remove` 는 작업만 지웁니다. 원문·대응표는 지우지 않습니다.
+- 지우기: 예약을 해제하고 연결을 끊은 뒤 홈 폴더를 지우고, Credential Manager 의 `my-crm-agent:` 항목을 지웁니다.
 
 ## 10. 시험
 
