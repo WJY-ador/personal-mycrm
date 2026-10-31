@@ -86,10 +86,11 @@ class EntryCaTests(unittest.TestCase):
             self.assertNotIn("SSL_CERT_FILE", os.environ)
 
     def test_ca_info_survives_a_broken_user_file(self):
-        with tempfile.NamedTemporaryFile("w", suffix=".pem") as broken:
-            broken.write("not a certificate")
-            broken.flush()
-            with mock.patch.dict(os.environ, {"SSL_CERT_FILE": broken.name}):
+        # A closed file, so Windows can reopen it by name.
+        with tempfile.TemporaryDirectory() as directory:
+            broken = Path(directory) / "broken.pem"
+            broken.write_text("not a certificate", encoding="utf-8")
+            with mock.patch.dict(os.environ, {"SSL_CERT_FILE": str(broken)}):
                 self.assertEqual(self.entry._ca_info(), {"ca_bundled": False, "ca_count": 0})
 
 
