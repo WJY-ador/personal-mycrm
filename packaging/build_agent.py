@@ -41,6 +41,18 @@ def stage_source(destination, version, root=ROOT):
     return hashes
 
 
+def check_ca(binary, info, version):
+    """HTTPS needs the bundled CA file; the frozen OpenSSL default path is the build machine's."""
+    bundled, count = info.pop("ca_bundled", None), info.pop("ca_count", None)
+    if info != {"app_version": version, "agent_version": "0.1.0", "protocol": 1}:
+        raise ValueError("unexpected sidecar protocol/version")
+    if bundled is not True or not isinstance(count, int) or count <= 0:
+        raise ValueError("sidecar CA bundle missing: ca_bundled=" + repr(bundled) + " ca_count=" + repr(count))
+    if not list(Path(binary).parent.glob("_internal/certifi/cacert.pem")):
+        raise ValueError("sidecar CA bundle file missing: _internal/certifi/cacert.pem")
+    return count
+
+
 def smoke(binary, version):
     with tempfile.TemporaryDirectory(prefix="agent-smoke-", dir=ROOT / "release") as scratch:
         home = Path(scratch) / "isolated-home"
@@ -48,6 +60,9 @@ def smoke(binary, version):
         env.pop("PYTHONPATH", None)
         env.pop("PYTHONHOME", None)
         env.pop("MYCRM_DESKTOP_CONTROL", None)
+        # A host CA path would hide a bundle without certificates.
+        env.pop("SSL_CERT_FILE", None)
+        env.pop("SSL_CERT_DIR", None)
         env["MYCRM_AGENT_HOME"] = str(home)
         def run(*args):
             # Keep stderr in the failure so CI logs show the cause.
@@ -59,8 +74,8 @@ def smoke(binary, version):
                                  + ": " + (result.stderr or "")[-800:])
             return result
         info = run("--desktop-info")
-        if json.loads(info.stdout) != {"app_version": version, "agent_version": "0.1.0", "protocol": 1}:
-            raise ValueError("unexpected sidecar protocol/version")
+        count = check_ca(binary, json.loads(info.stdout), version)
+        print("sidecar CA bundle: " + str(count) + " certificates")
         run("--help")
         run("--home", str(home), "status")
 
@@ -82,6 +97,7 @@ def build(output, version):
         cmd = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onedir",
                "--name", "mycrm-agent", "--distpath", str(scratch / "dist"),
                "--workpath", str(scratch / "work"), "--specpath", str(scratch),
+               "--collect-data", "certifi",
                "--paths", str(stage), str(stage / "agent_entry.py")]
         build_env = dict(os.environ)
         build_env["PYINSTALLER_CONFIG_DIR"] = str(release / ".pyinstaller-cache")

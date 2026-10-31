@@ -1,2 +1,4 @@
 # Native build runner only. Python runtime is embedded in the sidecar.
 PyInstaller==6.22.3
+# CA bundle for the sidecar: frozen OpenSSL points at the build machine's cert path.
+certifi==2026.10.23
