@@ -3520,7 +3520,7 @@ const MIG_WHY = {unit_deferred: "이번 이관 대상이 아닌 자료군", revi
 const MIG_LEAD = "PC에 모아 둔 옛 자료를 이 계정으로 옮겨요. PC 업로더가 올린 plan을 여기서 항목마다 확인한 뒤 [반영]해요. 반영은 웹에서만 해요.";
 const MIG_TOK_WARN = "새로 발급하면 이전 토큰은 폐기돼요.";
 let migToken = null;   // {label, token} — 발급 응답을 받은 그 화면에서만
-const MIG = {pid: "", plan: null, limits: null, open: new Set(), body: {}, err: "", busy: false};
+const MIG = {pid: "", plan: null, limits: null, on: true, open: new Set(), body: {}, err: "", busy: false};   // on = 스위치·allowlist(꺼지면 발급·체크·반영만 숨김)
 const migWhy = r => r ? `${esc(MIG_WHY[r] || r)} <span class="tech"><code>${esc(r)}</code></span>` : "";
 const migChip = st => { const [c, t] = MIG_STATE[st] || ["", st]; return `<span class="chip ${c}">${esc(t)}</span>`; };
 const migActChip = a => `<span class="chip mig-${esc(a)}">${esc(MIG_ACT[a] || a)}</span>`;
@@ -3540,10 +3540,10 @@ async function migListLoad() {
   if (!p.ok) { $("mig-body").innerHTML = loadFail(p, "이관 plan 목록"); return; }
   $("mig-body").innerHTML = migListHtml(t.j, p.j);
 }
-// 스위치·allowlist — 꺼져 있으면 안내만
+// 스위치·allowlist — 꺼져 있으면 토큰 발급·기준 체크·[반영]만 숨기고 그 자리에 안내. plan 목록·영수증(내 자료 읽기)은 그대로 보인다
 function migOffNote(j) {
-  if (!j.enabled) return `<p class="fnote" id="mig-off">지금은 이관이 꺼져 있어요. 운영자가 켜면 여기서 이관 토큰을 발급하고 plan을 확인할 수 있어요.</p>`;
-  if (!j.allowed) return `<p class="fnote" id="mig-off">이 계정은 이관 허용 목록에 없어요. 운영자에게 허용 목록에 넣어 달라고 하세요.</p>`;
+  if (!j.enabled) return `<p class="fnote" id="mig-off">지금은 이관이 꺼져 있어요. 운영자가 켜면 이관 토큰을 발급하고 plan을 반영할 수 있어요. 지난 plan과 영수증은 아래에서 볼 수 있어요.</p>`;
+  if (!j.allowed) return `<p class="fnote" id="mig-off">이 계정은 이관 허용 목록에 없어요. 운영자에게 허용 목록에 넣어 달라고 하세요. 지난 plan과 영수증은 아래에서 볼 수 있어요.</p>`;
   return "";
 }
 function migTokenBox(t) {
@@ -3571,17 +3571,16 @@ function migPlanRow(p) {
   const meta = [`${esc(p.item_count)}항목`, `${esc(mdhm(p.created_at))} 올림`, open ? `${esc(mdhm(p.expires_at))} 만료` : "",
     p.applied_at ? `${esc(mdhm(p.applied_at))} 반영` : "", a ? esc(a) : ""].filter(Boolean).join(" · ");
   return `<li class="inrow"><a href="#_setup/migration/${esc(p.plan_id)}">${migChip(p.state)}<b>${esc(p.source_instance)}</b><span class="tech"><code>${esc(p.plan_id)}</code></span></a>
-    <span class="meta">${meta}</span></li>`;
+    <span class="meta">${meta}${p.state === "applied" ? ` · <a href="#_setup/migration/${esc(p.plan_id)}">영수증 보기</a>` : ""}</span></li>`;
 }
 function migListHtml(t, p) {
   const off = migOffNote(t);
-  if (off) return off;
   const toks = t.tokens || [], plans = p.plans || [], L = p.limits || {};
   const lim = `오늘 반영 ${esc(L.used_today)} / ${esc(L.daily)}행 · plan당 ${esc(L.plan_items)}항목 · 열린 plan ${esc(L.open_plans)}개까지 · 보관 ${esc(L.plan_days)}일`;
-  return `${migToken ? migTokenBox(migToken) : ""}
+  return `${off}${migToken && !off ? migTokenBox(migToken) : ""}
     <section class="sec" data-errbox><h2 class="sh">이관 토큰</h2>
       <p class="hint">PC 업로더가 plan을 올릴 때만 써요. ${esc(t.token_days)}일 뒤 만료돼요. ${esc(MIG_TOK_WARN)}</p>
-      <div class="frow" style="margin:0 0 .6rem"><button type="button" class="primary" data-mig="tok-new" data-active="${toks.some(x => x.active) ? 1 : 0}">새 토큰</button></div>
+      ${off ? `<p class="hint">이관이 켜지면 여기서 새 토큰을 발급해요.</p>` : `<div class="frow" style="margin:0 0 .6rem"><button type="button" class="primary" data-mig="tok-new" data-active="${toks.some(x => x.active) ? 1 : 0}">새 토큰</button></div>`}
       ${toks.length ? `<ul class="rows">${toks.map(migTokRow).join("")}</ul>` : `<div class="empty">아직 발급한 이관 토큰이 없어요.</div>`}
       <p class="ferr" role="alert" aria-atomic="true"></p></section>
     <section class="sec"><h2 class="sh">plan <span class="speclabel">${lim}</span></h2>
@@ -3598,6 +3597,7 @@ async function migPlanLoad(pid) {
   if (!d.ok) { $("mig-plan").innerHTML = loadFail(d, "이관 plan"); return; }
   MIG.plan = d.j;
   MIG.limits = l && l.ok ? l.j.limits || null : null;
+  MIG.on = !!(l && l.ok && l.j.enabled && l.j.allowed);
   if (d.j.state === "applied") {
     const r = await getJSON("/api/migrations/" + encodeURIComponent(pid) + "/receipt");
     if (!r || seq !== renderSeq || !$("mig-plan")) return;
@@ -3647,7 +3647,7 @@ function migBodyHtml(x) {
 function migItemRow(x, sealed) {
   const open = MIG.open.has(x.seq);
   const title = x.title != null ? esc(x.title) || `<span class="tech">(제목 없음)</span>` : `<span class="tech">(본문을 지웠어요)</span>`;
-  const check = x.needs_check && sealed ? `<label class="migchk"><input type="checkbox" data-mig-check="${esc(x.seq)}"${x.checked ? " checked" : ""}${MIG.busy ? " disabled" : ""}> 이 기준을 반영할게요</label>`
+  const check = x.needs_check && sealed && MIG.on ? `<label class="migchk"><input type="checkbox" data-mig-check="${esc(x.seq)}"${x.checked ? " checked" : ""}${MIG.busy ? " disabled" : ""}> 이 기준을 반영할게요</label>`
     : x.needs_check ? `<span class="tech">${x.checked ? "체크함" : "체크 안 함"}</span>` : "";
   return `<li class="migitem${x.needs_check && !x.checked ? " need" : ""}" id="mig-i-${esc(x.seq)}"><div class="mighead"><span class="speclabel">#${esc(x.seq)}</span><code>${esc(x.unit_kind)}</code>
       <b>${title}</b>${migActChip(x.action)}</div>
@@ -3672,7 +3672,9 @@ function migPlanHtml(pl) {
     <section class="sec"><h2 class="sh">항목 <span class="speclabel">${esc(items.length)}개${t.checks ? ` · 기준 체크 ${esc(t.checks - t.unchecked)} / ${esc(t.checks)}` : ""}</span></h2>
       <ul class="rows migitems">${items.map(x => migItemRow(x, sealed)).join("")}</ul></section>
     <div id="mig-err" role="alert" aria-atomic="true">${MIG.err}</div>
-    <div class="frow migacts"><button type="button" class="primary" data-mig="apply"${MIG.busy ? " disabled" : ""}>반영</button>
+    ${MIG.on ? "" : `<p class="fnote" id="mig-off">지금은 이관이 꺼져 있거나 이 계정이 허용 목록에 없어 기준 체크와 반영을 할 수 없어요. 운영자가 켜면 다시 해 주세요.</p>
+    <div class="frow migacts"><button type="button" class="secondary" data-mig="cancel"${MIG.busy ? " disabled" : ""}>이 plan 취소</button></div>`}
+    ${MIG.on ? `<div class="frow migacts"><button type="button" class="primary" data-mig="apply"${MIG.busy ? " disabled" : ""}>반영</button>
       <button type="button" class="secondary" data-mig="cancel"${MIG.busy ? " disabled" : ""}>이 plan 취소</button>
       ${L ? `<span class="tech">오늘 남은 이관 한도 ${esc(Math.max(0, L.daily - L.used_today))}행</span>` : ""}</div>
     <dialog id="mig-dlg" aria-labelledby="mig-dlg-title"><div class="dh"><b id="mig-dlg-title">이 plan을 반영할까요?</b></div><div class="db">
@@ -3683,7 +3685,7 @@ function migPlanHtml(pl) {
         <li>중복 의심 <b>${esc(t.warn)}</b> · 충돌 <b>${esc(t.conflict)}</b> · 거절 <b>${esc(t.reject)}</b>개 — 반영하지 않아요</li>
         ${L ? `<li>오늘 남은 이관 한도 <b>${esc(Math.max(0, L.daily - L.used_today))}</b>행</li>` : ""}</ul>
       <p class="hint">전부 반영하거나, 하나라도 실패하면 아무것도 반영하지 않아요. 반영한 뒤엔 이 화면에서 되돌릴 수 없어요.</p>
-      <div class="frow"><button type="button" class="primary" data-mig="apply-go">반영</button><button type="button" class="secondary" data-mig="apply-no">닫기</button></div></div></dialog>`;
+      <div class="frow"><button type="button" class="primary" data-mig="apply-go">반영</button><button type="button" class="secondary" data-mig="apply-no">닫기</button></div></div></dialog>` : ""}`;
 }
 // 오류 — 사람 말 문구(코드는 기술 정보로만)
 function migErrHtml(res) {

@@ -5,7 +5,7 @@
 
 A. 정적 — Setup 페이지 「이관」(SETUP_PAGES 끝에 덧붙임 · 휴지통 순서 그대로) · 연결 장치 화면 링크 · 이관 API 접점 = 「이관」 절 한 곳 ·
    토큰·본문을 콘솔·localStorage 에 넣지 않음 · 일괄 체크 없음.
-B. 실행(node — 「이관」 절을 가짜 DOM 으로 돌린다): 꺼짐·허용 목록 밖 = 안내만 · 토큰 발급(앞 토큰 있으면 「이전 토큰은 폐기돼요」 확인 → 한 번만 보임 →
+B. 실행(node — 「이관」 절을 가짜 DOM 으로 돌린다): 꺼짐·허용 목록 밖 = 토큰 발급·기준 체크·[반영]만 숨기고 안내(plan 목록·영수증은 보임) · 토큰 발급(앞 토큰 있으면 「이전 토큰은 폐기돼요」 확인 → 한 번만 보임 →
    다른 화면 가면 지움) · 폐기 · plan 목록(상태·항목 수·만료·오늘 사용량/한도) · 확인 화면(자료군×action 개수·항목·사유·기준 체크 상자 하나씩) ·
    체크 = seqs 하나 · 반영 확인 대화상자 숫자(반영·체크 안 한 기준·warn/reject/conflict) · 반영 = plan_hash · 오류 문구(PLAN-STALE·PLAN-HASH-MISMATCH·
    RATE-LIMIT·PLAN-EXPIRED·CHECK-DEPENDENCY) · 본문 펼침 · 영수증(결과별 개수·해시 일치/다름/휴지통).
@@ -162,7 +162,7 @@ CONFIRM = true; await migTokRevoke(btn({{id: "mt_a"}})); out.rev = api.slice();
 const e = {{textContent: ""}}; REPLY = {{ok: false, code: "MIGRATION-OFF", msg: "x", j: {{}}}}; await migTokNew(btn({{active: "0"}}, e)); out.offErr = e.textContent;
 """)
     for k in ("off", "deny"):
-        assert 'id="mig-off"' in o[k] and "data-mig" not in o[k] and "mp_" not in o[k], (k, "꺼짐·허용 목록 밖 = 안내만")
+        assert 'id="mig-off"' in o[k] and 'data-mig="tok-new"' not in o[k], (k, "꺼짐·허용 목록 밖 = 발급 버튼 대신 안내")
     assert "운영자가 켜면" in o["off"] and "허용 목록에 없어요" in o["deny"]
     on, txt = o["on"], o["onText"]
     assert 'data-mig="tok-new" data-active="1"' in on and on.count('data-mig="tok-revoke"') == 1, "살아 있는 토큰만 [폐기]"
@@ -180,7 +180,7 @@ const e = {{textContent: ""}}; REPLY = {{ok: false, code: "MIGRATION-OFF", msg: 
     assert o["ask0"] == 0, "앞 토큰 없음 = 확인창 없음"
     assert o["revNo"] == 0 and o["rev"] == [{"url": "/api/migration-tokens/mt_a/revoke", "body": {}}]
     assert o["offErr"] == "지금은 이관이 꺼져 있어요."
-    print("OK — B1 꺼짐·허용 목록 밖 = 안내만 · 토큰 목록(상태·만료·마지막 사용·[폐기]) · 발급(이전 토큰 폐기 확인·한 번만·화면 떠나면 지움) · plan 목록(상태·항목 수·만료·사용량/한도)")
+    print("OK — B1 꺼짐·허용 목록 밖 = 발급 대신 안내 · 토큰 목록(상태·만료·마지막 사용·[폐기]) · 발급(이전 토큰 폐기 확인·한 번만·화면 떠나면 지움) · plan 목록(상태·항목 수·만료·사용량/한도)")
 
 
 def test_confirm_apply():
@@ -287,6 +287,50 @@ out.rc = migReceiptHtml(Object.assign({{}}, D, {{state: "applied"}}), R); out.rc
     print("OK — B3 오류 문구(PLAN-STALE 바뀐 항목·HASH-MISMATCH·RATE-LIMIT resume_at·EXPIRED·CHECK-DEPENDENCY seq·STATE) · 본문 펼침(하나씩·esc·지운 본문·출처) · 영수증(결과별·해시 일치/다름/휴지통)")
 
 
+def test_off_applied():
+    """꺼짐(또는 허용 목록 밖) + applied plan — 목록·영수증 링크·영수증은 보이고, 토큰 발급·기준 체크·[반영]은 없다(그 자리에 안내).
+    발급 직후 받은 토큰이 남아 있어도 꺼짐이면 그리지 않는다. [폐기]·[취소]는 스위치와 무관하게 남는다."""
+    o = mig_run(f"""
+const T = {json.dumps(TOKENS, ensure_ascii=False)}, P = {json.dumps(PLANS, ensure_ascii=False)}, D = {json.dumps(DETAIL, ensure_ascii=False)};
+migToken = {{label: "이관 업로더", token: "mig_mt_0123456789abcdef.SECRET"}};
+out.list = {{}};
+for (const [k, sw] of [["off", {{enabled: false}}], ["deny", {{allowed: false}}]]) out.list[k] = migListHtml(Object.assign({{}}, T, sw), Object.assign({{}}, P, sw));
+// 상세 — 꺼짐이면 sealed 확인 화면에 체크 상자·[반영]·대화상자 0, 안내 + [취소]
+GETS["/api/migrations/" + D.plan_id] = {{ok: true, j: D}};
+GETS["/api/migrations"] = {{ok: true, j: Object.assign({{}}, P, {{enabled: false}})}};
+mk("view"); mk("mig-plan");
+await migPlanLoad(D.plan_id); out.on = MIG.on; out.sealedOff = els["mig-plan"].innerHTML;
+GETS["/api/migrations"] = {{ok: true, j: P}};
+await migPlanLoad(D.plan_id); out.on2 = MIG.on; out.sealedOn = els["mig-plan"].innerHTML;
+// applied — 꺼져도 영수증
+const A = Object.assign({{}}, D, {{plan_id: "mp_" + "2".repeat(24), state: "applied", items: []}});
+GETS["/api/migrations/" + A.plan_id] = {{ok: true, j: A}};
+GETS["/api/migrations/" + A.plan_id + "/receipt"] = {{ok: true, j: {{plan_id: A.plan_id, import_batch_id: A.plan_id, plan_hash: "b".repeat(64), receipt_hash: "d".repeat(64),
+  applied_at: "2026-11-01T02:00:00+00:00", counts: {{results: {{applied: 1}}, units: {{record: {{applied: 1}}}}}},
+  items: [{{seq: 0, unit_kind: "record", original_id: "o_0", content_hash: "e".repeat(64), result: "applied", target_id: "r_1", stored_hash: "e".repeat(64), target_state: "live"}}]}}}};
+GETS["/api/migrations"] = {{ok: true, j: Object.assign({{}}, P, {{enabled: false}})}};
+await migPlanLoad(A.plan_id); out.receipt = strip(els["mig-plan"].innerHTML);
+""")
+    applied = f'href="#_setup/migration/mp_{"2" * 24}"'
+    for k, h in o["list"].items():
+        assert 'id="mig-off"' in h and "지난 plan과 영수증은 아래에서 볼 수 있어요" in h, k
+        assert 'data-mig="tok-new"' not in h and "이관이 켜지면 여기서 새 토큰을 발급해요" in h, (k, "발급 버튼 대신 안내")
+        assert "SECRET" not in h and 'id="mig-token"' not in h, (k, "꺼짐 = 받은 토큰도 그리지 않음")
+        assert h.count(applied) == 2 and ">영수증 보기</a>" in h and f'href="#_setup/migration/mp_{"1" * 24}"' in h, (k, "plan 목록·영수증 링크 보임")
+        assert 'data-mig="tok-revoke"' in h, (k, "폐기는 스위치 무관")
+        assert 'data-mig="apply' not in h and "data-mig-check" not in h
+    so = o["sealedOff"]
+    assert o["on"] is False and 'id="mig-off"' in so and "기준 체크와 반영을 할 수 없어요" in so
+    assert "data-mig-check" not in so and 'data-mig="apply"' not in so and 'id="mig-dlg"' not in so and 'data-mig="apply-go"' not in so, "꺼짐 = 체크·[반영]·대화상자 0"
+    assert 'data-mig="cancel"' in so and so.count('data-mig="body"') == 8, "[취소]·본문 보기는 그대로"
+    assert "체크함" in so and "체크 안 함" in so, "기준 체크 상태는 글로만"
+    son = o["sealedOn"]
+    assert o["on2"] is True and 'id="mig-off"' not in son and son.count("data-mig-check") == 3 and 'data-mig="apply"' in son and 'id="mig-dlg"' in son
+    rt = o["receipt"]
+    assert "이관 영수증" in rt and "r_1" in rt and "1 / 1 일치" in rt, "꺼져도 영수증"
+    print("OK — B4 꺼짐·허용 목록 밖 + applied plan = 목록·영수증 링크·영수증 보임 · 토큰 발급·기준 체크·[반영]·대화상자 0(그 자리 안내) · [폐기]·[취소] 그대로 · 켜짐 = 그대로")
+
+
 async def test_http():
     site = main.site
     real = site.dev, site.dev_user
@@ -326,6 +370,7 @@ async def run():
         test_list_tokens()
         test_confirm_apply()
         test_errors_body_receipt()
+        test_off_applied()
         await test_http()
     finally:
         cleanup()
