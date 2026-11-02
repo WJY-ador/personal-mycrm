@@ -62,6 +62,8 @@ def _parser() -> argparse.ArgumentParser:
     r = sub.add_parser("run-once", help="수집·변환·검증·업로드 1회")
     r.add_argument("--scheduled", action="store_true", help="예약 실행(0~5분 지연, unattended)")
     r.add_argument("--no-upload", action="store_true", help="전송 대기까지만")
+    r.add_argument("--no-rotate", action="store_true",
+                   help="만료 전 Bearer 토큰 교체를 건너뛴다(데스크톱 앱 = 세션 교체를 쓴다)")
     r.add_argument("--resume", choices=("auth", "config", "account", "policy", "forbidden", "summary"),
                    help="사용자 조치 뒤 멈춤 해제")
 
@@ -394,7 +396,7 @@ def cmd_run_once(ctx: Ctx, a) -> int:
     ctx.say(json.dumps({k: v for k, v in res.items()}, ensure_ascii=False, sort_keys=True))
     up = res.get("upload") or {}
     stopped = (up.get("stopped") or "").replace("-halted", "")
-    if "upload" in res and stopped not in ("auth", "config"):
+    if "upload" in res and stopped not in ("auth", "config") and not a.no_rotate:
         # 만료 30일 안이면 Bearer 교체(결정 0). 실패해도 이번 실행 결과(exit)는 바꾸지 않는다
         try:
             rcfg = _config.load(ctx.paths)

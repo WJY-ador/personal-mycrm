@@ -196,6 +196,18 @@ class TokenRotateTest(unittest.TestCase):
         self.assertEqual(code, 3, out)
         self.assertEqual(self.rotate_calls(), [])
 
+    def test_no_rotate_flag_skips_bearer_rotate(self):
+        # 앱이 띄우는 run-once — 교체는 앱 세션 경로(계획 §3)라 Bearer 교체를 하지 않는다
+        self.connect()
+        self.expire_in(5)
+        code, out = self.cli("run-once", "--no-rotate")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.rotate_calls(), [])
+        self.assertNotIn("토큰 교체", out)
+        self.assertEqual(self.ks.get(MAIN), TOKEN)
+        code, out = self.cli("run-once")                 # 플래그가 없으면 교체
+        self.assertEqual(len(self.rotate_calls()), 1)
+
     def test_disconnect_removes_pending(self):
         self.connect()
         self.ks.set(PENDING, "imp_" + STREAM_ID + ".tok_Pend01." + "P" * 43)
