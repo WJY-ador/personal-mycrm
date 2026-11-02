@@ -375,7 +375,10 @@ def browser_login(server_url: str, scope: str, *, client_name: str | None = None
     base = server_url.rstrip("/")
     verifier, challenge = pkce_pair()
     state = new_state()
-    rx = LoopbackReceiver(state)
+    try:
+        rx = LoopbackReceiver(state)
+    except OSError:
+        raise LoginError("loopback") from None
     try:
         url = base + DESKTOP_LOGIN_PATH + "?" + urllib.parse.urlencode(
             {"challenge": challenge, "state": state, "redirect_uri": rx.redirect_uri})
@@ -431,6 +434,8 @@ def explain_login_error(e: LoginError) -> list:
         return [f"{int(LOGIN_TIMEOUT // 60)}분 안에 브라우저 로그인을 받지 못했어요. 다시 실행하세요."]
     if e.kind == "network":
         return ["서버에 닿지 못했어요. 주소·네트워크를 확인하세요."]
+    if e.kind == "loopback":
+        return ["127.0.0.1 에서 로그인을 기다릴 포트를 열지 못했어요. 원격 셸이면 웹에서 토큰을 발급해 --token-stdin 으로 넣으세요."]
     if e.kind == "bad-response":
         return ["서버 응답 모양이 맞지 않아요. 아무것도 저장하지 않았어요."]
     out = [f"서버가 받지 않았어요(http-{e.status}" + (f" {e.code}" if e.code else "") + ")" + (f": {e.msg}" if e.msg else "")]

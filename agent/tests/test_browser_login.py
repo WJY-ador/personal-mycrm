@@ -152,6 +152,14 @@ class BrowserLoginCliTest(unittest.TestCase):
         self.assertEqual(self.srv.claim_requests, [])
         self.assertEqual(self.ks.items, {})
 
+    def test_loopback_bind_failure(self):
+        from unittest import mock
+        with mock.patch.object(uploader, "LoopbackReceiver", side_effect=OSError("bind")):
+            code, out = self.cli("connect", "--server", self.srv.url, "--browser")
+        self.assertEqual(code, 1, out)
+        self.assertIn("포트를 열지 못했어요", out)
+        self.assertEqual(self.srv.login_requests, [])
+
     def test_browser_and_token_stdin_exclusive(self):
         with self.assertRaises(SystemExit) as cm:
             self.cli("connect", "--server", self.srv.url, "--browser", "--token-stdin")
