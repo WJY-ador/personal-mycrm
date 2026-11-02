@@ -3,7 +3,7 @@
 실행: DATABASE_URL=postgresql://localhost/crm_test_facade python3 server/test_facade.py
 가드: server/.env 를 읽지 않는다(운영 DB 폴백 사고 방지) — DATABASE_URL 을 명시해야 하고, 호스트는 로컬, DB 이름은 crm_test 로 시작해야 한다.
 
-1) 카탈로그: family 12 · op 마다 tier·family 정확히 하나 · 겉면 enum = tier 분할 · 예시 전부 입력 스키마 통과 · K2(D∪P ↔ shown 빌더)
+1) 카탈로그: family 13 · op 마다 tier·family 정확히 하나 · 겉면 enum = tier 분할 · 예시 전부 입력 스키마 통과 · K2(D∪P ↔ shown 빌더)
 2) 전 op 대칭: 읽기 = 직접 결과 그대로 · 쓰기·확정·삭제 = 같은 모양(ID·시각 가림) · 오류 코드 같음
 3) bind: REQUIRED · 위조 · 대상 변경 STALE(detail 에 새 preview) · 인자 변경 STALE · 비밀 회전 STALE · 직접 D 도구 선택 bind
 4) 가드: TIER-MISMATCH · OP-UNKNOWN(가까운 이름) · ARG-INVALID(detail) · NAME-REQUIRED 그대로 · 이관 op 은 decide_preview 대상 아님
@@ -128,9 +128,9 @@ async def test_catalog():
         return dict(pairs)
     cat = json.loads(raw, object_pairs_hook=no_dup)
     fams = [f["key"] for f in cat["families"]]
-    assert len(fams) == 12 == len(set(fams)), fams
+    assert len(fams) == 13 == len(set(fams)), fams
     assert [f["label"] for f in cat["families"]] == ["상태·도움·나", "질문·프로필", "내 글", "판단 후보", "자료 종류·항목", "사람",
-                                                     "출처·읽고 든 생각", "활동", "저장 승인 대기", "휴지통", "문의", "이관"]
+                                                     "출처·읽고 든 생각", "활동", "저장 승인 대기", "휴지통", "문의", "이관", "PC 연결"]
     for op, s in cat["ops"].items():
         assert s["tier"] in facade.TIERS and s["family"] in fams, op
         assert set(s) <= {"family", "tier", "keywords", "examples", "bind", "direct", "rule"}, (op, set(s))   # 설명은 카탈로그에 적지 않는다
@@ -151,7 +151,14 @@ async def test_catalog():
         assert facade.OPS[op].tier == v["tier"], op
         assert facade.OPS[op].direct == (op == "migration_receipt_get"), op
     assert {o for o, x in facade.OPS.items() if x.bind == "self"} == {"migration_apply", "migration_cancel", "migration_revert"}
-    assert {o for o, x in facade.OPS.items() if not x.direct} == {"decide_preview"} | (mig - {"migration_receipt_get"})
+    # PC 연결 family(2026-11-02 가안 2) = facade 전용 7(본체 token_grants) — 확정 3 은 hmac bind(K2 shown 빌더)
+    pc = {o for o, x in facade.OPS.items() if x.family == "pc"}
+    assert pc == {"pc_list", "pc_connect", "migration_token_send", "pc_forget", "token_grant_status", "token_list", "token_revoke"}, pc
+    assert {o: facade.OPS[o].tier for o in pc} == {"pc_list": "read", "pc_connect": "write", "migration_token_send": "decide",
+                                                   "pc_forget": "decide", "token_grant_status": "read", "token_list": "read",
+                                                   "token_revoke": "decide"}
+    assert {o for o in pc if facade.OPS[o].bind == "hmac"} == {"migration_token_send", "pc_forget", "token_revoke"}
+    assert {o for o, x in facade.OPS.items() if not x.direct} == {"decide_preview"} | (mig - {"migration_receipt_get"}) | pc
     # 겉면 enum = tier 분할(겹침·빠짐 없음)
     enums = {t: tools[t].input_schema["properties"]["op"]["enum"] for t in facade.TIERS}
     allops = [o for t in facade.TIERS for o in enums[t]]
@@ -190,7 +197,7 @@ async def test_catalog():
     assert {o for o, t in tiers.items() if t == "write"} == {
         "question_add", "record_add", "candidates_propose", "profile_set", "definition_propose", "item_propose", "record_attach",
         "display_name_set", "person_save", "source_create", "source_reflection_save"}
-    ok(f"카탈로그(family 12 · op {len(facade.OPS)} 마다 tier·family 하나 · enum = tier 분할 · 예시 {n}개 스키마 통과 · K2 대칭 · 분류 기준)")
+    ok(f"카탈로그(family 13 · op {len(facade.OPS)} 마다 tier·family 하나 · enum = tier 분할 · 예시 {n}개 스키마 통과 · K2 대칭 · 분류 기준)")
 
 
 # ── 준비 ───────────────────────────────────────────────
@@ -280,7 +287,7 @@ async def test_symmetry(S):
             "source_create": ({"kind": "url", "name": "도입 사례 글", "location": "https://example.com/a"},) * 2,
             "source_reflection_save": ({"source_id": S["src"], "kind": "summary", "body": "요약"},) * 2,
         }
-        writes = {o for o, x in facade.OPS.items() if x.tier == "write"}
+        writes = {o for o, x in facade.OPS.items() if x.tier == "write" and x.direct}   # facade 전용 쓰기(pc_connect)는 test_token_grants
         assert set(wa) == writes, set(wa) ^ writes
         for op, (a, b) in wa.items():
             d, f = await direct(c, op, a), await via(c, op, b)
@@ -311,7 +318,8 @@ async def test_symmetry(S):
             ("trash_purge", *({"kind": "record", "target_id": x, "expected_revision": None} for x in S["purge"])),
             ("feedback_send", *({"kind": "question", "text": "facade 시험 문의예요.", "tool": "find"},) * 2),
         ]
-        assert {x[0] for x in da} == set(facade.PREVIEWS), {x[0] for x in da} ^ set(facade.PREVIEWS)
+        direct_pv = {o for o in facade.PREVIEWS if facade.OPS[o].direct}   # facade 전용 확정 op(PC 연결)은 test_token_grants 가 본다
+        assert {x[0] for x in da} == direct_pv, {x[0] for x in da} ^ direct_pv
         for op, a, b in da:
             d, f = await direct(c, op, a), await via_bound(c, op, b)
             assert not d.is_error and not f.is_error, (op, d.content[0].text[:300], f.content[0].text[:300])
@@ -328,7 +336,7 @@ async def test_symmetry(S):
             d, f = await direct(c, op, a), await via_bound(c, op, a)
             assert code(d) == code(f) and code(d) not in ("BIND-STALE", "BIND-REQUIRED"), (op, code(d), code(f))
         # 없는 대상 — 직접 오류 코드 = 미리보기 오류 코드(미리보기가 같은 조회를 한다)
-        for op in facade.PREVIEWS:
+        for op in direct_pv:
             if op == "feedback_send":
                 continue
             ex = facade.OPS[op].examples[0]
@@ -392,7 +400,7 @@ async def test_bind(S):
         f = val(await c.call_tool("find", {"op": "candidate_decide"}))
         assert "bind" not in f["input_schema"]["properties"] and "bind" not in f["input_schema"].get("required", [])
         tools = {t.name: t for t in (await c.list_tools()).tools}
-        for op in facade.PREVIEWS:
+        for op in (o for o in facade.PREVIEWS if facade.OPS[o].direct):
             assert "bind" in tools[op].input_schema["properties"] and "bind" not in tools[op].input_schema.get("required", []), op
         # 되돌릴 수 없음 표시 — 영구 삭제·밖으로 보내기 · 휴지통 꺼짐이면 사람 삭제도
         pv = await preview(c, "trash_purge", {"kind": "record", "target_id": S["trash"][0], "expected_revision": None})
@@ -567,7 +575,7 @@ async def test_find(S):
         assert tools["purge"].annotations.destructive_hint and not (tools["decide"].annotations and tools["decide"].annotations.read_only_hint)
         assert tools["write"].annotations is None
         f = val(await c.call_tool("find", {}))
-        assert [x["key"] for x in f["families"]] == [x["key"] for x in facade.FAMILIES] and len(f["families"]) == 12
+        assert [x["key"] for x in f["families"]] == [x["key"] for x in facade.FAMILIES] and len(f["families"]) == 13
         allops = [o for x in f["families"] for t in facade.TIERS for o in x["ops_by_tier"][t]]
         assert sorted(allops) == sorted(facade.OPS)
         m = val(await c.call_tool("find", {"query": "후보 남길게"}))["matches"]
@@ -603,7 +611,7 @@ async def test_find(S):
         assert "되물을 수 없다" in ins
         # find 는 search·fetch 이름을 쓰지 않는다(다음 묶음 예약)
         assert not {"search", "fetch"} & set(tools)
-    ok("find(family 12 · query ≤8·부분 일치·family 걸기 · op 상세 = docstring·스키마·예시·rule·flow · OP-UNKNOWN) · annotations · 설명·INSTRUCTIONS 규칙")
+    ok("find(family 13 · query ≤8·부분 일치·family 걸기 · op 상세 = docstring·스키마·예시·rule·flow · OP-UNKNOWN) · annotations · 설명·INSTRUCTIONS 규칙")
 
 
 async def run():

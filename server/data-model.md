@@ -1,4 +1,4 @@
-# 데이터 모델 (2026-10-18 확정 · 2026-11-02 이관 경로·이관 MCP(가안 X)까지 정정)
+# 데이터 모델 (2026-10-18 확정 · 2026-11-02 이관 경로·이관 MCP(가안 X)·PC 연결(가안 2)까지 정정)
 
 전제: 사용자 AI 클라이언트 → MCP → 이 서버 → Postgres. 서버 모델 호출 0. 사용자 10~100명, 1인당 월 기록 10~30편 — 작아서 파티션·아카이브 없음. DDL은 `schema.sql`. `db.py` 는 psycopg(Postgres) 판이다(끝 절).
 
@@ -28,7 +28,8 @@
 | (board 이전·연결 장치) import_streams·import_entries·import_counters·activities·activity_links·people·source_reflections | 연결 장치 입력원·접수 대응표·한도 카운터·활동·사람·출처 요약/반응 — DDL 주석이 정본(`schema.sql`) | users M-D |
 | (쌓기·휴지통·화면) jobs·stack_sessions·confirm_events·item_versions·item_stage·page_layouts | 작업 전달·쌓기 세션·확인 이벤트·항목 판·단계·레이아웃 — DDL 주석이 정본 | users M-D |
 | (이관 경로, 2026-11-02) migration_tokens·migration_plans·migration_plan_items | 이관 토큰·이관 plan·plan 항목(영수증) — 아래 「이관 경로」 절 | users M-D |
-| (앱 로그인 넘김, 2026-11-02) desktop_handoffs | 시스템 브라우저 로그인(`/desktop/login` → `/auth/callback`) 뒤 앱(`mycrm://auth/callback`)이 `/desktop/claim` 으로 세션을 받는 일회용 코드. 코드 원문은 저장하지 않는다(`code_hash` = SHA-256) · `challenge` = base64url(sha256(verifier)), verifier 는 앱 메모리에만 · 앱 `state` 그대로 · 2분 만료 · `used_at` 일회용(교환은 UPDATE 한 문장) · 만료 행은 발급 때마다 지운다. 로그·감사에 값 없음 | users M-D |
+| (앱 로그인 넘김, 2026-11-02) desktop_handoffs | 시스템 브라우저 로그인(`/desktop/login` → `/auth/callback`) 뒤 앱(`mycrm://auth/callback`)이 `/desktop/claim` 으로 세션을 받는 일회용 코드. 코드 원문은 저장하지 않는다(`code_hash` = SHA-256) · `challenge` = base64url(sha256(verifier)), verifier 는 앱 메모리에만 · 앱 `state` 그대로 · 2분 만료 · `used_at` 일회용(교환은 UPDATE 한 문장) · 만료 행은 발급 때마다 지운다. 로그·감사에 값 없음 · `loopback`(PC 연결 2026-11-02) = CLI `--browser` 코드(`redirect_uri=http://127.0.0.1|[::1]:<port>/cb` 로 302, `/desktop/cli/claim` 만 받는다 — 앱 코드와 섞지 않는다) | users M-D |
+| (PC 연결, 2026-11-02 가안 2) desktop_installations·token_grants | 로그인한 데스크톱 앱 설치본(이름·OS·로그인·폴링 시각·해제 기록·연결 장치 id — IP 없음)과 대화가 남긴 토큰 전달 요청(scope device·migration, 10분, 토큰 값·해시 없음) — 아래 「PC 연결」 절 | users M-D |
 | tickets | 문의(desk-0). 종류 bug/request/question/privacy · via web/mcp · page·tool·브라우저 계열 · `hint`(오분류 개인정보 요청 표식) · 상태 open/ack/doing/done/wontfix(종결 ⇔ `closed_at`) · `admin_note`(사용자 응답에 없음). 사용자 하루 10건·전역 100건(KST), 종결 180일 뒤 파기 | users M-D |
 | privacy_log | 개인정보 요청 처리 사실(받은 날·종류·통지한 날·결과·본인 확인). 사람 식별 정보 없음. kind=privacy 문의와 같은 트랜잭션에서 1행 | 없음 — CASCADE 밖, `ticket_id` FK 없음(문의가 지워져도 남는다) |
 
@@ -120,7 +121,7 @@ Governor limit 없음. M-D 깊이 최대 2(users→candidates→candidate_histor
 
 | 대상 | 내용 | 관계 |
 |---|---|---|
-| migration_tokens | 이관 전용 토큰(`mig_<id>.<secret>`, 비밀값은 SHA-256 만). 웹 세션에서만 발급, 14일, 사용자당 살아 있는 1개. 일반 연결 장치 토큰(import_streams)과 분리 | users M-D |
+| migration_tokens | 이관 전용 토큰(`mig_<id>.<secret>`, 비밀값은 SHA-256 만). 웹 세션 또는 앱 수령(PC 연결 grant)으로 발급, 14일. M2: 새 토큰을 처음 쓸 때 앞 토큰 폐기(안 쓴 대기 토큰은 다음 발급이 덮어씀) — 결국 살아 있는 1개. 일반 연결 장치 토큰(import_streams)과 분리 | users M-D |
 | migration_plans | 상태 staged → sealed → applied → reverted · cancelled · expired(만든 뒤 3일). `plan_hash`(seal 때 고정) · `summary`(dry-run·영수증 개수) · 열린 plan 사용자당 3 · `via`(반영 경로 web·mcp, 옛 행 NULL) · `reverted_at`(`ck_migration_plans_reverted`). `ck_migration_plans_applied` = applied·reverted 둘 다 applied_at | users M-D |
 | migration_plan_items | 받은 순 `seq` · original_id·source_revision·unit_kind·target_kind·`content_hash`·`item_sha256` · `payload`(받은 항목 JSON — 반영은 이것만 쓴다) · action(insert/noop/conflict/reject/warn)+사유 · 기준 `checked` · `result`·`target_id`(FK 없음) · `created`(반영이 대상을 새로 만들었나 — 되돌리기 판정, 옛 행 NULL) · `decision_deferred`(MCP 반영이 confirmed 표시 기준을 확정하지 않고 넣음 — 반영 뒤 미확정) | migration_plans M-D |
 | records `date_kind` | 원본 날짜 종류 written·occurred·registered·heading(`ck_records_date_kind`). NULL = 라벨 없음(옛 행·이관 밖) | — |
@@ -141,6 +142,23 @@ Governor limit 없음. M-D 깊이 최대 2(users→candidates→candidate_histor
 - **한도.** 이관 반영 전용 200행/일(KST, `DAILY_LIMITS["migration"]` = 대응표의 오늘 적용 행 + plan 출처 적용). 일반 기록·제안·결정 집계는 이관 행을 뺀다(`_DAILY_SOURCES`). 반영은 남은 한도 < 반영 행이면 시작하지 않는다. plan 200항목 · 스테이징 사용자당 2MB · 청크 256KB · 토큰 분당 60 요청.
 - **원문 체류 최소화.** 항목 본문(payload)은 reject 면 seal 때, 반영·취소·만료 때 바로 영구 삭제(휴지통 아님). 남는 것은 해시·action·결과·대상 id(영수증). 만료 정리 = `imports.expire_pending` 회차 + 접근 때 즉시.
 - **CLI 은퇴.** `migrate_cli.py` run·resume·close 는 DB 이름이 crm_test* 일 때만(합성 시험). 운영 이관은 위 경로.
+
+## PC 연결·토큰 대화 발급 (2026-11-02 가안 2 「상주 앱 수령형」)
+
+정본: `notes/2026-11-02_pc-connect-구현계획.md`(비공개). 코드: `token_grants.py`. 토큰이 대화에 남지 않게 — 대화(MCP)는 「이 PC 로 보내라」만 남기고,
+같은 계정으로 로그인한 앱이 세션 + `X-MyCRM-Desktop` 헤더로 받아 간다. 토큰은 수령 요청 안에서 발급되고 그 응답에만 있다.
+
+| 오브젝트 | 뜻 | 관계 |
+|---|---|---|
+| desktop_installations | 설치본 = 로그인한 앱 하나(`di_<hex24>`, 앱 userData 에 보관). `client_name`·`os`(darwin·win32·linux)·`last_login_at`(지목 기본)·`last_seen_at`(폴링 — 최근 2분 = 켜짐)·`revoked_at`(대화 `pc_forget` 해제 기록 — 자동 연결·교체가 되살리지 않는다)·`device_id`(이 PC 의 연결 장치, FK 없음). IP·호스트·경로 없음. 계정당 해제 안 된 것 10 | users M-D |
+| token_grants | 전달 요청(`tg_<hex24>`) — `scope` device·migration · `state` waiting → delivered(redeem) · expired(10분) · cancelled(pc_forget) · `via`=mcp · `delivered_to`(받은 장치·PC 이름). 토큰 값·해시 열 없음. 한도: 계정당 열린 3·하루(KST) 10. 정리 회차가 만료 표시·30일 지난 끝난 행 삭제 | desktop_installations M-D (cascade) |
+| import_streams.pending_* | M2 대기 토큰(`pending_token_id`·`pending_secret_hash`·`pending_expires_at`, 부분 UNIQUE·`ck_import_streams_pending`) — 재발급·교체·자동 연결의 새 토큰. 처음 인증되면 현재 토큰으로 올라가고 옛 토큰은 그때 무효. 1개(다음 교체가 덮어씀). 만료 지난 대기 토큰은 정리 회차가 비운다 | — |
+
+### 판단 로그
+- **수령 관문 = 앱 세션 바인딩.** 서버는 사용자 발화를 확인할 수 없다(MCP elicitation 불가). 그래서 토큰은 같은 계정 앱 세션 + 헤더로만 받는다. 대화 쪽은 W(`pc_connect`)·D(`migration_token_send`·`pc_forget`·`token_revoke`, bind)·한도·규칙 문장뿐 — prompt injection 피해 상한 = 내 PC 에 내 장치 토큰(사용자 데이터 읽기 없음).
+- **M2 「새 토큰 첫 사용 때 무효」.** 업로드가 `run-once` 때만이라 시간 유예는 새 토큰을 죽일 수 있다. 장치 = 대기 열, 이관 = 행마다 토큰이라 「안 쓴(last_used_at NULL) 앞 토큰은 발급 때 폐기 · 새 토큰 첫 인증 때 나머지 폐기」. 웹 재발급·이관 웹 발급도 같다.
+- **해제 기록은 서버가 지킨다.** 앱 userData 를 지워도 서버 설치본 표·장치 표의 해제가 남아 자동 연결(`/desktop/device/auto`)·교체가 `DEVICE-REVOKED`. 다시 연결은 대화(`pc_connect` → redeem)에서만.
+- **M3 계정 전환.** 다른 계정 설치본·grant 는 `NOT-OWNER` — 앱이 옛 계정 장치 토큰을 지우고 새 계정으로 다시 등록.
 
 ## `db.py` psycopg 판 메모(옛 SQLite 임시판과의 차이)
 Postgres 전환은 끝났다(2026-10-18, `db.py` psycopg 판). 후보 revision 검사는 PR① 에서 웹 결정에 넣었다(`expected_revision`). 남은 것(지인 검증 전): 같은 본문 10분 중복 억제, `state_get` 요약+커서, 입력 상한 거절. 토론 raw 는 세션 스크래치패드 `arch/`.

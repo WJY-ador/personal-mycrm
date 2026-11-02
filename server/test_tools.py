@@ -7677,8 +7677,10 @@ async def test_bi_imports():
         assert r.status_code == 401 and r.json()["code"] == "TOKEN-EXPIRED"
         tok2 = imports.device_reissue(A, DEV)["token"]
         r = await _bi_post(tok, act())
-        assert r.status_code == 401 and r.json()["code"] == "AUTH-INVALID", "재발급 = 옛 토큰 즉시 무효"
+        assert r.status_code == 401 and r.json()["code"] == "TOKEN-EXPIRED", "재발급 = 대기 토큰(M2) — 새 토큰을 쓰기 전엔 옛 토큰 그대로(여기선 만료)"
         assert (await _bi_post(tok2, act())).status_code == 201
+        r = await _bi_post(tok, act())
+        assert r.status_code == 401 and r.json()["code"] == "AUTH-INVALID", "새 토큰 첫 사용 = 옛 토큰 무효(M2)"
         _sql("UPDATE users SET blocked_at = now() WHERE id=%s", (A,))
         r = await _bi_post(tok2, act())
         assert r.status_code == 403 and r.json()["code"] == "AUTH-BLOCKED"

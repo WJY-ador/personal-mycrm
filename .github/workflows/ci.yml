@@ -216,6 +216,19 @@ jobs:
           PY
           python server/test_facade.py
 
+      # PC 연결·토큰 대화 발급(2026-11-02 가안 2) — 설치본·grant 상태기계·앱 세션 수령·자동 연결·교체·M2·해제 기록·이관 scope·facade
+      # ·값 없음·cascade(합성 PG). 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
+      - name: "④-k PC 연결 시험 (test_token_grants.py)"
+        env:
+          DATABASE_URL: postgresql://postgres:crm@localhost:5432/crm_test_token_grants
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:crm@localhost:5432/crm", autocommit=True) as c:
+              c.execute("CREATE DATABASE crm_test_token_grants")
+          PY
+          python server/test_token_grants.py
+
       # board 이전(2026-10-20) — 로컬 에이전트(agent/, 표준 라이브러리만). 서버 DB 를 쓰지 않는다
       - name: "④-b 로컬 에이전트 시험 (agent/tests)"
         run: python -m unittest discover -s agent/tests -t . -v

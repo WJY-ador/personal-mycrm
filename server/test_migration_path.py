@@ -170,8 +170,13 @@ def test_tokens(A, B):
     assert t1["token"].startswith("mig_mt_") and t1["info"]["active"] and "secret_hash" not in t1["info"]
     a = M.authenticate("Bearer " + t1["token"])
     assert a == {"user_id": A, "token_id": t1["info"]["id"]}
-    t2 = M.token_issue(A)   # 새로 발급 = 앞 토큰 폐기(사용자당 1개)
+    t2 = M.token_issue(A)   # 새로 발급 = 대기 토큰(M2, PC 연결 2026-11-02) — 쓰던 앞 토큰은 새 토큰 첫 사용 때 폐기
+    M.authenticate("Bearer " + t1["token"])   # 새 토큰을 아직 안 썼다 — 앞 토큰은 살아 있다
+    t2b = M.token_issue(A)   # 대기 토큰은 1개 — 다음 발급이 안 쓴 대기 토큰(t2)을 덮어쓴다
+    expect("TOKEN-REVOKED", M.authenticate, "Bearer " + t2["token"])
+    M.authenticate("Bearer " + t2b["token"])   # 첫 사용 → 앞 토큰 폐기
     expect("TOKEN-REVOKED", M.authenticate, "Bearer " + t1["token"])
+    t2 = t2b
     M.authenticate("Bearer " + t2["token"])
     expect("AUTH-INVALID", M.authenticate, "Bearer " + t2["token"][:-1] + ("A" if t2["token"][-1] != "A" else "B"))
     expect("AUTH-INVALID", M.authenticate, "Bearer imp_is_" + "0" * 24 + ".it_" + "0" * 16 + "." + "x" * 43)   # 일반 장치 토큰 꼴 거절
@@ -191,8 +196,8 @@ def test_tokens(A, B):
     st = M.token_status(A)
     assert st["enabled"] and st["allowed"] and st["token_days"] == 14 and not any(x["active"] for x in st["tokens"])
     assert all("secret" not in json.dumps(x) for x in st["tokens"])
-    assert sql("SELECT count(*) AS n FROM admin_audit WHERE action='migration_token' AND actor_id=%s", (A,))[0]["n"] == 3
-    ok("토큰: 스위치·allowlist(발급·사용 때마다) · 사용자당 1개 · 폐기·만료·변조·imp 토큰 거절 · 남의 토큰 404 · 감사 migration_token")
+    assert sql("SELECT count(*) AS n FROM admin_audit WHERE action='migration_token' AND actor_id=%s", (A,))[0]["n"] == 4
+    ok("토큰: 스위치·allowlist(발급·사용 때마다) · M2(새 토큰 첫 사용 때 앞 토큰 폐기·대기 1개) · 폐기·만료·변조·imp 토큰 거절 · 남의 토큰 404 · 감사 migration_token")
 
 
 def test_upload(A):
