@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import io
+import json
 import os
 import unittest
 
@@ -166,6 +167,38 @@ class TokenRotateTest(unittest.TestCase):
                 self.assertEqual(self.ks.get(MAIN), TOKEN)
                 self.assertIsNone(self.ks.get(PENDING))
         self.assert_no_secret_leak(TOKEN)
+
+    def test_refusal_backoff_24h(self):
+        self.connect()
+        self.expire_in(5)
+        self.srv.rotate_script = [(401, {"code": "TOKEN-EXPIRED"})]
+        code, out = self.cli("run-once")
+        self.assertIn("다시 연결하세요", out)
+        self.assertEqual(len(self.rotate_calls()), 1)
+        code, out = self.cli("run-once")                     # 24시간 안 — 묻지 않고 안내도 없다
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(self.rotate_calls()), 1)
+        self.assertNotIn("토큰 교체", out)
+        state = os.path.join(self.th.home, cli.ROTATE_STATE_FILE)
+        with open(state, encoding="utf-8") as f:
+            st = json.load(f)
+        self.assertEqual((st["source_instance_id"], st["code"]), (STREAM_ID, "TOKEN-EXPIRED"))
+        st["refused_at"] = (osutil.kst_now() - _dt.timedelta(hours=25)).isoformat(timespec="seconds")
+        with open(state, "w", encoding="utf-8") as f:
+            json.dump(st, f)
+        code, out = self.cli("run-once")                     # 하루 지남 — 다시 교체, 성공하면 기록을 지운다
+        self.assertEqual(len(self.rotate_calls()), 2)
+        self.assertIn("새 토큰으로 바꿨어요", out)
+        self.assertFalse(os.path.exists(state))
+        self.assert_no_secret_leak(TOKEN, self.srv.token)
+
+    def test_network_failure_not_backed_off(self):
+        self.connect()
+        self.expire_in(5)
+        self.srv.rotate_script = ["drop"]
+        self.cli("run-once")
+        self.cli("run-once")
+        self.assertEqual(len(self.rotate_calls()), 2)
 
     def test_rotate_bad_response_not_stored(self):
         self.connect()

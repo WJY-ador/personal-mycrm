@@ -162,29 +162,67 @@ def promote_pending(ctx: Ctx, cfg: dict, ks) -> str | None:
     return "promoted"
 
 
+ROTATE_REFUSED_BACKOFF = _dt.timedelta(hours=24)   # 서버가 교체를 거절하면 하루 한 번만 다시 묻는다(안내 반복 방지)
+ROTATE_STATE_FILE = "rotate-state.json"            # {source_instance_id, refused_at, code} — 토큰 값 없음
+
+
+def _rotate_refused_recently(ctx: Ctx, sid: str, now: _dt.datetime) -> bool:
+    try:
+        with open(os.path.join(ctx.paths.home, ROTATE_STATE_FILE), "r", encoding="utf-8") as f:
+            st = json.load(f)
+        at = _dt.datetime.fromisoformat(st["refused_at"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    if st.get("source_instance_id") != sid or at.tzinfo is None:
+        return False
+    return now - ROTATE_REFUSED_BACKOFF < at <= now + _dt.timedelta(minutes=5)   # 미래 시각(시계 어긋남)은 무시
+
+
+def _set_rotate_refused(ctx: Ctx, sid: str | None, code: str, now: _dt.datetime) -> None:
+    path = os.path.join(ctx.paths.home, ROTATE_STATE_FILE)
+    try:
+        if sid is None:
+            if os.path.exists(path):
+                os.remove(path)
+            return
+        data = {"source_instance_id": sid, "refused_at": now.isoformat(timespec="seconds"), "code": code}
+        osutil.atomic_write(path, json.dumps(data, ensure_ascii=False, sort_keys=True).encode("utf-8"))
+    except OSError:
+        pass                   # 기록 실패면 다음 실행이 다시 묻는다 — 안내가 한 번 더 나올 뿐
+
+
 def rotate_token(ctx: Ctx, cfg: dict, ks, *, now=None) -> str | None:
     """만료 30일 안이면 POST /api/device/rotate(Bearer 현 토큰) → 새 토큰을 대기 자리에 두고 바로 승격을 시도한다.
     반환: None(할 일 없음) · promote_pending 결과 · "rotate-<종류>[-코드]"(서버 거절·네트워크). 토큰 값은 반환·출력하지 않는다."""
     from .uploader import DeviceError
     sid, server = cfg.get("source_instance_id"), cfg.get("server_url")
-    if not sid or not server or not _rotate_due(cfg, now or osutil.kst_now()):
+    now = now or osutil.kst_now()
+    if not sid or not server or not _rotate_due(cfg, now):
         return None
     if ks.get(pending_token_account(sid)):
         return promote_pending(ctx, cfg, ks)
+    if _rotate_refused_recently(ctx, sid, now):
+        return None            # 24시간 안에 거절됨 — 조용히 건너뛴다
     old = ks.get(_config.token_account(sid))
     if not old:
         return None
     try:
         res = _uploader(ctx, server, old).rotate()
     except DeviceError as e:
-        return "rotate-" + e.kind + (("-" + e.code) if e.code else "")
+        r = "rotate-" + e.kind + (("-" + e.code) if e.code else "")
+        if e.kind != "network":    # 네트워크는 다음 실행에 바로 다시
+            _set_rotate_refused(ctx, sid, e.code or ("http-" + str(e.status)), now)
+        return r
     new = res.get("token") if isinstance(res, dict) else None
     try:
         stream_id, _tid = contract.parse_token(new if isinstance(new, str) else "")
     except contract.ContractError:
+        _set_rotate_refused(ctx, sid, "bad-response", now)
         return "rotate-bad-response"
     if stream_id != sid or res.get("stream_id") not in (None, sid):
+        _set_rotate_refused(ctx, sid, "bad-response", now)
         return "rotate-bad-response"
+    _set_rotate_refused(ctx, None, "", now)
     ks.set(pending_token_account(sid), new)
     return promote_pending(ctx, cfg, ks)
 
@@ -311,6 +349,7 @@ def cmd_connect(ctx: Ctx, a) -> int:
     except _config.ConfigError as e:
         ctx.say(f"설정 오류: {e}")
         return EXIT_ERR
+    _set_rotate_refused(ctx, None, "", osutil.kst_now())   # 새 토큰 — 지난 교체 거절 기록은 의미 없다
     ctx.say("연결했어요(서버 확인 완료).")
     ctx.say(f"  입력원 ID: {stream_id}")
     ctx.say(f"  정책 판: {new['policy_revision']} · 허용 행동: {', '.join(new['allowed_actions'] or []) or '없음'}"
