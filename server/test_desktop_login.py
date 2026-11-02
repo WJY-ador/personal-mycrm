@@ -313,6 +313,86 @@ async def test_http(A, B):
             assert (await app.get("/app")).status_code == 200
         ok("CRM_DEV 개발 사용자 흐름(AuthKit 없이 넘김 → claim → 세션)")
 
+        # ⑬ fresh=1 — 웹 세션이 있어도 지름길 없이 AuthKit(prompt=login)으로 → 다른 계정(B)으로 전환
+        site.dev, site.dev_user, site.client_id = False, "", "client_test"
+        async with T() as h, T() as app:
+            await flow(h, "tok-a")   # h 에 A 웹 세션
+            v, ch, st = pkce()
+            r = await h.get("/desktop/login", params={"challenge": ch, "state": st, "fresh": "1"})
+            assert r.status_code == 302 and r.headers["location"].startswith("https://fake.authkit.test/oauth2/authorize?"), r.status_code
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(r.headers["location"]).query)
+            assert q["prompt"] == ["login"] and "crm_desktop" in cookies(r), q
+            TOK["next"] = "tok-b"
+            r = await h.get("/auth/callback", params={"code": "authkit-code", "state": q["state"][0]})
+            assert_handoff_page(r)
+            code, _ = handoff_code(r)
+            assert (await claim(app, code, v, st)).status_code == 303
+            assert (await app.get("/api/state")).json()["user"]["email"] == B_EMAIL, "fresh=1 = 계정 전환"
+            r = await h.get("/desktop/login", params={"challenge": ch, "state": st})
+            assert r.status_code == 200, "fresh 없으면 종전대로 지름길"
+        ok("fresh=1 — 웹 세션 지름길 없이 AuthKit prompt=login · 다른 계정으로 넘김")
+
+        # ⑭ 개발 로그인(/dev/login) — CRM_DEV + 개발 사용자 폴백 없음(CRM_DEV_USER 빈 값) + AuthKit 설정 없음 = 로컬 E2E 경로
+        async with T() as h:
+            assert (await h.get("/dev/login")).status_code == 404, "운영(DEV 아님)엔 개발 로그인 없음"
+            assert (await h.post("/dev/login", data={"email": A_EMAIL}, headers={"origin": PUBLIC})).status_code == 404
+        site.dev, site.dev_user, site.client_id = True, "", ""
+        async with T() as h, T() as app:
+            assert (await app.get("/app")).status_code == 302, "개발 사용자 폴백 없음 — 쿠키 없으면 로그인 안 됨"
+            v, ch, st = pkce()
+            r = await h.get("/desktop/login", params={"challenge": ch, "state": st})
+            assert r.status_code == 302 and r.headers["location"] == "/dev/login" and "max-age=600" in cookies(r)["crm_desktop"], r.status_code
+            r = await h.get("/dev/login")
+            assert r.status_code == 200 and '<form method="post" action="/dev/login">' in r.text and 'name="email"' in r.text, r.text
+            assert "<script" not in r.text.lower() and r.headers["cache-control"] == "no-store"
+            assert (await h.post("/dev/login", data={"email": A_EMAIL})).status_code == 403, "Origin 없음 거절"
+            assert (await h.post("/dev/login", data={"email": "nope"}, headers={"origin": PUBLIC})).status_code == 400
+            r = await h.post("/dev/login", data={"email": A_EMAIL}, headers={"origin": PUBLIC})
+            assert_handoff_page(r)
+            assert "crm_session" in cookies(r), "브라우저 쪽 개발 세션도 생긴다"
+            code, _ = handoff_code(r)
+            r = await claim(app, code, v, st)
+            assert r.status_code == 303 and r.headers["location"] == "/app"
+            assert (await app.get("/api/state")).json()["user"]["email"] == A_EMAIL
+            # 브라우저에 세션이 있으면 지름길 · fresh=1 이면 다시 개발 로그인 폼(계정 전환)
+            v, ch, st = pkce()
+            assert (await h.get("/desktop/login", params={"challenge": ch, "state": st})).status_code == 200
+            r = await h.get("/desktop/login", params={"challenge": ch, "state": st, "fresh": "1"})
+            assert r.status_code == 302 and r.headers["location"] == "/dev/login"
+            r = await h.post("/dev/login", data={"email": B_EMAIL}, headers={"origin": PUBLIC})
+            assert_handoff_page(r)
+            code, _ = handoff_code(r)
+            assert (await claim(app, code, v, st)).status_code == 303
+            assert (await app.get("/api/state")).json()["user"]["email"] == B_EMAIL
+            # crm_desktop 없이 개발 로그인 = 302 /app(일반 웹 개발 로그인)
+            h.cookies.clear()
+            r = await h.post("/dev/login", data={"email": A_EMAIL}, headers={"origin": PUBLIC})
+            assert r.status_code == 302 and r.headers["location"] == "/app" and "crm_session" in cookies(r)
+        ok("개발 로그인(/dev/login) — DEV 아님 404 · 폼 · Origin · 넘김 · fresh=1 계정 전환 · crm_desktop 없으면 /app")
+
+        # ⑮ IP 상한 dict 크기 상한 — 기억하는 IP 가 상한이면 새 IP 는 그 분 동안 429
+        real_max = web.DESKTOP_CLAIM_IPS_MAX
+        try:
+            web.DESKTOP_CLAIM_IPS_MAX = 2
+            async with T() as app:
+                for i in (1, 2):
+                    assert (await claim(app, "A" * 43, "B" * 43, "C" * 22, headers={"x-forwarded-for": f"192.0.2.{i}"})).status_code == 400
+                assert_fail(await claim(app, "A" * 43, "B" * 43, "C" * 22, headers={"x-forwarded-for": "192.0.2.3"}), 429)
+                assert (await claim(app, "A" * 43, "B" * 43, "C" * 22, headers={"x-forwarded-for": "192.0.2.1"})).status_code == 400
+                assert len(site._claims) == 2
+        finally:
+            web.DESKTOP_CLAIM_IPS_MAX = real_max
+            site._claims.clear()
+        ok("IP 기억 상한 — 넘으면 새 IP 429 · 아는 IP 는 그대로")
+
+        # ⑯ 주기 정리(main.purge_once) — 만료 넘김 행 삭제
+        with db.tx() as c:
+            c.execute("UPDATE desktop_handoffs SET created_at=now() - interval '3 minutes', expires_at=now() - interval '1 minute'")
+        assert row_count("expires_at <= now()") >= 1
+        await main.purge_once()
+        assert row_count("expires_at <= now()") == 0
+        ok("주기 정리(purge_once) — 만료 넘김 행 삭제")
+
         # ⑫ 사용자 삭제 → 넘김 행도 삭제
         site.dev, site.dev_user, site.client_id = False, "", "client_test"
         async with T() as h:

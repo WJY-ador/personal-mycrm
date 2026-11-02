@@ -49,6 +49,8 @@ DESKTOP_COOKIE = "crm_desktop"   # {c: challenge, s: state} 서명 쿠키 10분.
 DESKTOP_TTL = 600
 DESKTOP_DEEPLINK = "mycrm://auth/callback"   # 고정 — 돌아갈 곳을 요청에서 받지 않는다(open redirect 없음)
 DESKTOP_CLAIM_PER_MIN = 10   # /desktop/claim IP 당 분당 상한(메모리 — 인스턴스 1개)
+DESKTOP_CLAIM_IPS_MAX = 10000   # 한 분 안에 기억하는 IP 수 상한 — 넘으면 새 IP 는 그 분 동안 429(메모리 무한 성장 없음)
+DEV_EMAIL_MAX = 254
 DESKTOP_FORM_MAX = 2048
 _B64_43 = re.compile(r"[A-Za-z0-9_-]{43}")   # challenge = base64url(sha256(verifier)) · 넘김 코드(32바이트) · verifier(32바이트), 패딩 없음
 _DESKTOP_STATE = re.compile(r"[A-Za-z0-9_-]{16,64}")   # 앱 state(16바이트 base64url = 22자). 길이 상한만 두고 값 그대로 저장
@@ -1360,14 +1362,19 @@ class Web:
         except Exception as e:   # ToolError·CrmError — 메시지만 보인다
             msg = getattr(e, "message", None) or str(e)
             return _page("사용자를 연결하지 못했어요", f"<p>{_esc(msg)}</p>{again}", 502)
-        # 앱 로그인 넘김 — /desktop/login 이 남긴 crm_desktop 쿠키가 살아 있을 때만 「앱으로 돌아가요」. 없거나 만료·변조면 종전대로 /app
+        resp = await self._finish_login(request, uid)
+        self.clear_cookie(resp, FLOW_COOKIE)
+        return resp
+
+    async def _finish_login(self, request, uid: str) -> Response:
+        """로그인 성공 뒤 — 세션 쿠키 + (crm_desktop 쿠키가 살아 있으면 「앱으로 돌아가요」, 없거나 만료·변조면 종전대로 302 /app).
+        /auth/callback 과 개발 로그인(/dev/login, CRM_DEV 만)이 같이 쓴다."""
         d = self.unsign(request.cookies.get(DESKTOP_COOKIE))
         if d and _B64_43.fullmatch(str(d.get("c", ""))) and _DESKTOP_STATE.fullmatch(str(d.get("s", ""))):
             resp = await self._handoff_page(uid, d["c"], d["s"])
         else:
             resp = RedirectResponse("/app", status_code=302)
         self.set_cookie(resp, SESSION_COOKIE, self.session_value(uid), SESSION_TTL)
-        self.clear_cookie(resp, FLOW_COOKIE)
         return resp
 
     # ── 앱 로그인 넘김 (2026-11-02) ───────────────────────
@@ -1375,13 +1382,18 @@ class Web:
     # /desktop/login(시스템 브라우저 GET) → [AuthKit → /auth/callback] → 「앱으로 돌아가요」(mycrm://auth/callback?code&state)
     # → 앱 창이 POST /desktop/claim(code·verifier·state) → 세션 쿠키 → 303 /app. 코드·verifier·state 값은 로그·오류 문구에 넣지 않는다.
     async def desktop_login(self, request):
-        """형식 검사(400) → 이미 웹 세션(DEV = 개발 사용자)이면 AuthKit 없이 바로 넘김 페이지 → 아니면 crm_desktop 쿠키 + 기존 /login 흐름."""
+        """형식 검사(400) → 이미 웹 세션(DEV = 개발 사용자)이면 AuthKit 없이 바로 넘김 페이지(fresh=1 이면 건너뛰지 않는다 — 계정 전환)
+        → 아니면 crm_desktop 쿠키 + 기존 /login 흐름(fresh=1 이면 prompt=login). CRM_DEV 이고 AuthKit 설정이 없으면 개발 로그인 폼(/dev/login)."""
         ch, st = request.query_params.get("challenge", ""), request.query_params.get("state", "")
         if not (_B64_43.fullmatch(ch) and _DESKTOP_STATE.fullmatch(st)):
             return self._desktop_fail("앱 로그인 요청이 올바르지 않아요", 400)
-        if await self.uid_of(request) is not None:
+        fresh = request.query_params.get("fresh") == "1"
+        if not fresh and await self.uid_of(request) is not None:
             return await self._handoff_page(request.state.uid, ch, st)
-        resp = await self.login(request)   # login_ready 아니면 503 페이지 — 그때는 쿠키를 붙이지 않는다
+        if self.dev and not self.login_ready:
+            resp = RedirectResponse("/dev/login", status_code=302)
+        else:
+            resp = await self.login(request)   # login_ready 아니면 503 페이지 — 그때는 쿠키를 붙이지 않는다. fresh=1 은 login 이 읽는다
         if resp.status_code == 302:
             self.set_cookie(resp, DESKTOP_COOKIE, self.sign({"c": ch, "s": st}, DESKTOP_TTL), DESKTOP_TTL)
         return resp
@@ -1420,6 +1432,8 @@ class Web:
         m = int(time.time() // 60)
         for k in [k for k, (mm, _) in self._claims.items() if mm != m]:
             del self._claims[k]
+        if ip not in self._claims and len(self._claims) >= DESKTOP_CLAIM_IPS_MAX:
+            return False
         n = self._claims.get(ip, (m, 0))[1] + 1
         self._claims[ip] = (m, n)
         return n <= DESKTOP_CLAIM_PER_MIN
@@ -1451,6 +1465,28 @@ class Web:
         resp = RedirectResponse("/app", status_code=303)
         self.set_cookie(resp, SESSION_COOKIE, self.session_value(uid), SESSION_TTL)
         return resp
+
+    async def dev_login(self, request):
+        """개발 로그인 — CRM_DEV 만(아니면 404, 없는 경로와 같은 모양). AuthKit 없이 이메일로 세션 쿠키를 만든다(앱 로그인 넘김 로컬 E2E용).
+        GET = 폼(email). POST = Origin(403) → form email(400) → db.user_by_email(없으면 만든다) → 차단·삭제면 403 → _finish_login.
+        CRM_DEV_USER 가 비어 있어야(빈 문자열) 쿠키 없는 개발 사용자 폴백이 꺼져 넘김을 증명할 수 있다."""
+        if not self.dev:
+            return _not_found()
+        if request.method == "GET":
+            body = ('<p>개발 모드(CRM_DEV=1) 전용 로그인이에요. 운영에는 이 화면이 없어요.</p>'
+                    '<form method="post" action="/dev/login"><p><label>이메일 <input name="email" type="email" required '
+                    'autocomplete="username" value="dev@local"></label></p><p><button type="submit">개발 로그인</button></p></form>')
+            return _page("개발 로그인", body, headers={"cache-control": "no-store"})
+        if not self.same_origin(request):
+            return _page("다른 사이트에서 온 요청이에요", "<p>ORIGIN</p>", 403, headers={"cache-control": "no-store"})
+        form = await self._admin_form(request, DESKTOP_FORM_MAX)
+        email = ((form or {}).get("email") or "").strip()
+        if not email or "@" not in email or len(email) > DEV_EMAIL_MAX:
+            return _page("이메일이 필요해요", '<p><a href="/dev/login">다시 하기</a></p>', 400, headers={"cache-control": "no-store"})
+        u = await run_in_threadpool(db.user_by_email, email)
+        if u.get("blocked_at") or u.get("status") == "deleted":
+            return _page("이 계정은 지금 쓸 수 없어요", "", 403, headers={"cache-control": "no-store"})
+        return await self._finish_login(request, u["id"])
 
     async def logout(self, request):
         if not self.same_origin(request):
@@ -2928,6 +2964,7 @@ class Web:
             Route("/auth/callback", self.callback),
             Route("/desktop/login", self.desktop_login),
             Route("/desktop/claim", self.desktop_claim, methods=["POST"]),
+            Route("/dev/login", self.dev_login, methods=["GET", "POST"]),   # CRM_DEV 만(아니면 404)
             Route("/logout", self.logout, methods=["POST"]),
             Route("/api/state", u("web:state", self.api_state)),
             Route("/api/journal", u("web:journal", self.api_journal)),
