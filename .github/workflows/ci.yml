@@ -190,6 +190,19 @@ jobs:
           PY
           python server/test_migration_screen.py
 
+      # 앱 로그인 넘김(2026-11-02) — /desktop/login · /auth/callback 넘김 · /desktop/claim(PKCE·일회용·2분·state·IP 한도) · 일반 로그인 불변
+      # · CRM_DEV 흐름 · 로그에 값 없음(합성 PG). 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
+      - name: "④-i 앱 로그인 넘김 시험 (test_desktop_login.py)"
+        env:
+          DATABASE_URL: postgresql://postgres:crm@localhost:5432/crm_test_desktop_login
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:crm@localhost:5432/crm", autocommit=True) as c:
+              c.execute("CREATE DATABASE crm_test_desktop_login")
+          PY
+          python server/test_desktop_login.py
+
       # board 이전(2026-10-20) — 로컬 에이전트(agent/, 표준 라이브러리만). 서버 DB 를 쓰지 않는다
       - name: "④-b 로컬 에이전트 시험 (agent/tests)"
         run: python -m unittest discover -s agent/tests -t . -v

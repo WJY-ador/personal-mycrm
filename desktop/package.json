@@ -15,6 +15,7 @@
     "files":["src/**/*", "package.json"],
     "extraResources":[{"from":"../release/agent", "to":"agent", "filter":["**/*"]}],
     "asar":true,
+    "protocols":[{"name":"MyCRM", "schemes":["mycrm"]}],
     "artifactName":"MyCRM-${version}-${os}-${arch}.${ext}",
     "mac":{"category":"public.app-category.productivity", "target":["dmg"], "hardenedRuntime":true, "identity":"-"},
     "win":{"target":[{"target":"nsis","arch":["x64"]}]},

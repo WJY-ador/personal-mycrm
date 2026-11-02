@@ -3897,6 +3897,7 @@ async def run():
         await test_prb_privacy()
         test_bi_schema()
         test_mig_path_schema()
+        test_desktop_schema()
         test_bi_contract()
         await test_bi_imports()
         await test_bi_aggregate()
@@ -6875,7 +6876,7 @@ def test_prb_oldcode():
     ref = os.environ.get("CRM_TEST_OLD_REF", "5704546")   # PR #21 최종 커밋(feat/admin-setup) — 브랜치가 지워져도 돈다
     assert not subprocess.run(["git", "-C", str(HERE), "rev-parse", "--verify", "-q", ref + "^{commit}"], capture_output=True).returncode, \
         f"24e 옛 코드 호환: 커밋 {ref} 이 없어요(얕은 clone 이면 fetch-depth 0)"
-    tables = ("users", "admin_audit", "ticket_history", "sources", "records") + PRB_TABLES + MIG_PATH_TABLES   # 이관 경로 새 표도 옛 init 에 불변
+    tables = ("users", "admin_audit", "ticket_history", "sources", "records") + PRB_TABLES + MIG_PATH_TABLES + DESKTOP_TABLES   # 이관 경로·앱 로그인 넘김 새 표도 옛 init 에 불변
     name = f"prbold_{secrets.token_hex(3)}"
     create_schema(name)
     try:
@@ -7216,6 +7217,53 @@ def test_mig_path_schema():
     order = {t: i for i, t in enumerate(db.DELETE_TABLES)}
     assert set(MIG_PATH_TABLES) <= set(order) and order["migration_plan_items"] < order["migration_plans"], "삭제 목록 = 항목 → plan"
     print("OK — 이관 경로 스키마(옛 DB → init 2회 = 새 DB · date_kind 옛 행 NULL · CHECK · 새 표 3개 · 감사 migration_token · 삭제 목록) 통과")
+
+
+DESKTOP_TABLES = ("desktop_handoffs",)   # 앱 로그인 넘김(2026-11-02) 새 표
+
+
+def test_desktop_schema():
+    """앱 로그인 넘김(2026-11-02) 스키마 — 옛 DB(desktop_handoffs 없음) → init_schema 2회 = 새 DB 모양(표·CHECK·인덱스)
+    · CHECK 가 모양 틀린 challenge·state·해시를 막는다 · 삭제 목록에 새 표 · 사용자 삭제 = cascade."""
+    fresh, old = f"dhf_{secrets.token_hex(3)}", f"dho_{secrets.token_hex(3)}"
+    create_schema(fresh)
+    create_schema(old)
+    try:
+        with schema_conn(fresh) as c:
+            db.init_schema(c)
+            c.commit()
+            want = _prb_shape(c, DESKTOP_TABLES)
+        with schema_conn(old) as c:
+            db.init_schema(c)
+            c.execute("DROP TABLE desktop_handoffs")
+            c.execute("INSERT INTO users (id,email) VALUES ('u_dh','dh@x.test')")
+            c.commit()
+            assert not db._has_table(c, "desktop_handoffs"), "옛 모양 재현"
+            db.init_schema(c)
+            c.commit()
+            first = _prb_shape(c, DESKTOP_TABLES)
+            db.init_schema(c)
+            c.commit()
+            assert _prb_shape(c, DESKTOP_TABLES) == first == want, "옛 DB 2회 = 새 DB 모양(desktop_handoffs·CHECK·인덱스)"
+            ins = ("INSERT INTO desktop_handoffs (code_hash,user_id,challenge,state,expires_at) "
+                   "VALUES (%s,'u_dh',%s,%s,now() + interval '2 minutes')")
+            c.execute(ins, (b"\x01" * 32, "A" * 43, "B" * 22))
+            c.commit()
+            for bad in ((b"\x02" * 32, "A" * 42, "B" * 22), (b"\x03" * 32, "A" * 42 + "=", "B" * 22), (b"\x04" * 32, "A" * 43, "B" * 15),
+                        (b"\x05" * 32, "A" * 43, "B/" * 11), (b"\x06" * 31, "A" * 43, "B" * 22)):
+                try:
+                    c.execute(ins, bad)
+                    raise AssertionError(f"CHECK 가 막지 않았다: {bad[1:]}")
+                except psycopg.errors.CheckViolation:
+                    c.rollback()
+            c.execute("DELETE FROM users WHERE id='u_dh'")
+            assert not c.execute("SELECT 1 FROM desktop_handoffs").fetchone(), "사용자 삭제 = cascade"
+            c.rollback()
+    finally:
+        drop_schema(fresh)
+        drop_schema(old)
+    assert set(DESKTOP_TABLES) <= set(db.DELETE_TABLES), "삭제 목록에 새 표"
+    print("OK — 앱 로그인 넘김 스키마(옛 DB → init 2회 = 새 DB · CHECK challenge 43·state 16~64·해시 32 · cascade · 삭제 목록) 통과")
 
 
 def test_bi_schema():

@@ -955,6 +955,11 @@ async def purge_once():
             print(f"[jobs] 작업 정리 {n}건", flush=True)
     except Exception as e:
         print(f"[jobs] 작업 정리 실패 — 계속: {type(e).__name__}", flush=True)
+    try:   # 앱 로그인 넘김 — 만료 넘김 코드 정리(발급 때도 지운다)
+        if n := await run_in_threadpool(db.desktop_handoffs_purge):
+            print(f"[desktop] 만료 넘김 코드 {n}건 정리", flush=True)
+    except Exception as e:
+        print(f"[desktop] 넘김 코드 정리 실패 — 계속: {type(e).__name__}", flush=True)
 
 
 async def trash_purge_round():
