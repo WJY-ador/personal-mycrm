@@ -2088,7 +2088,7 @@ class Web:
                                        lambda uid, b: migration.plan_check(uid, pid, b["seqs"], b["checked"]))
         if (op, request.method) == ("apply", "POST"):
             return await self._mig_web(request, "migration_apply", {"plan_hash": ((str,), True)},
-                                       lambda uid, b: migration.plan_apply(uid, pid, b["plan_hash"]))
+                                       lambda uid, b: migration.plan_apply(uid, pid, b["plan_hash"], via="web"))   # 감사 via=web(가안 X)
         if (op, request.method) == ("cancel", "POST"):
             return await self._mig_web(request, "migration_cancel", {}, lambda uid, b: migration.plan_cancel(uid, pid), quota=False)
         return JSONResponse({"code": "NOT-FOUND", "msg": "그런 경로는 없어요."}, status_code=404, headers={"cache-control": "no-store"})
