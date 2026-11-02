@@ -135,8 +135,12 @@ async def flow(h, who="tok-a"):
     return code, v, st, r
 
 
-async def claim(h, code, verifier, state, headers=None):
-    return await h.post("/desktop/claim", data={"code": code, "verifier": verifier, "state": state}, headers=headers or {})
+APP_H = {"x-mycrm-desktop": "1"}   # 앱이 loadURL extraHeaders 로 붙이는 필수 헤더
+
+
+async def claim(h, code, verifier, state, headers=None, app_header=True):
+    hd = {**(APP_H if app_header else {}), **(headers or {})}
+    return await h.post("/desktop/claim", data={"code": code, "verifier": verifier, "state": state}, headers=hd)
 
 
 TOK = {"next": "tok-a"}
@@ -256,11 +260,11 @@ async def test_http(A, B):
                          {"code": code, "verifier": cv + "x", "state": cst}, {"code": code, "verifier": cv, "state": cst + "!"},
                          {"code": code, "verifier": "A" * 43, "state": cst}):
                 async with T() as app:
-                    assert_fail(await app.post("/desktop/claim", data=form), 400)
+                    assert_fail(await app.post("/desktop/claim", data=form, headers=APP_H), 400)
             async with T() as app:
-                assert_fail(await app.post("/desktop/claim", json={"code": code, "verifier": cv, "state": cst}), 400)
+                assert_fail(await app.post("/desktop/claim", json={"code": code, "verifier": cv, "state": cst}, headers=APP_H), 400)
                 big = {"code": code, "verifier": cv, "state": cst, "pad": "x" * 3000}
-                assert_fail(await app.post("/desktop/claim", data=big), 400)
+                assert_fail(await app.post("/desktop/claim", data=big, headers=APP_H), 400)
                 r = await claim(app, code, cv, cst, headers={"origin": "null"})
                 assert r.status_code == 303, "Origin 없음·null 모두 받는다(앱 창의 브라우저 시작 요청)"
         ok("형식 이상 거절(challenge 43·state 16~64 base64url · 폼만 · 2KB) · 실패에 값·쿠키 없음")
@@ -327,7 +331,23 @@ async def test_http(A, B):
                 h.cookies.clear()
                 code, v, st, _ = await flow(h)
                 assert (await claim(app, code, v, st, headers=hd)).status_code == 303, ("Origin 없음·null 허용", hd)
-        ok("claim Origin — 외부·빈 값·file 403(코드 안 태움) · 없음·null·자기 origin 허용")
+            # X-MyCRM-Desktop 필수 — 없거나 1 이 아니면 403(코드 안 태움) · 있고 null 이면 303 · 있고 외부면 403
+            h.cookies.clear()
+            code, v, st, _ = await flow(h)
+            for hd in ({"origin": "null"}, {}, {"origin": PUBLIC}, {"origin": "null", "x-mycrm-desktop": "0"}):
+                r = await claim(app, code, v, st, headers=hd, app_header=False)
+                assert_fail(r, 403)
+                assert "MyCRM 앱에서 온 요청이 아니에요" in r.text
+            assert_fail(await claim(app, code, v, st, headers={"origin": "https://evil.example"}), 403)
+            assert row_count("used_at IS NOT NULL AND code_hash=%s", (hashlib.sha256(code.encode()).digest(),)) == 0, "헤더 거절은 코드를 안 태운다"
+            assert (await claim(app, code, v, st, headers={"origin": "null"})).status_code == 303, "헤더 + null = 앱 창"
+            # CORS 허용 응답 없음 — 사전 요청(preflight)이 막혀 fetch 로 헤더를 실을 수 없다
+            r = await app.request("OPTIONS", "/desktop/claim", headers={"origin": "https://evil.example", "access-control-request-method": "POST",
+                                                                      "access-control-request-headers": "x-mycrm-desktop"})
+            assert not any(k.lower().startswith("access-control-") for k in r.headers), dict(r.headers)
+            assert r.status_code != 200 or not r.headers.get("access-control-allow-origin"), r.status_code
+        ok("claim Origin·헤더 — 외부·빈 값·file 403 · X-MyCRM-Desktop 없거나 틀리면 403(코드 안 태움) · 헤더+없음·null·자기 origin 303"
+           " · preflight 에 Access-Control-* 없음")
 
         # ⑱ 일반 /login 은 남은 crm_desktop 을 지운다 — 앱 로그인을 버린 뒤 일반 로그인은 /app 으로
         async with T() as h:
@@ -345,6 +365,13 @@ async def test_http(A, B):
             h.cookies.clear()
             r = await h.get("/login")
             assert "crm_desktop" not in cookies(r), "crm_desktop 이 없으면 /login 응답 종전과 같다(지우는 헤더 없음)"
+            # /desktop/login 은 옛 crm_desktop 을 들고 와도 새 값으로 한 번만 심는다(지우는 헤더 없음 — 순서 문제 없음)
+            h.cookies.set("crm_desktop", site.sign({"c": "A" * 43, "s": "B" * 22}, 600))
+            v, ch, st = pkce()
+            r = await h.get("/desktop/login", params={"challenge": ch, "state": st})
+            sets = [x for x in r.headers.get_list("set-cookie") if x.startswith("crm_desktop=")]
+            assert r.status_code == 302 and len(sets) == 1 and "max-age=600" in sets[0].lower(), sets
+            assert site.unsign(sets[0].split(";", 1)[0].split("=", 1)[1])["c"] == ch, "새 challenge 로 심는다"
         ok("일반 /login — 남은 crm_desktop 지움 → callback 302 /app · 쿠키 없으면 응답 불변")
 
         # ⑬ fresh=1 — 웹 세션이 있어도 지름길 없이 AuthKit(prompt=login)으로 → 다른 계정(B)으로 전환
@@ -398,6 +425,11 @@ async def test_http(A, B):
             code, _ = handoff_code(r)
             assert (await claim(app, code, v, st)).status_code == 303
             assert (await app.get("/api/state")).json()["user"]["email"] == B_EMAIL
+            # 만료 crm_desktop 을 들고 개발 로그인 = 넘김 아님 → 302 /app + 쿠키 삭제
+            h.cookies.clear()
+            h.cookies.set("crm_desktop", site.sign({"c": "A" * 43, "s": "B" * 22}, -10))
+            r = await h.post("/dev/login", data={"email": A_EMAIL}, headers={"origin": PUBLIC})
+            assert r.status_code == 302 and r.headers["location"] == "/app" and "max-age=0" in cookies(r).get("crm_desktop", ""), cookies(r)
             # crm_desktop 없이 개발 로그인 = 302 /app(일반 웹 개발 로그인)
             h.cookies.clear()
             r = await h.post("/dev/login", data={"email": A_EMAIL}, headers={"origin": PUBLIC})

@@ -52,6 +52,7 @@ DESKTOP_CLAIM_PER_MIN = 10   # /desktop/claim IP 당 분당 상한(메모리 —
 DESKTOP_CLAIM_IPS_MAX = 10000   # 한 분 안에 기억하는 IP 수 상한 — 넘으면 새 IP 는 그 분 동안 429(메모리 무한 성장 없음)
 DEV_EMAIL_MAX = 254
 DESKTOP_FORM_MAX = 2048
+DESKTOP_HEADER = "x-mycrm-desktop"   # claim 필수 요청 헤더(값 "1") — 앱이 loadURL extraHeaders 로 붙인다. 다른 사이트의 폼은 못 싣는다
 _B64_43 = re.compile(r"[A-Za-z0-9_-]{43}")   # challenge = base64url(sha256(verifier)) · 넘김 코드(32바이트) · verifier(32바이트), 패딩 없음
 _DESKTOP_STATE = re.compile(r"[A-Za-z0-9_-]{16,64}")   # 앱 state(16바이트 base64url = 22자). 길이 상한만 두고 값 그대로 저장
 
@@ -1450,16 +1451,23 @@ class Web:
     async def desktop_claim(self, request):
         """POST form(code·verifier·state) → 코드 해시 조회 · 미사용 · 미만료 · sha256(verifier)==challenge · state 일치 → used_at(원자적)
         → crm_session 쿠키 → 303 /app. 실패 = 사람이 읽는 페이지(값 없음).
-        Origin 검사 완화(이 경로만): 앱이 딥링크를 받은 뒤 창의 loadURL(postData)로 보내는 브라우저 시작 요청이라 Origin 이 없거나 null 이다.
-        그래서 정확히 일치(same_origin) 대신 「없음·null·자기 origin」만 받는다 — 다른 사이트가 자기 계정 코드로 폼을 자동 제출해
-        피해자를 공격자 계정에 로그인시키는 것(login CSRF)은 Origin 으로 막는다. 나머지는 일회용 코드(해시만 저장)·2분 만료
-        ·PKCE(verifier 는 앱 메모리에만)·state·IP 분당 상한."""
+        Origin 규칙(이 경로만 same_origin 대신): 헤더 없음·"null"·자기 origin 만 받고, 그 밖의 Origin 은 403.
+        null 을 받는 이유 — 앱 창의 loadURL(postData) 요청은 Origin "null" 을 보낸다(D2 실측: Electron 45.1.0, 창이 data: 페이지일 때).
+        null 허용의 구멍 — 공격자 페이지의 sandboxed iframe·data: 문서가 폼을 자동 제출해도 Origin 이 null 이다. 공격자는 자기 계정으로
+        받은 code·verifier·state 를 다 갖고 있어 PKCE 는 이 login CSRF(피해자를 공격자 계정에 로그인)를 못 막는다.
+        그래서 사용자 정의 헤더 X-MyCRM-Desktop: 1 을 필수로 한다(없으면 403) — HTML 폼은 사용자 정의 헤더를 못 싣고, fetch·XHR 로 실으면
+        사전 요청(preflight)이 먼저 나가는데 서버는 CORS 허용 응답(Access-Control-Allow-*)을 주지 않아 막힌다.
+        그 밖의 방어 = 일회용 코드(해시만 저장)·2분 만료·PKCE(앱 코드 가로채기 대비, verifier 는 앱 메모리에만)·state·IP 분당 상한.
+        Origin·헤더 거절은 코드를 태우지 않는다."""
         if not self.secret:
             return self._desktop_fail("아직 로그인을 열지 않았어요", 503)
         origin = request.headers.get("origin")
         if origin is not None and origin != "null" and origin not in self.origins:
             print("[desktop] 앱 로그인 교환 거절: origin", flush=True)
             return self._desktop_fail("다른 사이트에서 온 요청이에요", 403)
+        if request.headers.get(DESKTOP_HEADER) != "1":
+            print("[desktop] 앱 로그인 교환 거절: header", flush=True)
+            return self._desktop_fail("MyCRM 앱에서 온 요청이 아니에요", 403)
         if not self._claim_rate_ok(request):
             resp = self._desktop_fail("요청이 너무 잦아요", 429)
             resp.headers["retry-after"] = str(max(1, 60 - int(time.time()) % 60))
@@ -1501,7 +1509,10 @@ class Web:
         u = await run_in_threadpool(db.user_by_email, email)
         if u.get("blocked_at") or u.get("status") == "deleted":
             return _page("이 계정은 지금 쓸 수 없어요", "", 403, headers={"cache-control": "no-store"})
-        return await self._finish_login(request, u["id"])
+        resp = await self._finish_login(request, u["id"])
+        if resp.status_code != 200 and DESKTOP_COOKIE in request.cookies:   # 넘김이 아닌 끝(만료·변조 crm_desktop) — 남은 쿠키 지움
+            self.clear_cookie(resp, DESKTOP_COOKIE)
+        return resp
 
     async def logout(self, request):
         if not self.same_origin(request):
