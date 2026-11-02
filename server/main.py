@@ -36,6 +36,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 import activity
 import auth
 import db
+import facade
 import imports
 import migration
 import web
@@ -56,6 +57,8 @@ INSTRUCTIONS = """이 서버는 사용자의 「내 판단 대시보드」다. �
 - 사람(person_save)은 사용자가 말한 별칭 하나만 저장한다. 연락처·소속·SNS·그 사람의 말·평가는 넣지 않는다.
 - 출처 요약/반응(source_reflection_save)은 사용자가 출처를 접한 뒤 한 자기 생각만 저장한다. 타인의 말·경험·생각을 옮기거나 다시 정리하지 않는다. 검토 완료는 판단 확정이 아니고 근거로 인용할 수 없다 — 사용자가 말할 때만 source_reflection_review 를 부른다.
 - 삭제는 휴지통이다(휴지통이 켜졌을 때). 내 글·항목(기준·결정·축·커스텀)·사람·읽고 든 생각·활동은 사용자가 지우라고 말할 때만 trash_move 로 옮긴다. 삭제 시각부터 168시간 안에 trash_restore 로 복원할 수 있고, 그 뒤엔 서버 정리 때 영구 삭제된다. trash_purge(영구 삭제 요청)는 되돌릴 수 없으니 사용자가 분명히 말할 때만 부른다. 휴지통 대상은 다른 도구에서 보이지 않는다. 휴지통이 켜지면 기준의 남기지 않기·되돌리기(item_decide exclude·pending)는 없다 — 남기지 않을 기준은 삭제한다.
+- 도구 다섯 개(find·read·write·decide·purge): find 로 할 일(op)을 찾고 그 등급 도구로 부른다. op 이름은 위 규칙의 도구 이름 그대로다. 확정·삭제는 read(op="decide_preview") 의 shown 을 고치지 않고 그대로 사용자에게 보여 주고, 사용자가 말한 뒤에만 decide·purge 에 그 bind 를 넣어 부른다. 이관(migration_*) 반영은 decide_preview 대신 migration_apply_preview 를 쓴다.
+- 한계: 이 서버는 호출 중 사용자에게 되물을 수 없다. 등급 나눔은 편의 장치이고, 사용자 확인은 위 규칙 문장으로 지킨다.
 """
 
 DEV = env("DEV") == "1"
@@ -98,6 +101,9 @@ ALLOWED_TOOLS = frozenset({
     "activity_list", "activity_get", "person_context_get", "source_context_get", "me_aggregate_get", "inbox_list", "inbox_get",
     "trash_list",   # 휴지통 PR-1 목록(본문 없음)
     "migration_receipt_get"})   # 이관 경로(2026-11-02) 영수증 read-back — 해시·개수만(본문 없음). 확인·반영은 웹 세션에서만
+# facade 겉면 5개(2026-11-02) — WRITE_TOOLS 에 넣지 않는다(guard 가 WRITE_LIMITS["write"] 를 찾다 깨진다). 쓰기 검사·NAME-REQUIRED 는
+# 안쪽 op 의 guard 가 건다. 등록 도구 = WRITE ∪ ALLOWED ∪ FACADE(시험 24)
+FACADE_TOOLS = frozenset({"find", "read", "write", "decide", "purge"})
 
 # 도구 호출 하나 안에서 푼 uid — guard 가 호출마다 새 dict 를 꽂는다. 쓰기 게이트(전역 크기)와 도구 본문이 같은 조회를 한 번만 하고,
 # 사용 집계(usage_count)가 추가 DB 조회 없이 uid 를 읽는다. guard 밖(직접 호출)에선 None — 매번 푼다.
@@ -124,7 +130,9 @@ def guard(fn):
     """CrmError 를 모델이 읽을 수 있는 ToolError 로 바꾼다. wraps 로 서명을 보존해야 입력 스키마가 유지된다.
     쓰기 도구(db.WRITE_LIMITS 의 키)는 실행 전에 db.write_gate — 인자 길이(PAYLOAD-LIMIT)
     ·전역 DB 크기(QUOTA-GLOBAL, QUOTA_EXEMPT 는 빼고). 모든 도구(읽기 포함)를 db.usage_count 로 센다 — 정상 OK, CrmError 는 그 code,
-    그 밖 예외(ToolError 포함)는 EXC. uid 는 이 호출 안에서 이미 푼 것만 쓴다(못 풀었으면 '')."""
+    그 밖 예외(ToolError 포함)는 EXC. uid 는 이 호출 안에서 이미 푼 것만 쓴다(못 풀었으면 '').
+    facade 경유(facade.VIA = "f")면 집계 키 = f:<op>. 확정·삭제 op(facade.PREVIEWS)은 쓰기 검사 전에 facade.bind_gate.
+    CrmError 에 detail(dict)이 있으면 오류 문구 끝에 detail=<json>."""
     sig = inspect.signature(fn)
     name = fn.__name__
     write = name in db.WRITE_LIMITS
@@ -134,24 +142,32 @@ def guard(fn):
     def run(*a, **k):
         memo = {}
         token = _call_uid.set(memo)
+        via = facade.VIA.get()   # "f" = facade 겉면 경유 — 사용 집계 키에만 f: 를 붙인다(write_gate·WRITE_LIMITS 는 op 이름 그대로)
         code = "EXC"
         try:
             if write:
                 args = sig.bind(*a, **k).arguments
-                db.write_gate(name, {n: v for n, v in args.items() if n != "ctx"}, lambda: uid_of(args["ctx"]), quota)
+                uid_fn = lambda: uid_of(args["ctx"])  # noqa: E731
+                if name in facade.PREVIEWS:   # 확정·삭제 op — bind 를 주면(직접) 또는 facade 경유면(필수) 쓰기 검사 전에 본다
+                    facade.bind_gate(name, args, uid_fn, required=via == "f")
+                db.write_gate(name, {n: v for n, v in args.items() if n not in ("ctx", "bind")}, uid_fn, quota)
             out = fn(*a, **k)
             code = "OK"
             return out
         except db.CrmError as e:
             code = e.code
-            raise ToolError(f"[{e.code}] {e.message}" + (f" 다음 조치: {e.action}" if e.action else ""))
+            raise ToolError(facade.error_text(e.code, e.message, e.action, getattr(e, "detail", None)))
         finally:
             _call_uid.reset(token)
-            db.usage_count(memo.get("uid"), name, code)
+            db.usage_count(memo.get("uid"), f"f:{name}" if via == "f" else name, code)
     return run
 
 
 # ── 도구 ───────────────────────────────────────────────
+
+# 확정·삭제 op(facade.PREVIEWS)의 직접 도구 선택 인자(2026-11-02 facade) — 주면 guard 가 검사, 없으면 지금처럼. 도구 본문은 쓰지 않는다
+BindArg = Annotated[str, Field(description='선택: read(op="decide_preview") 가 준 bind. 주면 미리보기 뒤 대상·인자가 안 바뀌었는지 서버가 본다')]
+
 
 @mcp.tool()
 @guard
@@ -233,6 +249,7 @@ def candidate_decide(
                       Field(description="confirm=내 판단으로 남기기, exclude=남기지 않기, pending=되돌리기(아직 안 정함으로), edit=문장 고치기(text 필요)")],
     ctx: Context,
     text: Annotated[str, Field(description="edit 일 때 사용자가 고친 문장. 사용자 표현 그대로.")] = "",
+    bind: BindArg = "",
 ) -> dict:
     """사용자가 원문과 대조한 뒤 말한 결정을 저장한다. 사용자가 말하기 전에 부르지 않는다. 이전 상태·문장은 이력에 남아 되돌릴 수 있다.
     confirm 은 근거 기록이 지금도 인용 적격(본인이 쓴 원문 그대로·삭제 안 됨)일 때만 된다 — 아니면 CANDIDATE-REVIEW 로 거절되고
@@ -325,6 +342,7 @@ def definition_apply(
     proposal_id: Annotated[str, Field(description="definition_propose 가 돌려준 제안 ID")],
     expected_revision: Annotated[int, Field(description="제안할 때의 revision")],
     ctx: Context,
+    bind: BindArg = "",
 ) -> dict:
     """제안한 정의를 적용한다. 사용자가 적용하라고 말했을 때만 부른다. 기존 항목이 깨지는 변경(필수 추가·타입 변경 등)은 거절된다."""
     return db.definition_apply(uid_of(ctx), object_id, proposal_id, expected_revision)
@@ -361,6 +379,7 @@ def item_decide(
                                         "휴지통이 켜지면 exclude·pending 은 ACTION-RETIRED(아무것도 안 바뀜) — 남기지 않을 기준은 trash_move")],
     history_id: Annotated[int | None, Field(description="restore 때 이력 ID. 그 외 null")],
     ctx: Context,
+    bind: BindArg = "",
 ) -> dict:
     """사용자가 말한 결정을 항목에 저장한다. 사용자가 말하기 전에 부르지 않는다. confirm·exclude·pending 은 기준(principle)만.
     confirm 결과의 promotion 은 승격 조건 충족 여부(사실)일 뿐 — 미충족이어도 저장되고, 사용자에게 그대로 알린다."""
@@ -392,6 +411,7 @@ def record_provenance_set(
                             Field(description="verbatim=원문 그대로, structured=구조만 정리, rewritten=다시 씀, generated=AI 가 만듦, unknown=모름")],
     reason: Annotated[str, Field(description="사용자가 말한 정정 사유 그대로")],
     ctx: Context,
+    bind: BindArg = "",
 ) -> dict:
     """기록의 출처 판정(작성자·가공 방식)을 정정한다. 본문은 바뀌지 않는다. 사용자가 「실제로 틀렸다」고 말했을 때만 부른다 — 확정을 풀려고 바꾸지 않는다.
     남이 쓴 글을 기록으로 넣었으면 author_kind=external 로 표시한다. 이 기록을 근거로 한 후보가 있는데 본인 원문이 아니라고 바꾸면 PROVENANCE-LOCKED.
@@ -401,7 +421,7 @@ def record_provenance_set(
 
 @mcp.tool()
 @guard
-def definition_archive(object_id: Annotated[str, Field(description="보관할 사용자 오브젝트 ID")], ctx: Context) -> dict:
+def definition_archive(object_id: Annotated[str, Field(description="보관할 사용자 오브젝트 ID")], ctx: Context, bind: BindArg = "") -> dict:
     """사용자가 만든 오브젝트를 보관한다(목록에서 빠짐, 항목은 지우지 않음). 사용자가 보관하라고 말했을 때만 부른다.
     먼저 그 오브젝트의 항목 수·이 오브젝트를 가리키는 다른 필드를 사용자에게 알린다 — 결과의 impact 에도 있다.
     표준 오브젝트는 STANDARD-LOCKED. 되돌리기는 definition_restore. 정의 JSON 에 archived 같은 키를 넣어 보관하지 않는다(ARG-INVALID)."""
@@ -410,7 +430,7 @@ def definition_archive(object_id: Annotated[str, Field(description="보관할 �
 
 @mcp.tool()
 @guard
-def definition_restore(object_id: Annotated[str, Field(description="복구할 사용자 오브젝트 ID")], ctx: Context) -> dict:
+def definition_restore(object_id: Annotated[str, Field(description="복구할 사용자 오브젝트 ID")], ctx: Context, bind: BindArg = "") -> dict:
     """보관한 사용자 오브젝트를 되살린다. 사용자가 말했을 때만 부른다. 보관된 오브젝트 ID 는 definitions_get(include_archived=true) 로 본다."""
     return db.definition_restore(uid_of(ctx), object_id)
 
@@ -444,6 +464,7 @@ def feedback_send(
     text: Annotated[str, Field(description="사용자가 확인한 문의 글 그대로. 기록 원문·다른 사람 정보는 넣지 않는다.")],
     ctx: Context,
     tool: Annotated[str, Field(description="문제가 난 이 서버의 도구 이름(예: record_add). 없으면 빈 문자열")] = "",
+    bind: BindArg = "",
 ) -> dict:
     """운영자에게 문의를 보낸다. 보낼 글을 사용자에게 먼저 그대로 보여 주고, 사용자가 확인한 뒤에만 부른다.
     글은 서버에 저장되고 운영자가 직접 읽는다. 처리 상태는 대시보드 「내 문의」에서 보인다. 응답의 notice 를 사용자에게 그대로 전한다."""
@@ -528,6 +549,7 @@ def person_delete(
     person_id: Annotated[str, Field(description="사람 ID")],
     expected_revision: Annotated[int, Field(description="지금 revision")],
     ctx: Context,
+    bind: BindArg = "",
 ) -> dict:
     """사람 하나를 지운다. 사용자가 지우라고 말했을 때만 부른다."""
     return db.person_delete(uid_of(ctx), person_id, expected_revision)
@@ -608,6 +630,7 @@ def source_reflection_review(
     expected_revision: Annotated[int, Field(description="지금 revision")],
     reviewed: Annotated[bool, Field(description="true=검토 완료, false=검토 대기로")],
     ctx: Context,
+    bind: BindArg = "",
 ) -> dict:
     """출처 요약/반응의 검토 상태를 바꾼다. 사용자가 말할 때만 부른다. 검토 완료는 판단 확정이 아니고 근거로 인용할 수 없다."""
     return db.source_reflection_review(uid_of(ctx), reflection_id, expected_revision, reviewed)
@@ -619,6 +642,7 @@ def source_reflection_delete(
     reflection_id: Annotated[str, Field(description="요약/반응 ID")],
     expected_revision: Annotated[int, Field(description="지금 revision")],
     ctx: Context,
+    bind: BindArg = "",
 ) -> dict:
     """출처 요약/반응 하나를 지운다. 사용자가 지우라고 말했을 때만 부른다."""
     return db.source_reflection_delete(uid_of(ctx), reflection_id, expected_revision)
@@ -648,6 +672,7 @@ def trash_move(
     target_id: Annotated[str, Field(description="대상 ID")],
     expected_revision: Annotated[int | None, Field(description=_TRASH_REV_DESC)],
     ctx: Context,
+    bind: BindArg = "",
 ) -> dict:
     """대상을 휴지통으로 옮긴다(삭제). 사용자가 지우라고 말했을 때만 부른다. 168시간 안에 trash_restore 로 복원할 수 있다.
     연결된 상대(글·항목·활동)는 그대로 남는다. 장치 허용 규칙이 쓰는 축은 AXIS-IN-POLICY — 사용자에게 장치 화면에서 먼저 빼라고 안내한다."""
@@ -661,6 +686,7 @@ def trash_restore(
     target_id: Annotated[str, Field(description="대상 ID")],
     expected_revision: Annotated[int | None, Field(description="item·person·reflection 의 지금 revision(선택). record·activity 는 null")],
     ctx: Context,
+    bind: BindArg = "",
 ) -> dict:
     """휴지통 대상을 삭제 직전 상태로 복원한다(같은 ID). 복원 기한이 지났으면 TRASH-EXPIRED. 복원은 승인·적용·확정이 아니다."""
     return db.trash_restore(uid_of(ctx), kind, target_id, expected_revision)
@@ -673,6 +699,7 @@ def trash_purge(
     target_id: Annotated[str, Field(description="대상 ID")],
     expected_revision: Annotated[int | None, Field(description="item·person·reflection 의 지금 revision(선택). record·activity 는 null")],
     ctx: Context,
+    bind: BindArg = "",
 ) -> dict:
     """휴지통 대상의 영구 삭제를 요청한다 — 지금부터 복원할 수 없다. 본문은 서버 정리 때 지워진다. 사용자가 분명히 말할 때만 부른다."""
     return db.trash_purge(uid_of(ctx), kind, target_id, expected_revision)
@@ -757,6 +784,11 @@ def migration_receipt_get(
     """이관 영수증(읽기 전용) — 반영한 plan 의 항목별 original_id·content_hash·결과·대상 ID·지금 저장본 재해시(stored_hash)와 개수·receipt_hash.
     본문은 없다. 이관 확인·반영은 사용자가 웹에서만 한다 — 대신 하지 않는다."""
     return migration.receipt(uid_of(ctx), plan_id or None)
+
+
+# ── facade 겉면 5개 (2026-11-02, 계획 「MCP facade(A′)」) — 직접 도구 48 을 다 등록한 뒤 한 번. op = 위 도구 이름 그대로,
+# tier·family 정본 = server/mcp_catalog.json. facade 전용 op(decide_preview·이관)은 직접 도구로 등록하지 않는다.
+facade.install(mcp, guard, uid_of)
 
 
 # ── 웹 ─────────────────────────────────────────────────
