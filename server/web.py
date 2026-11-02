@@ -1314,6 +1314,15 @@ class Web:
 
     # ── 로그인 ─────────────────────────────────────────
     async def login(self, request):
+        """일반 로그인 시작. 앱 로그인 넘김(crm_desktop)이 남아 있으면 지운다 — 앱 로그인을 시작만 하고 버린 뒤의 일반 로그인이
+        「앱으로 돌아가요」로 새지 않게. 쿠키가 없으면 응답은 종전과 같다."""
+        resp = await self._authkit_redirect(request)
+        if DESKTOP_COOKIE in request.cookies:
+            self.clear_cookie(resp, DESKTOP_COOKIE)
+        return resp
+
+    async def _authkit_redirect(self, request):
+        """AuthKit 로 보내는 302(+ crm_login 쿠키). fresh=1 이면 prompt=login. /login 과 /desktop/login 이 쓴다."""
         if not self.login_ready:
             return _page("아직 로그인을 열지 않았어요", "<p>운영자가 로그인 설정(AUTHKIT_WEB_CLIENT_ID·CRM_SESSION_SECRET)을 마치면 열려요.</p>", 503)
         verifier = _b64(secrets.token_bytes(48))
@@ -1393,7 +1402,7 @@ class Web:
         if self.dev and not self.login_ready:
             resp = RedirectResponse("/dev/login", status_code=302)
         else:
-            resp = await self.login(request)   # login_ready 아니면 503 페이지 — 그때는 쿠키를 붙이지 않는다. fresh=1 은 login 이 읽는다
+            resp = await self._authkit_redirect(request)   # login_ready 아니면 503 페이지 — 그때는 쿠키를 붙이지 않는다. fresh=1 은 여기서 읽는다
         if resp.status_code == 302:
             self.set_cookie(resp, DESKTOP_COOKIE, self.sign({"c": ch, "s": st}, DESKTOP_TTL), DESKTOP_TTL)
         return resp
@@ -1441,10 +1450,16 @@ class Web:
     async def desktop_claim(self, request):
         """POST form(code·verifier·state) → 코드 해시 조회 · 미사용 · 미만료 · sha256(verifier)==challenge · state 일치 → used_at(원자적)
         → crm_session 쿠키 → 303 /app. 실패 = 사람이 읽는 페이지(값 없음).
-        Origin 검사 예외(이 경로만): 앱이 딥링크를 받은 뒤 창의 loadURL(postData)로 보내는 브라우저 시작 요청이라 Origin 이 없거나 null 이다.
-        대신 일회용 코드(해시만 저장)·2분 만료·PKCE(verifier 는 앱 메모리에만)·state·IP 분당 상한으로 막는다."""
+        Origin 검사 완화(이 경로만): 앱이 딥링크를 받은 뒤 창의 loadURL(postData)로 보내는 브라우저 시작 요청이라 Origin 이 없거나 null 이다.
+        그래서 정확히 일치(same_origin) 대신 「없음·null·자기 origin」만 받는다 — 다른 사이트가 자기 계정 코드로 폼을 자동 제출해
+        피해자를 공격자 계정에 로그인시키는 것(login CSRF)은 Origin 으로 막는다. 나머지는 일회용 코드(해시만 저장)·2분 만료
+        ·PKCE(verifier 는 앱 메모리에만)·state·IP 분당 상한."""
         if not self.secret:
             return self._desktop_fail("아직 로그인을 열지 않았어요", 503)
+        origin = request.headers.get("origin")
+        if origin is not None and origin != "null" and origin not in self.origins:
+            print("[desktop] 앱 로그인 교환 거절: origin", flush=True)
+            return self._desktop_fail("다른 사이트에서 온 요청이에요", 403)
         if not self._claim_rate_ok(request):
             resp = self._desktop_fail("요청이 너무 잦아요", 429)
             resp.headers["retry-after"] = str(max(1, 60 - int(time.time()) % 60))

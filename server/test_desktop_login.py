@@ -226,11 +226,11 @@ async def test_http(A, B):
             for cookie in (None, site.sign({"c": "A" * 43, "s": "B" * 22}, -10), "garbage.sig",
                            site.sign({"c": "A" * 43, "s": "B" * 22}, 600)[:-2] + "xx", site.sign({"c": "short", "s": "B" * 22}, 600)):
                 h.cookies.clear()
-                if cookie:
-                    h.cookies.set("crm_desktop", cookie)
                 r = await h.get("/login")
                 assert r.status_code == 302 and "crm_desktop" not in cookies(r), "일반 /login 은 crm_desktop 을 만들지 않는다"
                 st = urllib.parse.parse_qs(urllib.parse.urlsplit(r.headers["location"]).query)["state"][0]
+                if cookie:   # callback 직전에 심는다 — callback 의 만료·변조·모양 틀림 분기를 본다(/login 은 남은 쿠키를 지운다, ⑱)
+                    h.cookies.set("crm_desktop", cookie)
                 TOK["next"] = "tok-a"
                 r = await h.get("/auth/callback", params={"code": "authkit-code", "state": st})
                 assert r.status_code == 302 and r.headers["location"] == "/app", (cookie, r.status_code, r.text[:200])
@@ -312,6 +312,40 @@ async def test_http(A, B):
             site.dev_user = ""   # 세션 쿠키만으로 /app 이 열리는지
             assert (await app.get("/app")).status_code == 200
         ok("CRM_DEV 개발 사용자 흐름(AuthKit 없이 넘김 → claim → 세션)")
+
+        # ⑰ claim Origin — 외부 http(s) Origin 403(login CSRF) · 없음·null·자기 origin 허용
+        site.dev, site.dev_user, site.client_id = False, "", "client_test"
+        async with T() as h, T() as app:
+            code, v, st, _ = await flow(h)
+            for bad in ("https://evil.example", "http://127.0.0.1:9999", "", "file://"):
+                r = await claim(app, code, v, st, headers={"origin": bad})
+                assert_fail(r, 403)
+                assert "다른 사이트" in r.text
+            assert row_count("used_at IS NOT NULL AND code_hash=%s", (hashlib.sha256(code.encode()).digest(),)) == 0, "Origin 거절은 코드를 안 태운다"
+            assert (await claim(app, code, v, st, headers={"origin": PUBLIC})).status_code == 303, "자기 origin 허용"
+            for hd in ({}, {"origin": "null"}):
+                h.cookies.clear()
+                code, v, st, _ = await flow(h)
+                assert (await claim(app, code, v, st, headers=hd)).status_code == 303, ("Origin 없음·null 허용", hd)
+        ok("claim Origin — 외부·빈 값·file 403(코드 안 태움) · 없음·null·자기 origin 허용")
+
+        # ⑱ 일반 /login 은 남은 crm_desktop 을 지운다 — 앱 로그인을 버린 뒤 일반 로그인은 /app 으로
+        async with T() as h:
+            h.cookies.clear()
+            v, ch, st = pkce()
+            r = await h.get("/desktop/login", params={"challenge": ch, "state": st})
+            assert r.status_code == 302 and "crm_desktop" in h.cookies, "앱 로그인 시작(버림)"
+            r = await h.get("/login")
+            assert r.status_code == 302 and "max-age=0" in cookies(r).get("crm_desktop", ""), cookies(r)
+            assert "crm_desktop" not in h.cookies
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(r.headers["location"]).query)
+            TOK["next"] = "tok-a"
+            r = await h.get("/auth/callback", params={"code": "authkit-code", "state": q["state"][0]})
+            assert r.status_code == 302 and r.headers["location"] == "/app", "버린 앱 로그인 뒤 일반 로그인 = /app"
+            h.cookies.clear()
+            r = await h.get("/login")
+            assert "crm_desktop" not in cookies(r), "crm_desktop 이 없으면 /login 응답 종전과 같다(지우는 헤더 없음)"
+        ok("일반 /login — 남은 crm_desktop 지움 → callback 302 /app · 쿠키 없으면 응답 불변")
 
         # ⑬ fresh=1 — 웹 세션이 있어도 지름길 없이 AuthKit(prompt=login)으로 → 다른 계정(B)으로 전환
         site.dev, site.dev_user, site.client_id = False, "", "client_test"
