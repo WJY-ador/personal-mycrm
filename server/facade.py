@@ -46,7 +46,8 @@ VIA: contextvars.ContextVar = contextvars.ContextVar("crm_via", default="")
 
 COMMON_RULE = "decide_preview 의 shown 을 고치지 않고 그대로 사용자에게 보여 주고, 사용자가 말한 뒤에만 부른다."
 PURGE_RULE = "되돌릴 수 없다. 사용자가 분명히 말할 때만."
-SELF_RULE = "decide_preview 대신 read(op=migration_apply_preview) 결과를 그대로 사용자에게 보여 주고, 사용자가 말한 뒤에만 부른다."
+SELF_RULE = ("이관 op 은 decide_preview·bind 를 쓰지 않는다(자기 바인딩). 반영 전엔 decide_preview 대신 read(op=migration_apply_preview) 결과를 "
+             "그대로 사용자에게 보여 주고, 사용자가 말한 뒤에만 부른다.")
 _GATE = re.compile(r"때만|뒤에만|전에 부르지 않는다|말하기 전에")
 
 
@@ -71,6 +72,7 @@ class Op:
 
 OPS: dict[str, Op] = {}
 FAMILIES: list[dict] = []
+RULES: dict[str, str] = {}   # op 별 덧붙일 규칙 문장(이관 본체 모듈의 표 — install 이 받는다)
 _uid_of = None
 
 
@@ -441,7 +443,7 @@ def gate_sentences(doc) -> list[str]:
 
 
 def rule_of(o) -> str:
-    gates = " ".join(gate_sentences(o.doc))
+    gates = " ".join(x for x in (" ".join(gate_sentences(o.doc)), RULES.get(o.name, "")) if x)
     if o.bind == "self":
         return f"{SELF_RULE} {gates}".strip()
     if o.tier == "decide":
@@ -459,8 +461,8 @@ def flow_of(o):
                 "shown 을 고치지 않고 사용자에게 그대로 보여 준다", "사용자가 말한 뒤에만",
                 f"{o.tier}(op=\"{o.name}\", params={{…같은 params}}, bind=\"…\")"]
     if o.bind == "self":
-        return ["read(op=\"migration_apply_preview\") → 미리보기를 그대로 보여 준다", "사용자가 말한 뒤에만",
-                f"decide(op=\"{o.name}\", params={{…}})"]
+        pre = ["read(op=\"migration_apply_preview\") → 미리보기를 고치지 않고 그대로 보여 준다"] if o.name == "migration_apply" else []
+        return pre + ["사용자가 말한 뒤에만", f"decide(op=\"{o.name}\", params={{…}}) — bind 없음"]
     return None
 
 
@@ -593,14 +595,16 @@ def _desc_decide(tier):
     for n in ops_of(tier):
         o = OPS[n]
         g = " ".join(gate_sentences(o.doc)) or o.summary
-        lines.append(f"- {n}: {SELF_RULE if o.bind == 'self' else ''}{g}".replace("부른다.사용자", "부른다. 사용자"))
+        lines.append(f"- {n}: " + " ".join(x for x in ((SELF_RULE if o.bind == "self" else ""), g) if x))
     return "\n".join(lines)
 
 
-def install(mcp, guard, uid_fn, extra_ops=()):
-    """카탈로그 로드 → 등록부 → 겉면 5개 등록. main.py 가 직접 도구를 다 등록한 뒤 한 번 부른다."""
-    global _uid_of, OPS, FAMILIES
+def install(mcp, guard, uid_fn, extra_ops=(), rules=None):
+    """카탈로그 로드 → 등록부 → 겉면 5개 등록. main.py 가 직접 도구를 다 등록한 뒤 한 번 부른다.
+    extra_ops = facade 전용 op 함수(직접 도구처럼 ctx 를 받는 서명) · rules = op 별 덧붙일 규칙 문장."""
+    global _uid_of, OPS, FAMILIES, RULES
     _uid_of = uid_fn
+    RULES = dict(rules or {})
     catalog = load_catalog()
     FAMILIES = list(catalog["families"])
     D_P = [n for n, s in catalog["ops"].items() if s["tier"] in ("decide", "purge") and s.get("bind") != "self"]

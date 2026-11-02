@@ -125,6 +125,20 @@
       "examples": [{"ticket_id": "t_example01"}]},
 
     "migration_receipt_get": {"family": "migration", "tier": "read", "keywords": ["이관", "영수증", "반영 결과"],
+      "examples": [{"plan_id": "mp_example01"}]},
+    "migration_list": {"family": "migration", "tier": "read", "direct": false, "keywords": ["이관", "옮겨 오기", "이관 목록", "plan"],
+      "examples": [{}]},
+    "migration_get": {"family": "migration", "tier": "read", "direct": false, "keywords": ["이관", "plan", "이관 항목 목록"],
+      "examples": [{"plan_id": "mp_example01"}]},
+    "migration_item_get": {"family": "migration", "tier": "read", "direct": false, "keywords": ["이관 항목", "payload", "항목 전문"],
+      "examples": [{"plan_id": "mp_example01", "seq": 1}]},
+    "migration_apply_preview": {"family": "migration", "tier": "read", "direct": false, "keywords": ["이관", "반영 미리보기", "반영 전 확인"],
+      "examples": [{"plan_id": "mp_example01"}]},
+    "migration_apply": {"family": "migration", "tier": "decide", "direct": false, "bind": "self", "keywords": ["이관 반영", "옮겨 넣기", "반영"],
+      "examples": [{"plan_id": "mp_example01", "plan_hash": "ph_example01", "expected_counts": {"applied": 3}}]},
+    "migration_cancel": {"family": "migration", "tier": "decide", "direct": false, "bind": "self", "keywords": ["이관 취소", "plan 취소"],
+      "examples": [{"plan_id": "mp_example01"}]},
+    "migration_revert": {"family": "migration", "tier": "decide", "direct": false, "bind": "self", "keywords": ["이관 되돌리기", "반영 취소", "되돌려"],
       "examples": [{"plan_id": "mp_example01"}]}
   }
 }

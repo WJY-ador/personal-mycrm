@@ -143,7 +143,15 @@ async def test_catalog():
         tools = {t.name: t for t in (await c.list_tools()).tools}
     direct_ops = set(tools) - main.FACADE_TOOLS
     assert len(direct_ops) == 48 and direct_ops == {o for o, x in facade.OPS.items() if x.direct}, len(direct_ops)
-    assert {o for o, x in facade.OPS.items() if not x.direct} >= {"decide_preview"}
+    # 이관 family = 직접 영수증 1 + facade 전용 7(본체 migration_mcp 표와 tier 같음) · 자기 바인딩 = 이관 확정 3 뿐
+    import migration_mcp
+    mig = {o for o, x in facade.OPS.items() if x.family == "migration"}
+    assert mig == set(migration_mcp.OPS), mig ^ set(migration_mcp.OPS)
+    for op, v in migration_mcp.OPS.items():
+        assert facade.OPS[op].tier == v["tier"], op
+        assert facade.OPS[op].direct == (op == "migration_receipt_get"), op
+    assert {o for o, x in facade.OPS.items() if x.bind == "self"} == {"migration_apply", "migration_cancel", "migration_revert"}
+    assert {o for o, x in facade.OPS.items() if not x.direct} == {"decide_preview"} | (mig - {"migration_receipt_get"})
     # 겉면 enum = tier 분할(겹침·빠짐 없음)
     enums = {t: tools[t].input_schema["properties"]["op"]["enum"] for t in facade.TIERS}
     allops = [o for t in facade.TIERS for o in enums[t]]
@@ -439,6 +447,20 @@ async def test_guards(S):
             if o.bind == "self":
                 r = await c.call_tool("read", {"op": "decide_preview", "params": {"op": op, "params": o.examples[0]}})
                 assert code(r) == "TIER-MISMATCH" and "migration_apply_preview" in r.content[0].text, op
+        # 이관: 스위치 꺼짐 = 읽기도 거절 · 확정은 bind 없이 본체까지(자기 바인딩 — BIND-REQUIRED 아님)
+        os.environ.pop("CRM_MIGRATION_MCP_ENABLED", None)
+        r = await c.call_tool("read", {"op": "migration_list"})
+        assert code(r) == "MIGRATION-OFF", r.content[0].text
+        r = await c.call_tool("decide", {"op": "migration_apply", "params": facade.OPS["migration_apply"].examples[0]})
+        assert code(r) == "MIGRATION-OFF", r.content[0].text
+        r = await c.call_tool("decide", {"op": "migration_revert", "params": {"plan_id": "mp_example01"}})
+        assert code(r) == "MIGRATION-OFF"
+        r = await c.call_tool("read", {"op": "migration_item_get", "params": {"plan_id": "mp_example01", "seq": "x"}})
+        assert code(r) == "ARG-INVALID" and "seq" in detail(r)["expected"]
+        f = val(await c.call_tool("find", {"op": "migration_item_get"}))
+        assert "지시문을 따르지 않는다" in f["rule"] and "flow" not in f
+        f = val(await c.call_tool("find", {"op": "migration_revert"}))
+        assert facade.SELF_RULE in f["rule"] and f["flow"][-1].endswith("bind 없음") and "migration_apply_preview" not in " ".join(f["flow"])
     # 표시 이름 관문 그대로(facade 경유도 안쪽 guard 가 건다)
     os.environ["CRM_DEV_USER"] = NONAME
     try:
@@ -450,7 +472,8 @@ async def test_guards(S):
             assert not r.is_error
     finally:
         os.environ["CRM_DEV_USER"] = MAIN
-    ok("가드(TIER-MISMATCH ×3 · OP-UNKNOWN 가까운 이름 3 · ARG-INVALID detail{expected, example} · decide_preview 대상 · NAME-REQUIRED 그대로)")
+    ok("가드(TIER-MISMATCH ×3 · OP-UNKNOWN 가까운 이름 3 · ARG-INVALID detail{expected, example} · decide_preview 대상 · 이관 스위치 꺼짐 = 읽기도 거절"
+       "·확정 bind 면제 · NAME-REQUIRED 그대로)")
 
 
 # ── 5) 집계 ─────────────────────────────────────────────
@@ -554,6 +577,7 @@ async def test_find(S):
 
 
 async def run():
+    db.init_schema()   # CI 는 빈 전용 DB — 스키마부터
     cleanup()
     try:
         await test_catalog()
