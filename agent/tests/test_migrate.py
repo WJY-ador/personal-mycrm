@@ -606,6 +606,19 @@ class CliFlowTest(unittest.TestCase):
         self.assertTrue(acct.startswith("migration-token:127.0.0.1:"))
         self.assertTrue(keystore._SAFE.match(acct))
 
+    def test_missing_module_in_installed_bundle(self):
+        import sys
+        from unittest import mock
+        import agent
+        saved = agent.__dict__.pop("migrate")   # 설치 패키지처럼 모듈이 없을 때
+        try:
+            with mock.patch.dict(sys.modules, {"agent.migrate": None}):
+                code, out = self.run_cli("status", "mp_" + "0" * 24, "--server", self.srv.url)
+        finally:
+            agent.migrate = saved
+        self.assertEqual(code, 2)
+        self.assertIn("키트 루트에서 파이썬으로 실행하세요", out)
+
     def test_client_repr_hides_token(self):
         self.assertNotIn(TOKEN, repr(migrate.Client("https://x.invalid", TOKEN)))
 

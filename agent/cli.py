@@ -495,7 +495,11 @@ def cmd_disconnect(ctx: Ctx, a) -> int:
 
 def cmd_migrate(ctx: Ctx, a) -> int:
     """실자료 이관 업로더 — agent/migrate.py(설치 패키지 목록 밖이라 여기서만 불러온다)."""
-    from . import migrate
+    try:
+        from . import migrate
+    except ImportError:
+        ctx.say("이 명령은 설치 패키지에 없어요. 키트 루트에서 파이썬으로 실행하세요: python3 -m agent migrate …")
+        return EXIT_USAGE
     return migrate.run(ctx, a)
 
 

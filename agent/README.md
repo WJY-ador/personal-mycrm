@@ -200,7 +200,7 @@ JOBS_LIVE_DB=postgresql://localhost/crm_test_<이름> python3 -m unittest agent.
 
 ## board 이전 명세 생성기 (`board_manifest.py`, 원작자 PC 전용)
 
-board 정본 마크다운에서 AI 검토표와 이전 명세(`board-migration/1`)를 만듭니다. 입력 경로는 전부 로컬 설정 파일(JSON)로 받고, 서버엔 검토표를 올리지 않습니다. 명세는 서버 `migrate_cli.py` 가 받습니다(쓰는 법은 [server/README.md](../server/README.md) 「board 이전 CLI」).
+board 정본 마크다운에서 AI 검토표와 이전 명세(`board-migration/1`)를 만듭니다. 입력 경로는 전부 로컬 설정 파일(JSON)로 받고, 서버엔 검토표를 올리지 않습니다. 서버 `migrate_cli.py` 는 운영 반영 경로에서 은퇴해 합성 시험 DB(`crm_test*`)용으로만 남았습니다. 운영 이관은 아래 「실자료 이관 업로더」 절의 `migrate` 업로더로 올리고 웹 이관 화면에서 확인·반영합니다(계약 `board-migration/2`).
 ```bash
 python3 agent/board_manifest.py sheet    --config CFG --state-dir DIR --out SHEET.md
 python3 agent/board_manifest.py build    --config CFG --state-dir DIR --sheet SHEET.md --out MANIFEST.json \
