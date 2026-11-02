@@ -446,12 +446,23 @@ def browser_login(server_url: str, scope: str, *, client_name: str | None = None
     return payload
 
 
+# 서버 계약 v3 — loopback 로그인 실패 때 /cb?error=<코드>&state
+_LOGIN_ERRORS = {
+    "access_denied": "브라우저에서 로그인을 거절·취소했어요",
+    "login_failed": "로그인에 실패했어요",
+    "login_expired": "로그인 절차가 만료됐어요(10분 넘김·다른 탭)",
+    "account_unavailable": "이 계정은 지금 연결할 수 없어요 — 운영자에게 문의하세요",
+    "server_error": "서버가 로그인 코드를 만들지 못했어요",
+}
+
+
 def explain_login_error(e: LoginError) -> list:
     """브라우저 로그인 실패 → 사람이 읽는 줄들(값 없음)."""
     if e.kind == "timeout":
         return [f"{int(LOGIN_TIMEOUT // 60)}분 안에 브라우저 로그인을 받지 못했어요. 브라우저에서 로그인을 마치지 못했으면 다시 실행하세요."]
     if e.kind == "denied":
-        return [f"브라우저 로그인이 끝나지 않았어요({e.code}). 다시 실행하세요."]
+        why = _LOGIN_ERRORS.get(e.code, "브라우저 로그인이 끝나지 않았어요")
+        return [f"{why}({e.code}). 다시 실행하세요."]
     if e.kind == "network":
         return ["서버에 닿지 못했어요. 주소·네트워크를 확인하세요."]
     if e.kind == "loopback":

@@ -76,6 +76,12 @@ class LoopbackTest(unittest.TestCase):
             rx.wait(1)
         self.assertEqual((cm.exception.kind, cm.exception.code), ("denied", "access_denied"))
 
+    def test_error_messages(self):
+        for code in ("access_denied", "login_failed", "login_expired", "account_unavailable", "server_error", "other_x"):
+            with self.subTest(code):
+                line = uploader.explain_login_error(uploader.LoginError("denied", code=code))[0]
+                self.assertIn(f"({code}). 다시 실행하세요.", line)
+
     def test_timeout(self):
         rx = uploader.LoopbackReceiver(uploader.new_state())
         with self.assertRaises(uploader.LoginError) as cm:
@@ -204,7 +210,7 @@ class BrowserLoginCliTest(unittest.TestCase):
         self.kw.update(browser_open=deny, login_timeout=30)
         code, out = self.cli("connect", "--server", self.srv.url, "--browser")
         self.assertEqual(code, 1, out)
-        self.assertIn("로그인이 끝나지 않았어요(access_denied)", out)
+        self.assertIn("로그인을 거절·취소했어요(access_denied)", out)
         self.assertEqual(self.srv.claim_requests, [])
         self.assertEqual(self.ks.items, {})
 
