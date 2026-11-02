@@ -3144,6 +3144,42 @@ def admin_audit_purge():
                          "AND action NOT IN ('bootstrap','recover')", (AUDIT_KEEP_DAYS,)).rowcount
 
 
+# ── 앱 로그인 넘김 (2026-11-02, 앱 대시보드 로그인 구현계획 흐름 4·6) ──
+# 일회용 코드 원문·verifier 는 저장하지 않는다(코드 SHA-256 · challenge 만). 값은 로그·감사·오류 문구에 넣지 않는다.
+HANDOFF_TTL_SECONDS = 120
+
+
+def desktop_handoffs_purge(c=None) -> int:
+    """만료된 넘김 행 삭제(쓴 행도 만료 뒤엔 같이). 발급 때마다 같은 트랜잭션에서 부른다. 반환 건수."""
+    if c is None:
+        with tx() as c2:
+            return c2.execute("DELETE FROM desktop_handoffs WHERE expires_at <= now()").rowcount
+    return c.execute("DELETE FROM desktop_handoffs WHERE expires_at <= now()").rowcount
+
+
+def desktop_handoff_create(uid, code_hash: bytes, challenge: str, state: str, ttl: int = HANDOFF_TTL_SECONDS):
+    """넘김 코드 1건 저장(코드 해시·challenge·state·만료). 같은 트랜잭션에서 만료 행 정리."""
+    with tx() as c:
+        desktop_handoffs_purge(c)
+        c.execute("INSERT INTO desktop_handoffs (code_hash, user_id, challenge, state, expires_at) "
+                  "VALUES (%s,%s,%s,%s, now() + make_interval(secs => %s))", (code_hash, uid, challenge, state, ttl))
+
+
+def desktop_handoff_claim(code_hash: bytes, challenge: str, state: str):
+    """넘김 코드 교환 → (user_id, None) · 실패 (None, 사유). 사유 = unknown·used·expired·mismatch(값 없음 — 로그용 분류).
+    미사용·미만료·challenge·state 일치를 UPDATE 한 문장 조건으로 보고 used_at 을 찍는다(원자적 — 동시 두 번째는 0행).
+    틀린 challenge·state 는 코드를 태우지 않는다(사유만 돌려준다)."""
+    with tx() as c:
+        r = _one(c, "UPDATE desktop_handoffs SET used_at=now() WHERE code_hash=%s AND used_at IS NULL AND expires_at > now() "
+                    "AND challenge=%s AND state=%s RETURNING user_id", (code_hash, challenge, state))
+        if r:
+            return r["user_id"], None
+        r = _one(c, "SELECT used_at IS NOT NULL AS used, expires_at <= now() AS gone FROM desktop_handoffs WHERE code_hash=%s", (code_hash,))
+    if r is None:
+        return None, "unknown"
+    return None, "used" if r["used"] else "expired" if r["gone"] else "mismatch"
+
+
 # ── 계정 삭제 CLI (PR B 결정 4·5·8·10) — admin_cli.py delete-notify·preview·run·cancel 이 부른다 ──
 # 대상 = 「개인정보 요청」 문의(kind=privacy)의 소유자. 이메일로 대상을 고르지 않는다. 실행자는 활성 관리자, 대상은 관리자가 아니어야 한다.
 # 통지(notify) → 유예 7일 → 미리보기(preview, 읽기 전용) → 실행(run, 한 트랜잭션: 잠금·재조회·자료 삭제·contact 이동·계정 닫기·이력·감사).
@@ -3162,7 +3198,7 @@ DELETE_NOTICE = ("7일 뒤 자료를 모두 지우고 계정을 닫습니다. �
 # tickets 는 보존 문의 1건을 빼고 지운다(ticket_history 는 cascade). 시험이 「이 목록 = schema 의 user_id 테이블 − 예외」를 정적으로 본다.
 # board 이전(2026-10-20): 관계(activity_links) → 접수 대응표(import_entries) → 업무 자료(activities) → 한도·입력원(import_counters·import_streams).
 # PR ②-b: 판·stage(items 자식, 확인 이벤트를 가리킨다) → 확인 이벤트 → items.
-DELETE_TABLES = ("page_layouts", "stack_sessions", "jobs", "item_links", "activity_links", "import_entries", "activities", "import_counters",
+DELETE_TABLES = ("desktop_handoffs", "page_layouts", "stack_sessions", "jobs", "item_links", "activity_links", "import_entries", "activities", "import_counters",
                  "import_streams", "migration_plan_items", "migration_plans", "migration_tokens", "item_stage", "item_versions", "confirm_events", "item_history", "items", "user_roles", "field_defs",
                  "object_defs", "std_choices", "std_marks",
                  "candidate_history", "candidates", "source_reflections", "records", "sources", "questions", "profile", "tabs",

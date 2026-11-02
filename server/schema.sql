@@ -874,3 +874,19 @@ CREATE TABLE IF NOT EXISTS migration_plan_items (
 );
 CREATE INDEX IF NOT EXISTS ix_migration_items_hash ON migration_plan_items (user_id, content_hash);
 CREATE INDEX IF NOT EXISTS ix_migration_items_applied ON migration_plan_items (user_id, applied_at) WHERE result = 'applied';
+
+-- 앱 로그인 넘김(2026-11-02) — 시스템 브라우저 로그인(/auth/callback) 뒤 앱(mycrm://auth/callback)으로 넘기는 일회용 코드.
+-- 코드 원문은 저장하지 않는다(SHA-256 만). challenge = base64url(sha256(verifier)) — verifier 는 앱 메모리에만. state 는 앱이 만든 값 그대로.
+-- 2분 만료 · 일회용(used_at) · 만료 행은 발급 때마다 지운다. 사용자 삭제 = cascade(+ DELETE_TABLES).
+CREATE TABLE IF NOT EXISTS desktop_handoffs (
+  code_hash   bytea PRIMARY KEY CHECK (octet_length(code_hash) = 32),
+  user_id     text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  challenge   text NOT NULL CHECK (challenge ~ '^[A-Za-z0-9_-]{43}$'),
+  state       text NOT NULL CHECK (state ~ '^[A-Za-z0-9_-]{16,64}$'),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  expires_at  timestamptz NOT NULL,
+  used_at     timestamptz,
+  CHECK (expires_at > created_at)
+);
+CREATE INDEX IF NOT EXISTS ix_desktop_handoffs_exp ON desktop_handoffs (expires_at);
+CREATE INDEX IF NOT EXISTS ix_desktop_handoffs_user ON desktop_handoffs (user_id);
