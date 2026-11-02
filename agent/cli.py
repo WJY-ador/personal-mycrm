@@ -636,7 +636,8 @@ def cmd_disconnect(ctx: Ctx, a) -> int:
 
 
 def cmd_migrate(ctx: Ctx, a) -> int:
-    """실자료 이관 업로더 — agent/migrate.py(설치 패키지 목록 밖이라 여기서만 불러온다)."""
+    """실자료 이관 업로더 — agent/migrate.py(설치 패키지 목록 packaging/agent-files.json 에 있다. 앱 sidecar 가
+    `migrate login --token-stdin` 을 돌린다). 목록에서 빠진 빌드면 ImportError 안내."""
     try:
         from . import migrate
     except ImportError:

@@ -11,6 +11,7 @@
   "agent/jcs.py",
   "agent/jobs.py",
   "agent/keystore.py",
+  "agent/migrate.py",
   "agent/osutil.py",
   "agent/runner.py",
   "agent/schedule.py",
