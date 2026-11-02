@@ -341,7 +341,7 @@ async def test_grants(A, B, IA):
         pl = {p["installation_id"]: p for p in val(await call(c, "pc_list"))["pcs"]}
         assert pl[IA2]["is_default"] and not pl[IA]["is_default"] and pl[IA]["active"] and pl[IA]["device_connected"]
         r = val(await call(c, "pc_connect"))
-        assert r["installation_id"] == IA2 and r["sent_to"] == "노트북"
+        assert r["installation_id"] == IA2 and r["sent_to"] == "노트북" and "note" not in r
         r2 = val(await call(c, "pc_connect", {"installation_id": IA}))
         assert r2["installation_id"] == IA and r2["grant_id"] != r["grant_id"]
         assert (await poll(ha, IA2))["grants"][0]["grant_id"] == r["grant_id"] and len((await poll(ha, IA))["grants"]) == 1
@@ -450,8 +450,18 @@ async def test_auto_rotate(A, IA, IA2, DEV):
         assert rr["revoked"] is True and rr["device"]["active"] is False, "재등록해도 해제 기록 유지"
         p = await poll(ha, IA)
         assert p["installation"]["revoked"] is True, "해제된 설치본도 폴링(다시 연결 통로)"
-        # 대화로 다시 연결 → 새 장치 + 해제 풀림
+        # 해제 PC 는 기본 대상이 아니다 — 해제 PC 만 켜져 있으면 지목 없는 pc_connect = NO-ACTIVE-APP(grant 없음)
+        others = [r["id"] for r in sql("SELECT id FROM desktop_installations WHERE user_id=%s AND id<>%s", (A, IA))]
+        sql("UPDATE desktop_installations SET revoked_at = now() WHERE id = ANY(%s)", (others,))
+        n0 = sql("SELECT count(*) AS n FROM token_grants WHERE user_id=%s", (A,))[0]["n"]
+        r = await call(c, "pc_connect")
+        assert code(r) == "NO-ACTIVE-APP" and detail(r)["grant_id"] is None, r.content[0].text
+        assert sql("SELECT count(*) AS n FROM token_grants WHERE user_id=%s", (A,))[0]["n"] == n0
+        assert not any(x["is_default"] for x in val(await call(c, "pc_list"))["pcs"]), "해제 PC 는 is_default 아님"
+        sql("UPDATE desktop_installations SET revoked_at = NULL WHERE id = ANY(%s)", (others,))
+        # 대화로 다시 연결(지목) → note · 새 장치 + 해제 풀림
         g = val(await call(c, "pc_connect", {"installation_id": IA}))
+        assert g["note"] == TG.REVIVE_NOTE
         j = await redeem(ha, g["grant_id"], IA)
         assert j["device_id"] != DEV and (await poll(ha, IA))["installation"]["revoked"] is False
         # token_revoke(device) — 장치 해제도 자동 재연결 금지
@@ -633,9 +643,32 @@ async def test_cli_browser(A):
             keep(r.json()["token"])
     finally:
         site.dev, site.dev_user = real
+    # 로그인 거절·실패(AuthKit 경유) — loopback 이면 302 <redirect_uri>?error=<짧은 code>&state, 앱 흐름은 종전 오류 페이지
+    real2 = (site.dev, site.dev_user, site.client_id)
+    site.dev, site.dev_user, site.client_id = False, "", "client_test"
+    try:
+        for qp, want in (({"error": "access_denied", "error_description": "user said no"}, "access_denied"),
+                         ({"error": "server_error"}, "login_failed"), ({"code": "x", "state": "wrong"}, "login_expired")):
+            async with H(header=False) as b:
+                v5, ch5, st6 = pkce()
+                r = await b.get("/desktop/login", params={"challenge": ch5, "state": st6, "redirect_uri": URI})
+                assert r.status_code == 302 and r.headers["location"].startswith("https://fake.authkit.test/"), r.headers.get("location")
+                r = await b.get("/auth/callback", params=qp)
+                assert r.status_code == 302 and r.headers["cache-control"] == "no-store", (qp, r.status_code)
+                loc = urllib.parse.urlsplit(r.headers["location"])
+                assert f"{loc.scheme}://{loc.netloc}{loc.path}" == URI
+                assert urllib.parse.parse_qs(loc.query) == {"error": [want], "state": [st6]}, loc.query
+                assert "user said no" not in r.headers["location"] and "crm_session" not in r.headers.get("set-cookie", "")
+        async with H(header=False) as b:   # 앱 흐름(redirect_uri 없음) — 종전대로 오류 페이지
+            v5, ch5, st6 = pkce()
+            await b.get("/desktop/login", params={"challenge": ch5, "state": st6})
+            r = await b.get("/auth/callback", params={"error": "access_denied"})
+            assert r.status_code == 400 and "location" not in r.headers
+    finally:
+        site.dev, site.dev_user, site.client_id = real2
     ok("CLI --browser(redirect_uri loopback 만 — 8가지 거절 · 세션 있으면 바로 302 · 로그인 쿠키 경유 302 · 코드 loopback 표식 · 앱 claim 은 "
        "loopback 코드 거절·cli claim 은 앱 코드 거절 · scope·client_name·Origin · PKCE·state 불일치 HANDOFF-INVALID(안 태움) · 일회용 · "
-       "device = 새 장치 토큰 · migration 스위치 꺼짐 503·켜짐 이관 토큰 · [::1])")
+       "device = 새 장치 토큰 · migration 스위치 꺼짐 503·켜짐 이관 토큰 · [::1] · 거절·실패·만료 = 302 ?error=코드&state, 앱 흐름은 오류 페이지)")
 
 
 # ── 7) 값 없음 · cascade ───────────────────────────────
