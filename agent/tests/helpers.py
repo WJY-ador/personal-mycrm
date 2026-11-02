@@ -1,8 +1,12 @@
 """시험 도우미 — 전부 합성 자료. 실제 Keychain·launchd·서버를 쓰지 않는다."""
 from __future__ import annotations
 
+import base64
+import hashlib
 import io
 import json
+import re
+import urllib.parse
 import os
 import secrets
 import shutil
@@ -116,6 +120,11 @@ class FakeImportServer:
         self.rotate_script = []     # rotate 강제 응답: (status, dict) | "drop"(발급은 했는데 응답 유실)
         self.rotated_expires_at = "2027-04-18T00:00:00+09:00"
         self.device_calls = []      # (method, path)
+        self.handoffs = {}          # 브라우저 로그인 코드 → {challenge, state, used}
+        self.login_requests = []    # /desktop/login 쿼리(dict)
+        self.claim_requests = []    # /desktop/cli/claim (헤더 dict, 폼 dict) — 메모리에만
+        self.claim_script = []      # claim 강제 응답 (status, dict)
+        self.migration_token = None
         self.device_script = []     # 장치 경로 강제 응답
         self.device_info = {"stream_id": STREAM_ID, "label": "synthetic-device",
                             "policy": {"actions": ["like"],
@@ -180,7 +189,64 @@ class FakeImportServer:
                 return self._json(200, {"stream_id": outer.device_info["stream_id"], "token": new,
                                         "token_expires_at": outer.rotated_expires_at})
 
+            def _desktop_login(self):
+                q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(self.path).query))
+                with outer.lock:
+                    outer.login_requests.append(q)
+                ok = (re.match(r"^[A-Za-z0-9_-]{43}$", q.get("challenge", ""))
+                      and re.match(r"^[A-Za-z0-9_-]{16,64}$", q.get("state", ""))
+                      and re.match(r"^http://127\.0\.0\.1:\d{4,5}/cb$", q.get("redirect_uri", "")))
+                if not ok:
+                    return self._json(400, {"code": "ARG-INVALID"})
+                code = secrets.token_urlsafe(32)
+                with outer.lock:
+                    outer.handoffs[code] = {"challenge": q["challenge"], "state": q["state"], "used": False}
+                loc = q["redirect_uri"] + "?" + urllib.parse.urlencode({"code": code, "state": q["state"]})
+                self.send_response(302)
+                self.send_header("Location", loc)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def _cli_claim(self, body):
+                form = dict(urllib.parse.parse_qsl(body.decode("ascii")))
+                hdrs = {k: v for k, v in self.headers.items()}
+                with outer.lock:
+                    outer.claim_requests.append((hdrs, form))
+                    forced = outer.claim_script.pop(0) if outer.claim_script else None
+                    h = outer.handoffs.get(form.get("code", ""))
+                    good = (h is not None and not h["used"] and h["state"] == form.get("state")
+                            and base64.urlsafe_b64encode(hashlib.sha256(form.get("verifier", "").encode()).digest())
+                            .rstrip(b"=").decode() == h["challenge"])
+                    if h is not None:
+                        h["used"] = True
+                if forced is not None:
+                    return self._json(*forced)
+                if "Origin" in hdrs:
+                    return self._json(403, {"code": "ORIGIN"})
+                if not good:
+                    return self._json(400, {"code": "HANDOFF-INVALID", "msg": "다시 로그인해 주세요"})
+                scope = form.get("scope")
+                if scope == "device":
+                    if not 1 <= len(form.get("client_name", "")) <= 80:
+                        return self._json(400, {"code": "ARG-INVALID"})
+                    tok = "imp_" + outer.device_info["stream_id"] + ".tok_Brw01." + secrets.token_urlsafe(32)
+                    with outer.lock:
+                        outer.token, outer.revoked = tok, False
+                        outer.device_info = dict(outer.device_info, label=form["client_name"])
+                    return self._json(200, {"scope": "device", "token": tok, "stream_id": outer.device_info["stream_id"],
+                                            "token_expires_at": outer.device_info["token_expires_at"],
+                                            "account_label": "synth@example.invalid"})
+                if scope == "migration":
+                    tok = "mig_mt_" + secrets.token_hex(8) + "." + secrets.token_urlsafe(32)
+                    outer.migration_token = tok
+                    return self._json(200, {"scope": "migration", "token": tok, "token_id": "mt_" + secrets.token_hex(8),
+                                            "expires_at": "2026-11-16T00:00:00+09:00",
+                                            "account_label": "synth@example.invalid"})
+                return self._json(400, {"code": "ARG-INVALID"})
+
             def do_GET(self):
+                if self.path.startswith("/desktop/login?"):
+                    return self._desktop_login()
                 if self.path == "/api/imports/device":
                     return self._device("GET")
                 return self._json(404, {"code": "NOT-FOUND"})
@@ -192,6 +258,8 @@ class FakeImportServer:
                     return self._device("POST")
                 if self.path == "/api/device/rotate":
                     return self._rotate()
+                if self.path == "/desktop/cli/claim":
+                    return self._cli_claim(body)
                 hdrs = {k: v for k, v in self.headers.items()}
                 with outer.lock:
                     outer.requests.append((hdrs, body))
@@ -258,3 +326,17 @@ def run_cli(argv, **kw):
     out = io.StringIO()
     code = cli.main(argv, out=out, **kw)
     return code, out.getvalue()
+
+
+def fake_browser(log=None):
+    """가짜 시스템 브라우저 — 주소를 열고 리다이렉트를 따라간다(서버 /desktop/login → 302 → 127.0.0.1 /cb)."""
+    import urllib.request
+
+    def open_url(url):
+        if log is not None:
+            log.append(url)
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))   # 환경 프록시를 타지 않게
+        with opener.open(url, timeout=10) as r:
+            r.read()
+        return True
+    return open_url

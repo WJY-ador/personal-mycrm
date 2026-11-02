@@ -22,7 +22,8 @@ EXIT_OK, EXIT_ERR, EXIT_USAGE, EXIT_HALT = 0, 1, 2, 3
 class Ctx:
     def __init__(self, home, *, ks_factory=None, getpass_fn=None, uploader_factory=None,
                  schedule_runner=None, launch_agents_dir=None, exec_runner=None, out=None, stdin=None,
-                 jobs_adapter_factory=None, jobs_client_factory=None, jobs_serve_kw=None):
+                 jobs_adapter_factory=None, jobs_client_factory=None, jobs_serve_kw=None,
+                 browser_open=None, login_timeout=None):
         self.paths = _config.Paths(home)
         self.ks_factory = ks_factory or keystore.for_platform
         self.getpass_fn = getpass_fn or getpass.getpass
@@ -33,6 +34,8 @@ class Ctx:
         self.jobs_adapter_factory = jobs_adapter_factory    # (runner) → jobs 어댑터 — 시험은 fake
         self.jobs_client_factory = jobs_client_factory      # (server, token) → jobs.Client
         self.jobs_serve_kw = dict(jobs_serve_kw or {})      # 시험용 serve_jobs 인자(유예 등)
+        self.browser_open = browser_open                    # 시스템 브라우저 열기 — 시험은 가짜
+        self.login_timeout = login_timeout                  # 브라우저 로그인 기다림(초) — 기본 uploader.LOGIN_TIMEOUT
         self.out = out or sys.stdout
         self.stdin = stdin or sys.stdin
 
@@ -54,7 +57,10 @@ def _parser() -> argparse.ArgumentParser:
     c.add_argument("--hmac-namespace", help="(덮어쓰기) 키 공간 ID — 기본은 서버 값")
     c.add_argument("--policy-revision", type=int, help="(덮어쓰기) 정책 판 — 기본은 서버 값")
     c.add_argument("--axis", action="append", default=[], help="(덮어쓰기) 허용 축 항목 ID(여러 번)")
-    c.add_argument("--token-stdin", action="store_true", help="토큰을 표준 입력 한 줄로 받는다(화면 표시 없음)")
+    cg = c.add_mutually_exclusive_group()
+    cg.add_argument("--token-stdin", action="store_true", help="토큰을 표준 입력 한 줄로 받는다(화면 표시 없음)")
+    cg.add_argument("--browser", action="store_true",
+                    help="앱 없이 브라우저 로그인으로 연결(127.0.0.1 loopback, 장치 이름 = --label 또는 호스트 이름)")
 
     v = sub.add_parser("validate", help="설정·전송 대기 파일·지정 파일의 계약 검증")
     v.add_argument("files", nargs="*")
@@ -89,7 +95,9 @@ def _parser() -> argparse.ArgumentParser:
     m = sub.add_parser("migrate", help="실자료 이관(board-migration/2) — login·logout·stage·status·cancel·receipt")
     ms = m.add_subparsers(dest="mcmd")
     ml = ms.add_parser("login", help="이관 토큰을 키 저장소에 넣는다(웹 이관 화면에서 발급)")
-    ml.add_argument("--token-stdin", action="store_true", help="토큰을 표준 입력 한 줄로 받는다(화면 표시 없음)")
+    mlg = ml.add_mutually_exclusive_group()
+    mlg.add_argument("--token-stdin", action="store_true", help="토큰을 표준 입력 한 줄로 받는다(화면 표시 없음)")
+    mlg.add_argument("--browser", action="store_true", help="브라우저 로그인으로 이관 토큰을 받는다(127.0.0.1 loopback)")
     ms.add_parser("logout", help="이 서버의 로컬 이관 토큰을 지운다")
     mst = ms.add_parser("stage", help="입력 JSONL 검증 → plan 만들기 → 청크 업로드 → seal → dry-run 요약")
     mst.add_argument("items", help="항목 JSONL(한 줄 = board-migration/2 항목 하나)")
@@ -238,7 +246,7 @@ ROTATE_MESSAGES = {
 def _rotate_message(r: str) -> str:
     if r in ROTATE_MESSAGES:
         return ROTATE_MESSAGES[r]
-    if "DEVICE-REVOKED" in r:
+    if "DEVICE-REVOKED" in r or "TOKEN-REVOKED" in r:
         return "토큰 교체: 이 PC 연결이 해제됐어요 — 대화에서 「PC 연결해 줘」로 다시 연결하세요."
     if r.startswith("rotate-network"):
         return "토큰 교체: 서버에 닿지 못해 다음 실행으로 미뤘어요."
@@ -261,6 +269,18 @@ def _with_run_lock(ctx: Ctx, fn):
         return fn()
     finally:
         lock.release()
+
+
+def browser_token(ctx: Ctx, server: str, scope: str, *, client_name=None):
+    """브라우저 로그인으로 토큰 받기(connect·migrate login 공용). 실패면 안내를 출력하고 None. 토큰은 출력하지 않는다."""
+    from .uploader import LOGIN_TIMEOUT, LoginError, browser_login, explain_login_error
+    try:
+        return browser_login(server, scope, client_name=client_name, open_browser=ctx.browser_open, say=ctx.say,
+                             timeout=ctx.login_timeout or LOGIN_TIMEOUT)
+    except LoginError as e:
+        for line in explain_login_error(e):
+            ctx.say(line)
+        return None
 
 
 # ---- 명령 ---------------------------------------------------------------------
@@ -287,7 +307,13 @@ def cmd_connect(ctx: Ctx, a) -> int:
     if a.label is not None and not (1 <= len(a.label) <= 80):
         ctx.say("장치 이름은 1~80자예요.")
         return EXIT_USAGE
-    if a.token_stdin:
+    account_label = None
+    if getattr(a, "browser", False):
+        r = browser_token(ctx, server, "device", client_name=a.label)
+        if r is None:
+            return EXIT_ERR
+        token, account_label = r["token"], r.get("account_label")
+    elif a.token_stdin:
         token = ctx.stdin.readline().strip()
     else:
         token = ctx.getpass_fn("업로드 토큰(화면에 안 보임): ").strip()
@@ -351,6 +377,8 @@ def cmd_connect(ctx: Ctx, a) -> int:
         return EXIT_ERR
     _set_rotate_refused(ctx, None, "", osutil.kst_now())   # 새 토큰 — 지난 교체 거절 기록은 의미 없다
     ctx.say("연결했어요(서버 확인 완료).")
+    if isinstance(account_label, str) and account_label:
+        ctx.say(f"  계정: {account_label[:120]}")
     ctx.say(f"  입력원 ID: {stream_id}")
     ctx.say(f"  정책 판: {new['policy_revision']} · 허용 행동: {', '.join(new['allowed_actions'] or []) or '없음'}"
             f" · 허용 축 {len(new['allowed_axes'])}개")

@@ -18,9 +18,14 @@
 """
 from __future__ import annotations
 
+import base64
 import datetime as _dt
+import hashlib
 import json
+import re
+import secrets
 import time
+import urllib.parse
 import urllib.error
 import urllib.request
 
@@ -247,3 +252,192 @@ class Uploader:
         wait = min(60 * (2 ** min(n, 6)), 3600)
         at = self.now() + _dt.timedelta(seconds=wait)
         store.bump_attempt(rev["idempotency_key"], err, at.isoformat(timespec="seconds"))
+
+
+# ---- 브라우저 로그인(앱 없는 대체 경로) — RFC 8252 loopback + PKCE S256 + state -----------------
+LOOPBACK_HOST = "127.0.0.1"     # localhost 이름 해석에 기대지 않는다(RFC 8252 §8.3)
+LOOPBACK_PATH = "/cb"
+_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
+
+
+def _b64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def pkce_pair():
+    """(verifier, challenge) — verifier = 32바이트 무작위 base64url(43자), challenge = base64url(SHA-256(verifier))."""
+    verifier = _b64url(secrets.token_bytes(32))
+    return verifier, _b64url(hashlib.sha256(verifier.encode("ascii")).digest())
+
+
+def new_state() -> str:
+    return _b64url(secrets.token_bytes(16))      # 22자
+
+
+class LoginError(RuntimeError):
+    """브라우저 로그인 실패 — 종류만(code·verifier·state·토큰 없음)."""
+
+    def __init__(self, kind: str, status: int | None = None, code: str = ""):
+        self.kind, self.status, self.code = kind, status, code
+        self.msg = self.action = ""         # 서버가 준 사람용 문장(토큰·코드 값 없음)
+        super().__init__(kind + (f" http-{status}" if status else "") + (f" {code}" if code else ""))
+
+
+_DONE_PAGE = ("<!doctype html><meta charset=utf-8><title>MyCRM</title>"
+              "<p>로그인을 받았어요. 이 창을 닫고 터미널로 돌아가세요.</p>").encode("utf-8")
+_BAD_PAGE = ("<!doctype html><meta charset=utf-8><title>MyCRM</title>"
+             "<p>이 요청은 받지 않았어요. 터미널에서 다시 시작하세요.</p>").encode("utf-8")
+
+
+class LoopbackReceiver:
+    """127.0.0.1 임의 포트에서 `/cb?code&state` 를 한 번 받는다. state 가 다르거나 code 형식이 틀리면 거절하고 계속 기다린다.
+    요청 줄은 로그에 남기지 않는다(code·state 가 들어 있다)."""
+
+    def __init__(self, expected_state: str):
+        import http.server
+        import threading
+        outer = self
+        self._expected = expected_state
+        self._event = threading.Event()
+        self._code = None
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                return
+
+            def do_GET(self):
+                parts = urllib.parse.urlsplit(self.path)
+                q = urllib.parse.parse_qs(parts.query, keep_blank_values=True)
+                code = (q.get("code") or [""])[0]
+                state = (q.get("state") or [""])[0]
+                ok = (parts.path == LOOPBACK_PATH and len(q.get("code") or []) == 1 and _CODE_RE.match(code)
+                      and secrets.compare_digest(state.encode(), outer._expected.encode()) and not outer._event.is_set())
+                body = _DONE_PAGE if ok else _BAD_PAGE
+                self.send_response(200 if ok else 400)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Referrer-Policy", "no-referrer")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                if ok:
+                    outer._code = code
+                    outer._event.set()
+
+        self._httpd = http.server.HTTPServer((LOOPBACK_HOST, 0), H)
+        self.port = self._httpd.server_address[1]
+        self._thread = threading.Thread(target=self._httpd.serve_forever, kwargs={"poll_interval": 0.2}, daemon=True)
+        self._thread.start()
+
+    @property
+    def redirect_uri(self) -> str:
+        return f"http://{LOOPBACK_HOST}:{self.port}{LOOPBACK_PATH}"
+
+    def wait(self, timeout: float) -> str:
+        """받은 code. 시간 안에 못 받으면 LoginError("timeout")."""
+        try:
+            if not self._event.wait(timeout):
+                raise LoginError("timeout")
+            return self._code
+        finally:
+            self.close()
+
+    def close(self) -> None:
+        self._httpd.shutdown()
+        self._httpd.server_close()
+
+
+DESKTOP_LOGIN_PATH = "/desktop/login"
+CLI_CLAIM_PATH = "/desktop/cli/claim"
+LOGIN_TIMEOUT = 300.0            # 브라우저 로그인 기다림(초)
+_CLIENT_NAME_BAD = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def default_client_name() -> str:
+    """서버 연결 장치 이름 기본값 — 이 PC 의 호스트 이름(한 줄, 1~80자)."""
+    import socket
+    try:
+        name = _CLIENT_NAME_BAD.sub("", socket.gethostname() or "").strip()
+    except OSError:
+        name = ""
+    return (name or "my-crm-agent")[:80]
+
+
+def browser_login(server_url: str, scope: str, *, client_name: str | None = None, open_browser=None, say=print,
+                  timeout: float = LOGIN_TIMEOUT, opener=None) -> dict:
+    """RFC 8252 loopback 로그인 → POST /desktop/cli/claim → {scope, token, …}. 토큰은 반환값에만 있다(출력·로그 없음).
+    open_browser(url) 는 시스템 브라우저를 연다(시험은 가짜). 실패는 LoginError(kind: timeout·network·server·bad-response)."""
+    if scope not in ("device", "migration"):
+        raise ValueError("scope")
+    if open_browser is None:
+        import webbrowser
+        open_browser = webbrowser.open
+    base = server_url.rstrip("/")
+    verifier, challenge = pkce_pair()
+    state = new_state()
+    rx = LoopbackReceiver(state)
+    try:
+        url = base + DESKTOP_LOGIN_PATH + "?" + urllib.parse.urlencode(
+            {"challenge": challenge, "state": state, "redirect_uri": rx.redirect_uri})
+        say("브라우저에서 로그인하세요. 브라우저가 안 열리면 이 PC 의 브라우저로 다음 주소를 여세요:")
+        say("  " + url)
+        try:
+            open_browser(url)
+        except Exception:
+            pass                       # 주소를 보여 줬으니 손으로 열 수 있다
+        code = rx.wait(timeout)
+    finally:
+        rx.close()
+    form = {"code": code, "verifier": verifier, "state": state, "scope": scope}
+    if scope == "device":
+        form["client_name"] = client_name or default_client_name()
+    req = urllib.request.Request(base + CLI_CLAIM_PATH, data=urllib.parse.urlencode(form).encode("ascii"),
+                                 method="POST")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    req.add_header("Accept", "application/json")
+    try:
+        try:
+            resp = (opener or _opener()).open(req, timeout=30)
+            status, data = resp.status, resp.read(MAX_RESPONSE_BYTES)
+            resp.close()
+        except urllib.error.HTTPError as e:
+            status = e.code
+            try:
+                data = e.read(MAX_RESPONSE_BYTES)
+            except Exception:
+                data = b""
+            e.close()
+    except (urllib.error.URLError, OSError, TimeoutError):
+        raise LoginError("network") from None
+    try:
+        payload = json.loads(data.decode("utf-8")) if data else {}
+    except (UnicodeDecodeError, ValueError):
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    if status != 200:
+        err = LoginError("server", status, payload.get("code") if isinstance(payload.get("code"), str) else "")
+        err.msg = payload.get("msg") if isinstance(payload.get("msg"), str) else ""
+        err.action = payload.get("action") if isinstance(payload.get("action"), str) else ""
+        raise err
+    if payload.get("scope") != scope or not isinstance(payload.get("token"), str):
+        raise LoginError("bad-response")
+    return payload
+
+
+def explain_login_error(e: LoginError) -> list:
+    """브라우저 로그인 실패 → 사람이 읽는 줄들(값 없음)."""
+    if e.kind == "timeout":
+        return [f"{int(LOGIN_TIMEOUT // 60)}분 안에 브라우저 로그인을 받지 못했어요. 다시 실행하세요."]
+    if e.kind == "network":
+        return ["서버에 닿지 못했어요. 주소·네트워크를 확인하세요."]
+    if e.kind == "bad-response":
+        return ["서버 응답 모양이 맞지 않아요. 아무것도 저장하지 않았어요."]
+    out = [f"서버가 받지 않았어요(http-{e.status}" + (f" {e.code}" if e.code else "") + ")" + (f": {e.msg}" if e.msg else "")]
+    if e.action:
+        out.append("  " + e.action)
+    if e.code == "HANDOFF-INVALID":
+        out.append("  로그인 코드가 만료됐거나 맞지 않아요(2분·한 번만). 명령을 다시 실행해 로그인부터 하세요.")
+    elif e.code in ("NAME-REQUIRED", "MIGRATION-OFF", "MIGRATION-NOT-ALLOWED"):
+        out.append("  조치한 뒤 명령을 다시 실행하세요(로그인 코드는 이미 쓰였어요).")
+    return out

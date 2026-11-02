@@ -596,7 +596,18 @@ def cmd_login(ctx, a) -> int:
     server = _server(ctx, a)
     if not server:
         return EXIT_USAGE
-    if a.token_stdin:
+    if getattr(a, "browser", False):
+        from .cli import browser_token
+        r = browser_token(ctx, server, "migration")
+        if r is None:
+            return EXIT_ERR
+        token = r["token"]
+        if not TOKEN_RE.match(token):
+            ctx.say("서버가 준 이관 토큰 형식이 맞지 않아요. 아무것도 저장하지 않았어요.")
+            return EXIT_ERR
+        if isinstance(r.get("account_label"), str) and r["account_label"]:
+            ctx.say(f"  계정: {r['account_label'][:120]}")
+    elif a.token_stdin:
         token = ctx.stdin.readline().strip()
     else:
         token = ctx.getpass_fn("이관 토큰(화면에 안 보임): ").strip()
@@ -613,6 +624,7 @@ def cmd_login(ctx, a) -> int:
     ctx.say(f"  서버: {server}")
     ctx.say(f"  계정: {acct}")
     ctx.say("  토큰은 발급 뒤 14일에 만료돼요. 서버 확인은 stage 때 합니다.")
+    ctx.say("  앞서 받은 이관 토큰은 이 토큰이 서버에서 처음 쓰일 때 폐기돼요.")
     return EXIT_OK
 
 
