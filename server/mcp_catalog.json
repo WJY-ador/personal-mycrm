@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "note": "facade 카탈로그 정본 — op 마다 family·tier·keywords·examples(가짜 ID 만). 설명은 도구 docstring 에서 만든다(여기 적지 않는다). tier = read|write|decide|purge. bind = self(자기 바인딩, decide_preview 면제) · direct = false(직접 도구 없음, facade 전용).",
+  "note": "facade 카탈로그 정본 — op 마다 family·tier·keywords·examples(가짜 ID 만). 설명은 도구 docstring 에서 만든다(여기 적지 않는다). tier = read|write|decide|purge. bind = self(자기 바인딩, decide_preview 면제) · direct = false(직접 도구 없음, facade 전용) · rule = docstring 에 「…때만·뒤에만 부른다」 문장이 없을 때만 두는 게이트 문장(시험이 D∪P 전부에 게이트 문장을 본다).",
   "families": [
     {"key": "state", "label": "상태·도움·나"},
     {"key": "question", "label": "질문·프로필"},
@@ -48,6 +48,7 @@
     "candidates_propose": {"family": "candidate", "tier": "write", "keywords": ["후보", "후보 뽑기", "판단 후보", "정리"],
       "examples": [{"record_id": "r_example01", "question_id": "", "candidates": [{"text": "입력 담당부터 정한다", "quote": "입력 담당부터 정했다"}]}]},
     "candidate_decide": {"family": "candidate", "tier": "decide", "keywords": ["후보", "남길게", "빼줘", "고쳐서", "확정", "되돌리기", "판단"],
+      "rule": "사용자가 원문과 대조해 「남길게·빼줘·고쳐서 남길게」라고 말했을 때만 부른다. 네가 대신 confirm 하지 않는다.",
       "examples": [{"candidate_id": "c_example01", "action": "confirm"}]},
     "candidate_list": {"family": "candidate", "tier": "read", "keywords": ["후보", "후보 목록", "확인할 후보"],
       "examples": [{"status": "pending"}]},
@@ -66,6 +67,7 @@
       "examples": [{"object_id": "o_example01", "schema_revision": 1, "item_id": null, "expected_revision": 0, "code": null,
                     "title": "입력 담당 먼저", "body": "도구보다 사람을 먼저 정한다.", "data_json": "{}", "links": []}]},
     "item_decide": {"family": "definition", "tier": "decide", "keywords": ["항목", "기준", "적용", "확정", "보관", "되돌리기"],
+      "rule": "사용자가 그 항목의 적용·확정·보관·되돌리기를 말했을 때만 부른다. 후보 문장을 기준으로 옮겨 확정하지 않는다.",
       "examples": [{"item_id": "i_example01", "expected_revision": 1, "proposal_id": null, "action": "confirm", "history_id": null}]},
 
     "person_list": {"family": "person", "tier": "read", "keywords": ["사람", "별칭", "사람 목록"],
@@ -113,6 +115,7 @@
     "trash_move": {"family": "trash", "tier": "decide", "keywords": ["삭제", "지워", "휴지통으로", "버려"],
       "examples": [{"kind": "record", "target_id": "r_example01", "expected_revision": null}]},
     "trash_restore": {"family": "trash", "tier": "decide", "keywords": ["복원", "되살려", "휴지통에서 꺼내"],
+      "rule": "사용자가 되살리라고 말했을 때만 부른다.",
       "examples": [{"kind": "record", "target_id": "r_example01", "expected_revision": null}]},
     "trash_purge": {"family": "trash", "tier": "purge", "keywords": ["영구 삭제", "완전히 지워", "비우기"],
       "examples": [{"kind": "record", "target_id": "r_example01", "expected_revision": null}]},
@@ -125,6 +128,7 @@
       "examples": [{"ticket_id": "t_example01"}]},
 
     "migration_receipt_get": {"family": "migration", "tier": "read", "keywords": ["이관", "영수증", "반영 결과"],
+      "rule": "영수증 읽기는 MCP 이관 스위치와 무관하다(직접·facade 같은 도구 — 기존 동작 유지).",
       "examples": [{"plan_id": "mp_example01"}]},
     "migration_list": {"family": "migration", "tier": "read", "direct": false, "keywords": ["이관", "옮겨 오기", "이관 목록", "plan"],
       "examples": [{}]},

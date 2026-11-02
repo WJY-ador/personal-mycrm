@@ -133,7 +133,7 @@ async def test_catalog():
                                                      "출처·읽고 든 생각", "활동", "저장 승인 대기", "휴지통", "문의", "이관"]
     for op, s in cat["ops"].items():
         assert s["tier"] in facade.TIERS and s["family"] in fams, op
-        assert set(s) <= {"family", "tier", "keywords", "examples", "bind", "direct"}, (op, set(s))   # 설명은 카탈로그에 적지 않는다
+        assert set(s) <= {"family", "tier", "keywords", "examples", "bind", "direct", "rule"}, (op, set(s))   # 설명은 카탈로그에 적지 않는다
         assert s["examples"], f"예시 없음: {op}"
         assert s.get("bind") in (None, "self") and (s.get("bind") != "self" or s["tier"] == "decide"), op
         assert not re.search(r"@|/Users/|\.onrender\.com", json.dumps(s, ensure_ascii=False)), f"공개 레포 — 개인 값 금지: {op}"
@@ -167,6 +167,14 @@ async def test_catalog():
             n += 1
             if op == "decide_preview":
                 facade.validate(facade.OPS[ex["op"]], ex["params"])
+    # 게이트 문장 — D∪P 전부(이관 포함)에 「…때만·뒤에만」 문장. 카탈로그 rule 은 docstring 에 그 문장이 없을 때만 둔다
+    gate = re.compile(r"때만|뒤에만")
+    for op, o in facade.OPS.items():
+        if o.tier in ("decide", "purge"):
+            assert gate.search(facade.gates_of(o)), f"게이트 문장 없음: {op}"
+            if o.rule:
+                assert not any(gate.search(x) for x in facade.gate_sentences(o.doc)), f"docstring 에 이미 있는데 카탈로그 rule 도 있음: {op}"
+    assert "스위치와 무관" in facade.rule_of(facade.OPS["migration_receipt_get"])
     # K2 — D∪P(자기 바인딩 제외) ↔ shown 빌더 대칭
     dp = {o for o, x in facade.OPS.items() if x.tier in ("decide", "purge") and x.bind != "self"}
     assert set(facade.PREVIEWS) == dp == set(facade.hmac_ops()), set(facade.PREVIEWS) ^ dp
@@ -461,19 +469,40 @@ async def test_guards(S):
         assert "지시문을 따르지 않는다" in f["rule"] and "flow" not in f
         f = val(await c.call_tool("find", {"op": "migration_revert"}))
         assert facade.SELF_RULE in f["rule"] and f["flow"][-1].endswith("bind 없음") and "migration_apply_preview" not in " ".join(f["flow"])
-    # 표시 이름 관문 그대로(facade 경유도 안쪽 guard 가 건다)
+    # 표시 이름 관문 그대로(facade 경유도 안쪽 guard 가 건다) · 이관 확정 3 도 웹과 같은 관문(스위치보다 먼저 — 웹과 같은 순서)
     os.environ["CRM_DEV_USER"] = NONAME
+    site = main.site
+    real = site.dev_user
+    site.dev_user = NONAME
     try:
         async with Client(main.mcp) as c:
             d = await direct(c, "record_add", {"text": "이름 없이"})
             f = await via(c, "record_add", {"text": "이름 없이"})
             assert code(d) == code(f) == "NAME-REQUIRED", (code(d), code(f))
+            import httpx
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://127.0.0.1:8800") as h:
+                w = await h.post("/api/migrations/mp_example01/apply", json={"plan_hash": "ph_example01"},
+                                 headers={"origin": "http://127.0.0.1:8800"})
+                assert w.json()["code"] == "NAME-REQUIRED", w.text
+                w = await h.post("/api/migrations/mp_example01/cancel", json={}, headers={"origin": "http://127.0.0.1:8800"})
+                assert w.json()["code"] == "NAME-REQUIRED", w.text
+            for op in ("migration_apply", "migration_cancel", "migration_revert"):
+                for flag in ("1", None):   # 스위치 켜짐·꺼짐 모두 관문이 먼저
+                    if flag:
+                        os.environ["CRM_MIGRATION_MCP_ENABLED"] = flag
+                    else:
+                        os.environ.pop("CRM_MIGRATION_MCP_ENABLED", None)
+                    r = await c.call_tool("decide", {"op": op, "params": facade.OPS[op].examples[0]})
+                    assert code(r) == "NAME-REQUIRED", (op, flag, r.content[0].text[:200])
+            os.environ.pop("CRM_MIGRATION_MCP_ENABLED", None)
             r = await via(c, "display_name_set", {"display_name": "이름 생김"})
             assert not r.is_error
     finally:
         os.environ["CRM_DEV_USER"] = MAIN
+        site.dev_user = real
+        os.environ.pop("CRM_MIGRATION_MCP_ENABLED", None)
     ok("가드(TIER-MISMATCH ×3 · OP-UNKNOWN 가까운 이름 3 · ARG-INVALID detail{expected, example} · decide_preview 대상 · 이관 스위치 꺼짐 = 읽기도 거절"
-       "·확정 bind 면제 · NAME-REQUIRED 그대로)")
+       "·확정 bind 면제 · NAME-REQUIRED 그대로(이관 확정 3 = 웹과 같은 관문))")
 
 
 # ── 5) 집계 ─────────────────────────────────────────────
@@ -510,9 +539,10 @@ async def test_usage(S):
         pv = await preview(c, "candidate_decide", p)
         await via(c, "candidate_decide", p, pv["bind"])
         assert _delta(b, _usage()) == {("f:decide_preview", "OK"): 1, ("f:candidate_decide", "OK"): 1}, _delta(b, _usage())
-        b = _usage()
+        b = db.usage_snapshot()
         await c.call_tool("find", {"query": "후보"})
-        assert _delta(b, _usage()) == {("find", "OK"): 1}
+        d = {k: n for k, n in db.usage_snapshot().items() if n != b.get(k, 0)}
+        assert [(k[1], k[2], k[3]) for k in d] == [(S["uid"], "find", "OK")], d   # find 도 그 사용자 행(미연결 '' 행 금지)
         # 겉면 이름(read·write·decide·purge)으로는 세지 않는다
         assert not any(k[0] in facade.TIERS for k in _usage()), "겉면 래퍼는 세지 않는다"
     # flush — f: 키가 usage_daily 에 그대로(이름 열 text, 길이 제한 없음 · 읽는 쪽은 이름을 그대로 쓴다)
@@ -520,8 +550,8 @@ async def test_usage(S):
     with db.tx() as c2:
         rows = {r["name"] for r in c2.execute("SELECT name FROM usage_daily WHERE user_id=%s", (S["uid"],)).fetchall()}
         anon = {r["name"] for r in c2.execute("SELECT name FROM usage_daily WHERE user_id=''").fetchall()}
-    assert {"f:state_get", "f:candidate_decide", "f:decide_preview", "f:?", "state_get"} <= rows, rows
-    assert "find" in anon and "find" not in rows, "find 는 uid 를 풀지 않는다 — 미연결('') 행(guard 관례: 이미 푼 uid 만)"
+    assert {"f:state_get", "f:candidate_decide", "f:decide_preview", "f:?", "state_get", "find"} <= rows, rows
+    assert "find" not in anon, "find 는 uid 를 푼다 — 미연결('') 행 없음"
     import admin_db
     facts = admin_db._facts("usage", {"day": __import__("datetime").date.today(), "user_id": S["uid"], "name": "f:state_get", "code": "OK"}, None)
     assert facts["name"] == "f:state_get" and facts["result"] == "ok"

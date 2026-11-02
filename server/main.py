@@ -780,7 +780,8 @@ def inbox_get(import_id: Annotated[str, Field(description="승인 대기 ID (ie_
 PlanId = Annotated[str, Field(description="이관 plan ID (mp_…)")]
 
 
-@mcp.tool(description=migration_mcp.migration_receipt_get.__doc__)
+@mcp.tool(description=migration_mcp.migration_receipt_get.__doc__.rstrip()
+          + "\n    영수증 읽기는 MCP 이관 스위치와 무관하다(직접·facade 같은 이 도구 — 기존 동작 유지).")
 @guard
 def migration_receipt_get(
     ctx: Context,
@@ -793,6 +794,8 @@ def migration_receipt_get(
 # ── 이관 op 7 (facade 전용, 2026-11-02 가안 X) — 직접 도구로 등록하지 않는다(facade.install 의 extra_ops).
 # 본체 = migration_mcp 의 (uid, …) 함수(스위치 CRM_MIGRATION_MCP_ENABLED 는 본체가 본다). 여기선 MCP 서명(인자 설명·ctx)만 붙이고
 # 설명은 본체 docstring 그대로(정본 하나). 확정 3개(apply·cancel·revert)는 자기 바인딩 — decide_preview·bind 면제(catalog bind=self).
+# 확정 3개는 웹 경로와 같은 db.write_gate(표시 이름 관문 NAME-REQUIRED · 전역 크기)를 본체 전에 지난다 — WRITE_LIMITS 에는 넣지 않는다
+# (이관 전용 일일 한도가 따로 있다). quota 는 웹과 같게: apply 켬 · cancel 끔 · revert 끔(웹 경로 없음 — 대상을 줄이는 쪽이라 cancel 과 같게).
 
 def _mig(fn):
     src = getattr(migration_mcp, fn.__name__)
@@ -827,17 +830,23 @@ def migration_apply(
     expected_counts: Annotated[dict[str, int], Field(description="migration_apply_preview 가 준 expected_counts({결과: 개수}) 그대로")],
     ctx: Context,
 ) -> dict:
-    return migration_mcp.migration_apply(uid_of(ctx), plan_id, plan_hash, expected_counts)
+    uid = uid_of(ctx)
+    db.write_gate("migration_apply", {"plan_hash": plan_hash}, uid, quota=True)
+    return migration_mcp.migration_apply(uid, plan_id, plan_hash, expected_counts)
 
 
 @_mig
 def migration_cancel(plan_id: PlanId, ctx: Context) -> dict:
-    return migration_mcp.migration_cancel(uid_of(ctx), plan_id)
+    uid = uid_of(ctx)
+    db.write_gate("migration_cancel", {}, uid, quota=False)
+    return migration_mcp.migration_cancel(uid, plan_id)
 
 
 @_mig
 def migration_revert(plan_id: PlanId, ctx: Context) -> dict:
-    return migration_mcp.migration_revert(uid_of(ctx), plan_id)
+    uid = uid_of(ctx)
+    db.write_gate("migration_revert", {}, uid, quota=False)
+    return migration_mcp.migration_revert(uid, plan_id)
 
 
 MIGRATION_OPS = (migration_list, migration_get, migration_item_get, migration_apply_preview, migration_apply, migration_cancel,

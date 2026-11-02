@@ -10,6 +10,7 @@
 - 확정·삭제(decide·purge)는 read(op="decide_preview") 가 준 bind 가 있어야 한다. bind = HMAC(key, op ∥ 정규화 params ∥ 대상 스냅샷)
   base64url 앞 16자, key = HMAC(CRM_SESSION_SECRET, "bind-v1"). 무상태·만료 없음 — 대상이 바뀌면 BIND-STALE.
   비밀을 바꾸면 웹 세션과 bind 가 함께 무효가 된다. 이관 op(catalog bind=self)은 자기 바인딩이라 면제.
+  CRM_SESSION_SECRET 이 없으면 개발(CRM_DEV=1)은 고정 개발 키, 운영은 BIND-UNAVAILABLE(확정·삭제 facade 경로가 멈춘다).
 - main.py 가 맨 끝에서 install(mcp, guard, uid_of, extra_ops) 를 한 번 부른다. 이 모듈은 main 을 import 하지 않는다.
 """
 import base64
@@ -52,7 +53,7 @@ _GATE = re.compile(r"때만|뒤에만|전에 부르지 않는다|말하기 전�
 
 
 class Op:
-    __slots__ = ("name", "tier", "family", "bind", "direct", "tool", "keywords", "examples")
+    __slots__ = ("name", "tier", "family", "bind", "direct", "tool", "keywords", "examples", "rule")
 
     def __init__(self, name, spec, tool):
         self.name, self.tool = name, tool
@@ -60,6 +61,7 @@ class Op:
         self.bind = spec.get("bind") or ("hmac" if spec["tier"] in ("decide", "purge") else None)
         self.direct = spec.get("direct", True)
         self.keywords, self.examples = list(spec.get("keywords", [])), list(spec.get("examples", []))
+        self.rule = spec.get("rule", "")   # docstring 에 게이트 문장이 없을 때만 카탈로그에 둔다
 
     @property
     def doc(self):
@@ -439,11 +441,16 @@ PREVIEWS = {
 def gate_sentences(doc) -> list[str]:
     """docstring 에서 「…때만 부른다」 류 문장만."""
     sents = re.split(r"(?<=[.。])\s+|\n+", doc or "")
-    return [s.strip() for s in sents if s.strip() and _GATE.search(s) and "부르" in s]
+    return [s.strip() for s in sents if s.strip() and _GATE.search(s) and re.search(r"부르|부른", s)]
+
+
+def gates_of(o) -> str:
+    """op 의 게이트 문장 — docstring 의 「…때만 부른다」 류 + 카탈로그 rule + 본체 모듈 규칙(이관)."""
+    return " ".join(x for x in (" ".join(gate_sentences(o.doc)), o.rule, RULES.get(o.name, "")) if x)
 
 
 def rule_of(o) -> str:
-    gates = " ".join(x for x in (" ".join(gate_sentences(o.doc)), RULES.get(o.name, "")) if x)
+    gates = gates_of(o)
     if o.bind == "self":
         return f"{SELF_RULE} {gates}".strip()
     if o.tier == "decide":
@@ -569,7 +576,8 @@ def decide_preview_fn(ops):
         ctx: Context,
     ) -> dict:
         """확정·삭제 전 미리보기 — 사용자에게 보여 줄 shown(고치지 않고 그대로)·영향·되돌릴 수 없는지·bind. 아무것도 바꾸지 않는다.
-        사용자가 shown 을 보고 말한 뒤에만 그 bind 로 decide·purge 를 부른다. 이관 반영은 migration_apply_preview 를 쓴다."""
+        사용자가 shown 을 보고 말한 뒤에만 그 bind 로 decide·purge 를 부른다. 이관 반영은 migration_apply_preview 를 쓴다.
+        서버에 bind 비밀(CRM_SESSION_SECRET)이 없으면 BIND-UNAVAILABLE — 운영자에게 문의하자고 안내한다."""
         o = OPS.get(op)
         if o is None:
             raise unknown(op)
@@ -592,10 +600,11 @@ def _desc_decide(tier):
              f"공통: {COMMON_RULE}"]
     if tier == "purge":
         lines.append(PURGE_RULE)
+    if ops_of(tier, "self"):
+        lines.append(f"이관(migration_*): {SELF_RULE}")
     for n in ops_of(tier):
         o = OPS[n]
-        g = " ".join(gate_sentences(o.doc)) or o.summary
-        lines.append(f"- {n}: " + " ".join(x for x in ((SELF_RULE if o.bind == "self" else ""), g) if x))
+        lines.append(f"- {n}: " + gates_of(o))
     return "\n".join(lines)
 
 
@@ -626,6 +635,7 @@ def install(mcp, guard, uid_fn, extra_ops=(), rules=None):
         family: Annotated[str, Field(description="이 묶음만 (선택)", json_schema_extra={"enum": ["", *fam_keys]})] = "",
         op: Annotated[str, Field(description="이 op 의 설명·입력 스키마·예시·규칙 (선택)")] = "",
     ) -> dict:
+        uid_of(ctx)   # 사용 집계를 그 사용자 행으로(다른 겉면과 같게 — 미연결 '' 행 금지)
         return find(query, family, op)
     find_tool.__name__ = "find"
     find_tool.__doc__ = ("이 서버의 할 일(op)을 찾는다. 인자 없음 = 묶음 목록, query = 말로 찾기(최대 8), op = 그 op 의 설명·input_schema·examples·rule. "
