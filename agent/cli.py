@@ -12,6 +12,7 @@ import datetime as _dt
 import getpass
 import json
 import os
+import re
 import sys
 
 from . import AGENT_VERSION, config as _config, contract, hmacid, keystore, osutil, runner, schedule, store as _store
@@ -322,10 +323,25 @@ def cmd_connect(ctx: Ctx, a) -> int:
     except contract.ContractError:
         ctx.say("토큰 형식이 맞지 않아요. 서버 연결 장치 화면의 토큰을 그대로 붙여 넣으세요.")
         return EXIT_USAGE
-    # 1) 서버 확인 — 실패하면 아무것도 저장하지 않는다
+    stored = False
+    if getattr(a, "browser", False):
+        # 브라우저 로그인은 서버에 장치를 이미 만들었다 — 확인 전에 Keychain 에 먼저 둔다(고아 장치 방지).
+        # 확인이 네트워크로 실패하면 남겨 두고 다음 run-once 가 확인을 마친다. 서버가 거절하면 지운다
+        ctx.paths.ensure()
+        try:
+            ctx.keystore(_config.load(ctx.paths)).set(_config.token_account(stream_id), token)
+        except keystore.KeyStoreError as e:
+            ctx.say(f"자격 증명 저장소에 쓰지 못했어요: {e}. 평문으로 저장하지 않고 멈춥니다.")
+            ctx.say("  서버엔 이 장치가 생겼어요 — 웹·대화에서 해제한 뒤 다시 하세요.")
+            return EXIT_ERR
+        _connect_pending(ctx, server, stream_id)
+        stored = True
+    # 1) 서버 확인 — 실패하면 아무것도 저장하지 않는다(브라우저 경로는 위 예외)
     try:
         info = _uploader(ctx, server, token).device()
     except DeviceError as e:
+        if stored:
+            return _connect_check_failed(ctx, e, stream_id)
         if e.kind == "auth":
             ctx.say(f"서버가 토큰을 받지 않았어요({e.code or e.status}). 연결 장치 화면에서 토큰을 다시 발급하세요.")
         elif e.kind == "network":
@@ -333,14 +349,101 @@ def cmd_connect(ctx: Ctx, a) -> int:
         else:
             ctx.say(f"서버 확인 실패: http-{e.status} {e.code}".rstrip())
         return EXIT_ERR
+    return _finish_connect(ctx, server, token, stream_id, info, a, account_label)
+
+
+CONNECT_PENDING_FILE = "connect-pending.json"   # {server_url, stream_id} — 브라우저 연결 확인 대기. 토큰 없음
+
+
+def _connect_pending(ctx: Ctx, server, stream_id) -> None:
+    """확인 대기 표식 쓰기(server·stream_id) · None 이면 지우기."""
+    path = os.path.join(ctx.paths.home, CONNECT_PENDING_FILE)
+    try:
+        if server is None:
+            if os.path.exists(path):
+                os.remove(path)
+        else:
+            osutil.atomic_write(path, json.dumps({"server_url": server, "stream_id": stream_id}, sort_keys=True).encode())
+    except OSError:
+        pass
+
+
+_STREAM_RE = re.compile(r"^is_[0-9a-f]{24}$")
+
+
+def _read_connect_pending(ctx: Ctx):
+    """확인 대기 표식 → (server, stream_id) | None(없음·깨짐 — 깨졌으면 지운다)."""
+    path = os.path.join(ctx.paths.home, CONNECT_PENDING_FILE)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            m = json.load(f)
+        server, sid = _config.check_server_url(m["server_url"]), m["stream_id"]
+        if not isinstance(sid, str) or not _STREAM_RE.match(sid):
+            raise ValueError("stream_id")
+        return server, sid
+    except (OSError, ValueError, KeyError, TypeError, _config.ConfigError):
+        _connect_pending(ctx, None, None)
+        return None
+
+
+def _connect_check_failed(ctx: Ctx, e, stream_id) -> int:
+    """미리 저장한 브라우저 토큰의 서버 확인 실패 — 거절이면 지우고, 네트워크·서버 오류면 남겨 둔다."""
+    from .uploader import AUTH_CODES
+    if e.kind == "auth" or e.code in AUTH_CODES:
+        try:
+            ctx.keystore(_config.load(ctx.paths)).delete(_config.token_account(stream_id))
+        except (keystore.KeyStoreError, _config.ConfigError):
+            pass
+        _connect_pending(ctx, None, None)
+        ctx.say(f"서버가 새 토큰을 받지 않아 지웠어요({e.code or e.status}). `connect --browser` 를 다시 하세요.")
+    else:
+        ctx.say("서버 확인을 마치지 못했어요(" + str(e) + "). 토큰은 Keychain 에 저장해 뒀어요(표시 안 함) — "
+                "다음 `run-once` 때 확인을 마칩니다.")
+    return EXIT_ERR
+
+
+def resume_connect(ctx: Ctx) -> int | None:
+    """브라우저 연결 확인 대기가 있으면 서버 확인을 마친다(run-once 시작 때). 대기가 없으면 None."""
+    from .uploader import DeviceError
+    pend = _read_connect_pending(ctx)
+    if pend is None:
+        return None
+    server, stream_id = pend
+    try:
+        token = ctx.keystore(_config.load(ctx.paths)).get(_config.token_account(stream_id))
+    except keystore.KeyStoreError as e:
+        ctx.say(f"브라우저 연결 확인: 자격 증명 저장소 접근 불가: {e}")
+        return EXIT_ERR
+    if not token:
+        _connect_pending(ctx, None, None)
+        return None
+    try:
+        info = _uploader(ctx, server, token).device()
+    except DeviceError as e:
+        return _connect_check_failed(ctx, e, stream_id)
+    return _finish_connect(ctx, server, token, stream_id, info, None, None)
+
+
+def _finish_connect(ctx: Ctx, server, token, stream_id, info, a, account_label) -> int:
+    """서버 확인(device) 뒤 — 설정 반영·Keychain 저장. a 가 None 이면 덮어쓰기 없음(run-once 의 연결 확인)."""
     ctx.paths.ensure()
     cfg = _config.load(ctx.paths)
     try:
         new = _config.apply_device_info(cfg, info, expected_stream=stream_id)
     except _config.ConfigError as e:
         ctx.say(f"서버 장치 정보가 맞지 않아요: {e}")
+        pend = _read_connect_pending(ctx)
+        if pend is not None and pend[1] == stream_id:     # 미리 저장한 브라우저 토큰만 지운다
+            try:
+                ctx.keystore(cfg).delete(_config.token_account(stream_id))
+            except keystore.KeyStoreError:
+                pass
+            _connect_pending(ctx, None, None)
         return EXIT_ERR
     overrides = []
+    a = a or argparse.Namespace(hmac_namespace=None, policy_revision=None, axis=[], label=None)
     if a.hmac_namespace is not None and a.hmac_namespace != new["hmac_namespace"]:
         new["hmac_namespace"] = a.hmac_namespace
         overrides.append("hmac_namespace")
@@ -376,6 +479,7 @@ def cmd_connect(ctx: Ctx, a) -> int:
         ctx.say(f"설정 오류: {e}")
         return EXIT_ERR
     _set_rotate_refused(ctx, None, "", osutil.kst_now())   # 새 토큰 — 지난 교체 거절 기록은 의미 없다
+    _connect_pending(ctx, None, None)
     ctx.say("연결했어요(서버 확인 완료).")
     if isinstance(account_label, str) and account_label:
         ctx.say(f"  계정: {account_label[:120]}")
@@ -420,6 +524,7 @@ def cmd_validate(ctx: Ctx, a) -> int:
 
 
 def cmd_run_once(ctx: Ctx, a) -> int:
+    resume_connect(ctx)        # 브라우저 연결 확인 대기가 있으면 먼저 마친다(실패해도 이번 실행은 그대로)
     try:
         cfg = _config.load(ctx.paths)
     except _config.ConfigError as e:
@@ -494,6 +599,8 @@ def cmd_status(ctx: Ctx, a) -> int:
         return EXIT_ERR
     connected = bool(cfg.get("source_instance_id"))
     ctx.say(f"홈: {ctx.paths.home}")
+    if os.path.exists(os.path.join(ctx.paths.home, CONNECT_PENDING_FILE)):
+        ctx.say("브라우저 연결: 서버 확인 대기(다음 run-once 때 마침)")
     ctx.say(f"연결: {'예' if connected else '아니오'}" + (f" · 입력원 {cfg['source_instance_id']}" if connected else ""))
     if connected:
         try:

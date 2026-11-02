@@ -66,6 +66,16 @@ class LoopbackTest(unittest.TestCase):
         finally:
             rx.close()
 
+    def test_error_redirect_stops_now_only_with_matching_state(self):
+        st = uploader.new_state()
+        rx = uploader.LoopbackReceiver(st)
+        self.assertEqual(_get(rx.port, "/cb?error=access_denied&state=wrong-state-value-xx")[0], 400)   # 남의 state 는 무시
+        self.assertFalse(rx._event.is_set())
+        self.assertEqual(_get(rx.port, f"/cb?error=access_denied&state={st}")[0], 200)
+        with self.assertRaises(uploader.LoginError) as cm:
+            rx.wait(1)
+        self.assertEqual((cm.exception.kind, cm.exception.code), ("denied", "access_denied"))
+
     def test_timeout(self):
         rx = uploader.LoopbackReceiver(uploader.new_state())
         with self.assertRaises(uploader.LoginError) as cm:
@@ -149,6 +159,52 @@ class BrowserLoginCliTest(unittest.TestCase):
         code, out = self.cli("connect", "--server", self.srv.url, "--browser")
         self.assertEqual(code, 1, out)
         self.assertIn("브라우저 로그인을 받지 못했어요", out)
+        self.assertEqual(self.srv.claim_requests, [])
+        self.assertEqual(self.ks.items, {})
+
+    def test_connect_browser_stores_first_and_run_once_finishes(self):
+        # claim 뒤 서버 확인이 실패(503) — 서버엔 장치가 생겼으니 토큰을 Keychain 에 남기고 다음 run-once 가 마친다
+        self.srv.device_script = [(503, {"code": "IMPORTS-OFF"})]
+        code, out = self.cli("connect", "--server", self.srv.url, "--browser")
+        self.assertEqual(code, 1, out)
+        self.assertIn("다음 `run-once` 때 확인을 마칩니다", out)
+        token = self.srv.token
+        self.assertEqual(self.ks.get(_config.token_account(STREAM_ID)), token)
+        self.assertIsNone(_config.load(self.th.paths).get("source_instance_id"))
+        code, out = self.cli("status")
+        self.assertIn("서버 확인 대기", out)
+        code, out = self.cli("run-once")
+        self.assertEqual(code, 0, out)
+        self.assertIn("연결했어요(서버 확인 완료)", out)
+        self.assertEqual(_config.load(self.th.paths)["source_instance_id"], STREAM_ID)
+        self.assertFalse(os.path.exists(os.path.join(self.th.home, "connect-pending.json")))
+        code, out = self.cli("status")
+        self.assertNotIn("서버 확인 대기", out)
+        self.assert_secrets_absent(token)
+
+    def test_connect_browser_check_rejected_deletes_token(self):
+        self.srv.device_script = [(401, {"code": "AUTH-INVALID"})]
+        code, out = self.cli("connect", "--server", self.srv.url, "--browser")
+        self.assertEqual(code, 1, out)
+        self.assertIn("지웠어요", out)
+        self.assertEqual(self.ks.items, {})
+        self.assertFalse(os.path.exists(os.path.join(self.th.home, "connect-pending.json")))
+
+    def test_connect_browser_error_redirect_stops_without_claim(self):
+        import urllib.parse
+        import urllib.request
+
+        def deny(url):     # 서버가 로그인 취소를 loopback 으로 알려 오는 경우
+            q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query))
+            back = q["redirect_uri"] + "?" + urllib.parse.urlencode({"error": "access_denied", "state": q["state"]})
+            try:
+                urllib.request.build_opener(urllib.request.ProxyHandler({})).open(back, timeout=5).read()
+            except Exception:
+                pass
+        self.kw.update(browser_open=deny, login_timeout=30)
+        code, out = self.cli("connect", "--server", self.srv.url, "--browser")
+        self.assertEqual(code, 1, out)
+        self.assertIn("로그인이 끝나지 않았어요(access_denied)", out)
         self.assertEqual(self.srv.claim_requests, [])
         self.assertEqual(self.ks.items, {})
 

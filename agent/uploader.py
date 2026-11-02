@@ -258,6 +258,7 @@ class Uploader:
 LOOPBACK_HOST = "127.0.0.1"     # localhost 이름 해석에 기대지 않는다(RFC 8252 §8.3)
 LOOPBACK_PATH = "/cb"
 _CODE_RE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
+_ERROR_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 
 
 def _b64url(raw: bytes) -> str:
@@ -300,6 +301,7 @@ class LoopbackReceiver:
         self._expected = expected_state
         self._event = threading.Event()
         self._code = None
+        self._error = None
 
         class H(http.server.BaseHTTPRequestHandler):
             def log_message(self, *a):
@@ -310,6 +312,20 @@ class LoopbackReceiver:
                 q = urllib.parse.parse_qs(parts.query, keep_blank_values=True)
                 code = (q.get("code") or [""])[0]
                 state = (q.get("state") or [""])[0]
+                err = (q.get("error") or [""])[0]
+                state_ok = secrets.compare_digest(state.encode(), outer._expected.encode())
+                if (parts.path == LOOPBACK_PATH and err and not code and state_ok and not outer._event.is_set()
+                        and _ERROR_RE.match(err)):
+                    # 서버가 로그인 거절·취소를 알려 왔다 — 5분 기다리지 않고 바로 멈춘다
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(_BAD_PAGE)))
+                    self.end_headers()
+                    self.wfile.write(_BAD_PAGE)
+                    outer._error = err
+                    outer._event.set()
+                    return
                 ok = (parts.path == LOOPBACK_PATH and len(q.get("code") or []) == 1 and _CODE_RE.match(code)
                       and secrets.compare_digest(state.encode(), outer._expected.encode()) and not outer._event.is_set())
                 body = _DONE_PAGE if ok else _BAD_PAGE
@@ -338,6 +354,8 @@ class LoopbackReceiver:
         try:
             if not self._event.wait(timeout):
                 raise LoginError("timeout")
+            if self._error:
+                raise LoginError("denied", code=self._error)
             return self._code
         finally:
             self.close()
@@ -431,7 +449,9 @@ def browser_login(server_url: str, scope: str, *, client_name: str | None = None
 def explain_login_error(e: LoginError) -> list:
     """브라우저 로그인 실패 → 사람이 읽는 줄들(값 없음)."""
     if e.kind == "timeout":
-        return [f"{int(LOGIN_TIMEOUT // 60)}분 안에 브라우저 로그인을 받지 못했어요. 다시 실행하세요."]
+        return [f"{int(LOGIN_TIMEOUT // 60)}분 안에 브라우저 로그인을 받지 못했어요. 브라우저에서 로그인을 마치지 못했으면 다시 실행하세요."]
+    if e.kind == "denied":
+        return [f"브라우저 로그인이 끝나지 않았어요({e.code}). 다시 실행하세요."]
     if e.kind == "network":
         return ["서버에 닿지 못했어요. 주소·네트워크를 확인하세요."]
     if e.kind == "loopback":
