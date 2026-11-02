@@ -15,6 +15,7 @@ import hashlib
 import hmac
 import html as _html
 import json
+import logging
 import os
 import re
 import secrets
@@ -43,6 +44,28 @@ SESSION_COOKIE = "crm_session"
 FLOW_COOKIE = "crm_login"
 SESSION_TTL = 7 * 24 * 3600   # 세션 쿠키 7일(PR①, 30일에서 줄임)
 FLOW_TTL = 600
+# 앱 로그인 넘김(2026-11-02) — 시스템 브라우저 로그인 → mycrm://auth/callback → 앱 창이 /desktop/claim. 값 형식은 앱(desktop/)과의 계약
+DESKTOP_COOKIE = "crm_desktop"   # {c: challenge, s: state} 서명 쿠키 10분. 있으면 /auth/callback 이 /app 대신 「앱으로 돌아가요」
+DESKTOP_TTL = 600
+DESKTOP_DEEPLINK = "mycrm://auth/callback"   # 고정 — 돌아갈 곳을 요청에서 받지 않는다(open redirect 없음)
+DESKTOP_CLAIM_PER_MIN = 10   # /desktop/claim IP 당 분당 상한(메모리 — 인스턴스 1개)
+DESKTOP_FORM_MAX = 2048
+_B64_43 = re.compile(r"[A-Za-z0-9_-]{43}")   # challenge = base64url(sha256(verifier)) · 넘김 코드(32바이트) · verifier(32바이트), 패딩 없음
+_DESKTOP_STATE = re.compile(r"[A-Za-z0-9_-]{16,64}")   # 앱 state(16바이트 base64url = 22자). 길이 상한만 두고 값 그대로 저장
+
+
+class _DesktopQueryRedact(logging.Filter):
+    """uvicorn 접근 로그에서 /desktop/* 의 쿼리(앱 state·challenge)를 지운다. 접근 로그 args = (주소, 메서드, 경로+쿼리, HTTP 버전, 상태)."""
+
+    def filter(self, record):
+        a = record.args
+        if isinstance(a, tuple) and len(a) >= 3 and isinstance(a[2], str) and a[2].startswith("/desktop/") and "?" in a[2]:
+            record.args = a[:2] + (a[2].split("?", 1)[0] + "?…",) + a[3:]
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(_DesktopQueryRedact())
+
 APP_HTML = Path(__file__).parent / "app.html"
 START_HTML = Path(__file__).parent / "start.html"
 ACTIONS = ("confirm", "exclude", "pending", "edit", "edit_confirm")
@@ -159,12 +182,13 @@ def ua_family(ua: str | None) -> str:
     return "other"
 
 
-def _page(title: str, body: str, status: int = 200) -> HTMLResponse:
-    """title 은 escape 한다. body 는 HTML 조각 — 동적 값은 호출하는 쪽이 _esc 로 감싸서 넘긴다."""
+def _page(title: str, body: str, status: int = 200, head: str = "", headers: dict | None = None) -> HTMLResponse:
+    """title 은 escape 한다. body 는 HTML 조각 — 동적 값은 호출하는 쪽이 _esc 로 감싸서 넘긴다.
+    head = <head> 에 더할 조각(앱 넘김의 meta refresh — 동적 값은 _esc). headers = 응답 헤더 추가(cache-control 등)."""
     t = _esc(title)
-    return _html_resp(f"""<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    return _html_resp(f"""<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">{head}
 <title>{t}</title><style>body{{font-family:system-ui,sans-serif;max-width:520px;margin:15vh auto;padding:0 20px;color:#2B2824;background:#FBF8F4;line-height:1.6}}
-a{{color:#E4705A}}</style></head><body><h2>{t}</h2>{body}</body></html>""", status)
+a{{color:#E4705A}}</style></head><body><h2>{t}</h2>{body}</body></html>""", status, headers)
 
 
 # ── 도움말: guides 마크다운 → HTML ─────────────────────
@@ -1336,9 +1360,96 @@ class Web:
         except Exception as e:   # ToolError·CrmError — 메시지만 보인다
             msg = getattr(e, "message", None) or str(e)
             return _page("사용자를 연결하지 못했어요", f"<p>{_esc(msg)}</p>{again}", 502)
-        resp = RedirectResponse("/app", status_code=302)
+        # 앱 로그인 넘김 — /desktop/login 이 남긴 crm_desktop 쿠키가 살아 있을 때만 「앱으로 돌아가요」. 없거나 만료·변조면 종전대로 /app
+        d = self.unsign(request.cookies.get(DESKTOP_COOKIE))
+        if d and _B64_43.fullmatch(str(d.get("c", ""))) and _DESKTOP_STATE.fullmatch(str(d.get("s", ""))):
+            resp = await self._handoff_page(uid, d["c"], d["s"])
+        else:
+            resp = RedirectResponse("/app", status_code=302)
         self.set_cookie(resp, SESSION_COOKIE, self.session_value(uid), SESSION_TTL)
         self.clear_cookie(resp, FLOW_COOKIE)
+        return resp
+
+    # ── 앱 로그인 넘김 (2026-11-02) ───────────────────────
+    # 앱(Electron) 창 안에서는 Google 등 외부 로그인이 쿠키를 잃는다 → 로그인만 시스템 브라우저에서 하고 일회용 코드로 앱에 넘긴다.
+    # /desktop/login(시스템 브라우저 GET) → [AuthKit → /auth/callback] → 「앱으로 돌아가요」(mycrm://auth/callback?code&state)
+    # → 앱 창이 POST /desktop/claim(code·verifier·state) → 세션 쿠키 → 303 /app. 코드·verifier·state 값은 로그·오류 문구에 넣지 않는다.
+    async def desktop_login(self, request):
+        """형식 검사(400) → 이미 웹 세션(DEV = 개발 사용자)이면 AuthKit 없이 바로 넘김 페이지 → 아니면 crm_desktop 쿠키 + 기존 /login 흐름."""
+        ch, st = request.query_params.get("challenge", ""), request.query_params.get("state", "")
+        if not (_B64_43.fullmatch(ch) and _DESKTOP_STATE.fullmatch(st)):
+            return self._desktop_fail("앱 로그인 요청이 올바르지 않아요", 400)
+        if await self.uid_of(request) is not None:
+            return await self._handoff_page(request.state.uid, ch, st)
+        resp = await self.login(request)   # login_ready 아니면 503 페이지 — 그때는 쿠키를 붙이지 않는다
+        if resp.status_code == 302:
+            self.set_cookie(resp, DESKTOP_COOKIE, self.sign({"c": ch, "s": st}, DESKTOP_TTL), DESKTOP_TTL)
+        return resp
+
+    async def _handoff_page(self, uid: str, challenge: str, state: str) -> Response:
+        """넘김 코드(32바이트) 발급 — 서버엔 SHA-256 만(2분·일회용) → 「MyCRM 앱으로 돌아가요」(링크 + meta refresh, 스크립트 없음, no-store)."""
+        code = _b64(secrets.token_bytes(32))
+        try:
+            await run_in_threadpool(db.desktop_handoff_create, uid, hashlib.sha256(code.encode()).digest(), challenge, state)
+        except Exception as e:
+            print(f"[desktop] 앱 로그인 넘김 발급 실패: {type(e).__name__}", flush=True)
+            resp = self._desktop_fail("앱 로그인을 이어 가지 못했어요", 503)
+        else:
+            link = _esc(f"{DESKTOP_DEEPLINK}?{urlencode({'code': code, 'state': state})}")
+            body = (f'<p>로그인을 마쳤어요. MyCRM 앱이 열리면 대시보드가 이어서 보여요.</p>'
+                    f'<p><a href="{link}"><strong>MyCRM 앱 열기</strong></a></p>'
+                    '<p>앱이 안 열리면 위 버튼을 눌러 주세요. 2분 안에 열어야 해요. 앱이 열린 뒤 이 창은 닫아도 돼요.</p>')
+            resp = _page("MyCRM 앱으로 돌아가요", body, head=f'<meta http-equiv="refresh" content="0;url={link}">',
+                         headers={"cache-control": "no-store"})
+        self.clear_cookie(resp, DESKTOP_COOKIE)
+        return resp
+
+    @staticmethod
+    def _desktop_fail(title: str, status: int) -> HTMLResponse:
+        """앱 로그인 실패 페이지 — 받은 code·verifier·state 값은 보여 주지 않는다."""
+        return _page(title, "<p>다시 로그인해 주세요. MyCRM 앱으로 돌아가 [로그인]을 다시 누르면 돼요.</p>", status,
+                     headers={"cache-control": "no-store"})
+
+    _claims: dict = {}   # IP → (분, 횟수) — /desktop/claim 분당 상한
+
+    def _claim_rate_ok(self, request) -> bool:
+        """IP 당 분당 DESKTOP_CLAIM_PER_MIN. IP = X-Forwarded-For 마지막 값(Render 프록시 1단이 붙인 값이라 가정) → 없으면 접속 주소.
+        지난 분 키는 부를 때마다 지운다(무한 성장 없음)."""
+        xff = request.headers.get("x-forwarded-for", "")
+        ip = xff.rsplit(",", 1)[-1].strip() if xff.strip() else ((request.client.host if request.client else None) or "local")
+        m = int(time.time() // 60)
+        for k in [k for k, (mm, _) in self._claims.items() if mm != m]:
+            del self._claims[k]
+        n = self._claims.get(ip, (m, 0))[1] + 1
+        self._claims[ip] = (m, n)
+        return n <= DESKTOP_CLAIM_PER_MIN
+
+    async def desktop_claim(self, request):
+        """POST form(code·verifier·state) → 코드 해시 조회 · 미사용 · 미만료 · sha256(verifier)==challenge · state 일치 → used_at(원자적)
+        → crm_session 쿠키 → 303 /app. 실패 = 사람이 읽는 페이지(값 없음).
+        Origin 검사 예외(이 경로만): 앱이 딥링크를 받은 뒤 창의 loadURL(postData)로 보내는 브라우저 시작 요청이라 Origin 이 없거나 null 이다.
+        대신 일회용 코드(해시만 저장)·2분 만료·PKCE(verifier 는 앱 메모리에만)·state·IP 분당 상한으로 막는다."""
+        if not self.secret:
+            return self._desktop_fail("아직 로그인을 열지 않았어요", 503)
+        if not self._claim_rate_ok(request):
+            resp = self._desktop_fail("요청이 너무 잦아요", 429)
+            resp.headers["retry-after"] = str(max(1, 60 - int(time.time()) % 60))
+            return resp
+        form = await self._admin_form(request, DESKTOP_FORM_MAX)
+        code, verifier, st = ((form or {}).get(k, "") for k in ("code", "verifier", "state"))
+        if not (_B64_43.fullmatch(code) and _B64_43.fullmatch(verifier) and _DESKTOP_STATE.fullmatch(st)):
+            return self._desktop_fail("앱 로그인 요청이 올바르지 않아요", 400)
+        challenge = _b64(hashlib.sha256(verifier.encode()).digest())
+        try:
+            uid, why = await run_in_threadpool(db.desktop_handoff_claim, hashlib.sha256(code.encode()).digest(), challenge, st)
+        except Exception as e:
+            print(f"[desktop] 앱 로그인 교환 실패: {type(e).__name__}", flush=True)
+            return self._desktop_fail("앱 로그인을 마치지 못했어요", 503)
+        if uid is None:
+            print(f"[desktop] 앱 로그인 교환 거절: {why}", flush=True)   # 사유 분류만(unknown·used·expired·mismatch) — 값 없음
+            return self._desktop_fail("앱 로그인 시간이 지났거나 이미 쓴 요청이에요", 400)
+        resp = RedirectResponse("/app", status_code=303)
+        self.set_cookie(resp, SESSION_COOKIE, self.session_value(uid), SESSION_TTL)
         return resp
 
     async def logout(self, request):
@@ -2815,6 +2926,8 @@ class Web:
             Route("/assets/{name}", self.asset),
             Route("/login", self.login),
             Route("/auth/callback", self.callback),
+            Route("/desktop/login", self.desktop_login),
+            Route("/desktop/claim", self.desktop_claim, methods=["POST"]),
             Route("/logout", self.logout, methods=["POST"]),
             Route("/api/state", u("web:state", self.api_state)),
             Route("/api/journal", u("web:journal", self.api_journal)),
