@@ -72,6 +72,8 @@ function sidecarArgs(scope, hosted) {
   if (scope === 'migration') return ['migrate', 'login', '--server', hosted, '--token-stdin'];
   throw new Error('scope');
 }
+// run-once from the app never rotates with Bearer: the app rotates with its session (maybeRotate), the CLI with Bearer.
+function runOnceArgs(resumeAuth = false) { return resumeAuth ? ['run-once', '--resume', 'auth', '--no-rotate'] : ['run-once', '--no-rotate']; }
 // reason 'timer' | 'focus' | 'login'. Focus and login polls are skipped when the last one was less than MIN_GAP_MS ago,
 // and nothing runs before a RATE-LIMIT backoff ends.
 function shouldPoll({lastAt = 0, backoffUntil = 0, inFlight = false} = {}, now) {
@@ -108,4 +110,4 @@ function parseRecord(raw) {
   } catch { return {installationId: null, revoked: false, released: false, forget: false}; }
 }
 module.exports = {POLL_MS, MIN_GAP_MS, RATE_BACKOFF_MS, ROTATE_BEFORE_MS, ROTATE_RETRY_MS, HEADERS, endpoint, errorCode, backoffMs, installationState, parseInstallation,
-  parseGrants, parseIssued, validToken, sidecarArgs, shouldPoll, needsRotate, clientInfo, deliveredNotice, failedNotice, parseRecord, clip};
+  parseGrants, parseIssued, validToken, sidecarArgs, runOnceArgs, shouldPoll, needsRotate, clientInfo, deliveredNotice, failedNotice, parseRecord, clip};

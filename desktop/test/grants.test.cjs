@@ -54,6 +54,10 @@ test('sidecar commands read the token from stdin; the token is never an argument
  assert.deepEqual(g.sidecarArgs('migration',HOSTED),['migrate','login','--server',HOSTED,'--token-stdin']);
  assert.throws(()=>g.sidecarArgs('other',HOSTED));
 });
+test('run-once from the app always skips Bearer rotate (the app rotates with its session)',()=>{
+ assert.deepEqual(g.runOnceArgs(),['run-once','--no-rotate']);
+ assert.deepEqual(g.runOnceArgs(true),['run-once','--resume','auth','--no-rotate']);
+});
 test('polling: timer every 30s, focus polls spaced at least 10s, nothing during a rate-limit backoff or while in flight',()=>{
  assert.equal(g.POLL_MS,30000);
  assert.equal(g.shouldPoll({},0+g.MIN_GAP_MS),true);

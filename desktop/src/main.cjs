@@ -269,10 +269,10 @@ async function initialize(){
   register('sync',()=>exclusively(async()=>{
     if(!ready)throw new Error('not-connected');
     if(connector.needsAuto())await connector.autoConnect();
-    let {code,detail}=await command(['run-once']);log('sync','completed',code);
+    let {code,detail}=await command(grants.runOnceArgs());log('sync','completed',code);
     if(code===3&&/--resume auth/.test(detail||'')){
       await connector.autoConnect();
-      ({code,detail}=await command(['run-once','--resume','auth']));log('sync','resumed',code);
+      ({code,detail}=await command(grants.runOnceArgs(true)));log('sync','resumed',code);
     }
     return {code,detail};
   }));
