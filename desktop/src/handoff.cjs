@@ -12,10 +12,17 @@ function begin(now = Date.now(), random = crypto.randomBytes) {
   const verifier = b64url(random(32)), state = b64url(random(16));
   return {verifier, state, challenge: challengeOf(verifier), expiresAt: now + TTL_MS};
 }
-function loginUrl(hosted, challenge, state) {
+// fresh: the intercepted login asked for a new sign-in (start page after logout links /login?fresh=1).
+// The server then skips its "already signed in in this browser" shortcut and shows the login form.
+function loginUrl(hosted, challenge, state, fresh = false) {
   const u = new URL('desktop/login', hosted);
-  u.search = new URLSearchParams({challenge, state}).toString();
+  const q = {challenge, state};
+  if (fresh) q.fresh = '1';
+  u.search = new URLSearchParams(q).toString();
   return u.href;
+}
+function wantsFresh(input) {
+  try { return new URL(input).searchParams.get('fresh') === '1'; } catch { return false; }
 }
 // mycrm://auth/callback?code=<base64url>&state=<base64url> — exactly these two parameters, once each.
 function parseCallback(raw) {
@@ -53,4 +60,4 @@ function isLoginNav(input, hosted) {
     return u.origin === new URL(hosted).origin && (u.pathname === '/login' || u.pathname === '/desktop/login');
   } catch { return false; }
 }
-module.exports = {TTL_MS, challengeOf, begin, loginUrl, parseCallback, accept, claimBody, findLink, isLoginNav};
+module.exports = {TTL_MS, challengeOf, begin, loginUrl, wantsFresh, parseCallback, accept, claimBody, findLink, isLoginNav};

@@ -48,7 +48,7 @@ function leave(url){if(externalHttps(url))shell.openExternal(url).catch(()=>{});
 // Order matters: a login start is taken over first; it is same-origin and would otherwise load in-app,
 // then redirect to AuthKit outside the allow list and start a browser login that never comes back.
 function guard(event,url){
-  if(handoff.isLoginNav(url,HOSTED)){event.preventDefault();startLogin();return;}
+  if(handoff.isLoginNav(url,HOSTED)){event.preventDefault();startLogin(handoff.wantsFresh(url));return;}
   if(inAppAllowed(url))return;event.preventDefault();leave(url);
 }
 const NOTICES={
@@ -71,11 +71,11 @@ function notice(kind){
     +`<body><main><h1>${title}</h1><p>${body}</p><a class="primary" href="${new URL('login',HOSTED).href}">${retry}</a><a href="${HOSTED}">처음 화면으로</a></main></body></html>`;
   dash.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent(html)).catch(()=>{});
 }
-function startLogin(){
+function startLogin(fresh=false){
   pendingLogin=handoff.begin();
   log?.('login','started');
   // HOSTED is the fixed production origin (or a loopback E2E server), so this is not routed through leave().
-  shell.openExternal(handoff.loginUrl(HOSTED,pendingLogin.challenge,pendingLogin.state)).then(()=>notice('waiting'),()=>{pendingLogin=null;notice('failed');});
+  shell.openExternal(handoff.loginUrl(HOSTED,pendingLogin.challenge,pendingLogin.state,fresh)).then(()=>notice('waiting'),()=>{pendingLogin=null;notice('failed');});
 }
 function deepLink(raw){
   if(!dash||dash.isDestroyed()){queuedLink=raw;return;}
@@ -103,7 +103,7 @@ function createDashboard(){
   dash=new BrowserWindow({width:1200,height:800,minWidth:720,minHeight:520,title:'MyCRM',backgroundColor:'#ffffff',webPreferences:{partition:'persist:dashboard',nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true}});
   const wc=dash.webContents;
   wc.session.setPermissionRequestHandler((_wc,_p,callback)=>callback(false));
-  wc.setWindowOpenHandler(({url})=>{if(handoff.isLoginNav(url,HOSTED))startLogin();else if(inAppAllowed(url))wc.loadURL(url).catch(()=>{});else leave(url);return {action:'deny'};});
+  wc.setWindowOpenHandler(({url})=>{if(handoff.isLoginNav(url,HOSTED))startLogin(handoff.wantsFresh(url));else if(inAppAllowed(url))wc.loadURL(url).catch(()=>{});else leave(url);return {action:'deny'};});
   wc.on('will-navigate',(e,url)=>guard(e,e.url||url));
   // Subframes (captcha, provider widgets) are not gated; only top-level navigation is.
   wc.on('will-redirect',(e,url,_inPlace,isMainFrame)=>{if(e.isMainFrame??isMainFrame)guard(e,e.url||url);});

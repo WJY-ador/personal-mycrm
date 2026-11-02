@@ -56,3 +56,11 @@ test('only hosted /login and /desktop/login count as a login start',()=>{
  for(const url of [HOSTED+'login',HOSTED+'login?fresh=1',HOSTED+'desktop/login?challenge=x&state=y'])assert(h.isLoginNav(url,HOSTED),url);
  for(const url of [HOSTED+'app',HOSTED+'loginx',HOSTED+'auth/callback','https://evil.com/login','http://personal-mycrm.onrender.com/login','nope'])assert(!h.isLoginNav(url,HOSTED),url);
 });
+test('fresh=1 on the intercepted login is passed on to /desktop/login, otherwise not',()=>{
+ for(const url of [HOSTED+'login?fresh=1',HOSTED+'login?x=2&fresh=1',HOSTED+'desktop/login?challenge=a&state=b&fresh=1'])assert(h.wantsFresh(url),url);
+ for(const url of [HOSTED+'login',HOSTED+'login?fresh=0',HOSTED+'login?fresh=true',HOSTED+'login#fresh=1','nope'])assert(!h.wantsFresh(url),url);
+ const p=h.begin();
+ const fresh=new URL(h.loginUrl(HOSTED,p.challenge,p.state,true));
+ assert.deepEqual([...fresh.searchParams.keys()],['challenge','state','fresh']);assert.equal(fresh.searchParams.get('fresh'),'1');
+ assert(!new URL(h.loginUrl(HOSTED,p.challenge,p.state,false)).searchParams.has('fresh'));
+});
