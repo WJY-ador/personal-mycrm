@@ -137,7 +137,7 @@ DATABASE_URL=… .venv/bin/python admin_cli.py delete-cancel  <ticket_id> --acto
 
 - 정본 명세는 레포 밖 `notes/2026-10-20_board-마이그-구현계획.md`(고정본)·`notes/raw/2026-10-20_board-migr-astra-r3.md`(gitignore). 계약 = `contract/imports/`(`canon-inbox-1.schema.json` 장치 수신 · `board-migration-1.schema.json` 이전 명세 · `vectors/` 서버·에이전트 공용 시험 벡터). 기존 `contract/*.json` 은 그대로.
 - **경계**: 원문은 PC, 서버엔 구조화 데이터만. `imports.py` = 수신·장치 토큰·승인 대기·개정·한도·이전 기본 연산, `activity.py` = 활동·관계·「나」 집계. 서버는 모델을 부르지 않고 본문·토큰·URL 을 로그·감사·오류 문구에 넣지 않는다. 문자열 필드에 URL·이메일·로컬 경로 꼴이 있으면 `CONTRACT-INVALID`. 실명 탐지는 하지 않는다.
-- **스위치 5개**(`envnames.SWITCHES`): 코드 기본값 꺼짐 — env 가 없거나 값이 정확히 `1` 이 아니면 꺼짐. 쓰기 직전마다 읽는다. **배포 때 미리 넣지 않는다** — 켤 때만 Render env 에 하나씩 더한다. 상시 확정되면 그 스위치를 코드에서 지우는 PR 을 따로 둔다(옛 `CRM_FEATURE_*` 선례).
+- **스위치 6개**(`envnames.SWITCHES`): 코드 기본값 꺼짐 — env 가 없거나 값이 정확히 `1` 이 아니면 꺼짐. 쓰기 직전마다 읽는다. **배포 때 미리 넣지 않는다** — 켤 때만 Render env 에 하나씩 더한다. 상시 확정되면 그 스위치를 코드에서 지우는 PR 을 따로 둔다(옛 `CRM_FEATURE_*` 선례).
 
 | 순서 | env | 꺼져 있으면 | 켜는 때 |
 |---|---|---|---|
@@ -146,6 +146,7 @@ DATABASE_URL=… .venv/bin/python admin_cli.py delete-cancel  <ticket_id> --acto
 | 3 | `CRM_INBOX_APPROVALS_ENABLED` | 승인 대기 글의 승인 `APPROVALS-OFF`. 제외·만료는 스위치 무관 | 내 글 접수를 받기 시작할 때 |
 | 4 | `CRM_BOARD_MIGRATION_ENABLED` | `migrate_cli.py run·resume·close` 가 `[SWITCH-OFF]`, 서버 `migration_apply_row` 는 `MIGRATION-OFF`. `init`·`validate-only`·`status`·`extend` 는 무관 | 이전 소량 실행부터 병행 종료까지 |
 | 5 | `CRM_UNATTENDED_SUMMARY_IMPORTS_ENABLED` | 무인(`execution=unattended`) AI 요약 접수 503 `SUMMARY-IMPORTS-OFF` | **약관 확인(출시 차단 항목) 뒤 마지막.** 예약 실행(launchd)의 요약만 여기에 걸린다. 장치 설정 `summary.enabled` 도 따로 꺼져 있다 |
+| 6 | `CRM_MIGRATION_MCP_ENABLED` | 대화(MCP) 이관 op 8개(`migration_list`~`migration_revert`, 읽기 포함) `MIGRATION-OFF`. 웹 이관 화면·토큰 경로는 무관. 켜져 있어도 `CRM_BOARD_MIGRATION_ENABLED`·`CRM_BOARD_MIGRATION_USERS` 를 그 위에 본다 | 대화로 이관을 반영·되돌릴 때 |
 
 - **장치 토큰**: 꼴 `imp_<is_…>.<it_…>.<비밀 43자>`. 웹 계정 메뉴 「연결 장치」(`#_devices`, 새 탐색 전용)의 연결·재발급 응답에 **한 번만**(no-store) 싣고, 서버엔 SHA-256 검증값(`import_streams.secret_hash`)만 둔다. 만료 90일(`TOKEN_DAYS`). 활성 장치 최대 5(`DEVICE-LIMIT`). 재발급 = 옛 토큰 즉시 무효. 연결 해제 = `revoked_at`(되살리지 않음 — `DEVICE-REVOKED`, 새로 연결). 받은 활동·기록은 남는다. 허용 규칙(policy) = 행동 부분집합 · 변환 `board-likes/1`(활동 바로 저장)·`self-text/1`(내 글, 승인 대기)·`self-summary/1`(AI 요약, 승인 대기) · 축 ≤10(분류 역할 오브젝트의 항목). 바꾸면 `policy_revision` +1 → 장치의 다음 업로드가 `POLICY-STALE` 를 받으면 에이전트가 같은 토큰으로 `GET /api/imports/device` 를 불러 새 규칙을 받고, 아직 접수되지 않은 대기 요청을 새 판으로 다시 만들어 그 실행에서 한 번 다시 보낸다(토큰 재입력 없음). 새 규칙이 막는 요청은 보내지 않고 격리한다. 입력원·키 공간이 바뀌었거나 장치 정보를 못 받으면 멈추고 connect 를 다시 해야 한다. 토큰 거절 = `AUTH-INVALID`·`TOKEN-EXPIRED`·`TOKEN-REVOKED` 401 · `AUTH-BLOCKED` 403(계정 차단). 웹 쿠키·MCP 토큰은 장치 경로에서 받지 않는다.
 - **장치 경로**(`main.py`, Bearer 장치 토큰만): `POST /api/imports`(본문 `canon-inbox/1` — 종류 `self_text`·`activity`·`self_summary`, 헤더 `Idempotency-Key: ci1_<64 hex>`) · `GET /api/imports/{import_id}`(같은 장치의 접수 결과 — 응답 유실 뒤 확인) · `GET /api/imports/device`(정책·키 공간·만료) · `POST /api/imports/device/revoke`(자기 토큰 폐기). 오류 본문 = `{code, msg[, resume_at]}`, 상태 = `imports.http_status` 한 표. 요청 값을 응답에 되돌려 주지 않는다. 이용 집계 이름 `api:imports`·`api:import_device`·`api:import_status`(사용자 id 없이).
