@@ -40,6 +40,7 @@ import facade
 import imports
 import migration
 import migration_mcp
+import token_grants
 import web
 from envnames import env
 
@@ -133,7 +134,8 @@ def guard(fn):
     쓰기 도구(db.WRITE_LIMITS 의 키)는 실행 전에 db.write_gate — 인자 길이(PAYLOAD-LIMIT)
     ·전역 DB 크기(QUOTA-GLOBAL, QUOTA_EXEMPT 는 빼고). 모든 도구(읽기 포함)를 db.usage_count 로 센다 — 정상 OK, CrmError 는 그 code,
     그 밖 예외(ToolError 포함)는 EXC. uid 는 이 호출 안에서 이미 푼 것만 쓴다(못 풀었으면 '').
-    facade 경유(facade.VIA = "f")면 집계 키 = f:<op>. 확정·삭제 op(facade.PREVIEWS)은 쓰기 검사 전에 facade.bind_gate.
+    facade 경유(facade.VIA = "f")면 집계 키 = f:<op>. 확정·삭제 op(facade.PREVIEWS)은 쓰기 검사 전에 facade.bind_gate —
+    facade 전용 확정 op(PC 연결 migration_token_send·pc_forget·token_revoke)은 WRITE_LIMITS 밖이라도 여기서 bind 를 본다(쓰기 검사는 본문이).
     CrmError 에 detail(dict)이 있으면 오류 문구 끝에 detail=<json>."""
     sig = inspect.signature(fn)
     name = fn.__name__
@@ -147,12 +149,13 @@ def guard(fn):
         via = facade.VIA.get()   # "f" = facade 겉면 경유 — 사용 집계 키에만 f: 를 붙인다(write_gate·WRITE_LIMITS 는 op 이름 그대로)
         code = "EXC"
         try:
-            if write:
+            if write or name in facade.PREVIEWS:
                 args = sig.bind(*a, **k).arguments
                 uid_fn = lambda: uid_of(args["ctx"])  # noqa: E731
                 if name in facade.PREVIEWS:   # 확정·삭제 op — bind 를 주면(직접) 또는 facade 경유면(필수) 쓰기 검사 전에 본다
                     facade.bind_gate(name, args, uid_fn, required=via == "f")
-                db.write_gate(name, {n: v for n, v in args.items() if n not in ("ctx", "bind")}, uid_fn, quota)
+                if write:
+                    db.write_gate(name, {n: v for n, v in args.items() if n not in ("ctx", "bind")}, uid_fn, quota)
             out = fn(*a, **k)
             code = "OK"
             return out
@@ -853,9 +856,73 @@ MIGRATION_OPS = (migration_list, migration_get, migration_item_get, migration_ap
                  migration_revert)
 
 
+# ── PC 연결 op 7 (facade 전용, 2026-11-02 가안 2 「상주 앱 수령형」) — 직접 도구로 등록하지 않는다(facade.install 의 extra_ops).
+# 본체 = token_grants 의 (uid, …) 함수 — 설명은 본체 docstring 그대로(정본 하나). 확정 3개(migration_token_send·pc_forget·token_revoke)는
+# hmac bind(decide_preview shown 빌더 = token_grants.PREVIEWS) — guard 가 bind 를 본 뒤 본문이 db.write_gate(표시 이름 관문·전역 크기).
+# WRITE_LIMITS 에는 넣지 않는다(직접 도구 분류 시험이 그 키 = 직접 도구라고 본다). 쓰기 pc_connect 도 본문이 write_gate.
+# 토큰 값은 MCP 응답·오류에 없다 — 토큰은 앱이 /desktop/grants/{id}/redeem 그 요청 안에서만 받는다.
+
+def _tg(fn):
+    fn.__doc__ = getattr(token_grants, fn.__name__).__doc__
+    return fn
+
+
+InstArg = Annotated[str, Field(description="받을 PC 설치본 ID (di_…, pc_list 로 본다). 비우면 지금 켜진 앱 중 가장 최근 로그인한 PC")]
+
+
+@_tg
+def pc_list(ctx: Context) -> dict:
+    return token_grants.pc_list(uid_of(ctx))
+
+
+@_tg
+def pc_connect(ctx: Context, installation_id: InstArg = "") -> dict:
+    uid = uid_of(ctx)
+    db.write_gate("pc_connect", {"installation_id": installation_id}, uid, quota=True)
+    return token_grants.pc_connect(uid, installation_id)
+
+
+@_tg
+def migration_token_send(ctx: Context, installation_id: InstArg = "", bind: BindArg = "") -> dict:
+    uid = uid_of(ctx)
+    db.write_gate("migration_token_send", {"installation_id": installation_id}, uid, quota=True)
+    return token_grants.migration_token_send(uid, installation_id)
+
+
+@_tg
+def pc_forget(ctx: Context, installation_id: Annotated[str, Field(description="해제할 PC 설치본 ID (di_…, pc_list 로 본다)")],
+              bind: BindArg = "") -> dict:
+    uid = uid_of(ctx)
+    db.write_gate("pc_forget", {"installation_id": installation_id}, uid, quota=False)
+    return token_grants.pc_forget(uid, installation_id)
+
+
+@_tg
+def token_grant_status(ctx: Context, grant_id: Annotated[str, Field(description="pc_connect·migration_token_send 가 준 grant_id (tg_…)")]) -> dict:
+    return token_grants.token_grant_status(uid_of(ctx), grant_id)
+
+
+@_tg
+def token_list(ctx: Context) -> dict:
+    return token_grants.token_list(uid_of(ctx))
+
+
+@_tg
+def token_revoke(ctx: Context, kind: Annotated[Literal["device", "migration"], Field(description="device = 연결 장치 · migration = 이관 토큰")],
+                 id: Annotated[str, Field(description="token_list 의 device_id(is_…) 또는 이관 토큰 id(mt_…)")],   # noqa: A002
+                 bind: BindArg = "") -> dict:
+    uid = uid_of(ctx)
+    db.write_gate("token_revoke", {"id": id}, uid, quota=False)
+    return token_grants.token_revoke(uid, kind, id)
+
+
+PC_OPS = (pc_list, pc_connect, migration_token_send, pc_forget, token_grant_status, token_list, token_revoke)
+facade.PREVIEWS.update(token_grants.PREVIEWS)   # K2 — 확정 op 3개의 shown 빌더(install 이 PREVIEWS = hmac op 대칭을 본다)
+
+
 # ── facade 겉면 5개 (2026-11-02, 계획 「MCP facade(A′)」) — 직접 도구 48 을 다 등록한 뒤 한 번. op = 위 도구 이름 그대로,
 # tier·family 정본 = server/mcp_catalog.json. facade 전용 op(decide_preview·이관)은 직접 도구로 등록하지 않는다.
-facade.install(mcp, guard, uid_of, MIGRATION_OPS, rules={k: v["rule"] for k, v in migration_mcp.OPS.items() if v["rule"]})
+facade.install(mcp, guard, uid_of, MIGRATION_OPS + PC_OPS, rules={k: v["rule"] for k, v in migration_mcp.OPS.items() if v["rule"]})
 
 
 # ── 웹 ─────────────────────────────────────────────────
