@@ -1081,10 +1081,13 @@ def counters_purge() -> int:
 
 
 def expire_pending() -> int:
-    """만료 지난 대기 → expired(payload 삭제). 서버 시작·매일(main.purge_once). 반환 건수."""
+    """만료 지난 대기 → expired(payload 삭제). 서버 시작·매일(main.purge_once). 반환 건수.
+    이관 경로(2026-11-02) — 같은 회차에 만료 지난 이관 plan(staged·sealed, 3일)도 expired 로 닫고 항목 본문을 영구 삭제한다(migration.expire_plans)."""
     with tx() as c:
-        return c.execute("UPDATE import_entries SET state='expired', payload=NULL, payload_bytes=0, resolved_at=now(), "
+        n = c.execute("UPDATE import_entries SET state='expired', payload=NULL, payload_bytes=0, resolved_at=now(), "
                          "resolved_by='expiry' WHERE state='pending' AND expires_at <= now()").rowcount
+    import migration   # 순환 import 회피(migration 이 imports 를 쓴다)
+    return n + migration.expire_plans()
 
 
 # ── board 이전 기본 연산 (migrate_cli.py) ────────────────────
@@ -1230,74 +1233,97 @@ def migration_apply_row(uid: str, stream_id: str, row: dict, *, batch_id: str, m
 
 
 def _mig_apply(uid, stream_id, row, pr, tk, sca, sdate, batch_id, manifest_sha256, transform_version):
-    kind = "migration_item" if tk == "item" else "migration_record"
+    """합성 시험용 CLI 경로 — 행 하나 = 한 트랜잭션. 병행 기간을 보고, 업무 적용이면 이관 전용 한도(db migration 200/일)를 1 센다."""
     req_sha = hashlib.sha256(jcs(row)).digest()
     proj_sha = hashlib.sha256(jcs(_mig_projection(row))).digest()
-    with db.tx_scope() as c:
+    with db.tx_scope() as c, db.migration_mode():
         db._user_lock(c, uid)
         st = _mig_lock(c, uid, stream_id)
-        same = _one(c, f"SELECT {_ENTRY_COLS} FROM import_entries WHERE user_id=%s AND stream_id=%s AND original_id=%s "
-                       "AND source_revision=%s", (uid, st["id"], row["original_id"], row["revision"]))
-        if same:
-            if bytes(same["request_sha256"]) != req_sha:
-                raise CrmError("IDEMPOTENCY-CONFLICT", "같은 개정 ID 로 다른 내용을 보냈어요.", "새 개정 ID 로 명세를 다시 만드세요.")
-            out = _resp(same, True)
-            return {k: out[k] for k in ("import_id", "state", "target_kind", "target_id", "duplicate")}
-        if st["migration_closed_at"] is not None or st["ended"]:
-            raise CrmError("MIGRATION-WINDOW-CLOSED", "병행 기간이 끝났거나 종료된 이전 입력원이에요.",
-                           "원작자가 결정했으면 extend 로 연장하세요. 종료된 입력원은 다시 열지 않아요.")
-        latest = _one(c, f"SELECT {_ENTRY_COLS} FROM import_entries WHERE user_id=%s AND stream_id=%s AND original_id=%s "
-                         "AND is_latest_received FOR UPDATE", (uid, st["id"], row["original_id"]))
-        if (latest is None) != (pr is None) or (latest is not None and latest["source_revision"] != pr):
-            raise CrmError("SOURCE-REVISION-CONFLICT", "previous_revision 이 서버 대응표의 최신 개정과 달라요.", "대응표를 다시 읽고 resume 하세요.")
-        if latest is not None and latest["kind"] != kind:
-            raise CrmError("KIND-CHANGED", "같은 원본의 대상 종류는 바꿀 수 없어요.")
-        current = _one(c, f"SELECT {_ENTRY_COLS} FROM import_entries WHERE user_id=%s AND stream_id=%s AND original_id=%s "
-                          "AND is_current_applied FOR UPDATE", (uid, st["id"], row["original_id"]))
-        state, item_rev = "applied", None
-        if current and bytes(current["projection_sha256"]) == proj_sha:
-            state = "noop"
-            target = current["target_item_id"] or current["target_record_id"]
-            item_rev = current["target_item_revision"]
-        elif tk == "record":
-            target = _mig_record(c, uid, st["id"], row, sca, sdate, batch_id)
+        return mig_apply_in(c, uid, st, row, pr, tk, sca, sdate, batch_id, manifest_sha256, transform_version, req_sha, proj_sha,
+                            window=True, gate=True)
+
+
+def mig_apply_in(c, uid, st, row, pr, tk, sca, sdate, batch_id, manifest_sha256, transform_version, req_sha, proj_sha, *,
+                 window, gate, ext=None):
+    """행 하나 반영 코어 — 호출자의 연결(db.tx_scope + db.migration_mode 안, users·입력원 잠금 뒤)에서. 결과 {import_id, state: applied|noop,
+    target_kind, target_id, duplicate}. 멱등(같은 개정·같은 요청 해시 = duplicate) · 개정 체인(previous_revision) · noop(반영 해시 같음) ·
+    기록 새 판·항목 제안 → 적용. window = 병행 기간 검사·시작·감사(CLI) · gate = 업무 적용마다 이관 한도 1(CLI — 새 경로는 plan 전체를 먼저 센다)
+    · ext = 새 이관 경로(migration.py)의 신고 출처·날짜 종류·출처 연결(None = CLI 의 self/verbatim)."""
+    kind = "migration_item" if tk == "item" else "migration_record"
+    same = _one(c, f"SELECT {_ENTRY_COLS} FROM import_entries WHERE user_id=%s AND stream_id=%s AND original_id=%s "
+                   "AND source_revision=%s", (uid, st["id"], row["original_id"], row["revision"]))
+    if same:
+        if bytes(same["request_sha256"]) != req_sha:
+            raise CrmError("IDEMPOTENCY-CONFLICT", "같은 개정 ID 로 다른 내용을 보냈어요.", "새 개정 ID 로 명세를 다시 만드세요.")
+        out = _resp(same, True)
+        return {k: out[k] for k in ("import_id", "state", "target_kind", "target_id", "duplicate")}
+    if window and (st["migration_closed_at"] is not None or st["ended"]):
+        raise CrmError("MIGRATION-WINDOW-CLOSED", "병행 기간이 끝났거나 종료된 이전 입력원이에요.",
+                       "원작자가 결정했으면 extend 로 연장하세요. 종료된 입력원은 다시 열지 않아요.")
+    latest = _one(c, f"SELECT {_ENTRY_COLS} FROM import_entries WHERE user_id=%s AND stream_id=%s AND original_id=%s "
+                     "AND is_latest_received FOR UPDATE", (uid, st["id"], row["original_id"]))
+    if (latest is None) != (pr is None) or (latest is not None and latest["source_revision"] != pr):
+        raise CrmError("SOURCE-REVISION-CONFLICT", "previous_revision 이 서버 대응표의 최신 개정과 달라요.", "대응표를 다시 읽고 resume 하세요.")
+    if latest is not None and latest["kind"] != kind:
+        raise CrmError("KIND-CHANGED", "같은 원본의 대상 종류는 바꿀 수 없어요.")
+    current = _one(c, f"SELECT {_ENTRY_COLS} FROM import_entries WHERE user_id=%s AND stream_id=%s AND original_id=%s "
+                      "AND is_current_applied FOR UPDATE", (uid, st["id"], row["original_id"]))
+    state, item_rev = "applied", None
+    if current and bytes(current["projection_sha256"]) == proj_sha:
+        state = "noop"
+        target = current["target_item_id"] or current["target_record_id"]
+        item_rev = current["target_item_revision"]
+    else:
+        if gate:   # 이관 전용 한도 — 업무 적용 1행(일반 기록·제안·결정 한도는 migration_mode 가 건너뛴다)
+            db._daily_gate(c, uid, "migration")
+        if tk == "record":
+            target = _mig_record(c, uid, st["id"], row, sca, sdate, batch_id, ext)
         else:
-            target, item_rev = _mig_item(c, uid, st["id"], row, current, sca, sdate, batch_id)
-        _entry_flags_off(c, uid, latest, current)
-        if state == "applied" and st["migration_started_at"] is None:   # 병행 기간 = 첫 업무 적용부터 14일
-            c.execute("UPDATE import_streams SET migration_started_at=now(), migration_ends_at = now() + make_interval(days => %s) "
-                      "WHERE user_id=%s AND id=%s", (MIGRATION_DAYS, uid, st["id"]))
-        if not _one(c, "SELECT 1 FROM import_entries WHERE user_id=%s AND stream_id=%s AND batch_id=%s LIMIT 1", (uid, st["id"], batch_id)):
-            db._audit(c, "migration_apply", uid, uid, {"stream_id": st["id"], "batch": batch_id[:24], "manifest": manifest_sha256[:12],
-                                                      "result": "started"})
-        e = _one(c, "INSERT INTO import_entries (user_id,id,stream_id,original_id,source_revision,previous_entry_id,kind,request_sha256,"
-                    "projection_sha256,state,is_latest_received,is_current_applied,resolved_at,resolved_by,target_item_id,target_record_id,"
-                    "target_item_revision,batch_id,manifest_sha256,transform_version) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,true,true,now(),'migration',%s,%s,%s,%s,%s,%s) "
-                    f"RETURNING {_ENTRY_COLS}",
-                    (uid, db.new_id("ie"), st["id"], row["original_id"], row["revision"], latest["id"] if latest else None, kind, req_sha,
-                     proj_sha, state, target if tk == "item" else None, target if tk == "record" else None, item_rev, batch_id,
-                     bytes.fromhex(manifest_sha256), transform_version))
+            target, item_rev = _mig_item(c, uid, st["id"], row, current, sca, sdate, batch_id, ext)
+    _entry_flags_off(c, uid, latest, current)
+    if window and state == "applied" and st["migration_started_at"] is None:   # 병행 기간 = 첫 업무 적용부터 14일(CLI 경로만)
+        c.execute("UPDATE import_streams SET migration_started_at=now(), migration_ends_at = now() + make_interval(days => %s) "
+                  "WHERE user_id=%s AND id=%s", (MIGRATION_DAYS, uid, st["id"]))
+    if window and not _one(c, "SELECT 1 FROM import_entries WHERE user_id=%s AND stream_id=%s AND batch_id=%s LIMIT 1",
+                           (uid, st["id"], batch_id)):
+        db._audit(c, "migration_apply", uid, uid, {"stream_id": st["id"], "batch": batch_id[:24], "manifest": manifest_sha256[:12],
+                                                  "result": "started"})
+    e = _one(c, "INSERT INTO import_entries (user_id,id,stream_id,original_id,source_revision,previous_entry_id,kind,request_sha256,"
+                "projection_sha256,state,is_latest_received,is_current_applied,resolved_at,resolved_by,target_item_id,target_record_id,"
+                "target_item_revision,batch_id,manifest_sha256,transform_version) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,true,true,now(),'migration',%s,%s,%s,%s,%s,%s) "
+                f"RETURNING {_ENTRY_COLS}",
+                (uid, db.new_id("ie"), st["id"], row["original_id"], row["revision"], latest["id"] if latest else None, kind, req_sha,
+                 proj_sha, state, target if tk == "item" else None, target if tk == "record" else None, item_rev, batch_id,
+                 bytes.fromhex(manifest_sha256) if manifest_sha256 else None, transform_version))
     out = _resp(e, False)
     return {k: out[k] for k in ("import_id", "state", "target_kind", "target_id", "duplicate")}
 
 
-def _mig_record(c, uid, stream_id, row, sca, sdate, batch_id):
-    """기록 새 판 — self/verbatim(원작자 결정 1·8: 검토표를 마친 「나와 AI 가 함께 만든 문장」) · ingest_kind board_migration.
-    확인된 원본 시각이 있으면 created 에 보존(한도는 received_at 으로 센다). 「어디에 붙나」 는 record_attach 그대로."""
+def _mig_record(c, uid, stream_id, row, sca, sdate, batch_id, ext=None):
+    """기록 새 판 — ingest_kind board_migration. 출처: ext 없음(CLI) = self/verbatim(원작자 결정 1·8: 검토표를 마친 「나와 AI 가 함께 만든 문장」)
+    · ext 있음(새 이관 경로) = 신고값 그대로(author_kind·text_process·generation_kind — 적격은 db._ELIGIBLE_SQL 이 판정, K3) + date_kind 라벨
+    + 출처 연결(source_id) + provenance_history 에 쓰지 않은 신고 날짜·검토 참조(K6). 확인된 원본 시각(sca)이 있으면 created 에 보존
+    (한도는 received_at 으로 센다). 「어디에 붙나」 는 record_attach 그대로."""
     body = row.get("body")
     if not isinstance(body, str) or not body.strip():
         raise CrmError("ARG-INVALID", "기록 본문이 비었어요.")
     title = (row.get("title") or "").strip() or body.strip().splitlines()[0][:40]
     db.check_len("body", body, db.LIMIT_BODY)
     db.check_len("title", title, db.LIMIT_TEXT)
-    db._daily_gate(c, uid, "records")
+    db._daily_gate(c, uid, "records")   # migration_mode 안 = 잠금만(이관 전용 한도는 호출자가 센다)
     rid = db.new_id("r")
-    hist = [{"at": db.now().isoformat(), "by": "board_migration", "author_kind": "self", "text_process": "verbatim"}]
-    c.execute("INSERT INTO records (id,user_id,title,body,source,author_kind,text_process,provenance_history,ingest_kind,import_batch_id,"
-              "source_created_at,source_date,created) "
-              "VALUES (%s,%s,%s,%s,%s,'self','verbatim',%s,'board_migration',%s,%s,%s,COALESCE(%s, now()))",
-              (rid, uid, title, body, "board 이전", Jsonb(hist), batch_id, sca, sdate, sca))
+    if ext is None:
+        ak, tp, gk, gm, dk, sid = "self", "verbatim", "unknown", {}, None, None
+        hist = [{"at": db.now().isoformat(), "by": "board_migration", "author_kind": ak, "text_process": tp}]
+    else:
+        ak, tp, gk, dk, sid = ext["author_kind"], ext["text_process"], ext["generation_kind"], ext["date_kind"], ext.get("source_id")
+        gm = ext.get("generation_meta") or {}
+        hist = [{"at": db.now().isoformat(), "by": "board_migration", "author_kind": ak, "text_process": tp, **(ext.get("history") or {})}]
+    c.execute("INSERT INTO records (id,user_id,title,body,source,source_id,author_kind,text_process,provenance_history,ingest_kind,"
+              "import_batch_id,generation_kind,generation_meta,source_created_at,source_date,date_kind,created) "
+              "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'board_migration',%s,%s,%s,%s,%s,%s,COALESCE(%s, now()))",
+              (rid, uid, title, body, "board 이전", sid, ak, tp, Jsonb(hist), batch_id, gk, Jsonb(gm), sca, sdate, dk, sca))
     at = row.get("attach") or {}
     if at:
         attach_to = None
@@ -1311,7 +1337,7 @@ def _mig_record(c, uid, stream_id, row, sca, sdate, batch_id):
     return rid
 
 
-def _mig_item(c, uid, stream_id, row, current, sca, sdate, batch_id):
+def _mig_item(c, uid, stream_id, row, current, sca, sdate, batch_id, ext=None):
     """항목 — 새 원본이면 제안 → 적용, 이미 적용한 원본이면 같은 항목에 제안 → 적용(revision+1). 결정(decision)은 기준에만.
     서버 항목 revision 이 마지막 적용(또는 expected_target_revision)과 다르거나 보관됐으면 TARGET-REVISION-CONFLICT. 반환 (item_id, revision)."""
     oid = row.get("object_id")
@@ -1345,6 +1371,9 @@ def _mig_item(c, uid, stream_id, row, current, sca, sdate, batch_id):
     if not current:   # 최초 배치·원본 날짜는 처음 만들 때만(재이전이 덮지 않는다)
         c.execute("UPDATE items SET ingest_kind='board_migration', import_batch_id=%s, source_created_at=%s, source_date=%s "
                   "WHERE user_id=%s AND id=%s", (batch_id, sca, sdate, uid, p["item_id"]))
+    if ext is not None:   # 새 이관 경로 — 신고 생성 종류·출처는 판마다(항목엔 author_kind·text_process·date_kind 열이 없어 generation_meta 에)
+        c.execute("UPDATE items SET generation_kind=%s, generation_meta=%s WHERE user_id=%s AND id=%s",
+                  (ext["generation_kind"], Jsonb(ext.get("generation_meta") or {}), uid, p["item_id"]))
     return p["item_id"], item["revision"]
 
 

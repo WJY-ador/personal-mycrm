@@ -1,0 +1,114 @@
+{
+ "contract": "board-migration/2",
+ "rule": "content_hash = sha256_hex(UTF-8(normalize(text))). normalize = ① 유니코드 NFC ② CRLF(\\r\\n)를 LF(\\n)로 ③ \\n 으로 나눈 줄마다 끝의 U+0020·U+0009 만 지운다. 그 밖(홀로 선 CR·U+3000·NBSP·BOM·본문 끝 개행·앞·안쪽 공백)은 그대로. 기록·항목 = body(없으면 \"\"), 출처 = source.name.",
+ "vectors": [
+  {
+   "name": "empty",
+   "input": "",
+   "normalized": "",
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+   "name": "plain_ascii",
+   "input": "hello world",
+   "normalized": "hello world",
+   "sha256": "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+  },
+  {
+   "name": "korean_nfc",
+   "input": "한글 판단",
+   "normalized": "한글 판단",
+   "sha256": "3072c7b2c3015941e118c8452388c7351e42a4b272682ba0b72be3e5b45b4ae8"
+  },
+  {
+   "name": "korean_nfd_to_nfc",
+   "input": "한글 판단",
+   "normalized": "한글 판단",
+   "sha256": "3072c7b2c3015941e118c8452388c7351e42a4b272682ba0b72be3e5b45b4ae8"
+  },
+  {
+   "name": "crlf_to_lf",
+   "input": "첫 줄\r\n둘째 줄\r\n",
+   "normalized": "첫 줄\n둘째 줄\n",
+   "sha256": "9e0b7af9c380489a67617f7cb47dee6f94590849a441d5f2e3973bfd7db97621"
+  },
+  {
+   "name": "lone_cr_kept",
+   "input": "a\rb\r",
+   "normalized": "a\rb\r",
+   "sha256": "95214dcabd7c592744f2ed461262a22b05fc1b2fd6f332bc83d0acf23193f15b"
+  },
+  {
+   "name": "cr_cr_lf",
+   "input": "a\r\r\nb",
+   "normalized": "a\r\nb",
+   "sha256": "18745f36a05e29072709042d6062ce54f1b08ff36c27ba80c39f81fb010c8ce2"
+  },
+  {
+   "name": "cr_space_lf",
+   "input": "a\r \nb",
+   "normalized": "a\r\nb",
+   "sha256": "18745f36a05e29072709042d6062ce54f1b08ff36c27ba80c39f81fb010c8ce2"
+  },
+  {
+   "name": "trailing_space_per_line",
+   "input": "a  \nb\t\n c \n",
+   "normalized": "a\nb\n c\n",
+   "sha256": "907f2bd14e0222909b4c7c76bbb240843d5da7f3bf387196f0928e4791d89b2c"
+  },
+  {
+   "name": "trailing_space_before_crlf",
+   "input": "a \t\r\nb",
+   "normalized": "a\nb",
+   "sha256": "7e18f737311b2dc3b2f269dd78396b0351f14fb66efa879f768cb23181883c78"
+  },
+  {
+   "name": "leading_and_inner_space_kept",
+   "input": "  a   b\n\t c",
+   "normalized": "  a   b\n\t c",
+   "sha256": "2af63a8007389fda22791eae3d51eacb4bb0801568d096e020d86ab055325748"
+  },
+  {
+   "name": "trailing_ideographic_space_kept",
+   "input": "가　\n나　",
+   "normalized": "가　\n나　",
+   "sha256": "ce10849924ccec4bfc3bc13245d48c4772cb0a6085db504e8ff96a6cc6f83294"
+  },
+  {
+   "name": "trailing_nbsp_kept",
+   "input": "가 \n",
+   "normalized": "가 \n",
+   "sha256": "570751b07c78816c99ce195d81affd589c9c4f6e2368ad1d4375aebc8c53e511"
+  },
+  {
+   "name": "final_newline_kept",
+   "input": "끝\n",
+   "normalized": "끝\n",
+   "sha256": "2f25494e407db6769759eb188e54d030678ecca3ac5d2ae0b2a23f18b321735c"
+  },
+  {
+   "name": "only_newlines",
+   "input": "\n\n\n",
+   "normalized": "\n\n\n",
+   "sha256": "6a3cf5192354f71615ac51034b3e97c20eda99643fcaf5bbe6d41ad59bd12167"
+  },
+  {
+   "name": "bom_kept",
+   "input": "﻿머리",
+   "normalized": "﻿머리",
+   "sha256": "818284e5c1eeac580a57b08d5414089c118cc939446cf3953a180af2cb18a2a6"
+  },
+  {
+   "name": "blank_lines_with_spaces",
+   "input": "a\n   \n\t\nb",
+   "normalized": "a\n\n\nb",
+   "sha256": "2282b3efda183ac2a3e762d8cf310bda78e79126b43846b41e1875fd043463cb"
+  },
+  {
+   "name": "emoji_and_combining",
+   "input": "é 👍🏽 ",
+   "normalized": "é 👍🏽",
+   "sha256": "a4586b1bf4e9467f44533b35fff33d33662a6cc939afd32f206cfa3b1b81351d"
+  }
+ ]
+}

@@ -7889,9 +7889,19 @@ def test_bi_migration():
         expect("LINK-INVALID", apply, row(O["late"], _bi_v(), target_kind="item", unit_kind="principle_wd", object_id=rules, title="합성",
                                           references=[{"field_key": "axes", "target": {"item_id": "i_nothere"}}]))
         assert counts() == before
+        # 한도(2026-11-02 메인 결정 2) — 이관은 전용 한도(db.DAILY_LIMITS["migration"])만 센다. 일반 기록 50 이 차 있어도 그 한도와 무관하고,
+        # 전용 한도를 「오늘 이미 적용한 행 수」로 낮추면 다음 적용 행이 RATE-LIMIT 이다
         _bulk("INSERT INTO records (id,user_id,title,body) SELECT 'r_bimig' || g, %s, 't', 'b' FROM generate_series(1, 50) AS g", (M,))
-        e = expect("RATE-LIMIT", apply, row(O["late"], _bi_v(), target_kind="record", unit_kind="journal", body="한도 넘는 합성 기록"))
+        used = _bi_count(M, "import_entries", "AND kind IN ('migration_item','migration_record') AND state='applied' "
+                                              f"AND received_at >= {db._KST_TODAY}")
+        old_lim = db.DAILY_LIMITS["migration"]
+        db.DAILY_LIMITS["migration"] = used
+        try:
+            e = expect("RATE-LIMIT", apply, row(O["late"], _bi_v(), target_kind="record", unit_kind="journal", body="한도 넘는 합성 기록"))
+        finally:
+            db.DAILY_LIMITS["migration"] = old_lim
         assert e.resume_at == imports.next_kst_midnight() and "합성" not in e.message + e.action, "재개 시각만, 값 없음"
+        assert "이관 반영" in e.message, "일반 기록 한도가 아니라 이관 전용 한도"
         assert _bi_count(M, "import_entries", "AND original_id=%s", (O["late"],)) == 0, "한도 = 미처리 행으로 남는다"
         _bulk("DELETE FROM records WHERE user_id=%s AND id LIKE 'r_bimig%%'", (M,))
         # ── 대응표 · 병행 기간 ──

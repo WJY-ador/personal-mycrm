@@ -424,21 +424,30 @@ def section_c(uid, m0):
             pending("C5b 충돌 코드 이름", "서버가 TARGET-CONFLICT 를 낸다 — 메인 판정은 TARGET-REVISION-CONFLICT")
         ok("C5 실제 서버: 웹에서 항목을 바꾼 뒤 새 개정 → 대상 충돌로 멈춤")
 
-        # 한도: 오늘 기록 = 이전 2판 + B5b 의 record_add 1 → 50 까지 47 남음. 새 기록 48행 → 47 적용 뒤 RATE-LIMIT
-        rows6 = copy.deepcopy(rows4) + [r_record(100 + k) for k in range(48)]
-        for r in rows6[4:]:
-            r["source_date"] = "2026-02-01"
-        p6 = write(mk(rows6), "c6.json")
-        code, out, err = cli("run", p6, "--user", uid)
-        assert code == 3 and "RATE-LIMIT" in err and "resume" in err and "applied 47" in out, (code, out, err)
-        code, out, err = cli("resume", p6, "--user", uid)
-        assert code == 3 and "RATE-LIMIT" in err and "applied 0" in out, (code, out, err)
-        # 다음 KST 구간 흉내 — 시험 DB 에서만 이 사용자 기록의 받은 시각을 하루 앞당긴다
-        with db.tx() as c:
-            c.execute("UPDATE records SET received_at = received_at - interval '1 day', created = created - interval '1 day' WHERE user_id = %s", (uid,))
-        code, out, err = cli("resume", p6, "--user", uid)
-        assert code == 0 and "applied 1" in out, (code, out, err)
-        ok("C6 실제 서버: 기록 일일 한도 → exit 3 partial(재개 안내) · 같은 날 resume 도 partial · 다음 구간 resume 로 나머지")
+        # 한도(2026-11-02 메인 결정 2): 이관 반영은 전용 한도(db.DAILY_LIMITS["migration"], 대응표의 오늘 적용 행)만 센다 — 일반 기록 50 과 분리.
+        # 상한을 「오늘 이미 적용한 행 + 47」로 두고 같은 꼴을 본다: 새 기록 48행 → 47 적용 뒤 RATE-LIMIT → 같은 날 resume partial → 다음 구간 나머지
+        used = q("SELECT count(*) AS n FROM import_entries WHERE user_id=%s AND kind IN ('migration_item','migration_record') "
+                 f"AND state='applied' AND received_at >= {db._KST_TODAY}", uid)[0]["n"]
+        old_lim = db.DAILY_LIMITS["migration"]
+        db.DAILY_LIMITS["migration"] = used + 47
+        try:
+            rows6 = copy.deepcopy(rows4) + [r_record(100 + k) for k in range(48)]
+            for r in rows6[4:]:
+                r["source_date"] = "2026-02-01"
+            p6 = write(mk(rows6), "c6.json")
+            code, out, err = cli("run", p6, "--user", uid)
+            assert code == 3 and "RATE-LIMIT" in err and "resume" in err and "applied 47" in out, (code, out, err)
+            code, out, err = cli("resume", p6, "--user", uid)
+            assert code == 3 and "RATE-LIMIT" in err and "applied 0" in out, (code, out, err)
+            # 다음 KST 구간 흉내 — 시험 DB 에서만 이 사용자 대응표·기록의 받은 시각을 하루 앞당긴다
+            with db.tx() as c:
+                c.execute("UPDATE import_entries SET received_at = received_at - interval '1 day' WHERE user_id = %s", (uid,))
+                c.execute("UPDATE records SET received_at = received_at - interval '1 day', created = created - interval '1 day' WHERE user_id = %s", (uid,))
+            code, out, err = cli("resume", p6, "--user", uid)
+            assert code == 0 and "applied 1" in out, (code, out, err)
+        finally:
+            db.DAILY_LIMITS["migration"] = old_lim
+        ok("C6 실제 서버: 이관 전용 일일 한도 → exit 3 partial(재개 안내) · 같은 날 resume 도 partial · 다음 구간 resume 로 나머지")
 
         with db.tx() as c:
             c.execute("UPDATE import_streams SET migration_started_at = now() - interval '15 days', migration_ends_at = now() - interval '1 day' WHERE user_id = %s AND id = %s", (uid, src))
