@@ -111,6 +111,10 @@ class FakeImportServer:
         self.script = []            # 앞에서부터 꺼내 쓰는 강제 응답: (status, dict) | "drop"
         self.lock = threading.Lock()
         self.revoked = False
+        self.pending = None         # rotate 로 내준 새 토큰(M2: 첫 사용 전까지 옛 토큰도 유효, 1개만)
+        self.rotations = 0
+        self.rotate_script = []     # rotate 강제 응답: (status, dict) | "drop"(발급은 했는데 응답 유실)
+        self.rotated_expires_at = "2027-04-18T00:00:00+09:00"
         self.device_calls = []      # (method, path)
         self.device_script = []     # 장치 경로 강제 응답
         self.device_info = {"stream_id": STREAM_ID, "label": "synthetic-device",
@@ -128,6 +132,11 @@ class FakeImportServer:
                 return
 
             def _auth_ok(self):
+                with outer.lock:
+                    if outer.pending and self.headers.get("Authorization") == "Bearer " + outer.pending:
+                        # M2 — 새 토큰 첫 사용: 이때 옛 토큰이 무효가 된다
+                        outer.token, outer.pending = outer.pending, None
+                        outer.device_info = dict(outer.device_info, token_expires_at=outer.rotated_expires_at)
                 if outer.revoked and self.headers.get("Authorization") == "Bearer " + outer.token:
                     self._json(401, {"code": "TOKEN-REVOKED", "msg": "revoked"})
                     return False
@@ -149,6 +158,28 @@ class FakeImportServer:
                 outer.revoked = True
                 return self._json(200, {"stream_id": outer.device_info["stream_id"], "revoked": True})
 
+            def _rotate(self):
+                with outer.lock:
+                    outer.device_calls.append(("POST", self.path))
+                    forced = outer.rotate_script.pop(0) if outer.rotate_script else None
+                if forced is not None and forced != "drop":
+                    return self._json(*forced)
+                if not self._auth_ok():
+                    return
+                with outer.lock:
+                    outer.rotations += 1
+                    new = "imp_" + outer.device_info["stream_id"] + f".tok_Rot{outer.rotations:02d}." + secrets.token_urlsafe(32)
+                    outer.pending = new           # 다음 교체가 덮어쓴다
+                if forced == "drop":
+                    self.close_connection = True
+                    try:
+                        self.connection.shutdown(2)
+                    except OSError:
+                        pass
+                    return
+                return self._json(200, {"stream_id": outer.device_info["stream_id"], "token": new,
+                                        "token_expires_at": outer.rotated_expires_at})
+
             def do_GET(self):
                 if self.path == "/api/imports/device":
                     return self._device("GET")
@@ -159,6 +190,8 @@ class FakeImportServer:
                 body = self.rfile.read(n)
                 if self.path == "/api/imports/device/revoke":
                     return self._device("POST")
+                if self.path == "/api/device/rotate":
+                    return self._rotate()
                 hdrs = {k: v for k, v in self.headers.items()}
                 with outer.lock:
                     outer.requests.append((hdrs, body))

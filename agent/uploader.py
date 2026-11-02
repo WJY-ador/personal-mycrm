@@ -30,6 +30,7 @@ from . import store as _store
 IMPORTS_PATH = "/api/imports"
 DEVICE_PATH = "/api/imports/device"
 DEVICE_REVOKE_PATH = "/api/imports/device/revoke"
+DEVICE_ROTATE_PATH = "/api/device/rotate"   # Bearer 교체(PC 연결 계획 §4). M2: 옛 토큰은 새 토큰 첫 사용 때 무효
 # 서버 server/imports.py _HTTP 표 기준
 DAILY_LIMIT_CODES = ("IMPORT-QUOTA", "PEOPLE-QUOTA")   # 본문 resume_at(다음 KST 0시) 이 있으면 그 시각
 AUTH_CODES = ("AUTH-INVALID", "TOKEN-EXPIRED", "TOKEN-REVOKED", "AUTH-BLOCKED", "DEVICE-REVOKED")
@@ -140,6 +141,11 @@ class Uploader:
     def revoke(self) -> dict:
         """POST /api/imports/device/revoke → {stream_id, revoked: true}. 이후 이 토큰은 401 TOKEN-REVOKED."""
         return self._device_call("POST", DEVICE_REVOKE_PATH)
+
+    def rotate(self) -> dict:
+        """POST /api/device/rotate → {stream_id, token, token_expires_at}. 새 토큰은 응답에만 한 번 온다.
+        옛 토큰은 새 토큰이 처음 쓰일 때 무효(M2) — 그 전까지 옛 토큰으로 계속 보낼 수 있다."""
+        return self._device_call("POST", DEVICE_ROTATE_PATH)
 
     def run(self, store, *, max_n: int = 100, min_interval: float = 0.0) -> dict:
         out = {"sent": 0, "accepted": 0, "duplicate": 0, "deleted": 0, "conflict": 0, "halted": 0, "rejected": 0,

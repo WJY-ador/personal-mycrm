@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import codecs
+import datetime as _dt
 import getpass
 import json
 import os
@@ -101,6 +102,123 @@ def _parser() -> argparse.ArgumentParser:
     return p
 
 
+# ---- 장치 토큰 교체(PC 연결 계획 §3 · M2) -------------------------------------------
+ROTATE_BEFORE = _dt.timedelta(days=30)   # 만료 30일 전부터 run-once 때 자동 교체
+
+
+def pending_token_account(source_instance_id: str) -> str:
+    """교체 대기 토큰 계정 — rotate 로 받았지만 아직 서버 확인(첫 사용) 전인 새 토큰. 1개만(다음 교체가 덮어씀)."""
+    return "upload-token-pending:" + source_instance_id
+
+
+def _rotate_due(cfg: dict, now: _dt.datetime) -> bool:
+    exp = cfg.get("token_expires_at")
+    if isinstance(exp, str) and exp.endswith("Z"):
+        exp = exp[:-1] + "+00:00"      # 3.9 fromisoformat 은 Z 를 못 읽는다
+    try:
+        at = _dt.datetime.fromisoformat(exp) if isinstance(exp, str) else None
+    except ValueError:
+        at = None
+    if at is None or at.tzinfo is None:
+        return False          # 만료를 모르면 교체하지 않는다
+    return at - now <= ROTATE_BEFORE
+
+
+def promote_pending(ctx: Ctx, cfg: dict, ks) -> str | None:
+    """대기 토큰을 새 토큰으로 서버에 확인(GET device = 첫 사용)하고 Keychain 본 자리로 옮긴다.
+    반환: None(대기 없음) · "promoted" · "discarded"(서버가 새 토큰을 안 받음 — 옛 토큰 그대로) · "deferred"(네트워크 등 — 다음에).
+    KeyStoreError 는 그대로 올린다(본 자리 쓰기 실패 = 옛 토큰은 이미 무효일 수 있어 업로드를 멈춰야 한다)."""
+    from .uploader import AUTH_CODES, DeviceError
+    sid, server = cfg.get("source_instance_id"), cfg.get("server_url")
+    if not sid or not server:
+        return None
+    acct = pending_token_account(sid)
+    new = ks.get(acct)
+    if not new:
+        return None
+    try:
+        info = _uploader(ctx, server, new).device()
+    except DeviceError as e:
+        if e.kind == "auth" or e.code in AUTH_CODES:
+            ks.delete(acct)        # 한 번도 쓰이지 않은 새 토큰 — 서버에서 옛 토큰은 아직 살아 있다(M2)
+            return "discarded"
+        return "deferred"
+    if not isinstance(info, dict) or info.get("stream_id") != sid:
+        return "deferred"
+    # 여기서부터 서버는 옛 토큰을 무효로 본다 — 새 토큰을 본 자리로
+    ks.set(_config.token_account(sid), new)
+    ks.delete(acct)
+    if isinstance(info.get("token_expires_at"), str):
+        try:
+            with osutil.FileLock(ctx.paths.lock("config")):
+                cur = _config.load(ctx.paths)
+                if cur.get("source_instance_id") == sid:
+                    cur["token_expires_at"] = info["token_expires_at"]
+                    _config.save(ctx.paths, cur)
+        except (osutil.LockBusy, _config.ConfigError):
+            pass               # 만료 표시만 늦어진다 — 다음 확인 때 고친다
+    return "promoted"
+
+
+def rotate_token(ctx: Ctx, cfg: dict, ks, *, now=None) -> str | None:
+    """만료 30일 안이면 POST /api/device/rotate(Bearer 현 토큰) → 새 토큰을 대기 자리에 두고 바로 승격을 시도한다.
+    반환: None(할 일 없음) · promote_pending 결과 · "rotate-<종류>[-코드]"(서버 거절·네트워크). 토큰 값은 반환·출력하지 않는다."""
+    from .uploader import DeviceError
+    sid, server = cfg.get("source_instance_id"), cfg.get("server_url")
+    if not sid or not server or not _rotate_due(cfg, now or osutil.kst_now()):
+        return None
+    if ks.get(pending_token_account(sid)):
+        return promote_pending(ctx, cfg, ks)
+    old = ks.get(_config.token_account(sid))
+    if not old:
+        return None
+    try:
+        res = _uploader(ctx, server, old).rotate()
+    except DeviceError as e:
+        return "rotate-" + e.kind + (("-" + e.code) if e.code else "")
+    new = res.get("token") if isinstance(res, dict) else None
+    try:
+        stream_id, _tid = contract.parse_token(new if isinstance(new, str) else "")
+    except contract.ContractError:
+        return "rotate-bad-response"
+    if stream_id != sid or res.get("stream_id") not in (None, sid):
+        return "rotate-bad-response"
+    ks.set(pending_token_account(sid), new)
+    return promote_pending(ctx, cfg, ks)
+
+
+ROTATE_MESSAGES = {
+    "promoted": "토큰 교체: 새 토큰으로 바꿨어요(Keychain, 표시 안 함).",
+    "discarded": "토큰 교체: 서버가 새 토큰을 받지 않아 버렸어요. 지금 토큰을 그대로 써요.",
+    "deferred": "토큰 교체: 새 토큰 확인을 다음 실행으로 미뤘어요(지금 토큰은 그대로 유효).",
+    "rotate-bad-response": "토큰 교체: 서버 응답 모양이 맞지 않아 건너뛰었어요.",
+}
+
+
+def _rotate_message(r: str) -> str:
+    if r in ROTATE_MESSAGES:
+        return ROTATE_MESSAGES[r]
+    if "DEVICE-REVOKED" in r:
+        return "토큰 교체: 이 PC 연결이 해제됐어요 — 대화에서 「PC 연결해 줘」로 다시 연결하세요."
+    if r.startswith("rotate-network"):
+        return "토큰 교체: 서버에 닿지 못해 다음 실행으로 미뤘어요."
+    return "토큰 교체: 서버가 거절했어요(" + r[len("rotate-"):] + "). 지금 토큰은 만료까지 그대로 써요."
+
+
+def _with_run_lock(ctx: Ctx, fn):
+    """run 잠금 안에서 fn() — 다른 run-once 가 옛 토큰으로 보내는 중에 새 토큰을 쓰지 않게. 잠금이 바쁘면 None."""
+    ctx.paths.ensure()
+    lock = osutil.FileLock(ctx.paths.lock("run"))
+    try:
+        lock.acquire()
+    except osutil.LockBusy:
+        return None
+    try:
+        return fn()
+    finally:
+        lock.release()
+
+
 # ---- 명령 ---------------------------------------------------------------------
 def _uploader(ctx: Ctx, server: str, token: str):
     from .uploader import Uploader
@@ -175,8 +293,10 @@ def cmd_connect(ctx: Ctx, a) -> int:
         if not ks.get(hk_acct):
             ks.set(hk_acct, hmacid.new_key_hex())
             made_key = True
-        if old_sid and old_sid != stream_id:
+        ks.delete(pending_token_account(stream_id))     # 새로 받은 토큰이 앞선 교체 대기분을 대신한다
+        if old_sid and old_sid != stream_id:            # M3 계정(입력원) 전환 — 옛 계정 토큰은 이 PC 에서 지운다
             ks.delete(_config.token_account(old_sid))
+            ks.delete(pending_token_account(old_sid))
     except keystore.KeyStoreError as e:
         ctx.say(f"자격 증명 저장소에 쓰지 못했어요: {e}. 평문으로 저장하지 않고 멈춥니다.")
         return EXIT_ERR
@@ -246,6 +366,15 @@ def cmd_run_once(ctx: Ctx, a) -> int:
         return summary.summarize(st, c, paths=ctx.paths, exec_runner=ctx.exec_runner)
 
     from .adapters import AdapterError
+    if not a.no_upload:
+        # 지난 교체에서 확인 못 한 새 토큰이 있으면 먼저 확인·승격(M2 — 응답 유실·네트워크 끊김 복구)
+        try:
+            pr = _with_run_lock(ctx, lambda: promote_pending(ctx, cfg, ks))
+        except keystore.KeyStoreError as e:
+            ctx.say(f"실행 멈춤: 새 토큰을 자격 증명 저장소에 쓰지 못했어요: {e}")
+            return EXIT_ERR
+        if pr:
+            ctx.say(_rotate_message(pr))
     try:
         res = runner.run_once(ctx.paths, ks=ks, uploader_factory=ctx.uploader_factory, summarizer=summarizer,
                               scheduled=a.scheduled, upload=not a.no_upload)
@@ -261,6 +390,16 @@ def cmd_run_once(ctx: Ctx, a) -> int:
     ctx.say(json.dumps({k: v for k, v in res.items()}, ensure_ascii=False, sort_keys=True))
     up = res.get("upload") or {}
     stopped = (up.get("stopped") or "").replace("-halted", "")
+    if "upload" in res and stopped not in ("auth", "config"):
+        # 만료 30일 안이면 Bearer 교체(결정 0). 실패해도 이번 실행 결과(exit)는 바꾸지 않는다
+        try:
+            rcfg = _config.load(ctx.paths)
+            rr = _with_run_lock(ctx, lambda: rotate_token(ctx, rcfg, ks))
+        except (keystore.KeyStoreError, _config.ConfigError) as e:
+            rr = None
+            ctx.say(f"토큰 교체: 자격 증명 저장소·설정 오류로 건너뛰었어요({type(e).__name__}).")
+        if rr:
+            ctx.say(_rotate_message(rr))
     hints = {
         "auth": "서버가 토큰을 거절했어요. 웹 계정 메뉴 › 연결 장치에서 토큰을 다시 발급해 connect 한 뒤",
         "config": "입력원 ID 가 토큰과 달라요. connect 를 다시 한 뒤",
@@ -289,6 +428,8 @@ def cmd_status(ctx: Ctx, a) -> int:
             has_tok = bool(ks.get(_config.token_account(cfg["source_instance_id"])))
             has_key = bool(ks.get(_config.hmac_account(cfg["hmac_namespace"]))) if cfg.get("hmac_namespace") else False
             ctx.say(f"업로드 토큰: {'있음' if has_tok else '없음'} · HMAC 키: {'있음' if has_key else '없음'}")
+            if ks.get(pending_token_account(cfg["source_instance_id"])):
+                ctx.say("교체 대기 토큰: 있음(다음 run-once 때 확인)")
             ctx.say(f"토큰 만료: {cfg.get('token_expires_at') or '모름'} · 정책 판 {cfg.get('policy_revision')}")
         except keystore.KeyStoreError as e:
             ctx.say(f"자격 증명 저장소 접근 불가: {e}")
@@ -474,6 +615,7 @@ def cmd_disconnect(ctx: Ctx, a) -> int:
                 return EXIT_ERR
     try:
         removed = ks.delete(_config.token_account(sid))
+        ks.delete(pending_token_account(sid))
         key_removed = None
         if a.forget_hmac_key and cfg.get("hmac_namespace"):
             key_removed = ks.delete(_config.hmac_account(cfg["hmac_namespace"]))
