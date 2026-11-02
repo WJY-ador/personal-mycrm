@@ -124,6 +124,10 @@
       "required": false
     },
     {
+      "path": "agent/migrate.py",
+      "required": false
+    },
+    {
       "path": "agent/osutil.py",
       "required": false
     },
@@ -233,6 +237,10 @@
     },
     {
       "path": "agent/tests/test_keychain_schedule.py",
+      "required": false
+    },
+    {
+      "path": "agent/tests/test_migrate.py",
       "required": false
     },
     {

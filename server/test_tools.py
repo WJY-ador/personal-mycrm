@@ -151,6 +151,8 @@ BI_TOOLS = {"activity_list", "activity_get", "person_context_get", "source_conte
 # 휴지통 PR-1(30절) MCP 4 — 목록(읽기) + 이동·복원·영구 삭제 요청(쓰기, 전역 크기 관문 면제)
 TRASH_TOOLS = {"trash_list", "trash_move", "trash_restore", "trash_purge"}
 TRASH_WRITES = TRASH_TOOLS - {"trash_list"}
+# 이관 경로(2026-11-02) MCP 읽기 1 — 영수증 해시·개수. 이관 쓰기 도구 없음(확인·반영은 웹 세션에서만)
+MIG_TOOLS = {"migration_receipt_get"}
 BI = {k: f"bi-{k}@example.com" for k in ("a", "b", "agg", "adm", "del", "mig")}   # 25절: a 장치·수신 · b 남 · agg 집계 · adm 삭제 실행 · del 삭제 대상 · mig 이전
 # 처리방침 머리글(`vN · 날짜`) — PR B 부터 v5. 날짜는 문서가 정본이라 파일에서 읽는다(시험이 날짜를 따로 들지 않는다)
 PRIVACY_VERSION = "v7"   # board 이전(2026-10-20) v6 → PR ②-b(2026-10-22) v7
@@ -984,7 +986,7 @@ async def test_definition_tools():
         base = {"state_get", "question_add", "question_list", "record_add", "record_get", "candidates_propose", "candidate_decide",
                 "candidate_list", "profile_set"}
         legacy = base | new | {"help_get", "feedback_send", "ticket_list_mine", "ticket_get_mine"}   # 기존 15개 + help_get + feedback_send(desk-0) + 내 문의 읽기 2(P3)
-        assert len(legacy) == 19 and legacy <= tools and tools - legacy == PRB_TOOLS | BI_TOOLS | TRASH_TOOLS, tools   # PR B 코어 도구는 24절, board 이전 읽기 7은 25절, 휴지통 4는 30절이 본다
+        assert len(legacy) == 19 and legacy <= tools and tools - legacy == PRB_TOOLS | BI_TOOLS | TRASH_TOOLS | MIG_TOOLS, tools   # PR B 코어 도구는 24절, board 이전 읽기 7은 25절, 휴지통 4는 30절, 이관 영수증 1은 test_migration_path 가 본다
         assert val(await c.call_tool("definitions_get", {"object_ids": None, "include_archived": False})) == []
         p = val(await c.call_tool("definition_propose", {"object_id": None, "expected_revision": 0, "definition_json": json.dumps(
             {"key": "notes", "label": "메모", "semantic_kind": "principle", "fields": []})}))
@@ -1568,8 +1570,8 @@ async def test_limits():
     assert names - set(db.WRITE_LIMITS) == {"state_get", "question_list", "candidate_list", "record_get", "definitions_get", "help_get",
                                             "ticket_list_mine", "ticket_get_mine",
                                             "me_get", "person_list", "person_get", "source_list", "source_get",   # PR B 읽기
-                                            "source_reflection_list", "source_reflection_get", "trash_list"} | BI_TOOLS, names
-    assert len(names) == 19 + len(PRB_TOOLS) + len(BI_TOOLS) + len(TRASH_TOOLS) \
+                                            "source_reflection_list", "source_reflection_get", "trash_list"} | BI_TOOLS | MIG_TOOLS, names
+    assert len(names) == 19 + len(PRB_TOOLS) + len(BI_TOOLS) + len(TRASH_TOOLS) + len(MIG_TOOLS) \
         and db.QUOTA_EXEMPT == {"feedback_send"} | TRASH_WRITES <= set(db.WRITE_LIMITS), (len(names), db.QUOTA_EXEMPT)
 
     def nrec():
@@ -2230,7 +2232,8 @@ async def test_daily_limits():
     site = main.site
     U = {k: db.user_by_email(LIM_EMAIL[k])["id"] for k in LIM_KINDS}
     assert db.DAILY_LIMITS == {"records": 50, "candidates": 150, "decisions": 300, "proposals": 100, "questions": 50,
-                               "people": 50, "reflections": 50}   # PR B ⓔ — 사람·출처 요약/반응은 24절이 본다
+                               "people": 50, "reflections": 50,   # PR B ⓔ — 사람·출처 요약/반응은 24절이 본다
+                               "migration": 200}   # 이관 경로(2026-11-02) 전용 — test_migration_path·25f·CLI C6 이 본다
     try:
         # 기록 50 — 관리자도 같다
         u = U["records"]
@@ -3893,6 +3896,7 @@ async def run():
         await test_prb_app()
         await test_prb_privacy()
         test_bi_schema()
+        test_mig_path_schema()
         test_bi_contract()
         await test_bi_imports()
         await test_bi_aggregate()
@@ -6196,6 +6200,7 @@ PRB_ALLOWED_ARGS = {
     "activity_list": {}, "activity_get": {"activity_id": "a_xxxxxx"}, "person_context_get": {"person_id": "p_x"},
     "source_context_get": {"source_id": "s_x"}, "me_aggregate_get": {}, "inbox_list": {}, "inbox_get": {"import_id": "ie_x"},
     "trash_list": {},   # 휴지통 PR-1 목록 — 이름 없이도(스위치 꺼짐이면 SWITCH-OFF)
+    "migration_receipt_get": {},   # 이관 경로 영수증 읽기 — 이름 없이도(반영한 plan 이 없으면 NOT-FOUND)
     "display_name_set": {"display_name": "  이름 PRBNAME  "},   # 마지막에 부른다(관문 통과 뒤 쓰기 확인)
 }
 
@@ -6308,7 +6313,7 @@ async def test_prb_gate():
         assert main.WRITE_TOOLS | main.ALLOWED_TOOLS == names and not main.WRITE_TOOLS & main.ALLOWED_TOOLS, names ^ (main.WRITE_TOOLS | main.ALLOWED_TOOLS)
         assert main.WRITE_TOOLS == set(db.WRITE_LIMITS) - db.NAME_EXEMPT and db.NAME_EXEMPT == {"feedback_send", "display_name_set"}
         assert set(PRB_WRITE_ARGS) == main.WRITE_TOOLS and set(PRB_ALLOWED_ARGS) == main.ALLOWED_TOOLS, "시험 인자 표 = 분류"
-        assert names - PRB_TOOLS - BI_TOOLS - TRASH_TOOLS == {"state_get", "question_add", "question_list", "record_add", "record_get", "candidates_propose",
+        assert names - PRB_TOOLS - BI_TOOLS - TRASH_TOOLS - MIG_TOOLS == {"state_get", "question_add", "question_list", "record_add", "record_get", "candidates_propose",
                                      "candidate_decide", "candidate_list", "profile_set", "definitions_get", "definition_propose",
                                      "definition_apply", "item_propose", "item_decide", "record_attach", "help_get", "feedback_send",
                                      "ticket_list_mine", "ticket_get_mine"}, "기존 19개 이름 그대로"
@@ -6870,7 +6875,7 @@ def test_prb_oldcode():
     ref = os.environ.get("CRM_TEST_OLD_REF", "5704546")   # PR #21 최종 커밋(feat/admin-setup) — 브랜치가 지워져도 돈다
     assert not subprocess.run(["git", "-C", str(HERE), "rev-parse", "--verify", "-q", ref + "^{commit}"], capture_output=True).returncode, \
         f"24e 옛 코드 호환: 커밋 {ref} 이 없어요(얕은 clone 이면 fetch-depth 0)"
-    tables = ("users", "admin_audit", "ticket_history", "sources", "records") + PRB_TABLES
+    tables = ("users", "admin_audit", "ticket_history", "sources", "records") + PRB_TABLES + MIG_PATH_TABLES   # 이관 경로 새 표도 옛 init 에 불변
     name = f"prbold_{secrets.token_hex(3)}"
     create_schema(name)
     try:
@@ -7160,6 +7165,57 @@ def _bi_values(x):
     if isinstance(x, list):
         return [v for y in x for v in _bi_values(y)]
     return [x] if isinstance(x, str) else []
+
+
+MIG_PATH_TABLES = ("migration_tokens", "migration_plans", "migration_plan_items")   # 이관 경로(2026-11-02) 새 표
+
+
+def test_mig_path_schema():
+    """이관 경로(2026-11-02) 스키마 — 옛 DB(records.date_kind 없음 · 새 표 3개 없음 · admin_audit 에 migration_token 없음)
+    → init_schema 2회 = 새 DB 모양(열·이름 붙은 CHECK·인덱스·새 표) · 옛 행 date_kind NULL(추측 백필 없음) · CHECK 가 모르는 날짜 종류를 막는다
+    · 삭제 목록에 새 표(항목 → plan 순)."""
+    tables = ("records", "admin_audit") + MIG_PATH_TABLES
+    fresh, old = f"mpf_{secrets.token_hex(3)}", f"mpo_{secrets.token_hex(3)}"
+    create_schema(fresh)
+    create_schema(old)
+    try:
+        with schema_conn(fresh) as c:
+            db.init_schema(c)
+            c.commit()
+            want = _prb_shape(c, tables)
+        with schema_conn(old) as c:
+            db.init_schema(c)
+            c.execute("DROP TABLE migration_plan_items, migration_plans, migration_tokens")
+            c.execute("ALTER TABLE records DROP CONSTRAINT ck_records_date_kind, DROP COLUMN date_kind")
+            c.execute("ALTER TABLE admin_audit DROP CONSTRAINT admin_audit_action_check")
+            c.execute("ALTER TABLE admin_audit ADD CONSTRAINT admin_audit_action_check CHECK (action IN ('bootstrap','recover','role_grant',"
+                      "'role_revoke','web_signout','block','unblock','delete_notify','delete_run','delete_cancel','device_connect',"
+                      "'device_reissue','device_revoke','device_policy','migration_apply','migration_extend','migration_close'))")
+            c.execute("INSERT INTO users (id,email,display_name) VALUES ('u_mp','mp@x.test','옛')")
+            c.execute("INSERT INTO records (id,user_id,title,body) VALUES ('r_mp','u_mp','t','옛 기록')")
+            c.commit()
+            assert not db._has_col(c, "records", "date_kind") and not db._has_table(c, "migration_plans"), "옛 모양 재현"
+            db.init_schema(c)
+            c.commit()
+            first = _prb_shape(c, tables)
+            db.init_schema(c)
+            c.commit()
+            assert _prb_shape(c, tables) == first == want, "옛 DB 2회 = 새 DB 모양(date_kind·CHECK·새 표 3개·인덱스·감사 action)"
+            assert c.execute("SELECT date_kind FROM records WHERE id='r_mp'").fetchone()["date_kind"] is None, "옛 행 = NULL"
+            c.execute("UPDATE records SET date_kind='heading' WHERE id='r_mp'")
+            c.execute("INSERT INTO admin_audit (action) VALUES ('migration_token')")
+            c.rollback()
+            try:
+                c.execute("UPDATE records SET date_kind='file_mtime' WHERE id='r_mp'")
+                raise AssertionError("ck_records_date_kind 가 file_mtime 을 막지 않았다")
+            except psycopg.errors.CheckViolation:
+                c.rollback()
+    finally:
+        drop_schema(fresh)
+        drop_schema(old)
+    order = {t: i for i, t in enumerate(db.DELETE_TABLES)}
+    assert set(MIG_PATH_TABLES) <= set(order) and order["migration_plan_items"] < order["migration_plans"], "삭제 목록 = 항목 → plan"
+    print("OK — 이관 경로 스키마(옛 DB → init 2회 = 새 DB · date_kind 옛 행 NULL · CHECK · 새 표 3개 · 감사 migration_token · 삭제 목록) 통과")
 
 
 def test_bi_schema():
@@ -7837,9 +7893,19 @@ def test_bi_migration():
         expect("LINK-INVALID", apply, row(O["late"], _bi_v(), target_kind="item", unit_kind="principle_wd", object_id=rules, title="합성",
                                           references=[{"field_key": "axes", "target": {"item_id": "i_nothere"}}]))
         assert counts() == before
+        # 한도(2026-11-02 메인 결정 2) — 이관은 전용 한도(db.DAILY_LIMITS["migration"])만 센다. 일반 기록 50 이 차 있어도 그 한도와 무관하고,
+        # 전용 한도를 「오늘 이미 적용한 행 수」로 낮추면 다음 적용 행이 RATE-LIMIT 이다
         _bulk("INSERT INTO records (id,user_id,title,body) SELECT 'r_bimig' || g, %s, 't', 'b' FROM generate_series(1, 50) AS g", (M,))
-        e = expect("RATE-LIMIT", apply, row(O["late"], _bi_v(), target_kind="record", unit_kind="journal", body="한도 넘는 합성 기록"))
+        used = _bi_count(M, "import_entries", "AND kind IN ('migration_item','migration_record') AND state='applied' "
+                                              f"AND received_at >= {db._KST_TODAY}")
+        old_lim = db.DAILY_LIMITS["migration"]
+        db.DAILY_LIMITS["migration"] = used
+        try:
+            e = expect("RATE-LIMIT", apply, row(O["late"], _bi_v(), target_kind="record", unit_kind="journal", body="한도 넘는 합성 기록"))
+        finally:
+            db.DAILY_LIMITS["migration"] = old_lim
         assert e.resume_at == imports.next_kst_midnight() and "합성" not in e.message + e.action, "재개 시각만, 값 없음"
+        assert "이관 반영" in e.message, "일반 기록 한도가 아니라 이관 전용 한도"
         assert _bi_count(M, "import_entries", "AND original_id=%s", (O["late"],)) == 0, "한도 = 미처리 행으로 남는다"
         _bulk("DELETE FROM records WHERE user_id=%s AND id LIKE 'r_bimig%%'", (M,))
         # ── 대응표 · 병행 기간 ──

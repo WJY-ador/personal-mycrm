@@ -712,6 +712,34 @@ ol.vers { margin: 0 0 .4rem; padding-left: 1.2rem; font-size: .82rem; line-heigh
 .devcard .poldet .fform { margin-top: .5rem; }
 .fform fieldset input[type="checkbox"] { accent-color: var(--accent); margin: 0; }
 ul.rows .inrow b { font-size: .88rem; }
+/* 이관(2026-11-02) — 토큰 · plan 목록 · 확인(자료군 표·항목·본문·기준 체크) · 반영 확인 · 영수증 */
+.mighead { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; min-width: 0; }
+.mighead b { font-size: .88rem; overflow-wrap: anywhere; }
+.migtok .mighead button { margin-left: auto; }
+.migtbl-wrap { overflow-x: auto; margin: .4rem 0 1rem; }
+table.migtbl { border-collapse: collapse; font-size: .82rem; min-width: 100%; }
+table.migtbl caption { text-align: left; margin-bottom: .3rem; }
+table.migtbl th, table.migtbl td { border-bottom: 1px solid var(--line); padding: .3rem .55rem; text-align: right; white-space: nowrap; }
+table.migtbl th:first-child, table.migtbl td:first-child { text-align: left; }
+table.migtbl thead th { color: var(--muted); font-weight: 500; font-size: .76rem; }
+table.migtbl tfoot th, table.migtbl tfoot td { font-weight: 600; border-bottom: 0; }
+table.migrcpt td { text-align: left; }
+ul.rows li.migitem.need { border-color: color-mix(in srgb, var(--warn) 55%, transparent); }
+ul.rows li.migitem .frow { margin-top: .15rem; }
+.migchk { display: inline-flex; align-items: center; gap: .35rem; font-size: .84rem; font-weight: 600; }
+.migchk input { accent-color: var(--accent); width: 1.05rem; height: 1.05rem; margin: 0; }
+.migbody { margin-top: .4rem; }
+.migbody .doc { padding: .7rem .9rem; }
+.migttl { font-weight: 700; margin: 0 0 .35rem; }
+pre.migjson { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .72rem; max-height: 22rem; overflow: auto; margin: .3rem 0 0; }
+.chip.mig-insert { color: var(--mine); border-color: color-mix(in srgb, var(--mine) 45%, transparent); background: var(--mine-bg); }
+.chip.mig-warn, .chip.mig-conflict { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); background: var(--warn-bg); }
+.chip.mig-reject { color: var(--fail); border-color: color-mix(in srgb, var(--fail) 45%, transparent); background: var(--fail-bg); }
+#mig-err:not(:empty) { margin: .8rem 0; }
+.migchg { margin: .3rem 0; padding-left: 1.1rem; }
+.migacts { margin-top: 1rem; }
+ul.migsum { margin: 0 0 .8rem; padding-left: 1.1rem; line-height: 1.8; font-size: .88rem; }
+#mig-dlg { width: min(520px, calc(100vw - 32px)); }
 @media (max-width: 1000px) { .aggcols { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 700px) {
   .aggcols, .aggcols.two { grid-template-columns: minmax(0, 1fr); }
@@ -3187,7 +3215,7 @@ function meSummary() {
 // 라우트 #_setup[/<page>]. 기존 화면은 그대로 그리고 위에 Setup 페이지 줄(subnav)만 얹는다. 옛 묶음 주소는 navReplace 가 새 주소로 replace,
 // 옛 상세 주소(#_obj/<…>/<id>·#_inbox/<id>·#structure/cand/…)는 그대로 열린다(대상·동작을 다 보존하는 새 화면이 아직 없다).
 // 쓰기 = 페이지 레이아웃의 PUT·DELETE /api/me/layout 만(계약 §3 쓰기 예외). 놓을 때 PUT 1 · 한 번에 하나(앞 요청 응답 뒤 다음) · 실패 = 마지막 저장 배치로 복원 + 1줄.
-const SETUP_PAGES = [["layout", "페이지 레이아웃"], ["structure", "내 구조 설정"], ["objects", "자료 종류"], ["devices", "연결 장치"], ["map", "지도"], ["help", "문의 및 개인정보"]];
+const SETUP_PAGES = [["layout", "페이지 레이아웃"], ["structure", "내 구조 설정"], ["objects", "자료 종류"], ["devices", "연결 장치"], ["map", "지도"], ["help", "문의 및 개인정보"], ["migration", "이관"]];
 const ME_BLOCK_LABEL = {heatmap: "13주 글·활동", kinds: "종류별 건수", waiting: "기다리는 결정", recent: "최근 변경"};
 // 옛 묶음 주소 → 새 주소(replace). 없으면 "". nav=new 에서만 부른다
 function navReplace(R) {
@@ -3222,6 +3250,7 @@ function renderSetup(tab, R) {
   else if (page === "devices") renderDevices();
   else if (page === "map") renderMap(BASE.map);
   else if (page === "trash") renderTrash();
+  else if (page === "migration") renderMigration(R.b);
   else renderSetupHelp();
   return page;
 }
@@ -3474,6 +3503,345 @@ document.addEventListener("click", e => {
 });
 window.addEventListener("hashchange", () => { const R = route(); if (!(R.tab === "_setup" && R.a === "trash")) { TRASH.msg = ""; TRASH.bad = false; } });   // 떠나면 지난 결과 문구를 지운다
 // ── /휴지통 ──
+// ── 이관 (migration, 2026-11-02 notes 이관경로-API계약 「웹 세션 경로」) — #_setup/migration[/<plan_id>]. 토큰 · plan 목록 · 확인 · 반영 · 영수증 ──
+// 웹 세션(쿠키)만. 읽기 = getJSON, 쓰기 = corePost(실패 응답 j 에 code·detail·resume_at 이 그대로 온다). 서버 값은 전부 esc(…) 로만 HTML 에 넣는다.
+// 이관 토큰 원문은 발급 응답을 받은 그 화면에서만 그린다(migToken) — S·localStorage·coreFlash·주소·콘솔에 넣지 않고, 다른 화면으로 가면 지운다.
+// 항목 본문(payload)은 사용자가 펼칠 때 하나씩 받아 그 화면에서만 그린다(콘솔·로그 0). 기준(principle_c·wd) 체크는 하나씩만 — 일괄 체크 없음.
+const MIG_STATE = {staged: ["st-wait", "올리는 중"], sealed: ["st-wait", "확인 대기"], applied: ["st-mine", "반영함"], cancelled: ["st-off", "취소함"], expired: ["st-off", "만료"]};
+const MIG_ACTIONS = ["insert", "noop", "warn", "conflict", "reject"];
+const MIG_ACT = {insert: "새로 넣기", noop: "이미 있음", warn: "중복 의심", conflict: "충돌", reject: "거절"};
+const MIG_RESULTS = ["applied", "noop", "skipped_unchecked", "skipped_warn", "skipped_conflict", "skipped_reject"];
+const MIG_RES = {applied: "반영함", noop: "이미 있음", skipped_unchecked: "체크 안 함", skipped_warn: "중복 의심 · 건너뜀", skipped_conflict: "충돌 · 건너뜀", skipped_reject: "거절 · 건너뜀"};
+const MIG_WHY = {unit_deferred: "이번 이관 대상이 아닌 자료군", review_pending: "검토가 끝나지 않음", sensitivity_internal: "내부 자료(internal)",
+  provenance_unknown: "출처 정보에 unknown 이 있음", scope_self_only: "내 글만 받음", provenance_contradiction: "출처 정보가 서로 맞지 않음",
+  file_mtime_not_allowed: "파일 수정 시각은 날짜로 쓸 수 없음", date_invalid: "날짜 형식이 틀림", content_hash_mismatch: "본문 해시가 맞지 않음",
+  url_not_allowed: "URL 이 있음", email_not_allowed: "이메일 주소가 있음", path_not_allowed: "로컬 경로가 있음", body_empty: "본문이 비어 있음",
+  dependency_cycle: "서로 가리키는 고리", duplicate_content: "같은 내용이 다른 ID 로 있음", "ref-not-found": "가리키는 항목을 찾을 수 없음"};
+const MIG_LEAD = "PC에 모아 둔 옛 자료를 이 계정으로 옮겨요. PC 업로더가 올린 plan을 여기서 항목마다 확인한 뒤 [반영]해요. 반영은 웹에서만 해요.";
+const MIG_TOK_WARN = "새로 발급하면 이전 토큰은 폐기돼요.";
+let migToken = null;   // {label, token} — 발급 응답을 받은 그 화면에서만
+const MIG = {pid: "", plan: null, limits: null, on: true, open: new Set(), body: {}, err: "", busy: false};   // on = 스위치·allowlist(꺼지면 발급·체크·반영만 숨김)
+const migWhy = r => r ? `${esc(MIG_WHY[r] || r)} <span class="tech"><code>${esc(r)}</code></span>` : "";
+const migChip = st => { const [c, t] = MIG_STATE[st] || ["", st]; return `<span class="chip ${c}">${esc(t)}</span>`; };
+const migActChip = a => `<span class="chip mig-${esc(a)}">${esc(MIG_ACT[a] || a)}</span>`;
+function migReset() { migToken = null; MIG.pid = ""; MIG.plan = null; MIG.open = new Set(); MIG.body = {}; MIG.err = ""; MIG.busy = false; }
+
+function renderMigration(pid) {
+  if (pid !== MIG.pid) { MIG.pid = pid; MIG.plan = null; MIG.open = new Set(); MIG.body = {}; MIG.err = ""; }
+  if (pid) return migPlanLoad(pid);
+  $("view").innerHTML = `<div class="paper sheet">${crumbs(["#_setup/devices", "연결 장치"], ["", "이관"])}${msgLine()}<h2 class="title">이관</h2>
+    <p class="hint">${esc(MIG_LEAD)}</p><div id="mig-body">${LOADING}</div></div>`;
+  migListLoad();
+}
+async function migListLoad() {
+  const seq = renderSeq, [t, p] = await Promise.all([getJSON("/api/migration-tokens"), getJSON("/api/migrations")]);
+  if (!t || !p || seq !== renderSeq || !$("mig-body")) return;
+  if (!t.ok) { $("mig-body").innerHTML = loadFail(t, "이관 토큰"); return; }
+  if (!p.ok) { $("mig-body").innerHTML = loadFail(p, "이관 plan 목록"); return; }
+  $("mig-body").innerHTML = migListHtml(t.j, p.j);
+}
+// 스위치·allowlist — 꺼져 있으면 토큰 발급·기준 체크·[반영]만 숨기고 그 자리에 안내. plan 목록·영수증(내 자료 읽기)은 그대로 보인다
+function migOffNote(j) {
+  if (!j.enabled) return `<p class="fnote" id="mig-off">지금은 이관이 꺼져 있어요. 운영자가 켜면 이관 토큰을 발급하고 plan을 반영할 수 있어요. 지난 plan과 영수증은 아래에서 볼 수 있어요.</p>`;
+  if (!j.allowed) return `<p class="fnote" id="mig-off">이 계정은 이관 허용 목록에 없어요. 운영자에게 허용 목록에 넣어 달라고 하세요. 지난 plan과 영수증은 아래에서 볼 수 있어요.</p>`;
+  return "";
+}
+function migTokenBox(t) {
+  return `<div class="tokbox" role="region" aria-label="새 이관 토큰"><b>「${esc(t.label)}」 이관 토큰 — 지금 한 번만 보여요</b>
+    <p>PC의 이관 업로더에 붙여 넣으세요. 이 화면을 떠나면 다시 볼 수 없어요(잃어버리면 새로 발급). 대화·문서·메신저에 붙여 넣지 마세요.</p>
+    <div class="frow"><input class="finput tok" id="mig-token" type="text" readonly value="${esc(t.token)}" aria-label="이관 토큰" autocomplete="off" spellcheck="false">
+      <button type="button" class="secondary" data-mig="tok-copy">복사</button><button type="button" class="tertiary" data-mig="tok-done">붙여 넣었어요 · 지우기</button></div>
+    <p class="fok" id="mig-tok-msg" role="status" aria-atomic="true"></p></div>`;
+}
+function migTokStatus(x) {
+  if (x.revoked_at) return ["st-off", "폐기됨"];
+  if (!x.active) return ["st-off", "만료"];
+  return ["st-mine", "사용 중"];
+}
+function migTokRow(x) {
+  const [c, t] = migTokStatus(x);
+  return `<li class="migtok"><div class="mighead"><span class="chip ${c}">${esc(t)}</span><b>${esc(x.label)}</b>
+    ${x.active ? `<button type="button" class="secondary small" data-mig="tok-revoke" data-id="${esc(x.id)}">폐기</button>` : ""}</div>
+    <span class="meta">${esc(mdhm(x.created_at))} 발급 · ${x.revoked_at ? `${esc(mdhm(x.revoked_at))} 폐기` : `${esc(mdhm(x.expires_at))} 만료`} · 마지막 사용 ${esc(x.last_used_at ? mdhm(x.last_used_at) : "아직 없음")}</span></li>`;
+}
+function migPlanRow(p) {
+  const acts = ((p.summary || {}).dry_run || {}).actions || {};
+  const a = MIG_ACTIONS.filter(k => acts[k]).map(k => `${MIG_ACT[k]} ${acts[k]}`).join(" · ");
+  const open = p.state === "staged" || p.state === "sealed";
+  const meta = [`${esc(p.item_count)}항목`, `${esc(mdhm(p.created_at))} 올림`, open ? `${esc(mdhm(p.expires_at))} 만료` : "",
+    p.applied_at ? `${esc(mdhm(p.applied_at))} 반영` : "", a ? esc(a) : ""].filter(Boolean).join(" · ");
+  return `<li class="inrow"><a href="#_setup/migration/${esc(p.plan_id)}">${migChip(p.state)}<b>${esc(p.source_instance)}</b><span class="tech"><code>${esc(p.plan_id)}</code></span></a>
+    <span class="meta">${meta}${p.state === "applied" ? ` · <a href="#_setup/migration/${esc(p.plan_id)}">영수증 보기</a>` : ""}</span></li>`;
+}
+function migListHtml(t, p) {
+  const off = migOffNote(t);
+  const toks = t.tokens || [], plans = p.plans || [], L = p.limits || {};
+  const lim = `오늘 반영 ${esc(L.used_today)} / ${esc(L.daily)}행 · plan당 ${esc(L.plan_items)}항목 · 열린 plan ${esc(L.open_plans)}개까지 · 보관 ${esc(L.plan_days)}일`;
+  return `${off}${migToken && !off ? migTokenBox(migToken) : ""}
+    <section class="sec" data-errbox><h2 class="sh">이관 토큰</h2>
+      <p class="hint">PC 업로더가 plan을 올릴 때만 써요. ${esc(t.token_days)}일 뒤 만료돼요. ${esc(MIG_TOK_WARN)}</p>
+      ${off ? `<p class="hint">이관이 켜지면 여기서 새 토큰을 발급해요.</p>` : `<div class="frow" style="margin:0 0 .6rem"><button type="button" class="primary" data-mig="tok-new" data-active="${toks.some(x => x.active) ? 1 : 0}">새 토큰</button></div>`}
+      ${toks.length ? `<ul class="rows">${toks.map(migTokRow).join("")}</ul>` : `<div class="empty">아직 발급한 이관 토큰이 없어요.</div>`}
+      <p class="ferr" role="alert" aria-atomic="true"></p></section>
+    <section class="sec"><h2 class="sh">plan <span class="speclabel">${lim}</span></h2>
+      ${plans.length ? `<ul class="rows">${plans.map(migPlanRow).join("")}</ul>` : `<div class="empty">아직 올라온 plan이 없어요. PC 업로더로 올리면 여기에 보여요.</div>`}</section>`;
+}
+
+// plan 하나 — 확인(sealed) · 영수증(applied) · 그 밖 상태 안내
+async function migPlanLoad(pid) {
+  const seq = renderSeq;
+  $("view").innerHTML = `<div class="paper sheet">${crumbs(["#_setup/devices", "연결 장치"], ["#_setup/migration", "이관"], ["", "plan"])}${msgLine()}
+    <div id="mig-plan">${LOADING}</div></div>`;
+  const [d, l] = await Promise.all([getJSON("/api/migrations/" + encodeURIComponent(pid)), getJSON("/api/migrations")]);
+  if (!d || seq !== renderSeq || !$("mig-plan")) return;
+  if (!d.ok) { $("mig-plan").innerHTML = loadFail(d, "이관 plan"); return; }
+  MIG.plan = d.j;
+  MIG.limits = l && l.ok ? l.j.limits || null : null;
+  MIG.on = !!(l && l.ok && l.j.enabled && l.j.allowed);
+  if (d.j.state === "applied") {
+    const r = await getJSON("/api/migrations/" + encodeURIComponent(pid) + "/receipt");
+    if (!r || seq !== renderSeq || !$("mig-plan")) return;
+    $("mig-plan").innerHTML = r.ok ? migReceiptHtml(d.j, r.j) : loadFail(r, "영수증");
+    return;
+  }
+  migDraw();
+}
+function migDraw() {
+  const box = $("mig-plan");
+  if (box && MIG.plan) box.innerHTML = migPlanHtml(MIG.plan);
+}
+// 반영 확인에 쓸 개수 — 체크한 기준만 반영 대상
+function migTally(pl) {
+  const xs = pl.items || [], take = x => !x.needs_check || x.checked;
+  const n = a => xs.filter(x => x.action === a).length;
+  return {insert: xs.filter(x => x.action === "insert" && take(x)).length, noop: xs.filter(x => x.action === "noop" && take(x)).length,
+    unchecked: xs.filter(x => x.needs_check && !x.checked).length, checks: xs.filter(x => x.needs_check).length,
+    warn: n("warn"), conflict: n("conflict"), reject: n("reject")};
+}
+function migUnitTable(c) {
+  const units = Object.keys(c.units || {}).sort();
+  if (!units.length) return "";
+  const cell = (o, a) => o[a] ? esc(o[a]) : `<span class="tech">0</span>`;
+  return `<div class="migtbl-wrap"><table class="migtbl"><caption class="sh">자료군별 개수</caption><thead><tr><th scope="col">자료군</th>${MIG_ACTIONS.map(a => `<th scope="col">${esc(MIG_ACT[a])}</th>`).join("")}</tr></thead>
+    <tbody>${units.map(u => `<tr><th scope="row"><code>${esc(u)}</code></th>${MIG_ACTIONS.map(a => `<td>${cell(c.units[u], a)}</td>`).join("")}</tr>`).join("")}</tbody>
+    <tfoot><tr><th scope="row">합계</th>${MIG_ACTIONS.map(a => `<td>${cell(c.actions || {}, a)}</td>`).join("")}</tr></tfoot></table></div>`;
+}
+function migBodyHtml(x) {
+  const b = MIG.body[x.seq];
+  if (!b) return `<p class="hint">불러오는 중이에요…</p>`;
+  if (b.error) return `<p class="ferr">${esc(b.error)}</p>`;
+  const p = b.payload;
+  if (!p) return `<p class="hint">본문은 지웠어요(거절·반영·취소·만료 때 지워요).</p>`;
+  const kv = (k, v) => v === undefined || v === null || v === "" ? "" : `<dt>${esc(k)}</dt><dd>${v}</dd>`;
+  if (p.unit_kind === "source") {
+    const s = p.source || {};
+    return `<dl class="kv">${kv("출처 이름", esc(s.name))}${kv("종류", `<code>${esc(s.kind)}</code>`)}${kv("위치(anchor 해시)", `<code>${esc(s.location)}</code>`)}</dl>
+      <details class="tech"><summary>받은 그대로(JSON)</summary><pre class="migjson">${esc(JSON.stringify(p, null, 2))}</pre></details>`;
+  }
+  const pd = p.primary_date ? `<code>${esc(p.primary_date.kind)}</code> ${esc(p.primary_date.value)}` : "";
+  return `${p.title ? `<p class="migttl">${esc(p.title)}</p>` : ""}<div class="doc"><p class="pre">${esc(p.body || "")}</p></div>
+    <dl class="kv">${kv("쓴 사람", `<code>${esc(p.author_kind)}</code>`)}${kv("글 처리", `<code>${esc(p.text_process)}</code>`)}${kv("만든 방법", `<code>${esc(p.generation_kind)}</code>`)}
+      ${kv("날짜", pd)}${kv("검토", `<code>${esc((p.review || {}).state)}</code>`)}${kv("민감도", `<code>${esc(p.sensitivity)}</code>`)}</dl>
+    <details class="tech"><summary>받은 그대로(JSON)</summary><pre class="migjson">${esc(JSON.stringify(p, null, 2))}</pre></details>`;
+}
+function migItemRow(x, sealed) {
+  const open = MIG.open.has(x.seq);
+  const title = x.title != null ? esc(x.title) || `<span class="tech">(제목 없음)</span>` : `<span class="tech">(본문을 지웠어요)</span>`;
+  const check = x.needs_check && sealed && MIG.on ? `<label class="migchk"><input type="checkbox" data-mig-check="${esc(x.seq)}"${x.checked ? " checked" : ""}${MIG.busy ? " disabled" : ""}> 이 기준을 반영할게요</label>`
+    : x.needs_check ? `<span class="tech">${x.checked ? "체크함" : "체크 안 함"}</span>` : "";
+  return `<li class="migitem${x.needs_check && !x.checked ? " need" : ""}" id="mig-i-${esc(x.seq)}"><div class="mighead"><span class="speclabel">#${esc(x.seq)}</span><code>${esc(x.unit_kind)}</code>
+      <b>${title}</b>${migActChip(x.action)}</div>
+    ${x.reason ? `<span class="meta">사유 · ${migWhy(x.reason)}</span>` : ""}
+    <div class="frow">${check}<button type="button" class="tertiary small" data-mig="body" data-seq="${esc(x.seq)}" aria-expanded="${open}" aria-controls="mig-b-${esc(x.seq)}">${open ? "본문 접기" : "본문 보기"}</button></div>
+    ${open ? `<div class="migbody" id="mig-b-${esc(x.seq)}">${migBodyHtml(x)}</div>` : ""}</li>`;
+}
+function migPlanHtml(pl) {
+  const sealed = pl.state === "sealed", c = pl.counts || {}, t = migTally(pl);
+  const head = `<div class="eyebrow">이관 plan</div><h2 class="title">${esc(pl.source_instance)} ${migChip(pl.state)}</h2>
+    <dl class="kv"><dt>plan</dt><dd><code>${esc(pl.plan_id)}</code></dd><dt>항목</dt><dd>${esc(pl.item_count)}개</dd><dt>올린 시각</dt><dd>${esc(mdhm(pl.created_at))}</dd>
+      ${pl.state === "staged" || sealed ? `<dt>만료</dt><dd>${esc(mdhm(pl.expires_at))}</dd>` : `<dt>닫은 시각</dt><dd>${esc(mdhm(pl.closed_at))}</dd>`}
+      ${pl.plan_hash ? `<dt>plan_hash</dt><dd><code>${esc(pl.plan_hash)}</code></dd>` : ""}</dl>`;
+  if (pl.state === "staged") return `${head}<p class="fnote">PC 업로더가 아직 다 올리지 않았어요(seal 전). 다 올리면 여기서 항목을 확인해요.</p>
+    <div id="mig-err" role="alert" aria-atomic="true">${MIG.err}</div><div class="frow"><button type="button" class="secondary" data-mig="cancel">이 plan 취소</button></div>`;
+  if (!sealed) return `${head}<p class="fnote">${pl.state === "expired" ? "보관 기간이 지나 닫힌 plan이에요." : "취소한 plan이에요."} 올린 본문은 지웠어요. 다시 하려면 PC에서 다시 올려 주세요.</p>
+    <div id="mig-err" role="alert" aria-atomic="true">${MIG.err}</div>${migUnitTable(c)}`;
+  const L = MIG.limits;
+  const items = pl.items || [];
+  return `${head}${migUnitTable(c)}
+    <p class="hint">항목을 열어 본문을 확인하세요. 기준은 하나씩 체크해야 반영돼요 — 체크 안 한 기준은 반영하지 않아요. 중복 의심·충돌·거절 항목은 반영하지 않아요.</p>
+    <section class="sec"><h2 class="sh">항목 <span class="speclabel">${esc(items.length)}개${t.checks ? ` · 기준 체크 ${esc(t.checks - t.unchecked)} / ${esc(t.checks)}` : ""}</span></h2>
+      <ul class="rows migitems">${items.map(x => migItemRow(x, sealed)).join("")}</ul></section>
+    <div id="mig-err" role="alert" aria-atomic="true">${MIG.err}</div>
+    ${MIG.on ? "" : `<p class="fnote" id="mig-off">지금은 이관이 꺼져 있거나 이 계정이 허용 목록에 없어 기준 체크와 반영을 할 수 없어요. 운영자가 켜면 다시 해 주세요.</p>
+    <div class="frow migacts"><button type="button" class="secondary" data-mig="cancel"${MIG.busy ? " disabled" : ""}>이 plan 취소</button></div>`}
+    ${MIG.on ? `<div class="frow migacts"><button type="button" class="primary" data-mig="apply"${MIG.busy ? " disabled" : ""}>반영</button>
+      <button type="button" class="secondary" data-mig="cancel"${MIG.busy ? " disabled" : ""}>이 plan 취소</button>
+      ${L ? `<span class="tech">오늘 남은 이관 한도 ${esc(Math.max(0, L.daily - L.used_today))}행</span>` : ""}</div>
+    <dialog id="mig-dlg" aria-labelledby="mig-dlg-title"><div class="dh"><b id="mig-dlg-title">이 plan을 반영할까요?</b></div><div class="db">
+      <ul class="migsum">
+        <li>새로 넣을 항목 <b>${esc(t.insert)}</b>개</li>
+        <li>이미 있어 그대로 둘 항목 <b>${esc(t.noop)}</b>개</li>
+        <li>체크 안 한 기준 <b>${esc(t.unchecked)}</b>개 — 반영하지 않아요</li>
+        <li>중복 의심 <b>${esc(t.warn)}</b> · 충돌 <b>${esc(t.conflict)}</b> · 거절 <b>${esc(t.reject)}</b>개 — 반영하지 않아요</li>
+        ${L ? `<li>오늘 남은 이관 한도 <b>${esc(Math.max(0, L.daily - L.used_today))}</b>행</li>` : ""}</ul>
+      <p class="hint">전부 반영하거나, 하나라도 실패하면 아무것도 반영하지 않아요. 반영한 뒤엔 이 화면에서 되돌릴 수 없어요.</p>
+      <div class="frow"><button type="button" class="primary" data-mig="apply-go">반영</button><button type="button" class="secondary" data-mig="apply-no">닫기</button></div></div></dialog>` : ""}`;
+}
+// 오류 — 사람 말 문구(코드는 기술 정보로만)
+function migErrHtml(res) {
+  const j = res.j || {}, d = j.detail || {}, xs = (MIG.plan || {}).items || [];
+  const name = s => { const x = xs.find(i => i.seq === s); return `#${esc(s)} ${x && x.title ? esc(x.title) : ""}`; };
+  const box = (b, more) => `<div class="partfail"><b>${b}</b>${more || ""}${res.code ? techInfo({code: res.code, msg: j.msg || ""}) : ""}</div>`;
+  if (res.code === "PLAN-STALE") return box("확인한 뒤 서버 자료가 바뀌어 반영 결과가 달라졌어요. 아무것도 반영하지 않았어요.",
+    `<ul class="migchg">${(d.changed || []).map(c => `<li>${name(c.seq)} — ${esc(MIG_ACT[c.sealed] || c.sealed)} → ${esc(MIG_ACT[c.now] || c.now)}${c.reason ? ` · ${migWhy(c.reason)}` : ""}</li>`).join("")}</ul>
+    <p>아래 [이 plan 취소]로 취소한 뒤 PC에서 다시 올려 주세요.</p>`);
+  if (res.code === "PLAN-HASH-MISMATCH") return box("확인한 plan과 서버에 저장한 plan이 달라요. 아무것도 반영하지 않았어요.", "<p>아래 [이 plan 취소]로 취소한 뒤 PC에서 다시 올려 주세요.</p>");
+  if (res.code === "RATE-LIMIT") return box(`오늘 남은 이관 한도보다 새로 넣을 행이 많아요${d.needed != null ? `(${esc(d.needed)}행)` : ""}. 아무것도 반영하지 않았어요.`,
+    `<p>${j.resume_at ? `${esc(mdhm(j.resume_at))} 이후에` : "내일"} 다시 반영해 주세요.</p>`);
+  if (res.code === "PLAN-EXPIRED") return box("보관 기간(3일)이 지나 이 plan이 닫혔어요. 올린 본문은 지웠어요.", "<p>PC에서 다시 올려 주세요.</p>");
+  if (res.code === "CHECK-DEPENDENCY") return box("체크하지 않은 기준을 가리키는 항목이 있어요. 아무것도 반영하지 않았어요.",
+    `<ul class="migchg">${(d.seqs || []).map(s => `<li><a href="#_setup/migration/${esc(MIG.pid)}" data-mig-jump="${esc(s)}">${name(s)}</a></li>`).join("")}</ul>
+    <p>그 항목이 가리키는 기준을 체크하거나, 이 plan을 취소한 뒤 그 항목을 빼고 다시 올려 주세요.</p>`);
+  if (res.code === "PLAN-STATE") return box(`지금 plan 상태(${esc((MIG_STATE[d.state] || ["", d.state])[1])})에선 할 수 없어요. 다시 불러왔어요.`);
+  if (res.code === "MIGRATION-OFF") return box("지금은 이관이 꺼져 있어요. 운영자가 켠 뒤 다시 해 주세요.");
+  if (res.code === "MIGRATION-NOT-ALLOWED") return box("이 계정은 이관 허용 목록에 없어요. 운영자에게 넣어 달라고 하세요.");
+  return box(esc(res.msg || "하지 못했어요. 다시 해 보세요."));
+}
+async function migFail(res) {
+  if (["NAME-REQUIRED", "NOT-FOUND"].includes(res.code)) return coreFail(res, null);
+  MIG.err = migErrHtml(res);
+  if (["PLAN-EXPIRED", "PLAN-STATE"].includes(res.code)) await migPlanLoad(MIG.pid);   // 상태가 바뀌었다 — 다시 받아 그린다(오류 문구는 남긴다)
+  else migDraw();
+  const e = $("mig-err");
+  if (e && e.scrollIntoView) e.scrollIntoView({block: "nearest"});
+}
+const migUrl = (op) => "/api/migrations/" + encodeURIComponent(MIG.pid) + (op ? "/" + op : "");
+async function migCheck(box) {
+  const seq = Number(box.dataset.migCheck), want = box.checked;
+  MIG.busy = true; MIG.err = "";
+  document.querySelectorAll("input[data-mig-check]").forEach(i => { i.disabled = true; });   // 한 번에 하나
+  const res = await corePost(migUrl("check"), {seqs: [seq], checked: want});
+  MIG.busy = false;
+  if (!res) return;
+  if (res.ok) { MIG.plan = res.j; migDraw(); }
+  else { await migFail(res); }
+  const n = document.querySelector(`input[data-mig-check="${seq}"]`);
+  if (n) n.focus();
+}
+async function migBody(b) {
+  const seq = Number(b.dataset.seq);
+  if (MIG.open.has(seq)) { MIG.open.delete(seq); migDraw(); }
+  else {
+    MIG.open.add(seq); migDraw();
+    if (!MIG.body[seq]) {
+      const pid = MIG.pid, res = await getJSON(migUrl("items/" + seq));
+      if (!res || pid !== MIG.pid) return;
+      MIG.body[seq] = res.ok ? {payload: res.j.payload} : {error: "본문을 불러오지 못했어요. 접었다가 다시 열어 보세요."};
+      migDraw();
+      if (!res.ok) delete MIG.body[seq];   // 다시 열면 다시 받는다
+    }
+  }
+  const n = document.querySelector(`button[data-mig="body"][data-seq="${seq}"]`);
+  if (n) n.focus();
+}
+async function migApply() {
+  const dlg = $("mig-dlg");
+  if (dlg && dlg.open) dlg.close();
+  if (!MIG.plan || !MIG.plan.plan_hash) return;
+  MIG.busy = true; MIG.err = ""; migDraw();
+  const res = await corePost(migUrl("apply"), {plan_hash: MIG.plan.plan_hash});
+  MIG.busy = false;
+  if (!res) return;
+  if (res.ok) return coreDone(res.j.already_applied ? "이미 반영한 plan이에요. 같은 영수증을 보여 줘요." : "반영했어요. 영수증을 확인하세요.");
+  return migFail(res);
+}
+async function migCancel(b) {
+  if (!window.confirm("이 plan을 취소할까요? 올린 본문을 바로 지우고 되돌릴 수 없어요. 다시 하려면 PC에서 다시 올려요.")) return;
+  b.disabled = true;
+  const res = await corePost(migUrl("cancel"), {});
+  b.disabled = false;
+  if (!res) return;
+  if (res.ok) return coreDone("plan을 취소했어요. 올린 본문을 지웠어요.", "#_setup/migration");
+  return migFail(res);
+}
+async function migTokNew(b) {
+  const err = b.closest("[data-errbox]") ? b.closest("[data-errbox]").querySelector(".ferr") : null;
+  if (err) err.textContent = "";
+  if (b.dataset.active === "1" && !window.confirm("새 이관 토큰을 발급할까요? " + MIG_TOK_WARN + " PC 업로더에 새 토큰을 넣어야 해요.")) return;
+  b.disabled = true;
+  const res = await corePost("/api/migration-tokens", {});
+  b.disabled = false;
+  if (!res) return;
+  if (!res.ok) { if (err) err.textContent = migPlain(res); return; }
+  migToken = {label: (res.j.info || {}).label || "이관 업로더", token: res.j.token || ""};
+  return coreDone("새 이관 토큰을 발급했어요. 지금 옮겨 두세요.");
+}
+async function migTokRevoke(b) {
+  const err = b.closest("[data-errbox]") ? b.closest("[data-errbox]").querySelector(".ferr") : null;
+  if (!window.confirm("이 이관 토큰을 폐기할까요? 바로 쓸 수 없게 되고 되살릴 수 없어요.")) return;
+  b.disabled = true;
+  const res = await corePost(`/api/migration-tokens/${encodeURIComponent(b.dataset.id)}/revoke`, {});
+  b.disabled = false;
+  if (!res) return;
+  if (!res.ok) { if (err) err.textContent = migPlain(res); return; }
+  return coreDone("이관 토큰을 폐기했어요.");
+}
+const migPlain = res => res.code === "MIGRATION-OFF" ? "지금은 이관이 꺼져 있어요." : res.code === "MIGRATION-NOT-ALLOWED" ? "이 계정은 이관 허용 목록에 없어요." : res.msg;
+// 영수증 — 결과별 개수 · 항목별 결과·대상 id · 저장된 본문 해시(stored_hash)와 content_hash 일치 여부
+function migHashCell(x) {
+  if (!x.target_id) return `<span class="tech">—</span>`;
+  if (x.stored_hash && x.stored_hash === x.content_hash) return `<span class="chip st-mine">일치</span>`;
+  if (x.stored_hash) return `<span class="chip flag">다름</span>`;
+  return `<span class="chip st-off">${esc(x.target_state === "trashed" ? "휴지통에 있음" : x.target_state === "missing" ? "찾을 수 없음" : "확인 못 함")}</span>`;
+}
+function migReceiptHtml(pl, r) {
+  const xs = r.items || [], res = (r.counts || {}).results || {}, units = (r.counts || {}).units || {};
+  const live = xs.filter(x => x.target_id), same = live.filter(x => x.stored_hash && x.stored_hash === x.content_hash).length;
+  const cols = MIG_RESULTS.filter(k => res[k] || Object.values(units).some(u => u[k]));
+  const cell = (o, k) => o[k] ? esc(o[k]) : `<span class="tech">0</span>`;
+  return `<div class="eyebrow">이관 영수증</div><h2 class="title">${esc(pl.source_instance)} ${migChip(pl.state)}</h2>
+    <dl class="kv"><dt>반영한 시각</dt><dd>${esc(mdhm(r.applied_at))}</dd><dt>import_batch_id</dt><dd><code>${esc(r.import_batch_id)}</code></dd>
+      <dt>plan_hash</dt><dd><code>${esc(r.plan_hash)}</code></dd><dt>receipt_hash</dt><dd><code>${esc(r.receipt_hash)}</code></dd>
+      <dt>본문 해시 대조</dt><dd>${esc(same)} / ${esc(live.length)} 일치</dd></dl>
+    <div class="migtbl-wrap"><table class="migtbl"><caption class="sh">결과별 개수</caption><thead><tr><th scope="col">자료군</th>${cols.map(k => `<th scope="col">${esc(MIG_RES[k])}</th>`).join("")}</tr></thead>
+      <tbody>${Object.keys(units).sort().map(u => `<tr><th scope="row"><code>${esc(u)}</code></th>${cols.map(k => `<td>${cell(units[u], k)}</td>`).join("")}</tr>`).join("")}</tbody>
+      <tfoot><tr><th scope="row">합계</th>${cols.map(k => `<td>${cell(res, k)}</td>`).join("")}</tr></tfoot></table></div>
+    <section class="sec"><h2 class="sh">항목 <span class="speclabel">${esc(xs.length)}개</span></h2>
+      <div class="migtbl-wrap"><table class="migtbl migrcpt"><thead><tr><th scope="col">#</th><th scope="col">자료군</th><th scope="col">결과</th><th scope="col">대상 id</th><th scope="col">본문 해시</th><th scope="col">original_id</th></tr></thead>
+        <tbody>${xs.map(x => `<tr><td>${esc(x.seq)}</td><td><code>${esc(x.unit_kind)}</code></td><td>${esc(MIG_RES[x.result] || x.result)}</td>
+          <td>${x.target_id ? `<code>${esc(x.target_id)}</code>` : `<span class="tech">—</span>`}</td><td>${migHashCell(x)}</td><td><code>${esc(x.original_id)}</code></td></tr>`).join("")}</tbody></table></div></section>
+    <p class="hint">본문은 반영할 때 서버 스테이징에서 지웠어요. 해시 대조는 지금 저장된 본문을 다시 계산해 올린 content_hash 와 견줘요.</p>`;
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest("button[data-mig]");
+  if (b) {
+    e.preventDefault();
+    if (b.disabled) return;
+    const k = b.dataset.mig;
+    if (k === "tok-new") migTokNew(b);
+    else if (k === "tok-revoke") migTokRevoke(b);
+    else if (k === "tok-done") { migToken = null; render(); }
+    else if (k === "tok-copy" && $("mig-token")) {
+      const t = $("mig-token"), say = m => { if ($("mig-tok-msg")) $("mig-tok-msg").textContent = m; };
+      if (navigator.clipboard) navigator.clipboard.writeText(t.value).then(() => say("복사했어요. PC 업로더에 붙여 넣으세요."), () => { t.select(); say("복사하지 못했어요. 선택된 글자를 직접 복사하세요."); });
+      else { t.select(); say("선택된 글자를 직접 복사하세요."); }
+    }
+    else if (k === "body") migBody(b);
+    else if (k === "apply") { const d = $("mig-dlg"); if (d && !d.open) d.showModal(); }
+    else if (k === "apply-no") { const d = $("mig-dlg"); if (d && d.open) d.close(); }
+    else if (k === "apply-go") migApply();
+    else if (k === "cancel") migCancel(b);
+    return;
+  }
+  const j = e.target.closest("a[data-mig-jump]");
+  if (j) { e.preventDefault(); const n = $("mig-i-" + j.dataset.migJump); if (n && n.scrollIntoView) n.scrollIntoView({block: "center"}); }
+});
+document.addEventListener("change", e => {
+  const c = e.target.closest ? e.target.closest("input[data-mig-check]") : null;
+  if (c && !MIG.busy) migCheck(c);
+});
+window.addEventListener("hashchange", () => { const R = route(); if (!(R.tab === "_setup" && R.a === "migration" && R.b === MIG.pid)) migReset(); });   // 떠나면 토큰·본문·오류를 지운다
+// ── /이관 ──
 // ── 오늘 (PR ①-b S5) — 들어온 것(B9): 저장 승인 대기(대기) + 승인해 저장된 내 글(ingest_kind=inbox · 보관됨) + 장치 활동(보관됨).
 // 들어온 날(KST) 머리글로 묶는다. 대기 = 받은 시각 · 저장된 글 = 저장된 시각 · 활동 = 받은 시각. [삭제] 없음(②-c). 동작 = 대기 상세의 승인·제외(기존 그대로) 2.
 // 라우트 #_today · #_today/inbox/<id>(대기 하나 — 옛 #_inbox/<id> 는 여기로 replace). 지난 승인 대기(승인함·제외함·만료)는 옛 목록 #_inbox/all.
@@ -3955,7 +4323,7 @@ function renderAxis(id) {
 function renderDevices() {
   $("view").innerHTML = `<div class="paper sheet">${crumbs(["#_me", "나"], ["", "연결 장치"])}${msgLine()}<h2 class="title">연결 장치</h2>
     <p class="hint">PC의 로컬 에이전트를 이 계정에 연결해요. 원문·실명·주소는 PC에 남고, 서버엔 행동·날짜·별칭·출처 종류 같은 구조화 정보와 내가 승인할 글만 와요.</p>
-    <p class="hint"><a href="/download">PC 앱 설치</a></p>
+    <p class="hint"><a href="/download">PC 앱 설치</a> · 옛 자료 옮기기는 <a href="#_setup/migration">이관</a></p>
     <div id="dev-body">${LOADING}</div></div>`;
   fill("dev-body", "/api/devices", devHtml, "연결 장치");
 }

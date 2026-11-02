@@ -122,15 +122,21 @@ OPTIONAL_VERSIONS = {"struct_names": STRUCT_NAMES_VERSION}
 # 계정 하나가 하루(KST 0시 기준, _KST_TODAY)에 쓸 수 있는 양. 각 쓰기 함수의 기존 트랜잭션 안 맨 앞에서 users 행을 잠그고 센다.
 # 관리자도 같다(QUOTA-GLOBAL 만 관리자 예외).
 DAILY_LIMITS = {"records": 50, "candidates": 150, "decisions": 300, "proposals": 100, "questions": 50,
-                "people": 50, "reflections": 50}   # PR B 메인 확정 ⓔ — 사람·출처 요약/반응은 기록과 같은 급(생성만 센다)
+                "people": 50, "reflections": 50,   # PR B 메인 확정 ⓔ — 사람·출처 요약/반응은 기록과 같은 급(생성만 센다)
+                "migration": 200}   # 이관 경로(2026-11-02) — board 이전 전용(새 이관 경로·합성 시험용 CLI 공통). 일반 집계에서는 이관 행을 뺀다
 _DAILY_NAMES = {"records": "기록은", "candidates": "후보는", "decisions": "결정은", "proposals": "제안은", "questions": "질문은",
-                "people": "사람은", "reflections": "출처 요약/반응은"}   # 조사까지
+                "people": "사람은", "reflections": "출처 요약/반응은", "migration": "이관 반영은"}   # 조사까지
 # 종류 → 세는 (테이블, 시각 열[, 추가 조건]) 목록. 합계를 센다.
 _DAILY_SOURCES = {
-    "records": (("records", "COALESCE(received_at, created)"),),   # board 이전: 이전한 기록의 created 가 과거여도 받은 시각으로 센다
+    # 이관 경로(2026-11-02 메인 결정 2): 일반 집계(기록·제안·결정)에서 board 이전 행을 뺀다 — 이관은 아래 migration 전용 한도만 쓴다
+    "records": (("records", "COALESCE(received_at, created)", "ingest_kind <> 'board_migration'"),),   # 받은 시각으로 센다(created 가 과거여도)
     "candidates": (("candidates", "created"),),
-    "decisions": (("candidate_history", "at"), ("item_history", "at")),
-    "proposals": (("object_defs", "created_at", "std_id IS NULL"), ("items", "COALESCE(received_at, created_at)")),   # 표준 정의(시드·편입)는 사용자 제안이 아니다
+    "decisions": (("candidate_history", "at"), ("item_history", "at", "COALESCE(event_meta->>'ingest', '') <> 'board_migration'")),
+    "proposals": (("object_defs", "created_at", "std_id IS NULL"),   # 표준 정의(시드·편입)는 사용자 제안이 아니다
+                  ("items", "COALESCE(received_at, created_at)", "ingest_kind <> 'board_migration'")),
+    # 이관 반영 행 = 이전 입력원 대응표의 적용 행(기록·항목, 받은 시각) + 이관 plan 의 출처 적용(반영 시각). noop·중복은 세지 않는다
+    "migration": (("import_entries", "received_at", "kind IN ('migration_item','migration_record') AND state = 'applied'"),
+                  ("migration_plan_items", "applied_at", "target_kind = 'source' AND result = 'applied'")),
     "questions": (("questions", "created"),),
     "people": (("people", "created"),),
     "reflections": (("source_reflections", "created"),),
@@ -293,10 +299,40 @@ def _user_lock(c, uid):
         raise CrmError("AUTH-INVALID", "사용자를 찾을 수 없어요. 다시 로그인하세요.")
 
 
+# 이관 반영 모드(2026-11-02 메인 결정 2) — migration_mode() 안의 db 쓰기는 일반 기록·제안·결정 한도를 보지 않는다(잠금만).
+# 이관은 호출하는 쪽(imports·migration)이 _daily_gate(c, uid, "migration", n) 전용 한도를 따로 건다. 항목 이력엔 ingest 표식을 단다.
+_MIGRATION_BYPASS = ("records", "proposals", "decisions")
+_mig_mode_var: "contextvars.ContextVar" = None
+
+
+def _mig_mode():
+    global _mig_mode_var
+    if _mig_mode_var is None:
+        import contextvars
+        _mig_mode_var = contextvars.ContextVar("crm_migration_mode", default=False)
+    return _mig_mode_var
+
+
+@contextmanager
+def migration_mode():
+    """board 이전 반영 구간 — 안의 _daily_gate(records·proposals·decisions)는 잠금만, item_history.event_meta 에 ingest 표식."""
+    token = _mig_mode().set(True)
+    try:
+        yield
+    finally:
+        _mig_mode().reset(token)
+
+
+def in_migration_mode() -> bool:
+    return bool(_mig_mode().get())
+
+
 def _daily_gate(c, uid, kind, adding=1):
     """일일 한도 — users 행을 잠근 뒤 KST 오늘 0시 이후 행을 센다. n + adding > 상한이면 RATE-LIMIT.
-    같은 트랜잭션에서 다시 잠가도 된다(이미 잡은 잠금)."""
+    같은 트랜잭션에서 다시 잠가도 된다(이미 잡은 잠금). migration_mode() 안에선 records·proposals·decisions 를 세지 않는다."""
     _user_lock(c, uid)
+    if kind in _MIGRATION_BYPASS and in_migration_mode():
+        return
     n = 0
     for table, col, *extra in _DAILY_SOURCES[kind]:
         cond = "".join(f" AND {x}" for x in extra)
@@ -462,6 +498,7 @@ def _init_schema(c):
         _migrate_board_import(c)   # board 이전(2026-10-20) — 열·이름 붙은 CHECK·부분 UNIQUE·item_links 대상 확장
         _migrate_stack(c)   # PR ②-b — jobs 새 열·definitions_version text·items 판 포인터·generation_kind 넓히기
         _migrate_trash(c)   # 휴지통 PR-1 — 5종 휴지통 열·CHECK·부분 인덱스 · 사람 표식 · 접수 deleted 상태
+        _migrate_migration_path(c)   # 이관 경로(2026-11-02) — records.date_kind + CHECK. 새 표 3개는 schema.sql 이 만든다
         _init_tmp(c)   # PR ②-a 임시 보관 — schema.sql 의 jobs 뒤(FK 대상). 위치는 current_schema() 로 정한다
         _migrate_classify_roles(c)
         _backfill_template_slots(c)   # 매번 돈다 — 시드가 적용 뒤 표시 전에 끊긴 경우도 여기서 채운다
@@ -489,7 +526,8 @@ _USERS_PRB_CHECKS = (
 _WIDEN_CHECKS = (
     ("admin_audit", "admin_audit_action_check", "action",
      ("bootstrap", "recover", "role_grant", "role_revoke", "web_signout", "block", "unblock", "delete_notify", "delete_run", "delete_cancel",
-      "device_connect", "device_reissue", "device_revoke", "device_policy", "migration_apply", "migration_extend", "migration_close")),
+      "device_connect", "device_reissue", "device_revoke", "device_policy", "migration_apply", "migration_extend", "migration_close",
+      "migration_token")),
     ("ticket_history", "ticket_history_kind_check", "kind", ("status", "reply", "note", "reclassify", "deleted")),
     ("field_defs", "field_defs_target_kind_check", "target_kind", ("item", "record", "candidate", "person", "source", "activity")))
 
@@ -626,6 +664,19 @@ def _migrate_trash(c):
         if not c.execute("SELECT 1 FROM pg_class WHERE relname = %s AND relnamespace = current_schema()::regnamespace",
                          (name,)).fetchone():
             c.execute(ddl)
+
+
+DATE_KINDS = ("written", "occurred", "registered", "heading")   # records.date_kind(이관 경로 K6)
+
+
+def _migrate_migration_path(c):
+    """이관 경로(2026-11-02) — 옛 DB 에 records.date_kind 열 + 이름 붙은 CHECK. 매번 돌아도 된다(있으면 건드리지 않는다).
+    옛 행은 NULL(라벨 없음 — 추측 백필 없음). migration_tokens·migration_plans·migration_plan_items 는 schema.sql 이 만든다."""
+    if not _has_col(c, "records", "date_kind"):
+        c.execute("ALTER TABLE records ADD COLUMN date_kind text")
+    if not _has_constraint(c, "records", "ck_records_date_kind"):
+        c.execute("ALTER TABLE records ADD CONSTRAINT ck_records_date_kind CHECK (date_kind IS NULL OR date_kind IN "
+                  f"({','.join(repr(v) for v in DATE_KINDS)}))")
 
 
 def _widen_check(c, t, name, col, vals):
@@ -1097,12 +1148,16 @@ def record_provenance_set(uid, rid, author_kind, text_process, reason, by="user"
         raise CrmError("ARG-INVALID", "출처를 고치는 사유가 비었어요.")
     check_len("reason", reason, LIMIT_TEXT)   # α1 ② — provenance_history 에 그대로 쌓인다
     with tx() as c:
-        r = _one(c, f"SELECT r.id,r.author_kind,r.text_process,r.deleted_at,r.trashed_at,r.generation_kind,({_ELIGIBLE_SQL}) AS eligible "
-                    "FROM records r WHERE r.user_id=%s AND r.id=%s AND r.deleted_at IS NULL FOR UPDATE OF r", (uid, rid))
+        r = _one(c, f"SELECT r.id,r.author_kind,r.text_process,r.deleted_at,r.trashed_at,r.generation_kind,r.ingest_kind,"
+                    f"({_ELIGIBLE_SQL}) AS eligible FROM records r WHERE r.user_id=%s AND r.id=%s AND r.deleted_at IS NULL FOR UPDATE OF r",
+                 (uid, rid))
         if not r:
             raise CrmError("RECORD-MISSING", f"기록을 찾을 수 없어요: {rid}")
         if r["trashed_at"] is not None:
             raise _in_trash("그 글")
+        if r["ingest_kind"] == "board_migration":   # 이관 경로 K2 — 이관 기록의 출처는 신고값 그대로(사후 승격 차단). 같은 값 재지정도 막는다
+            raise CrmError("PROVENANCE-MIGRATION-LOCKED", "이관한 기록은 출처 판정을 바꿀 수 없어요.",
+                           "PC 에서 검토를 고친 뒤 새 source_revision 으로 다시 이관하세요.")
         if (r["author_kind"], r["text_process"]) == (author_kind, text_process):
             return _record_in(c, uid, rid)
         if r["generation_kind"] in ("ai", "mixed", "conversation", "routine"):   # board 이전 r3 T2 · ②-b — 출처 정정으로 생성 이력을 지우지 않는다
@@ -2669,8 +2724,11 @@ def item_decide(uid, item_id, expected_revision, proposal_id, action, history_id
         snap = _item_state(row, cur_links)
 
         def bump(act, sets, args, meta=None):
+            meta = dict(meta or {})
+            if in_migration_mode():   # 이관 반영이 만든 이력 — 일반 결정 한도에서 뺀다(_DAILY_SOURCES decisions)
+                meta["ingest"] = "board_migration"
             c.execute("INSERT INTO item_history (user_id,item_id,action,prev_revision,prev_state,event_meta) VALUES (%s,%s,%s,%s,%s,%s)",
-                      (uid, item_id, act, row["revision"], Jsonb(snap), Jsonb(meta or {})))
+                      (uid, item_id, act, row["revision"], Jsonb(snap), Jsonb(meta)))
             c.execute("UPDATE items SET " + sets + (", " if sets else "") + "revision=revision+1, updated_at=now() WHERE user_id=%s AND id=%s",
                       (*args, uid, item_id))
 
@@ -3105,7 +3163,7 @@ DELETE_NOTICE = ("7일 뒤 자료를 모두 지우고 계정을 닫습니다. �
 # board 이전(2026-10-20): 관계(activity_links) → 접수 대응표(import_entries) → 업무 자료(activities) → 한도·입력원(import_counters·import_streams).
 # PR ②-b: 판·stage(items 자식, 확인 이벤트를 가리킨다) → 확인 이벤트 → items.
 DELETE_TABLES = ("page_layouts", "stack_sessions", "jobs", "item_links", "activity_links", "import_entries", "activities", "import_counters",
-                 "import_streams", "item_stage", "item_versions", "confirm_events", "item_history", "items", "user_roles", "field_defs",
+                 "import_streams", "migration_plan_items", "migration_plans", "migration_tokens", "item_stage", "item_versions", "confirm_events", "item_history", "items", "user_roles", "field_defs",
                  "object_defs", "std_choices", "std_marks",
                  "candidate_history", "candidates", "source_reflections", "records", "sources", "questions", "profile", "tabs",
                  "people", "agreements", "optional_consent_log", "optional_consents", "usage_daily", "tickets")

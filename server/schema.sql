@@ -80,6 +80,8 @@ CREATE TABLE IF NOT EXISTS records (
   received_at        timestamptz DEFAULT now(),   -- 서버에 실제로 생긴 시각
   source_created_at  timestamptz,                 -- 확인된 원본 시각(시간대 포함)
   source_date        date,                        -- 날짜만 확인된 원본. 자정·KST 를 붙이지 않는다
+  date_kind          text,                        -- 이관 경로(2026-11-02 K6): 원본 날짜 종류 written·occurred·registered·heading. NULL = 라벨 없음(이관 밖).
+                                                  -- written·occurred 만 created 를 채운다 · registered·heading = source_date + 이 라벨, created = 받은 시각. 옛 DB 는 init_schema
   ingest_kind        text NOT NULL DEFAULT 'interactive',
   generation_kind    text NOT NULL DEFAULT 'unknown',
   generation_meta    jsonb NOT NULL DEFAULT '{}', -- 연결 장치가 신고한 도구·모델·입력 참조(검증된 사실 아님). 토큰·프롬프트·경로 없음
@@ -100,7 +102,8 @@ CREATE TABLE IF NOT EXISTS records (
   -- PR ②-b: conversation = 확인 1번을 거친 대화 정리(인용 적격은 confirm_events 실재까지 — db._eligible) · routine = 루틴 결과(비적격)
   CONSTRAINT ck_records_generation_kind CHECK (generation_kind IN ('unknown','human','ai','mixed','conversation','routine')),
   CONSTRAINT ck_records_generation_meta CHECK (jsonb_typeof(generation_meta) = 'object'),
-  CONSTRAINT ck_records_source_when CHECK (source_created_at IS NULL OR source_date IS NULL)
+  CONSTRAINT ck_records_source_when CHECK (source_created_at IS NULL OR source_date IS NULL),
+  CONSTRAINT ck_records_date_kind CHECK (date_kind IS NULL OR date_kind IN ('written','occurred','registered','heading'))
 );
 CREATE INDEX IF NOT EXISTS ix_records_user ON records (user_id, created DESC) WHERE deleted_at IS NULL;
 
@@ -584,7 +587,7 @@ CREATE TABLE IF NOT EXISTS admin_audit (
   action     text NOT NULL CHECK (action IN ('bootstrap','recover','role_grant','role_revoke','web_signout','block','unblock',
                                          'delete_notify','delete_run','delete_cancel',
                                          'device_connect','device_reissue','device_revoke','device_policy',
-                                         'migration_apply','migration_extend','migration_close')),   -- 삭제 CLI(PR B) 3종 · board 이전 7종. 옛 DB 는 init_schema 가 넓힌다
+                                         'migration_apply','migration_extend','migration_close','migration_token')),   -- 삭제 CLI(PR B) 3종 · board 이전 7종 · 이관 토큰 1종(2026-11-02). 옛 DB 는 init_schema 가 넓힌다
   target_id  text,
   detail     jsonb NOT NULL DEFAULT '{}'
 );
@@ -798,3 +801,76 @@ CREATE TABLE IF NOT EXISTS item_stage (
   PRIMARY KEY (user_id, item_id),
   FOREIGN KEY (user_id, item_id) REFERENCES items(user_id, id) ON DELETE CASCADE
 );
+
+-- 이관 경로(2026-11-02, notes/2026-11-02_이관경로-구현계획.md K1·가안 1). 옛 DB 도 이 CREATE … IF NOT EXISTS 가 만든다(새 표뿐).
+-- 이관 토큰 = 이관 전용 scope 장치 토큰(일반 연결 장치 토큰 import_streams 와 분리). 웹 로그인 세션에서만 발급, 14일 만료, 비밀값은 SHA-256 만.
+-- 토큰 원문 = "mig_<id>.<secret>" — 발급 응답에서 한 번만 보인다. 사용자당 살아 있는 토큰 1개(새로 발급하면 앞 토큰 폐기).
+CREATE TABLE IF NOT EXISTS migration_tokens (
+  user_id      text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  id           text NOT NULL,                     -- mt_<hex16>
+  secret_hash  bytea NOT NULL CHECK (octet_length(secret_hash) = 32),
+  label        text NOT NULL CHECK (char_length(label) BETWEEN 1 AND 80 AND label = btrim(label)),
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  expires_at   timestamptz NOT NULL,
+  revoked_at   timestamptz,
+  last_used_at timestamptz,
+  PRIMARY KEY (user_id, id),
+  UNIQUE (id),
+  CHECK (expires_at > created_at)
+);
+
+-- 이관 plan(상태기계 staged → sealed → applied · → cancelled · → expired). 서버가 토큰으로 사용자를 정한다(본문에 사용자 필드 없음).
+-- plan_hash = SHA-256(JCS(seq 순 item_sha256 hex 목록)) — seal 때 고정. 반영은 웹 세션에서만, 저장한 바이트만 쓴다.
+-- 만료(만든 시각 + 3일)·취소·반영 뒤 항목 본문(migration_plan_items.payload)은 바로 영구 삭제(휴지통 아님). 해시·영수증만 남는다.
+CREATE TABLE IF NOT EXISTS migration_plans (
+  user_id          text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  id               text NOT NULL,                 -- mp_<hex24>
+  token_id         text,                          -- 만든 이관 토큰(FK 없음 — 토큰을 지워도 plan 영수증은 남는다)
+  contract         text NOT NULL CHECK (contract = 'board-migration/2'),
+  source_instance  text NOT NULL,                 -- PC 인스턴스 표식(불투명). 항목의 source_instance 와 같아야 한다
+  state            text NOT NULL CHECK (state IN ('staged','sealed','applied','cancelled','expired')),
+  item_count       integer NOT NULL DEFAULT 0 CHECK (item_count BETWEEN 0 AND 200),
+  staged_bytes     integer NOT NULL DEFAULT 0 CHECK (staged_bytes >= 0),
+  plan_hash        bytea CHECK (plan_hash IS NULL OR octet_length(plan_hash) = 32),
+  summary          jsonb NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(summary) = 'object'),   -- seal 집계·반영 영수증 집계(개수만, 본문 없음)
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  expires_at       timestamptz NOT NULL,
+  sealed_at        timestamptz,
+  applied_at       timestamptz,
+  closed_at        timestamptz,                   -- cancelled·expired 시각
+  PRIMARY KEY (user_id, id),
+  CHECK (state NOT IN ('sealed','applied') OR (plan_hash IS NOT NULL AND sealed_at IS NOT NULL)),
+  CHECK ((state = 'applied') = (applied_at IS NOT NULL)),
+  CHECK ((state IN ('cancelled','expired')) = (closed_at IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS ix_migration_plans_open ON migration_plans (expires_at) WHERE state IN ('staged','sealed');
+
+-- plan 항목 = 받은 순(seq). payload = 받은 항목 JSON 그대로(본문 포함) — 반영은 이 값만 쓴다. 본문 없는 열(해시·action·결과·대상 id)이 영수증이다.
+-- target_id 는 FK 없음(import_batch_id 선례) — 영구 삭제된 대상도 영수증은 남는다. 반영 배치 ID(import_batch_id) = plan id.
+CREATE TABLE IF NOT EXISTS migration_plan_items (
+  user_id          text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  plan_id          text NOT NULL,
+  seq              integer NOT NULL CHECK (seq >= 0),
+  original_id      text NOT NULL,
+  source_revision  text NOT NULL,
+  unit_kind        text NOT NULL,
+  target_kind      text NOT NULL CHECK (target_kind IN ('record','item','source')),
+  content_hash     bytea NOT NULL CHECK (octet_length(content_hash) = 32),
+  item_sha256      bytea NOT NULL CHECK (octet_length(item_sha256) = 32),   -- JCS(항목)의 SHA-256 — plan_hash 의 원소
+  payload          jsonb,
+  payload_bytes    integer NOT NULL DEFAULT 0 CHECK (payload_bytes >= 0),
+  action           text CHECK (action IS NULL OR action IN ('insert','noop','conflict','reject','warn')),
+  reason           text,                          -- reject·conflict·warn 사유 코드(값 없음)
+  checked          boolean NOT NULL DEFAULT false,   -- 기준(principle_c·principle_wd) 항목 확인 체크 — 웹 세션만
+  result           text CHECK (result IS NULL OR result IN ('applied','noop','skipped_unchecked','skipped_warn','skipped_reject',
+                                                            'skipped_conflict')),
+  target_id        text,
+  applied_at       timestamptz,
+  PRIMARY KEY (user_id, plan_id, seq),
+  UNIQUE (user_id, plan_id, original_id),
+  FOREIGN KEY (user_id, plan_id) REFERENCES migration_plans(user_id, id) ON DELETE CASCADE,
+  CHECK (payload IS NOT NULL OR payload_bytes = 0),
+  CHECK ((result IS NULL) = (applied_at IS NULL))
+);
+CREATE INDEX IF NOT EXISTS ix_migration_items_hash ON migration_plan_items (user_id, content_hash);
+CREATE INDEX IF NOT EXISTS ix_migration_items_applied ON migration_plan_items (user_id, applied_at) WHERE result = 'applied';

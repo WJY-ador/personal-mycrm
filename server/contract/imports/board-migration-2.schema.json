@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "board-migration-2.schema.json",
+  "title": "board-migration/2 — 이관 경로(2026-11-02) plan 만들기 본문과 항목(JSONL 한 줄)",
+  "$comment": "정본 notes/2026-11-02_이관경로-구현계획.md K1~K10. 서버 검증 = server/migration.py check_item(구조, 업로드 때 — 틀리면 청크 전체 400 CONTRACT-INVALID) · semantic_reject(의미, seal 때 — 항목 action=reject + 사유). 사용자는 서버가 이관 토큰으로 정한다 — owner·owner_id·user·user_id·target_user_id·uid·account·account_id 키가 오면 거절(owner_field_not_allowed). JSON 은 UTF-8 · 중복 키 금지 · 실수(float)·NaN 금지 · 문자열에 NUL·고아 서러게이트 금지. JCS = json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False). item_sha256 = SHA-256(JCS(항목)) · plan_hash = SHA-256(JCS(seq 순 item_sha256 hex 목록)) 소문자 hex. content_hash = SHA-256(UTF-8(normalize(text))) — normalize·벡터는 vectors/board-migration-2-normalize.json(기록·항목 = body, 없으면 \"\" · 출처 = source.name). target_kind 는 unit_kind 로 서버가 정한다(item: principle_c·principle_wd·application_axis·decision_index·craft·open_question·publication·axis·application_doc · record: record·journal·session_story(session_story 는 seal 에서 reject unit_deferred) · source: source). 권장 ID: original_id = 'o_' + sha256_hex(source_instance + '\\n' + 원천 경로 + '\\n' + anchor)[:32] (K5 — 해시가 아니라 원천 위치) · source_revision = 'v_' + sha256_hex(JCS(항목 − source_revision))[:32] (payload 가 바뀔 때만 바뀐다 — 메인 결정 3). 서버는 같은 (original_id, source_revision) 의 다른 내용을 conflict(idempotency-conflict)로 막는다.",
+  "$defs": {
+    "plan_create": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract", "source_instance"],
+      "properties": {
+        "contract": {"const": "board-migration/2"},
+        "source_instance": {"$ref": "#/$defs/source_instance"}
+      }
+    },
+    "source_instance": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$", "$comment": "PC 인스턴스 표식(불투명). plan 의 값과 항목의 값이 같아야 한다(plan_mismatch)"},
+    "original_id": {"type": "string", "pattern": "^o_[0-9a-f]{32}$"},
+    "source_revision": {"type": "string", "pattern": "^v_[0-9a-f]{32}$"},
+    "hex64": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "date": {
+      "type": "object", "additionalProperties": false, "required": ["kind", "value"],
+      "properties": {
+        "kind": {"enum": ["written", "occurred", "registered", "heading", "file_mtime"],
+                 "$comment": "file_mtime 은 구조로는 받되 seal 에서 reject file_mtime_not_allowed(K6)"},
+        "value": {"type": "string", "maxLength": 40,
+                  "$comment": "YYYY-MM-DD 또는 시간대 있는 ISO 시각(YYYY-MM-DDTHH:MM:SS[.ffffff](Z|±HH:MM)), 1900~2100년. 틀리면 reject date_invalid"}
+      }
+    },
+    "review": {
+      "type": "object", "additionalProperties": false, "required": ["state"],
+      "properties": {
+        "state": {"enum": ["reviewed", "pending"], "$comment": "reviewed 가 아니면 reject review_pending(K2)"},
+        "decision_ref": {"type": ["string", "null"], "maxLength": 200, "$comment": "PC 검토표 참조(불투명). URL·이메일·로컬 경로면 reject"}
+      }
+    },
+    "target": {
+      "$comment": "board-migration/1 과 같다 — original_id 는 정확한 판(revision)과 함께. 그 밖 키는 하나만",
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["original_id", "revision"],
+         "properties": {"original_id": {"$ref": "#/$defs/original_id"}, "revision": {"$ref": "#/$defs/source_revision"}}},
+        {"type": "object", "additionalProperties": false, "required": ["record_id"], "properties": {"record_id": {"type": "string"}}},
+        {"type": "object", "additionalProperties": false, "required": ["item_id"], "properties": {"item_id": {"type": "string"}}},
+        {"type": "object", "additionalProperties": false, "required": ["candidate_id"], "properties": {"candidate_id": {"type": "string"}}}
+      ]
+    },
+    "common": {
+      "type": "object",
+      "required": ["original_id", "source_revision", "source_instance", "unit_kind", "content_hash"],
+      "properties": {
+        "original_id": {"$ref": "#/$defs/original_id"},
+        "source_revision": {"$ref": "#/$defs/source_revision"},
+        "source_instance": {"$ref": "#/$defs/source_instance"},
+        "content_hash": {"$ref": "#/$defs/hex64", "$comment": "서버가 정규화 뒤 재계산 — 다르면 reject content_hash_mismatch"}
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["author_kind", "text_process", "generation_kind", "primary_date", "review", "sensitivity"],
+      "properties": {
+        "author_kind": {"enum": ["self", "external", "unknown"], "$comment": "unknown → reject provenance_unknown · external → reject scope_self_only"},
+        "text_process": {"enum": ["verbatim", "structured", "rewritten", "generated", "unknown"],
+                         "$comment": "가림만 = verbatim + redaction · 한 글자라도 고침 = rewritten(비적격) — K4"},
+        "generation_kind": {"enum": ["human", "ai", "mixed", "unknown"],
+                            "$comment": "ai·mixed 는 text_process ≠ verbatim 일 때만(self+verbatim+ai/mixed = reject provenance_contradiction). 적격 판정은 서버 _ELIGIBLE_SQL"},
+        "primary_date": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/date"}],
+                         "$comment": "K6 — written·occurred 시각 = 기록 created · 날짜만이거나 registered·heading = source_date + records.date_kind, created = 받은 시각"},
+        "other_dates": {"type": "array", "maxItems": 10, "items": {"$ref": "#/$defs/date"}, "$comment": "쓰지 않은 신고 날짜 — provenance_history 에 남는다"},
+        "review": {"$ref": "#/$defs/review"},
+        "sensitivity": {"enum": ["normal", "internal"], "$comment": "internal → reject sensitivity_internal"},
+        "redaction": {"type": "object", "additionalProperties": false, "required": ["count"],
+                      "properties": {"count": {"type": "integer", "minimum": 1, "maximum": 10000}}, "$comment": "가림 표식(선택) — 가린 곳 수"},
+        "distinct": {"type": "boolean", "$comment": "K5 — 같은 content_hash·다른 original_id 를 일부러 따로 둘 때 true(없으면 dry-run warn duplicate_content)"},
+        "supersedes": {"$ref": "#/$defs/original_id", "$comment": "K5 — 이 항목이 대신하는 옛 original_id(그 중복 warn 을 넘긴다. 옛 대상은 지우지 않는다)"}
+      }
+    },
+    "record_item": {
+      "$comment": "unit_kind record·journal·session_story — 기록(records)",
+      "allOf": [{"$ref": "#/$defs/common"}, {"$ref": "#/$defs/provenance"}],
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["body"],
+      "properties": {
+        "original_id": true, "source_revision": true, "source_instance": true, "content_hash": true,
+        "author_kind": true, "text_process": true, "generation_kind": true, "primary_date": true, "other_dates": true, "review": true,
+        "sensitivity": true, "redaction": true, "distinct": true, "supersedes": true,
+        "unit_kind": {"enum": ["record", "journal", "session_story"]},
+        "title": {"type": ["string", "null"], "maxLength": 1024, "$comment": "비면 본문 첫 줄 40자"},
+        "body": {"type": "string", "minLength": 1, "$comment": "64KB(UTF-8) 이하. 정규화 뒤 비면 reject body_empty. 서버는 받은 그대로 저장"},
+        "attach": {"type": "object", "additionalProperties": false,
+                   "properties": {"attach_to": {"type": "array", "items": {"$ref": "#/$defs/target"}},
+                                  "axes": {"type": "array", "items": {"$ref": "#/$defs/target"}},
+                                  "use_at": {"type": "array", "items": {"type": "string", "maxLength": 1024}},
+                                  "unattached": {"type": "array", "items": {"type": "string", "maxLength": 1024}}},
+                   "$comment": "record_attach 그대로(board-migration/1 과 같다)"},
+        "source_ref": {"type": "object", "additionalProperties": false, "required": ["original_id"],
+                       "properties": {"original_id": {"$ref": "#/$defs/original_id"}},
+                       "$comment": "같은 plan 또는 앞서 반영한 plan 의 출처 항목 → records.source_id"}
+      }
+    },
+    "item_item": {
+      "$comment": "unit_kind principle_c·principle_wd·application_axis·decision_index·craft·open_question·publication·axis·application_doc — 항목(items, 제안 → 적용). 기준(principle_c·principle_wd)은 웹 확인 화면에서 항목마다 체크해야 반영",
+      "allOf": [{"$ref": "#/$defs/common"}, {"$ref": "#/$defs/provenance"}],
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["object_ref", "title"],
+      "properties": {
+        "original_id": true, "source_revision": true, "source_instance": true, "content_hash": true,
+        "author_kind": true, "text_process": true, "generation_kind": true, "primary_date": true, "other_dates": true, "review": true,
+        "sensitivity": true, "redaction": true, "distinct": true, "supersedes": true,
+        "unit_kind": {"enum": ["principle_c", "principle_wd", "application_axis", "decision_index", "craft", "open_question", "publication",
+                               "axis", "application_doc"]},
+        "object_ref": {"type": "object", "additionalProperties": false, "minProperties": 1,
+                       "properties": {"std_id": {"type": "string"}, "template_slot": {"type": "string"}, "key": {"type": "string"}},
+                       "$comment": "해석 순서 std_id → template_slot → key(board-migration/1 과 같다)"},
+        "title": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "body": {"type": "string"},
+        "code": {"type": ["string", "null"], "maxLength": 80},
+        "fields": {"type": "object"},
+        "decision": {"enum": ["pending", "confirmed", "excluded", null], "$comment": "기준에만"},
+        "references": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["field_key", "target"],
+                                                  "properties": {"field_key": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,39}$"},
+                                                                 "target": {"$ref": "#/$defs/target"}}}},
+        "expected_target_revision": {"type": ["integer", "null"], "minimum": 0}
+      }
+    },
+    "source_item": {
+      "$comment": "unit_kind source — 출처 메타(K7). 본문이 아니고 적격과 무관. 자연키 (kind, name, location) — 같은 location 에 다른 kind·name 이면 conflict",
+      "allOf": [{"$ref": "#/$defs/common"}],
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source"],
+      "properties": {
+        "original_id": true, "source_revision": true, "source_instance": true, "content_hash": true,
+        "unit_kind": {"const": "source"},
+        "source": {"type": "object", "additionalProperties": false, "required": ["kind", "name", "location"],
+                   "properties": {"kind": {"enum": ["file", "url", "chat", "other"]},
+                                  "name": {"type": "string", "minLength": 1, "maxLength": 1024, "$comment": "URL·이메일·경로면 reject"},
+                                  "location": {"$ref": "#/$defs/hex64", "$comment": "로컬 anchor 해시(opaque). URL 은 PC 에만"}}},
+        "review": {"$ref": "#/$defs/review", "$comment": "선택. 있으면 reviewed 여야 한다"}
+      }
+    },
+    "item": {"oneOf": [{"$ref": "#/$defs/record_item"}, {"$ref": "#/$defs/item_item"}, {"$ref": "#/$defs/source_item"}]}
+  },
+  "$ref": "#/$defs/item"
+}

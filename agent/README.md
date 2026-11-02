@@ -200,7 +200,7 @@ JOBS_LIVE_DB=postgresql://localhost/crm_test_<이름> python3 -m unittest agent.
 
 ## board 이전 명세 생성기 (`board_manifest.py`, 원작자 PC 전용)
 
-board 정본 마크다운에서 AI 검토표와 이전 명세(`board-migration/1`)를 만듭니다. 입력 경로는 전부 로컬 설정 파일(JSON)로 받고, 서버엔 검토표를 올리지 않습니다. 명세는 서버 `migrate_cli.py` 가 받습니다(쓰는 법은 [server/README.md](../server/README.md) 「board 이전 CLI」).
+board 정본 마크다운에서 AI 검토표와 이전 명세(`board-migration/1`)를 만듭니다. 입력 경로는 전부 로컬 설정 파일(JSON)로 받고, 서버엔 검토표를 올리지 않습니다. 서버 `migrate_cli.py` 는 운영 반영 경로에서 은퇴해 합성 시험 DB(`crm_test*`)용으로만 남았습니다. 운영 이관은 아래 「실자료 이관 업로더」 절의 `migrate` 업로더로 올리고 웹 이관 화면에서 확인·반영합니다(계약 `board-migration/2`).
 ```bash
 python3 agent/board_manifest.py sheet    --config CFG --state-dir DIR --out SHEET.md
 python3 agent/board_manifest.py build    --config CFG --state-dir DIR --sheet SHEET.md --out MANIFEST.json \
@@ -208,3 +208,27 @@ python3 agent/board_manifest.py build    --config CFG --state-dir DIR --sheet SH
 python3 agent/board_manifest.py validate MANIFEST.json [--config CFG --state-dir DIR --sheet SHEET.md]
 ```
 `--source-instance-id` 는 서버 `migrate_cli.py init` 이 출력한 ID 입니다. 고객사 원문(D 본문·E·W)을 두는 폴더는 설정의 `forbidden_roots`(설정 파일 기준 상대 경로·`~/`·절대 경로) 에 직접 적습니다 — 코드에 박아 둔 경로는 없고 기본값은 비어 있습니다. 그 아래 파일은 심볼릭 링크로 가리켜도 읽지 않습니다. 예시 설정은 `agent/tests/fixtures/board/config.example.json`. 검토표의 차단 항목(`⚠️AI` 줄·`(AI)` 절·URL·경로 꼴 줄·D 색인 제목·craft 이슈 키)을 전부 골라야 명세가 나옵니다. 참조는 정확한 판(`{original_id, revision}`)으로 적습니다.
+
+## 실자료 이관 업로더 (`migrate`, `board-migration/2`)
+
+검토를 끝낸 항목 명세(JSONL)를 서버 이관 plan 으로 올립니다. 확인·체크·반영은 웹 이관 화면에서만 합니다. 이 명령은 올리기·상태·취소·영수증 대조만 합니다. 서버가 이관 스위치와 허용 목록으로 켠 계정만 씁니다.
+
+```bash
+# 1) 웹 이관 화면에서 토큰을 발급해 표준 입력으로 넣는다(화면·명령줄·로그에 남지 않는다)
+python3 -m agent migrate login   --server https://crm.example.invalid --token-stdin < 토큰을_담은_파일
+# 2) 검증 → plan 만들기 → 청크 업로드 → seal → dry-run 요약(plan_id 출력)
+python3 -m agent migrate stage   items.jsonl --server https://crm.example.invalid --source-instance pc-home-1
+python3 -m agent migrate status  mp_0123456789abcdef01234567 --server https://crm.example.invalid
+python3 -m agent migrate cancel  mp_0123456789abcdef01234567 --server https://crm.example.invalid
+# 3) 웹에서 반영한 뒤 영수증을 같은 입력 파일과 대조
+python3 -m agent migrate receipt mp_0123456789abcdef01234567 --server https://crm.example.invalid --verify items.jsonl
+python3 -m agent migrate logout  --server https://crm.example.invalid
+```
+
+- **토큰**: 이관 전용(`mig_mt_…`, 발급 뒤 14일 만료)입니다. 연결 장치 토큰과 다릅니다. Keychain(Windows 는 Credential Manager)의 계정 `migration-token:<서버 호스트>` 에 둡니다. `logout` 은 로컬만 지웁니다. 서버 쪽 폐기는 웹에서 합니다.
+- **입력**: 한 줄에 계약 항목 하나입니다. `original_id` 는 꼭 있어야 합니다. 권장 공식은 `'o_' + sha256(source_instance + '\n' + 원천 경로 + '\n' + anchor)[:32]` 입니다. 비어 있는 값은 이렇게 채웁니다: `source_instance` 는 `--source-instance` 값, `content_hash` 는 정규화한 본문(출처는 `source.name`)의 SHA-256, `source_revision` 은 `'v_' + sha256(JCS(항목 − source_revision))[:32]` 입니다. 정규화 규칙은 서버와 같은 벡터 파일(`server/contract/imports/vectors/board-migration-2-normalize.json`)로 묶여 있습니다.
+- **올리기 전에 로컬에서 거절하는 것**: JSON 규칙 위반(중복 키·실수·NaN), 사용자 필드(`owner`·`user_id` 등 8개), `original_id` 없음·형식 틀림·중복, 모르는 `unit_kind`, 적힌 `content_hash` 가 다시 계산한 값과 다름, 본문 64KB·줄 96KB·항목 200개·합계 2MB 초과. 이 경우 서버에 아무것도 보내지 않습니다. 그 밖의 계약 구조 오류는 서버가 업로드 때 `400 CONTRACT-INVALID <경로>: <규칙>` 으로 알려 줍니다. 검토 미완·URL 등 의미 거절은 seal 뒤 dry-run 의 `reject` 사유로 보입니다.
+- **업로드**: 청크는 256KB 이하입니다. 응답이 끊겨 `409 CHUNK-OFFSET` 이 오면 서버가 받은 항목 수(`detail.received`)부터 이어 보냅니다. seal 뒤 서버의 `plan_hash` 를 로컬 계산과 맞춰 봅니다. 다르면 종료 코드 1입니다 — 반영하지 말고 취소하세요.
+- **오류**: 서버 코드와 안내를 그대로 보여 줍니다. `429` 는 `retry-after` 초만 알려 주고 자동으로 다시 보내지 않습니다. 업로드 중 실패하면 plan 이 열린 채 남습니다(`status`·`cancel` 로 처리, 만든 뒤 3일이면 서버가 만료시킵니다).
+- **`receipt --verify`**: 다음을 대조합니다 — 항목별 `original_id`·`source_revision`·`content_hash`, 결과가 `applied`·`noop` 인 항목의 `stored_hash == content_hash`(휴지통·없음이면 불일치), 자료군별 개수, `receipt_hash`·`plan_hash` 재계산. 불일치는 seq·original_id·사유만 보여 줍니다. 종료 코드: 0 일치 · 1 불일치·오류 · 2 쓰는 법.
+- 출력에는 토큰과 본문을 쓰지 않습니다. 이 모듈(`agent/migrate.py`)은 설치 패키지에 들어 있지 않습니다. 키트 루트에서 `python3 -m agent` 로 돌립니다.

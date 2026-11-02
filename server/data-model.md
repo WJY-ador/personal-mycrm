@@ -1,4 +1,4 @@
-# 데이터 모델 (2026-10-18 확정)
+# 데이터 모델 (2026-10-18 확정 · 2026-11-02 이관 경로까지 정정)
 
 전제: 사용자 AI 클라이언트 → MCP → 이 서버 → Postgres. 서버 모델 호출 0. 사용자 10~100명, 1인당 월 기록 10~30편 — 작아서 파티션·아카이브 없음. DDL은 `schema.sql`. `db.py` 는 psycopg(Postgres) 판이다(끝 절).
 
@@ -25,6 +25,9 @@
 | profile | 프로필 항목 key-value, 상태 4값 | users M-D |
 | tabs | 화면 탭. `doc`=적용본, `draft_doc`=제안 | users M-D |
 | (2단계) object_defs·field_defs·items·item_links·item_history | 사용자 정의 층 — 아래 절 | users M-D |
+| (board 이전·연결 장치) import_streams·import_entries·import_counters·activities·activity_links·people·source_reflections | 연결 장치 입력원·접수 대응표·한도 카운터·활동·사람·출처 요약/반응 — DDL 주석이 정본(`schema.sql`) | users M-D |
+| (쌓기·휴지통·화면) jobs·stack_sessions·confirm_events·item_versions·item_stage·page_layouts | 작업 전달·쌓기 세션·확인 이벤트·항목 판·단계·레이아웃 — DDL 주석이 정본 | users M-D |
+| (이관 경로, 2026-11-02) migration_tokens·migration_plans·migration_plan_items | 이관 토큰·이관 plan·plan 항목(영수증) — 아래 「이관 경로」 절 | users M-D |
 | tickets | 문의(desk-0). 종류 bug/request/question/privacy · via web/mcp · page·tool·브라우저 계열 · `hint`(오분류 개인정보 요청 표식) · 상태 open/ack/doing/done/wontfix(종결 ⇔ `closed_at`) · `admin_note`(사용자 응답에 없음). 사용자 하루 10건·전역 100건(KST), 종결 180일 뒤 파기 | users M-D |
 | privacy_log | 개인정보 요청 처리 사실(받은 날·종류·통지한 날·결과·본인 확인). 사람 식별 정보 없음. kind=privacy 문의와 같은 트랜잭션에서 1행 | 없음 — CASCADE 밖, `ticket_id` FK 없음(문의가 지워져도 남는다) |
 
@@ -51,7 +54,7 @@ imports(3단계)가 기대는 저장 계약을 코어에 먼저 넣었다. 기�
 | candidate_history | `user_id` · `prev_revision` · `prev_state` jsonb | 변경 전 스냅샷. v1 = PR① 전 이력(text·decision 만, prev_revision NULL) · v2 = text·decision·wording_by·wording_approved·edited_by_user·question_id |
 
 ### 판단 로그
-- **인용 적격** = `author_kind='self' AND text_process='verbatim' AND deleted_at IS NULL`. 후보(판단 근거)는 적격 기록에서만 만든다 — 비적격이면 dropped 「이 기록은 본인 원문이 아니라 근거로 쓸 수 없어요」. 승격 근거 수도 적격 기록의 확정 후보만 센다. 목록에서는 빼지 않는다.
+- **인용 적격** = `db._ELIGIBLE_SQL` 한 곳: `author_kind='self' AND deleted_at IS NULL AND trashed_at IS NULL AND ((text_process='verbatim' AND generation_kind NOT IN ('ai','routine')) OR (generation_kind='conversation' AND 확인 이벤트 실재))`(PR ②-b·휴지통 PR-1 뒤 — 2026-11-02 정정). 후보(판단 근거)는 적격 기록에서만 만든다 — 비적격이면 dropped 「이 기록은 본인 원문이 아니라 근거로 쓸 수 없어요」. 승격 근거 수도 적격 기록의 확정 후보만 센다. 목록에서는 빼지 않는다.
 - 기존 기록은 `unknown` 그대로 둔다. 과거 기록 전부를 self/verbatim 으로 백필할 근거가 없다. MCP `record_add` 는 사용자가 대화에서 직접 준 말이라 self/verbatim. `author_kind='external'` 입력은 `SCOPE-SELF-ONLY`(PR #20 — 서버는 작성자 표시만 검사, 내용은 확인 못 함). 확정(confirm·edit_confirm)도 근거 기록을 다시 검사해 비적격이면 `CANDIDATE-REVIEW`(사유 author_unknown·external·processed·deleted), 미확정 후보 응답에 `review`. 이미 확정한 판단은 그대로.
 - 본문·인용 구간은 생성 뒤 불변. **작성 판정은 정정 가능**(`record_provenance_set`, 사유 필수). 후보가 있는 기록의 적격 → 비적격 정정은 거절(`PROVENANCE-LOCKED`) — 과거 오판정은 별도 복구 작업. 후보 생성과 출처 정정은 같은 기록 행을 `FOR UPDATE` 로 잠가 경합을 막는다. 직접 SQL 은 이 계약을 우회할 수 있다(트리거는 지인 시험 뒤, raw R3).
 - 후보 변경 = 변경 전 스냅샷 이력 한 줄 + revision+1(`UNIQUE(user_id,candidate_id,prev_revision)`). 같은 결정 반복은 no-op(revision 그대로). 웹 결정은 `expected_revision`(선택)이 틀리면 CONFLICT. MCP 도구는 revision 인자를 받지 않는다(서명 불변).
@@ -67,9 +70,9 @@ imports(3단계)가 기대는 저장 계약을 코어에 먼저 넣었다. 기�
 | 오브젝트 | 용도 | 관계 |
 |---|---|---|
 | object_defs | 오브젝트 정의. `semantic_kind` collection/event/principle · `policy`(승격·대상 규칙) · `history`(적용 revision 마다 전체 정의 스냅샷) · draft_* · `template_slot`(템플릿 계보, 시드만) | users M-D |
-| field_defs | 필드. `value_type` text/number/boolean/date/select/text_list/reference · select `options`=[{value,label}] · reference 는 target_kind(item/record/candidate)·target_object_id·multiple. 빠진 필드는 `archived_at` · `template_slot`(시드만) | object_defs M-D · 대상 오브젝트 보호 Lookup |
+| field_defs | 필드. `value_type` text/number/boolean/date/select/text_list/reference · select `options`=[{value,label}] · reference 는 target_kind(item/record/candidate/person/source/activity — 뒤 셋은 board 이전)·target_object_id·multiple. 빠진 필드는 `archived_at` · `template_slot`(시드만) | object_defs M-D · 대상 오브젝트 보호 Lookup |
 | items | 항목. `code`(적용 뒤 변경·재사용 금지) · title · body · `data`(일반 필드만) · `decision`(principle 만) · revision · draft_* | object_defs 보호 Lookup |
-| item_links | 관계. 출발은 item(필드 key) 또는 record(`attach_to`·`axes`) 중 하나 → 대상 item/record/candidate 중 하나. 값은 data 가 아니라 여기. record 출발 `axes` 의 대상 오브젝트는 `user_roles`(classify)가 정한다(PR #20) | 출발 M-D · 대상 보호 Lookup |
+| item_links | 관계. 출발은 item(필드 key) 또는 record(`attach_to`·`axes`) 중 하나 → 대상 item/record/candidate/person/source/activity 중 정확히 하나(`ck_item_links_target`). 값은 data 가 아니라 여기. record 출발 `axes` 의 대상 오브젝트는 `user_roles`(classify)가 정한다(PR #20) | 출발 M-D · 대상 보호 Lookup |
 | item_history | 항목 이력. `prev_state`(title·body·data·decision·code·schema_revision·links·archived) + `prev_revision` | items M-D |
 
 기존 테이블 변경: `records.notes jsonb`(「어디에 붙나」 중 쓸 자리·아직 안 붙는 것) · `candidates.question_id` NULL 허용(질문 없는 후보 — 화면은 기록별 묶음). `init_schema` 가 상태를 보고 멱등 ALTER.
@@ -103,7 +106,7 @@ principle 정의의 `policy.promotion`. 기본 `{"confirmed_claims_min":2,"claim
 | object_defs·field_defs `std_id` | 표준 식별자 `std:<key>[.<field>]`(버전 무관). NULL = 표준 아님. 시드·편입만 채운다. 있으면 잠금(`STANDARD-LOCKED`) | — |
 | std_marks | 사용자·표준 판(`std@1`)마다 1행. state seed_pending(신규 시드 실패 대기)·seeded·adopting(기존 사용자 첫 편입) | users M-D |
 | std_choices | 사용자·표준 오브젝트마다 1행. state deferred·refused·incorporated·seeded, 고를 때 본 def_id·def_revision, confirmed_meaning. 행 없음 = none. 덮어쓰기(이력 없음) | users M-D |
-| sources | 기록 출처(사용자별). kind file·url·chat·other · name · location · UNIQUE(user, kind, name, location) | users M-D |
+| sources | 기록 출처(사용자별). kind file·url·chat·other · name · location · UNIQUE(user, kind, name, location) · `activity_provider`(board 이전 — 활동 일반 출처, 그때는 kind other·location '') · 이관 출처는 location = 로컬 anchor 해시(URL 아님) | users M-D |
 | records `source_id` | 출처 연결(nullable, 복합 FK 로 같은 사용자 출처만). 옛 기록은 NULL(「출처 미확인」), 옛 `source` 문자열 보존 | sources Lookup |
 | user_roles | 역할 → 오브젝트 1개. 지금 role = classify(기록 분류 대상) | users M-D · object_defs(CASCADE) |
 기능 플래그 `CRM_FEATURE_STANDARD`·`SOURCES`(미설정 off)는 신규 시드·편입·출처 쓰기만 막는다 — 읽기·잠금은 항상. 상세: `server/README.md` 「표준·출처·기능 플래그」 절.
@@ -111,5 +114,26 @@ principle 정의의 `policy.promotion`. 기본 `{"confirmed_claims_min":2,"claim
 ## 제약 검증
 Governor limit 없음. M-D 깊이 최대 2(users→candidates→candidate_history). cascade 끝은 users 삭제 = 그 사용자 데이터 전체 삭제 — 계정 삭제 요청 처리와 같다. 인덱스: `(user_id, question_id, decision)`, `(user_id, created)`.
 
-## `db.py`(SQLite 임시판)와 차이 — Postgres 전환 때 할 일
-끝남(2026-10-18, `db.py` psycopg 판). 후보 revision 검사는 PR① 에서 웹 결정에 넣었다(`expected_revision`). 남은 것(지인 검증 전): 같은 본문 10분 중복 억제, `state_get` 요약+커서, 입력 상한 거절. 토론 raw 는 세션 스크래치패드 `arch/`.
+## 이관 경로 (2026-11-02)
+정본: `notes/2026-11-02_이관경로-구현계획.md` K1~K10(레포 밖 비공개). 코드: `migration.py`(상태기계) · `imports.mig_apply_in`(반영 코어 — 합성 시험용 CLI `migrate_cli.py` 와 공통). 계약: `contract/imports/board-migration-2.schema.json` · 정규화 벡터 `contract/imports/vectors/board-migration-2-normalize.json`.
+
+| 대상 | 내용 | 관계 |
+|---|---|---|
+| migration_tokens | 이관 전용 토큰(`mig_<id>.<secret>`, 비밀값은 SHA-256 만). 웹 세션에서만 발급, 14일, 사용자당 살아 있는 1개. 일반 연결 장치 토큰(import_streams)과 분리 | users M-D |
+| migration_plans | 상태 staged → sealed → applied · cancelled · expired(만든 뒤 3일). `plan_hash`(seal 때 고정) · `summary`(dry-run·영수증 개수) · 열린 plan 사용자당 3 | users M-D |
+| migration_plan_items | 받은 순 `seq` · original_id·source_revision·unit_kind·target_kind·`content_hash`·`item_sha256` · `payload`(받은 항목 JSON — 반영은 이것만 쓴다) · action(insert/noop/conflict/reject/warn)+사유 · 기준 `checked` · `result`·`target_id`(FK 없음) | migration_plans M-D |
+| records `date_kind` | 원본 날짜 종류 written·occurred·registered·heading(`ck_records_date_kind`). NULL = 라벨 없음(옛 행·이관 밖) | — |
+
+### 판단 로그
+- **사용자는 서버가 토큰으로 정한다.** 요청에 owner·user 류 필드가 오면 거절. 켜는 조건 = 스위치 `CRM_BOARD_MIGRATION_ENABLED=1` + allowlist `CRM_BOARD_MIGRATION_USERS`(user id, 기본 비어 있음) — 발급·토큰 사용·반영 때마다 본다.
+- **stage 는 토큰, 확인·체크·반영은 웹 세션만.** MCP 는 읽기 `migration_receipt_get` 하나(해시·개수). 반영은 stage 때 저장한 바이트만 쓴다(plan_hash 재계산 대조).
+- **dry-run = 실제 반영을 savepoint 에서 되돌린 것.** seal 결과와 반영 때 재계산이 같은 코드라 갈라지지 않는다. 반영 때 action 이 seal 과 다르면 시작하지 않고(PLAN-STALE) 전부 롤백 — 재stage.
+- **출처는 신고값 그대로.** 이관 기록을 self/verbatim 으로 고정하지 않는다. 적격은 `_ELIGIBLE_SQL` 이 판정. 검토 미완·unknown·external·internal·file_mtime·URL/이메일/경로·해시 불일치는 seal 에서 reject. ai/mixed + self + verbatim 은 모순으로 reject(ai/mixed 는 verbatim 이 아닐 때만 받아 기존 SQL 로 비적격). `record_provenance_set` 은 `ingest_kind='board_migration'` 기록을 거절(PROVENANCE-MIGRATION-LOCKED) — 정정은 새 source_revision 재이관만.
+- **날짜(K6).** written·occurred 시각 = `source_created_at` + created. 날짜만이거나 registered·heading = `source_date` + `date_kind`, created = 받은 시각(자정을 만들지 않는다). file_mtime 거절. 쓰지 않은 신고 날짜는 `provenance_history`. 항목(items)엔 `date_kind` 열이 없어 `generation_meta` 에 둔다.
+- **멱등.** 대응표 = 기존 `import_entries`(사용자의 board_migration 입력원 하나). 같은 (original_id, source_revision) 의 다른 내용 = conflict. 같은 해시·다른 original_id = warn(distinct·supersedes 로 넘김). 출처 메타는 대응표 밖 — 자연키 (kind, name, location=anchor 해시), 같은 location 에 다른 이름이면 conflict.
+- **한도.** 이관 반영 전용 200행/일(KST, `DAILY_LIMITS["migration"]` = 대응표의 오늘 적용 행 + plan 출처 적용). 일반 기록·제안·결정 집계는 이관 행을 뺀다(`_DAILY_SOURCES`). 반영은 남은 한도 < 반영 행이면 시작하지 않는다. plan 200항목 · 스테이징 사용자당 2MB · 청크 256KB · 토큰 분당 60 요청.
+- **원문 체류 최소화.** 항목 본문(payload)은 reject 면 seal 때, 반영·취소·만료 때 바로 영구 삭제(휴지통 아님). 남는 것은 해시·action·결과·대상 id(영수증). 만료 정리 = `imports.expire_pending` 회차 + 접근 때 즉시.
+- **CLI 은퇴.** `migrate_cli.py` run·resume·close 는 DB 이름이 crm_test* 일 때만(합성 시험). 운영 이관은 위 경로.
+
+## `db.py` psycopg 판 메모(옛 SQLite 임시판과의 차이)
+Postgres 전환은 끝났다(2026-10-18, `db.py` psycopg 판). 후보 revision 검사는 PR① 에서 웹 결정에 넣었다(`expected_revision`). 남은 것(지인 검증 전): 같은 본문 10분 중복 억제, `state_get` 요약+커서, 입력 상한 거절. 토론 raw 는 세션 스크래치패드 `arch/`.
