@@ -135,7 +135,8 @@ _DAILY_SOURCES = {
     "proposals": (("object_defs", "created_at", "std_id IS NULL"),   # 표준 정의(시드·편입)는 사용자 제안이 아니다
                   ("items", "COALESCE(received_at, created_at)", "ingest_kind <> 'board_migration'")),
     # 이관 반영 행 = 이전 입력원 대응표의 적용 행(기록·항목, 받은 시각) + 이관 plan 의 출처 적용(반영 시각). noop·중복은 세지 않는다
-    "migration": (("import_entries", "received_at", "kind IN ('migration_item','migration_record') AND state = 'applied'"),
+    # 되돌린 행(reverted, MCP migration_revert)도 센다 — 되돌리기가 일일 한도를 돌려주지 않는다(가안 X §5 revert d)
+    "migration": (("import_entries", "received_at", "kind IN ('migration_item','migration_record') AND state IN ('applied','reverted')"),
                   ("migration_plan_items", "applied_at", "target_kind = 'source' AND result = 'applied'")),
     "questions": (("questions", "created"),),
     "people": (("people", "created"),),
@@ -314,9 +315,10 @@ def _mig_mode():
 
 
 @contextmanager
-def migration_mode():
-    """board 이전 반영 구간 — 안의 _daily_gate(records·proposals·decisions)는 잠금만, item_history.event_meta 에 ingest 표식."""
-    token = _mig_mode().set(True)
+def migration_mode(via=None):
+    """board 이전 반영 구간 — 안의 _daily_gate(records·proposals·decisions)는 잠금만, item_history.event_meta 에 ingest 표식.
+    via = 반영 경로(web·mcp, 가안 X 감사) — 주면 event_meta.via 에도 남긴다. None = CLI·seal dry-run(표식 없음)."""
+    token = _mig_mode().set(via or True)
     try:
         yield
     finally:
@@ -325,6 +327,12 @@ def migration_mode():
 
 def in_migration_mode() -> bool:
     return bool(_mig_mode().get())
+
+
+def migration_via():
+    """migration_mode(via=…) 의 반영 경로(web·mcp) — 없으면 None."""
+    v = _mig_mode().get()
+    return v if isinstance(v, str) else None
 
 
 def _daily_gate(c, uid, kind, adding=1):
@@ -498,7 +506,7 @@ def _init_schema(c):
         _migrate_board_import(c)   # board 이전(2026-10-20) — 열·이름 붙은 CHECK·부분 UNIQUE·item_links 대상 확장
         _migrate_stack(c)   # PR ②-b — jobs 새 열·definitions_version text·items 판 포인터·generation_kind 넓히기
         _migrate_trash(c)   # 휴지통 PR-1 — 5종 휴지통 열·CHECK·부분 인덱스 · 사람 표식 · 접수 deleted 상태
-        _migrate_migration_path(c)   # 이관 경로(2026-11-02) — records.date_kind + CHECK. 새 표 3개는 schema.sql 이 만든다
+        _migrate_migration_path(c)   # 이관 경로(2026-11-02) — records.date_kind · 가안 X(plan reverted·via · 항목 created · 접수 reverted). 새 표 3개는 schema.sql
         _init_tmp(c)   # PR ②-a 임시 보관 — schema.sql 의 jobs 뒤(FK 대상). 위치는 current_schema() 로 정한다
         _migrate_classify_roles(c)
         _backfill_template_slots(c)   # 매번 돈다 — 시드가 적용 뒤 표시 전에 끊긴 경우도 여기서 채운다
@@ -622,7 +630,8 @@ def _migrate_stack(c):
 TRASH_TABLES = ("records", "items", "people", "source_reflections", "activities")   # 휴지통 대상 5종(같은 열 셋)
 _TRASH_COLS = (("trashed_at", "timestamptz"), ("purge_at", "timestamptz"), ("last_trashed_at", "timestamptz"))
 _TRASH_CHECK = "CHECK ((trashed_at IS NULL) = (purge_at IS NULL) AND (trashed_at IS NULL OR last_trashed_at IS NOT NULL))"
-IMPORT_STATES = ("pending", "applied", "noop", "excluded", "expired", "deleted")   # deleted = 대상 영구 삭제 뒤 표식(target 없음)
+IMPORT_STATES = ("pending", "applied", "noop", "excluded", "expired", "deleted", "reverted")   # deleted = 대상 영구 삭제 뒤 표식(target 없음)
+# reverted = MCP migration_revert 가 되돌린 이관 접수(가안 X §5 b) — 최신·현재 표시 없음, 같은 판을 다시 stage 하면 새 행으로 insert
 
 
 def _migrate_trash(c):
@@ -669,14 +678,49 @@ def _migrate_trash(c):
 DATE_KINDS = ("written", "occurred", "registered", "heading")   # records.date_kind(이관 경로 K6)
 
 
+MIGRATION_PLAN_STATES = ("staged", "sealed", "applied", "cancelled", "expired", "reverted")   # reverted = MCP migration_revert(가안 X)
+_MIG_PLAN_COLS = (("reverted_at", "timestamptz"), ("via", "text"))
+_MIG_PLAN_CHECKS = (("ck_migration_plans_applied", "CHECK ((state IN ('applied','reverted')) = (applied_at IS NOT NULL))"),
+                    ("ck_migration_plans_reverted", "CHECK ((state = 'reverted') = (reverted_at IS NOT NULL))"),
+                    ("ck_migration_plans_via", "CHECK (via IS NULL OR via IN ('web','mcp'))"))
+_MIG_ITEM_COLS = (("created", "boolean"), ("decision_deferred", "boolean NOT NULL DEFAULT false"))
+
+
 def _migrate_migration_path(c):
-    """이관 경로(2026-11-02) — 옛 DB 에 records.date_kind 열 + 이름 붙은 CHECK. 매번 돌아도 된다(있으면 건드리지 않는다).
-    옛 행은 NULL(라벨 없음 — 추측 백필 없음). migration_tokens·migration_plans·migration_plan_items 는 schema.sql 이 만든다."""
+    """이관 경로(2026-11-02) — 옛 DB 를 schema.sql 최종형과 같은 모양으로. 매번 돌아도 된다(있으면 건드리지 않는다).
+    · records.date_kind 열 + 이름 붙은 CHECK(옛 행 NULL — 추측 백필 없음)
+    · 가안 X(MCP 반영·되돌리기): migration_plans state 에 reverted · reverted_at·via 열 · 옛 이름 없는 applied CHECK 를 정의로 찾아 지우고
+      ck_migration_plans_applied(applied·reverted 둘 다 applied_at) 로 · migration_plan_items created·decision_deferred 열(옛 행 NULL·false)
+      · import_entries 판 UNIQUE 를 reverted 뺀 부분 UNIQUE(ux_import_revision)로. state 의 reverted 는 _migrate_trash(IMPORT_STATES).
+    migration_tokens·migration_plans·migration_plan_items 표 자체는 schema.sql 이 만든다."""
     if not _has_col(c, "records", "date_kind"):
         c.execute("ALTER TABLE records ADD COLUMN date_kind text")
     if not _has_constraint(c, "records", "ck_records_date_kind"):
         c.execute("ALTER TABLE records ADD CONSTRAINT ck_records_date_kind CHECK (date_kind IS NULL OR date_kind IN "
                   f"({','.join(repr(v) for v in DATE_KINDS)}))")
+    _widen_check(c, "migration_plans", "migration_plans_state_check", "state", MIGRATION_PLAN_STATES)
+    for n, ddl in _MIG_PLAN_COLS:
+        if not _has_col(c, "migration_plans", n):
+            c.execute(f"ALTER TABLE migration_plans ADD COLUMN {n} {ddl}")
+    if not _has_constraint(c, "migration_plans", "ck_migration_plans_applied"):
+        # 옛 이름 없는 CHECK((state = 'applied') = (applied_at IS NOT NULL)) 는 이름을 가정하지 않고 정의로 찾는다(ck_item_links_target 선례)
+        for r in c.execute("SELECT conname FROM pg_constraint WHERE conrelid = 'migration_plans'::regclass AND contype = 'c' "
+                           "AND pg_get_constraintdef(oid) LIKE '%%applied_at IS NOT NULL%%'").fetchall():
+            c.execute(f'ALTER TABLE migration_plans DROP CONSTRAINT "{r["conname"]}"')
+    for name, ddl in _MIG_PLAN_CHECKS:
+        if not _has_constraint(c, "migration_plans", name):
+            c.execute(f"ALTER TABLE migration_plans ADD CONSTRAINT {name} {ddl}")
+    for n, ddl in _MIG_ITEM_COLS:
+        if not _has_col(c, "migration_plan_items", n):
+            c.execute(f"ALTER TABLE migration_plan_items ADD COLUMN {n} {ddl}")
+    # 판 UNIQUE → reverted 뺀 부분 UNIQUE. schema.sql 이 ux_import_revision 을 먼저 만들므로(옛 DB 도) 인덱스 유무와 따로 옛 UNIQUE 를 본다.
+    # 옛 표 UNIQUE (user_id, stream_id, original_id, source_revision) — 자동 이름은 63자에서 잘리므로 정의로 찾는다
+    if not c.execute("SELECT 1 FROM pg_class WHERE relname = 'ux_import_revision' AND relnamespace = current_schema()::regnamespace").fetchone():
+        c.execute("CREATE UNIQUE INDEX ux_import_revision ON import_entries (user_id, stream_id, original_id, source_revision) "
+                  "WHERE state <> 'reverted'")
+    for r in c.execute("SELECT conname FROM pg_constraint WHERE conrelid = 'import_entries'::regclass AND contype = 'u' "
+                       "AND pg_get_constraintdef(oid) = 'UNIQUE (user_id, stream_id, original_id, source_revision)'").fetchall():
+        c.execute(f'ALTER TABLE import_entries DROP CONSTRAINT "{r["conname"]}"')
 
 
 def _widen_check(c, t, name, col, vals):
@@ -2727,6 +2771,8 @@ def item_decide(uid, item_id, expected_revision, proposal_id, action, history_id
             meta = dict(meta or {})
             if in_migration_mode():   # 이관 반영이 만든 이력 — 일반 결정 한도에서 뺀다(_DAILY_SOURCES decisions)
                 meta["ingest"] = "board_migration"
+                if migration_via():   # 가안 X 감사 — 반영 경로(web·mcp)
+                    meta["via"] = migration_via()
             c.execute("INSERT INTO item_history (user_id,item_id,action,prev_revision,prev_state,event_meta) VALUES (%s,%s,%s,%s,%s,%s)",
                       (uid, item_id, act, row["revision"], Jsonb(snap), Jsonb(meta)))
             c.execute("UPDATE items SET " + sets + (", " if sets else "") + "revision=revision+1, updated_at=now() WHERE user_id=%s AND id=%s",
@@ -4179,7 +4225,9 @@ def trash_get(uid, kind, target_id):
 # 기록 → 후보·후보 이력·기록 출발 관계는 CASCADE · 후보를 가리키는 관계(item_links.target_candidate_id)는 먼저 지운다(quote 는 비우지 않는다).
 # 수신 기록(import_entries)이 가리키면 state='deleted'·target NULL(본문 없는 표식, 대응표는 계정 존속 기간). 사람 HMAC 표식은 행을 남긴다.
 _TRASH_DUE = f"trashed_at IS NOT NULL AND purge_at <= {_TNOW} AND trashed_at < {_KST_TODAY}"
-_ENTRY_DELETED = ("UPDATE import_entries SET state='deleted', deleted_target_id={col}, {col}=NULL{extra}, is_current_applied=false, "
+# 되돌린 접수(reverted)는 상태를 그대로 둔다 — 재stage 판정(ux_import_revision 이 reverted 를 뺀다)이 영구 삭제 뒤에도 같다
+_ENTRY_DELETED = ("UPDATE import_entries SET state=CASE WHEN state='reverted' THEN state ELSE 'deleted' END, deleted_target_id={col}, "
+                  "{col}=NULL{extra}, is_current_applied=false, "
                   "payload=NULL, payload_bytes=0, "
                   "resolved_at=COALESCE(resolved_at, now()), resolved_by='user' WHERE user_id=%s AND {col}=%s")
 

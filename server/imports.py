@@ -1248,15 +1248,16 @@ def mig_apply_in(c, uid, st, row, pr, tk, sca, sdate, batch_id, manifest_sha256,
     """행 하나 반영 코어 — 호출자의 연결(db.tx_scope + db.migration_mode 안, users·입력원 잠금 뒤)에서. 결과 {import_id, state: applied|noop,
     target_kind, target_id, duplicate}. 멱등(같은 개정·같은 요청 해시 = duplicate) · 개정 체인(previous_revision) · noop(반영 해시 같음) ·
     기록 새 판·항목 제안 → 적용. window = 병행 기간 검사·시작·감사(CLI) · gate = 업무 적용마다 이관 한도 1(CLI — 새 경로는 plan 전체를 먼저 센다)
-    · ext = 새 이관 경로(migration.py)의 신고 출처·날짜 종류·출처 연결(None = CLI 의 self/verbatim)."""
+    · ext = 새 이관 경로(migration.py)의 신고 출처·날짜 종류·출처 연결(None = CLI 의 self/verbatim).
+    created = 이 호출이 대상을 새로 만들었나(기록 = 새 판 행 · 항목 = 지금 적용된 대응이 없던 원본). 되돌린 접수(reverted)는 없는 것으로 본다."""
     kind = "migration_item" if tk == "item" else "migration_record"
     same = _one(c, f"SELECT {_ENTRY_COLS} FROM import_entries WHERE user_id=%s AND stream_id=%s AND original_id=%s "
-                   "AND source_revision=%s", (uid, st["id"], row["original_id"], row["revision"]))
+                   "AND source_revision=%s AND state <> 'reverted'", (uid, st["id"], row["original_id"], row["revision"]))
     if same:
         if bytes(same["request_sha256"]) != req_sha:
             raise CrmError("IDEMPOTENCY-CONFLICT", "같은 개정 ID 로 다른 내용을 보냈어요.", "새 개정 ID 로 명세를 다시 만드세요.")
         out = _resp(same, True)
-        return {k: out[k] for k in ("import_id", "state", "target_kind", "target_id", "duplicate")}
+        return {**{k: out[k] for k in ("import_id", "state", "target_kind", "target_id", "duplicate")}, "created": False}
     if window and (st["migration_closed_at"] is not None or st["ended"]):
         raise CrmError("MIGRATION-WINDOW-CLOSED", "병행 기간이 끝났거나 종료된 이전 입력원이에요.",
                        "원작자가 결정했으면 extend 로 연장하세요. 종료된 입력원은 다시 열지 않아요.")
@@ -1297,7 +1298,8 @@ def mig_apply_in(c, uid, st, row, pr, tk, sca, sdate, batch_id, manifest_sha256,
                  proj_sha, state, target if tk == "item" else None, target if tk == "record" else None, item_rev, batch_id,
                  bytes.fromhex(manifest_sha256) if manifest_sha256 else None, transform_version))
     out = _resp(e, False)
-    return {k: out[k] for k in ("import_id", "state", "target_kind", "target_id", "duplicate")}
+    return {**{k: out[k] for k in ("import_id", "state", "target_kind", "target_id", "duplicate")},
+            "created": state == "applied" and (tk == "record" or current is None)}
 
 
 def _mig_record(c, uid, stream_id, row, sca, sdate, batch_id, ext=None):
