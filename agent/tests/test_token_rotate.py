@@ -154,7 +154,8 @@ class TokenRotateTest(unittest.TestCase):
     def test_rotate_refused_keeps_token_exit_zero(self):
         for forced, expect in (((409, {"code": "DEVICE-REVOKED"}), "해제됐어요"),
                                ((403, {"code": "ROTATE-DENIED"}), "ROTATE-DENIED"),
-                               ((401, {"code": "TOKEN-EXPIRED"}), "TOKEN-EXPIRED")):
+                               ((429, {"code": "RATE-LIMIT"}), "RATE-LIMIT"),
+                               ((401, {"code": "TOKEN-EXPIRED"}), "다시 연결하세요")):
             with self.subTest(expect):
                 self.connect()
                 self.expire_in(5)

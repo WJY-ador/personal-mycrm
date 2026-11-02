@@ -202,6 +202,10 @@ def _rotate_message(r: str) -> str:
         return "토큰 교체: 이 PC 연결이 해제됐어요 — 대화에서 「PC 연결해 줘」로 다시 연결하세요."
     if r.startswith("rotate-network"):
         return "토큰 교체: 서버에 닿지 못해 다음 실행으로 미뤘어요."
+    if r.startswith("rotate-auth"):
+        # 서버 계약: 90일 동안 업로드가 없던 장치는 401 TOKEN-EXPIRED 로 교체를 거절한다
+        return ("토큰 교체: 서버가 거절했어요(" + r[len("rotate-auth-"):] + "). 지금 토큰은 만료까지 그대로 써요 — "
+                "만료 전에 다시 연결하세요(앱에서 수집 켜기 · 대화에서 「PC 연결해 줘」).")
     return "토큰 교체: 서버가 거절했어요(" + r[len("rotate-"):] + "). 지금 토큰은 만료까지 그대로 써요."
 
 
