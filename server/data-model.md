@@ -28,6 +28,7 @@
 | (board 이전·연결 장치) import_streams·import_entries·import_counters·activities·activity_links·people·source_reflections | 연결 장치 입력원·접수 대응표·한도 카운터·활동·사람·출처 요약/반응 — DDL 주석이 정본(`schema.sql`) | users M-D |
 | (쌓기·휴지통·화면) jobs·stack_sessions·confirm_events·item_versions·item_stage·page_layouts | 작업 전달·쌓기 세션·확인 이벤트·항목 판·단계·레이아웃 — DDL 주석이 정본 | users M-D |
 | (이관 경로, 2026-11-02) migration_tokens·migration_plans·migration_plan_items | 이관 토큰·이관 plan·plan 항목(영수증) — 아래 「이관 경로」 절 | users M-D |
+| (앱 로그인 넘김, 2026-11-02) desktop_handoffs | 시스템 브라우저 로그인(`/desktop/login` → `/auth/callback`) 뒤 앱(`mycrm://auth/callback`)이 `/desktop/claim` 으로 세션을 받는 일회용 코드. 코드 원문은 저장하지 않는다(`code_hash` = SHA-256) · `challenge` = base64url(sha256(verifier)), verifier 는 앱 메모리에만 · 앱 `state` 그대로 · 2분 만료 · `used_at` 일회용(교환은 UPDATE 한 문장) · 만료 행은 발급 때마다 지운다. 로그·감사에 값 없음 | users M-D |
 | tickets | 문의(desk-0). 종류 bug/request/question/privacy · via web/mcp · page·tool·브라우저 계열 · `hint`(오분류 개인정보 요청 표식) · 상태 open/ack/doing/done/wontfix(종결 ⇔ `closed_at`) · `admin_note`(사용자 응답에 없음). 사용자 하루 10건·전역 100건(KST), 종결 180일 뒤 파기 | users M-D |
 | privacy_log | 개인정보 요청 처리 사실(받은 날·종류·통지한 날·결과·본인 확인). 사람 식별 정보 없음. kind=privacy 문의와 같은 트랜잭션에서 1행 | 없음 — CASCADE 밖, `ticket_id` FK 없음(문의가 지워져도 남는다) |
 
