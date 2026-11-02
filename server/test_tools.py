@@ -151,6 +151,8 @@ BI_TOOLS = {"activity_list", "activity_get", "person_context_get", "source_conte
 # 휴지통 PR-1(30절) MCP 4 — 목록(읽기) + 이동·복원·영구 삭제 요청(쓰기, 전역 크기 관문 면제)
 TRASH_TOOLS = {"trash_list", "trash_move", "trash_restore", "trash_purge"}
 TRASH_WRITES = TRASH_TOOLS - {"trash_list"}
+# 이관 경로(2026-11-02) MCP 읽기 1 — 영수증 해시·개수. 이관 쓰기 도구 없음(확인·반영은 웹 세션에서만)
+MIG_TOOLS = {"migration_receipt_get"}
 BI = {k: f"bi-{k}@example.com" for k in ("a", "b", "agg", "adm", "del", "mig")}   # 25절: a 장치·수신 · b 남 · agg 집계 · adm 삭제 실행 · del 삭제 대상 · mig 이전
 # 처리방침 머리글(`vN · 날짜`) — PR B 부터 v5. 날짜는 문서가 정본이라 파일에서 읽는다(시험이 날짜를 따로 들지 않는다)
 PRIVACY_VERSION = "v7"   # board 이전(2026-10-20) v6 → PR ②-b(2026-10-22) v7
@@ -1568,8 +1570,8 @@ async def test_limits():
     assert names - set(db.WRITE_LIMITS) == {"state_get", "question_list", "candidate_list", "record_get", "definitions_get", "help_get",
                                             "ticket_list_mine", "ticket_get_mine",
                                             "me_get", "person_list", "person_get", "source_list", "source_get",   # PR B 읽기
-                                            "source_reflection_list", "source_reflection_get", "trash_list"} | BI_TOOLS, names
-    assert len(names) == 19 + len(PRB_TOOLS) + len(BI_TOOLS) + len(TRASH_TOOLS) \
+                                            "source_reflection_list", "source_reflection_get", "trash_list"} | BI_TOOLS | MIG_TOOLS, names
+    assert len(names) == 19 + len(PRB_TOOLS) + len(BI_TOOLS) + len(TRASH_TOOLS) + len(MIG_TOOLS) \
         and db.QUOTA_EXEMPT == {"feedback_send"} | TRASH_WRITES <= set(db.WRITE_LIMITS), (len(names), db.QUOTA_EXEMPT)
 
     def nrec():
@@ -6197,6 +6199,7 @@ PRB_ALLOWED_ARGS = {
     "activity_list": {}, "activity_get": {"activity_id": "a_xxxxxx"}, "person_context_get": {"person_id": "p_x"},
     "source_context_get": {"source_id": "s_x"}, "me_aggregate_get": {}, "inbox_list": {}, "inbox_get": {"import_id": "ie_x"},
     "trash_list": {},   # 휴지통 PR-1 목록 — 이름 없이도(스위치 꺼짐이면 SWITCH-OFF)
+    "migration_receipt_get": {},   # 이관 경로 영수증 읽기 — 이름 없이도(반영한 plan 이 없으면 NOT-FOUND)
     "display_name_set": {"display_name": "  이름 PRBNAME  "},   # 마지막에 부른다(관문 통과 뒤 쓰기 확인)
 }
 
@@ -6309,7 +6312,7 @@ async def test_prb_gate():
         assert main.WRITE_TOOLS | main.ALLOWED_TOOLS == names and not main.WRITE_TOOLS & main.ALLOWED_TOOLS, names ^ (main.WRITE_TOOLS | main.ALLOWED_TOOLS)
         assert main.WRITE_TOOLS == set(db.WRITE_LIMITS) - db.NAME_EXEMPT and db.NAME_EXEMPT == {"feedback_send", "display_name_set"}
         assert set(PRB_WRITE_ARGS) == main.WRITE_TOOLS and set(PRB_ALLOWED_ARGS) == main.ALLOWED_TOOLS, "시험 인자 표 = 분류"
-        assert names - PRB_TOOLS - BI_TOOLS - TRASH_TOOLS == {"state_get", "question_add", "question_list", "record_add", "record_get", "candidates_propose",
+        assert names - PRB_TOOLS - BI_TOOLS - TRASH_TOOLS - MIG_TOOLS == {"state_get", "question_add", "question_list", "record_add", "record_get", "candidates_propose",
                                      "candidate_decide", "candidate_list", "profile_set", "definitions_get", "definition_propose",
                                      "definition_apply", "item_propose", "item_decide", "record_attach", "help_get", "feedback_send",
                                      "ticket_list_mine", "ticket_get_mine"}, "기존 19개 이름 그대로"

@@ -44,6 +44,7 @@ ITEM_MAX_BYTES = 96 * 1024            # 항목 한 줄(JCS) 상한
 BODY_MAX_BYTES = db.LIMIT_BODY        # 본문 64KB
 CHUNK_MAX_BYTES = db.MAX_BODY_BYTES   # 청크 요청 본문(main.BodyLimit 와 같다 — 256KB)
 DAILY_LIMIT = db.DAILY_LIMITS["migration"]   # 이관 반영 200행/일(KST)
+RATE_PER_MINUTE = 60                  # 이관 토큰 하나의 분당 요청(청크 8개 + seal + 상태 조회가 한 분에 들어가게)
 ALLOW_ENV = "BOARD_MIGRATION_USERS"   # CRM_BOARD_MIGRATION_USERS = 쉼표로 나눈 user id 목록(기본 비어 있음 = 아무도 못 씀)
 
 ITEM_UNITS = ("principle_c", "principle_wd", "application_axis", "decision_index", "craft", "open_question", "publication", "axis",
@@ -225,7 +226,9 @@ def authenticate(authorization: str) -> dict:
     if r["user_id"] not in allowed_users():
         raise _err("MIGRATION-NOT-ALLOWED", "이 계정은 이관을 쓸 수 없어요.", "운영자에게 이관 허용 목록에 넣어 달라고 하세요.")
     tok = {"user_id": r["user_id"], "token_id": tid}
-    imports._rate({"id": tid, "user_id": r["user_id"]})   # 토큰 분당 10 · 사용자 분당 30(연결 장치와 같은 카운터 표, 별도 트랜잭션)
+    with tx() as c:   # 요청 속도 — 별도 트랜잭션(뒤에서 실패해도 센다). 카운터 표는 연결 장치와 같고 키는 토큰 id
+        if imports._bump(c, tok["user_id"], tid, "minute", "request")["n"] > RATE_PER_MINUTE:
+            raise _err("RATE-LIMIT", f"요청이 너무 잦아요(분당 {RATE_PER_MINUTE}회).", "1분 뒤 다시 보내세요.")
     with tx() as c:
         c.execute("UPDATE migration_tokens SET last_used_at=now() WHERE user_id=%s AND id=%s", (tok["user_id"], tid))
     return tok

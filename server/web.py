@@ -33,6 +33,7 @@ import auth
 import contract
 import db
 import imports
+import migration
 import service_schema
 import stack_service
 import structure_svg
@@ -1784,6 +1785,145 @@ class Web:
         iid = request.path_params["iid"]
         return await self._core_write(request, "inbox_exclude", {}, lambda uid, b: imports.inbox_exclude(uid, iid))
 
+    # ── 이관 경로 (2026-11-02, notes/2026-11-02_이관경로-구현계획.md K1·가안 1) ──
+    # 토큰 경로 /api/migration/plans… = Bearer 이관 토큰(mig_…)만 — 웹 쿠키·MCP·연결 장치 토큰(imp_…)은 받지 않는다(uid_of 를 부르지 않는다).
+    # 웹 세션 경로 /api/migration-tokens…·/api/migrations… = 쿠키 세션만(Authorization 은 보지 않는다). 확인·체크·반영·토큰 발급은 여기서만.
+    # 오류 = {code, msg, action?, detail?, resume_at?} + migration.http_status(code). 응답은 모두 no-store. 본문 값은 오류에 넣지 않는다.
+    @staticmethod
+    def _mig_err(e):
+        body = {"code": e.code, "msg": e.message}
+        if e.action:
+            body["action"] = e.action
+        if getattr(e, "detail", None):
+            body["detail"] = e.detail
+        if getattr(e, "resume_at", None):
+            body["resume_at"] = e.resume_at
+        status = migration.http_status(e.code)
+        h = {"cache-control": "no-store"}
+        if status == 429:
+            h["retry-after"] = str(max(1, 60 - _dt.datetime.now().second))
+        return JSONResponse(body, status_code=status, headers=h)
+
+    async def api_mig_plans(self, request):
+        """POST /api/migration/plans {contract: "board-migration/2", source_instance} (토큰) → 201 plan(staged)."""
+        code = "EXC"
+        try:
+            tok = await run_in_threadpool(migration.authenticate, request.headers.get("authorization", ""))
+            body = imports.parse_request(await request.body())
+            out = await run_in_threadpool(migration.plan_create, tok, body)
+            code = "OK"
+            return JSONResponse(out, status_code=201, headers={"cache-control": "no-store"})
+        except db.CrmError as e:
+            code = e.code
+            return self._mig_err(e)
+        finally:
+            db.usage_count(None, "api:migration_plans", code)
+
+    _MIG_TOKEN_OPS = {("", "GET"), ("items", "POST"), ("seal", "POST"), ("cancel", "POST"), ("receipt", "GET")}
+
+    async def api_mig_plan(self, request):
+        """토큰 경로 — GET /api/migration/plans/{id} 상태 · POST …/items?offset=N (JSONL 본문) · POST …/seal {item_count} ·
+        POST …/cancel {} · GET …/receipt. 사용자는 토큰이 정한다(남의 plan = 404)."""
+        pid, op = request.path_params["pid"], request.path_params.get("op", "")
+        code = "EXC"
+        try:
+            if (op, request.method) not in self._MIG_TOKEN_OPS:
+                raise db.CrmError("NOT-FOUND", "그런 경로는 없어요.")
+            tok = await run_in_threadpool(migration.authenticate, request.headers.get("authorization", ""))
+            if op == "":
+                out = await run_in_threadpool(migration.plan_status, tok, pid)
+            elif op == "items":
+                raw = await request.body()
+                off = request.query_params.get("offset", "")
+                out = await run_in_threadpool(migration.plan_upload, tok, pid, raw, int(off) if off.isdigit() else None)
+            elif op == "seal":
+                body = imports.parse_request(await request.body())
+                if set(body) != {"item_count"}:
+                    raise db.CrmError("CONTRACT-INVALID", "$: item_count 하나만 보내요.")
+                out = await run_in_threadpool(migration.plan_seal, tok, pid, body["item_count"])
+            elif op == "cancel":
+                out = await run_in_threadpool(migration.plan_cancel, tok["user_id"], pid)
+            else:
+                out = await run_in_threadpool(migration.receipt, tok["user_id"], pid)
+            code = "OK"
+            return JSONResponse(out, headers={"cache-control": "no-store"})
+        except db.CrmError as e:
+            code = e.code
+            return self._mig_err(e)
+        finally:
+            db.usage_count(None, f"api:migration_{op or 'plan'}" if (op, request.method) in self._MIG_TOKEN_OPS else "api:migration_plan", code)
+
+    async def _mig_web(self, request, op, shape, call, quota=True):
+        """웹 세션 경로 — 세션 401 → (POST) Origin 403 → JSON 모양 400 → db.write_gate(표시 이름 관문 · 전역 크기) → migration.
+        GET 은 읽기(관문 없음). 오류 = _mig_err(상태·detail 그대로 — 확인 화면이 PLAN-STALE 의 changed·CHECK-DEPENDENCY 의 seqs 를 쓴다)."""
+        uid, err = await self._need(request)
+        if err:
+            return err
+        body = {}
+        if request.method == "POST":
+            if not self.same_origin(request):
+                return JSONResponse({"code": "ORIGIN", "msg": "다른 사이트에서 온 요청이에요."}, status_code=403)
+            try:
+                body = await request.json()
+                assert isinstance(body, dict)
+                for k, (types, need) in shape.items():
+                    v = body.get(k)
+                    if v is None:
+                        assert not need
+                    else:
+                        assert isinstance(v, types) and not (isinstance(v, bool) and bool not in types)
+            except Exception:
+                want = ", ".join(f"{k}({'/'.join(t.__name__ for t in ts)}{'' if need else ' 선택'})" for k, (ts, need) in shape.items())
+                return JSONResponse({"code": "ARG-INVALID", "msg": f"JSON 본문이 필요해요: {want or '{}'}."}, status_code=400)
+
+        def run():
+            if request.method == "POST":
+                db.write_gate(op, {k: body.get(k) for k in shape if isinstance(body.get(k), str)}, uid, quota=quota)
+            return call(uid, body)
+        try:
+            out = await run_in_threadpool(run)
+        except db.CrmError as e:
+            return self._mig_err(e)
+        return JSONResponse(out, headers={"cache-control": "no-store"})
+
+    async def api_mig_tokens(self, request):
+        """GET = 이관 토큰 목록(원문·해시 없음) + enabled·allowed · POST {label?} = 발급(스위치·allowlist, 앞 토큰 폐기). 응답 token 은 한 번만."""
+        if request.method == "POST":
+            return await self._mig_web(request, "migration_token_issue", {"label": ((str,), False)},
+                                       lambda uid, b: migration.token_issue(uid, b.get("label") or "이관 업로더"))
+        return await self._mig_web(request, "", {}, lambda uid, b: migration.token_status(uid))
+
+    async def api_mig_token_revoke(self, request):
+        """POST /api/migration-tokens/{tid}/revoke {} — 폐기(멱등)."""
+        tid = request.path_params["tid"]
+        return await self._mig_web(request, "migration_token_revoke", {}, lambda uid, b: migration.token_revoke(uid, tid), quota=False)
+
+    async def api_migs(self, request):
+        """GET /api/migrations — 내 이관 plan 목록(최근 20) + enabled·allowed + limits(daily·used_today·…). 본문 없음."""
+        return await self._mig_web(request, "", {}, lambda uid, b: migration.plans_list(uid))
+
+    async def api_mig(self, request):
+        """웹 세션 — GET /api/migrations/{id} 상세 · GET …/receipt · POST …/check {seqs, checked} · POST …/apply {plan_hash} · POST …/cancel {}."""
+        pid, op = request.path_params["pid"], request.path_params.get("op", "")
+        if (op, request.method) == ("", "GET"):
+            return await self._mig_web(request, "", {}, lambda uid, b: migration.plan_detail(uid, pid))
+        if (op, request.method) == ("receipt", "GET"):
+            return await self._mig_web(request, "", {}, lambda uid, b: migration.receipt(uid, pid))
+        if (op, request.method) == ("check", "POST"):
+            return await self._mig_web(request, "migration_check", {"seqs": ((list,), True), "checked": ((bool,), True)},
+                                       lambda uid, b: migration.plan_check(uid, pid, b["seqs"], b["checked"]))
+        if (op, request.method) == ("apply", "POST"):
+            return await self._mig_web(request, "migration_apply", {"plan_hash": ((str,), True)},
+                                       lambda uid, b: migration.plan_apply(uid, pid, b["plan_hash"]))
+        if (op, request.method) == ("cancel", "POST"):
+            return await self._mig_web(request, "migration_cancel", {}, lambda uid, b: migration.plan_cancel(uid, pid), quota=False)
+        return JSONResponse({"code": "NOT-FOUND", "msg": "그런 경로는 없어요."}, status_code=404, headers={"cache-control": "no-store"})
+
+    async def api_mig_item(self, request):
+        """GET /api/migrations/{id}/items/{seq} — 항목 전문 하나(받은 그대로 · action·사유·체크). 본문이 지워졌으면 payload=null."""
+        pid, seq = request.path_params["pid"], request.path_params["seq"]
+        return await self._mig_web(request, "", {}, lambda uid, b: migration.plan_item(uid, pid, seq))
+
     # ── PR ①-b 페이지 레이아웃 · 「나」 통계 (2026-10-22, 구현계획 §3) ──
     # 레이아웃 쓰기 = PUT(저장)·DELETE(기본 복원) 두 개뿐. 세션 401 → Origin 403 → 모양 400 → db.write_gate → db. 버전 불일치 409 LAYOUT-STALE.
     async def api_me_layout(self, request):
@@ -2702,6 +2842,16 @@ class Web:
             Route("/api/devices/{did}/reissue", u("web:device_reissue", self.api_device_reissue), methods=["POST"]),
             Route("/api/devices/{did}/revoke", u("web:device_revoke", self.api_device_revoke), methods=["POST"]),
             Route("/api/devices/{did}/policy", u("web:device_policy", self.api_device_policy), methods=["POST"]),
+            # 이관 경로(2026-11-02) — 토큰(Bearer mig_…) 2 · 웹 세션 5. 경로 순서: 더 긴 경로가 먼저
+            Route("/api/migration/plans", self.api_mig_plans, methods=["POST"]),
+            Route("/api/migration/plans/{pid}", self.api_mig_plan, methods=["GET"]),
+            Route("/api/migration/plans/{pid}/{op}", self.api_mig_plan, methods=["GET", "POST"]),
+            Route("/api/migration-tokens", u("web:migration_tokens", self.api_mig_tokens), methods=["GET", "POST"]),
+            Route("/api/migration-tokens/{tid}/revoke", u("web:migration_token_revoke", self.api_mig_token_revoke), methods=["POST"]),
+            Route("/api/migrations", u("web:migrations", self.api_migs)),
+            Route("/api/migrations/{pid}/items/{seq}", u("web:migration_item", self.api_mig_item)),
+            Route("/api/migrations/{pid}", u("web:migration", self.api_mig)),
+            Route("/api/migrations/{pid}/{op}", u("web:migration_op", self.api_mig), methods=["GET", "POST"]),
             Route("/api/inbox", u("web:inbox", self.api_inbox)),
             Route("/api/inbox/{iid}", u("web:inbox_get", self.api_inbox_one)),
             Route("/api/inbox/{iid}/approve", u("web:inbox_approve", self.api_inbox_approve), methods=["POST"]),

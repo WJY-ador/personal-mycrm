@@ -37,6 +37,7 @@ import activity
 import auth
 import db
 import imports
+import migration
 import web
 from envnames import env
 
@@ -95,7 +96,8 @@ ALLOWED_TOOLS = frozenset({
     "source_reflection_get",
     # board 이전(2026-10-20) 읽기 7 — 활동·사람/출처 문맥·「나」 집계·승인 대기. 승인·제외는 웹에서만
     "activity_list", "activity_get", "person_context_get", "source_context_get", "me_aggregate_get", "inbox_list", "inbox_get",
-    "trash_list"})   # 휴지통 PR-1 목록(본문 없음)
+    "trash_list",   # 휴지통 PR-1 목록(본문 없음)
+    "migration_receipt_get"})   # 이관 경로(2026-11-02) 영수증 read-back — 해시·개수만(본문 없음). 확인·반영은 웹 세션에서만
 
 # 도구 호출 하나 안에서 푼 uid — guard 가 호출마다 새 dict 를 꽂는다. 쓰기 게이트(전역 크기)와 도구 본문이 같은 조회를 한 번만 하고,
 # 사용 집계(usage_count)가 추가 DB 조회 없이 uid 를 읽는다. guard 밖(직접 호출)에선 None — 매번 푼다.
@@ -744,6 +746,17 @@ def inbox_list(
 def inbox_get(import_id: Annotated[str, Field(description="승인 대기 ID (ie_…)")], ctx: Context) -> dict:
     """승인 대기 하나 + 본문(대기 중일 때만). AI 요약은 승인해도 직접 쓴 원문이 아니고 인용할 수 없다."""
     return imports.inbox_get(uid_of(ctx), import_id)
+
+
+@mcp.tool()
+@guard
+def migration_receipt_get(
+    ctx: Context,
+    plan_id: Annotated[str, Field(description="이관 plan ID (mp_…). 비우면 가장 최근에 반영한 plan")] = "",
+) -> dict:
+    """이관 영수증(읽기 전용) — 반영한 plan 의 항목별 original_id·content_hash·결과·대상 ID·지금 저장본 재해시(stored_hash)와 개수·receipt_hash.
+    본문은 없다. 이관 확인·반영은 사용자가 웹에서만 한다 — 대신 하지 않는다."""
+    return migration.receipt(uid_of(ctx), plan_id or None)
 
 
 # ── 웹 ─────────────────────────────────────────────────

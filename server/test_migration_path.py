@@ -440,13 +440,127 @@ def test_expiry(A):
     ok("만료(3일): 정리 회차(imports.expire_pending) · 접근 때 즉시 → expired + 본문 영구 삭제 · 반영 PLAN-EXPIRED")
 
 
+async def test_http(A, B):
+    """B. HTTP — 토큰 경로는 Bearer 이관 토큰만(세션·imp 토큰 불가) · 웹 세션 경로는 쿠키 세션만(토큰 불가) · 전체 흐름 · 격리 · 스위치."""
+    import httpx
+    import main
+    site = main.site
+    real = site.dev, site.dev_user
+    H = {"origin": PUBLIC}
+    nd = {"content-type": "application/x-ndjson"}
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url=PUBLIC) as h:
+            site.dev, site.dev_user = True, A_EMAIL   # 웹 세션 = DEV 사용자 A
+            r = await h.post("/api/migration-tokens", json={"label": "집 PC"})
+            assert r.status_code == 403 and r.json()["code"] == "ORIGIN"
+            r = await h.post("/api/migration-tokens", json={"label": "집 PC"}, headers=H)
+            assert r.status_code == 200 and r.headers["cache-control"] == "no-store", r.text
+            tokA = r.json()["token"]
+            AUTH = {"authorization": "Bearer " + tokA}
+            r = await h.get("/api/migration-tokens")
+            assert r.status_code == 200 and r.json()["allowed"] and tokA.split(".")[1] not in r.text, "목록에 비밀값 없음"
+            # 토큰 경로 — 세션만 있고 토큰 없음 / imp 토큰 / 틀린 토큰 → 401
+            for hd in ({}, {"authorization": "Bearer imp_is_" + "0" * 24 + ".it_" + "0" * 16 + "." + "x" * 43}, {"authorization": "Bearer mig_x"}):
+                r = await h.post("/api/migration/plans", json={"contract": M.CONTRACT, "source_instance": INST}, headers=hd)
+                assert r.status_code == 401 and r.json()["code"] == "AUTH-INVALID", (hd, r.text)
+            r = await h.post("/api/migration/plans", json={"contract": M.CONTRACT, "source_instance": INST, "user_id": B}, headers=AUTH)
+            assert r.status_code == 400 and r.json()["code"] == "CONTRACT-INVALID" and "owner_field_not_allowed" in r.json()["msg"]
+            r = await h.post("/api/migration/plans", content=b'{"contract": "board-migration/2", "contract": "x"}', headers=AUTH)
+            assert r.status_code == 400 and r.json()["code"] == "CONTRACT-INVALID", "중복 키"
+            r = await h.post("/api/migration/plans", json={"contract": M.CONTRACT, "source_instance": INST}, headers=AUTH)
+            assert r.status_code == 201 and r.json()["state"] == "staged", r.text
+            pid = r.json()["plan_id"]
+            items = [rec(90, "HTTP 로 온 원문"), principle(91, "HTTP 기준")]
+            r = await h.post(f"/api/migration/plans/{pid}/items?offset=1", content=jsonl(items), headers={**AUTH, **nd})
+            assert r.status_code == 409 and r.json()["code"] == "CHUNK-OFFSET" and r.json()["detail"]["received"] == 0
+            r = await h.post(f"/api/migration/plans/{pid}/items?offset=0", content=jsonl(items[:1]), headers={**AUTH, **nd})
+            assert r.status_code == 200 and r.json()["received"] == 1, r.text
+            r = await h.post(f"/api/migration/plans/{pid}/items?offset=1", content=jsonl(items[1:]), headers={**AUTH, **nd})
+            assert r.json()["received"] == 2
+            r = await h.post(f"/api/migration/plans/{pid}/items?offset=2", content=b"x" * (M.CHUNK_MAX_BYTES + 1), headers={**AUTH, **nd})
+            assert r.status_code == 413 and r.json()["code"] == "PAYLOAD-LIMIT"
+            r = await h.post(f"/api/migration/plans/{pid}/seal", json={"item_count": 3}, headers=AUTH)
+            assert r.status_code == 409 and r.json()["code"] == "PLAN-COUNT-MISMATCH" and r.json()["detail"]["received"] == 2
+            r = await h.post(f"/api/migration/plans/{pid}/seal", json={"item_count": 2}, headers=AUTH)
+            assert r.status_code == 200 and r.json()["state"] == "sealed", r.text
+            sealed = r.json()
+            assert all("body" not in json.dumps(x) for x in sealed["items"]) and HTTP_BODY not in r.text, "토큰 응답에 본문 없음"
+            r = await h.get(f"/api/migration/plans/{pid}", headers=AUTH)
+            assert r.status_code == 200 and r.json()["plan_hash"] == sealed["plan_hash"]
+            r = await h.get(f"/api/migration/plans/{pid}/receipt", headers=AUTH)
+            assert r.status_code == 409 and r.json()["code"] == "PLAN-STATE"
+            r = await h.post(f"/api/migration/plans/{pid}/apply", json={"plan_hash": sealed["plan_hash"]}, headers=AUTH)
+            assert r.status_code == 404, "토큰으로 반영 경로 없음"
+            # 웹 세션 경로 — 토큰만으로는 불가(DEV 끄고 쿠키 없음)
+            site.dev, site.dev_user = False, ""
+            for path, body in ((f"/api/migrations/{pid}/apply", {"plan_hash": sealed["plan_hash"]}), (f"/api/migrations/{pid}/check", {"seqs": [1], "checked": True}),
+                               ("/api/migration-tokens", {"label": "x"})):
+                r = await h.post(path, json=body, headers={**H, **AUTH})
+                assert r.status_code == 401 and r.json()["code"] == "UNAUTHORIZED", (path, r.text)
+            for path in ("/api/migrations", f"/api/migrations/{pid}", f"/api/migrations/{pid}/items/0"):
+                assert (await h.get(path, headers=AUTH)).status_code == 401, path
+            site.dev, site.dev_user = True, A_EMAIL
+            # 웹 확인 화면 — 목록 · 상세(제목·체크 필요) · 항목 전문 · 체크 · 반영
+            r = await h.get("/api/migrations")
+            assert r.status_code == 200 and any(x["plan_id"] == pid for x in r.json()["plans"]) and r.json()["limits"]["daily"] == 200
+            d = (await h.get(f"/api/migrations/{pid}")).json()
+            assert [x["needs_check"] for x in d["items"]] == [False, True] and d["items"][0]["title"]
+            it = (await h.get(f"/api/migrations/{pid}/items/0")).json()
+            assert it["payload"]["body"] == HTTP_BODY
+            r = await h.post(f"/api/migrations/{pid}/check", json={"seqs": [1], "checked": True})
+            assert r.status_code == 403
+            r = await h.post(f"/api/migrations/{pid}/check", json={"seqs": [1], "checked": "yes"}, headers=H)
+            assert r.status_code == 400 and r.json()["code"] == "ARG-INVALID"
+            r = await h.post(f"/api/migrations/{pid}/check", json={"seqs": [1], "checked": True}, headers=H)
+            assert r.status_code == 200 and r.json()["items"][1]["checked"] is True
+            r = await h.post(f"/api/migrations/{pid}/apply", json={"plan_hash": "0" * 64}, headers=H)
+            assert r.status_code == 409 and r.json()["code"] == "PLAN-HASH-MISMATCH"
+            r = await h.post(f"/api/migrations/{pid}/apply", json={"plan_hash": sealed["plan_hash"]}, headers=H)
+            assert r.status_code == 200 and r.json()["already_applied"] is False, r.text
+            rc = r.json()
+            assert [x["result"] for x in rc["items"]] == ["applied", "applied"] and HTTP_BODY not in r.text
+            r = await h.post(f"/api/migrations/{pid}/apply", json={"plan_hash": sealed["plan_hash"]}, headers=H)
+            assert r.status_code == 200 and r.json()["already_applied"] is True and r.json()["receipt_hash"] == rc["receipt_hash"]
+            r = await h.get(f"/api/migration/plans/{pid}/receipt", headers=AUTH)
+            assert r.status_code == 200 and r.json()["receipt_hash"] == rc["receipt_hash"]
+            assert (await h.get(f"/api/migrations/{pid}/receipt")).json()["receipt_hash"] == rc["receipt_hash"]
+            # MCP 읽기 도구 — 같은 영수증(DEV 사용자 A)
+            assert main.migration_receipt_get(None, pid)["receipt_hash"] == rc["receipt_hash"]
+            assert main.migration_receipt_get(None)["plan_id"] == pid
+            # 격리 — B 의 토큰으로 A 의 plan = 404
+            site.dev_user = B_EMAIL
+            tokB = (await h.post("/api/migration-tokens", json={}, headers=H)).json()["token"]
+            r = await h.get(f"/api/migration/plans/{pid}", headers={"authorization": "Bearer " + tokB})
+            assert r.status_code == 404 and r.json()["code"] == "NOT-FOUND"
+            assert (await h.get(f"/api/migrations/{pid}")).status_code == 404
+            site.dev_user = A_EMAIL
+            # 취소(토큰) · 스위치 끔
+            r = await h.post("/api/migration/plans", json={"contract": M.CONTRACT, "source_instance": INST}, headers=AUTH)
+            p2 = r.json()["plan_id"]
+            r = await h.post(f"/api/migration/plans/{p2}/cancel", json={}, headers=AUTH)
+            assert r.status_code == 200 and r.json()["state"] == "cancelled"
+            switches(False, [A, B])
+            r = await h.get(f"/api/migration/plans/{pid}", headers=AUTH)
+            assert r.status_code == 503 and r.json()["code"] == "MIGRATION-OFF"
+            r = await h.post("/api/migration-tokens", json={}, headers=H)
+            assert r.status_code == 503 and r.json()["code"] == "MIGRATION-OFF"
+            switches(True, [A, B])
+    finally:
+        site.dev, site.dev_user = real
+    ok("HTTP: 토큰 경로 = Bearer mig 만(세션·imp·틀린 토큰 401) · owner 필드·중복 키 400 · offset 409 · 청크 413 · seal 수 불일치 409 · "
+       "토큰 응답 본문 없음 · 토큰으로 반영 경로 없음 · 웹 세션 경로 = 쿠키만(토큰 401) · Origin 403 · 모양 400 · 확인·체크·반영·두 번째 noop · "
+       "영수증 3경로(토큰·웹·MCP) 같음 · 격리 404 · 취소 · 스위치 503")
+
+
+HTTP_BODY = "HTTP 로 온 원문"
+
+
 def test_mcp_tool(A):
     import main
     tools = {t.name for t in main.mcp._tool_manager.list_tools()}
     assert "migration_receipt_get" in tools and "migration_receipt_get" in main.ALLOWED_TOOLS
-    assert not any(n.startswith("migration_") and n != "migration_receipt_get" for n in tools), "MCP 쓰기 도구 없음"
-    out = main.migration_receipt_get.__wrapped__ if hasattr(main.migration_receipt_get, "__wrapped__") else None
-    assert out is not None
+    assert not any("migration" in n and n != "migration_receipt_get" for n in tools), "MCP 이관 쓰기 도구 없음"
+    assert "migration_receipt_get" not in db.WRITE_LIMITS and "migration_receipt_get" not in main.WRITE_TOOLS
     ok("MCP: migration_receipt_get 하나(읽기 · ALLOWED_TOOLS) · 이관 쓰기 도구 없음")
 
 
@@ -467,10 +581,7 @@ def main_():
         test_seal_apply(A, B)
         test_stale_limits(A)
         test_expiry(A)
-        if "--http" in sys.argv or True:
-            run_http = globals().get("test_http")
-            if run_http:
-                asyncio.run(run_http(A, B))
+        asyncio.run(test_http(A, B))
         test_mcp_tool(A)
     finally:
         cleanup()
