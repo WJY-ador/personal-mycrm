@@ -134,6 +134,28 @@ console.log(JSON.stringify(out));
         self.assertIn('grp("표준 🔒"', JS)
         self.assertNotIn('grp("기본 🔒"', JS)
 
+    def test_body_bold_renders_safely(self):
+        """사용자 글 본문의 **굵게** 는 <strong>, 그 밖은 escape. 홀수·빈 ** 는 그대로, 인용 mark 안에서도 짝이 맞는다."""
+        funcs = JS[JS.index("const esc ="):JS.index("const $ = id")] + JS[JS.index("function paraHtml"):JS.index("function attachHtml")]
+        result = js_run(funcs + '''
+console.log(JSON.stringify({
+  bold: rich("- **사실**: Lost에 **a**"), xss: rich("<b>x</b> **<img src=x onerror=1>**"),
+  odd: rich("a ** b"), empty: rich("****"), multi: rich("**a\\nb**"), plain: rich("- 목록"),
+  para: paraHtml("앞 **굵게** 뒤 인용구 끝", "인용구"), head: paraHtml("## **제목**", ""),
+}));''')
+        self.assertEqual(result["bold"], "- <strong>사실</strong>: Lost에 <strong>a</strong>")
+        self.assertEqual(result["xss"], "&lt;b&gt;x&lt;/b&gt; <strong>&lt;img src=x onerror=1&gt;</strong>")
+        self.assertNotIn("<b>", result["xss"])
+        self.assertNotIn("<img", result["xss"])
+        self.assertEqual(result["odd"], "a ** b")
+        self.assertEqual(result["empty"], "****")
+        self.assertEqual(result["multi"], "**a\nb**")
+        self.assertEqual(result["plain"], "- 목록")
+        self.assertEqual(result["para"], '<p class="">앞 <strong>굵게</strong> 뒤 <mark>인용구</mark> 끝</p>')
+        self.assertEqual(result["head"], '<p class="h"><strong>제목</strong></p>')
+        self.assertNotIn("${esc(x.body)}", JS.replace('esc(x.body) : ""', ""))
+        self.assertNotIn("${esc(cur.body)}", JS)
+
 
 if __name__ == '__main__':
     unittest.main()

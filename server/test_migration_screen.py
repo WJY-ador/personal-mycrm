@@ -81,7 +81,7 @@ def mig_run(scenario):
     node = shutil.which("node")
     assert node, "node 가 필요해요(CI 는 setup-node) — 이관 화면 실행 시험"
     helpers = "\n".join(re.search(rf"^{p}.*$", JS, re.M).group(0) for p in (
-        r"const esc = ", r"const toDate = ", r"const pad2 = ", r"function mdhm\(", r"const LOADING = "))
+        r"const esc = ", r"const rich = ", r"const toDate = ", r"const pad2 = ", r"function mdhm\(", r"const LOADING = "))
     a = JS.index("function techInfo(err) {")
     tech = JS[a:JS.index("\n}\n", a) + 3]
     stub = """let S = {}, renderSeq = 0, rendered = 0; const render = () => { rendered++; };
