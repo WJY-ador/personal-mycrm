@@ -1369,24 +1369,39 @@ class Web:
         qp = request.query_params
         again = '<p><a href="/login">다시 로그인하기</a></p>'
         if qp.get("error"):
-            return _page("로그인이 취소됐거나 실패했어요", f"<p>{_esc(qp.get('error_description') or qp['error'])}</p>{again}", 400)
+            lb = self._loopback_error(request, "access_denied" if qp.get("error") == "access_denied" else "login_failed")
+            return lb or _page("로그인이 취소됐거나 실패했어요", f"<p>{_esc(qp.get('error_description') or qp['error'])}</p>{again}", 400)
         if not flow or not qp.get("code") or qp.get("state") != flow.get("s"):
-            return _page("로그인 절차가 맞지 않아요", "<p>로그인 창을 10분 안에 끝내지 않았거나, 다른 탭에서 시작한 로그인이에요.</p>" + again, 400)
+            return self._loopback_error(request, "login_expired") or _page(
+                "로그인 절차가 맞지 않아요", "<p>로그인 창을 10분 안에 끝내지 않았거나, 다른 탭에서 시작한 로그인이에요.</p>" + again, 400)
         status, tok = await self.token_post({
             "grant_type": "authorization_code", "code": qp["code"], "redirect_uri": f"{self.public_url}/auth/callback",
             "client_id": self.client_id, "code_verifier": flow["v"], "resource": f"{self.public_url}/mcp"})
         access = tok.get("access_token") if isinstance(tok, dict) else None
         if status != 200 or not access:
-            return _page("로그인 서버가 토큰을 주지 않았어요", f"<p>{_esc(tok.get('error_description') or tok.get('error') or status)}</p>{again}", 502)
+            return self._loopback_error(request, "login_failed") or _page("로그인 서버가 토큰을 주지 않았어요", f"<p>{_esc(tok.get('error_description') or tok.get('error') or status)}</p>{again}", 502)
         verified = await self.verifier.verify_token(access)
         if verified is None:
-            return _page("받은 토큰을 믿을 수 없어요", "<p>토큰의 발급자·대상이 이 서버와 맞지 않아요.</p>" + again, 502)
+            return self._loopback_error(request, "login_failed") or _page("받은 토큰을 믿을 수 없어요", "<p>토큰의 발급자·대상이 이 서버와 맞지 않아요.</p>" + again, 502)
         try:
             uid = await run_in_threadpool(auth.user_id_for, verified)
         except Exception as e:   # ToolError·CrmError — 메시지만 보인다
             msg = getattr(e, "message", None) or str(e)
-            return _page("사용자를 연결하지 못했어요", f"<p>{_esc(msg)}</p>{again}", 502)
+            return self._loopback_error(request, "account_unavailable") or _page("사용자를 연결하지 못했어요", f"<p>{_esc(msg)}</p>{again}", 502)
         resp = await self._finish_login(request, uid)
+        self.clear_cookie(resp, FLOW_COOKIE)
+        return resp
+
+    LOOPBACK_ERRORS = ("access_denied", "login_failed", "login_expired", "account_unavailable", "server_error")
+
+    def _loopback_error(self, request, code: str) -> Response | None:
+        """CLI --browser(loopback) 로그인이 실패·취소되면 302 <redirect_uri>?error=<code>&state=<state> — 값·메시지 없이 짧은 식별자만
+        (LOOPBACK_ERRORS). crm_desktop 쿠키에 검사된 loopback 이 없으면(앱 mycrm:// 흐름·일반 로그인) None — 호출하는 쪽이 종전 오류 페이지."""
+        d = self.unsign(request.cookies.get(DESKTOP_COOKIE))
+        if not (d and _loopback_ok(d.get("r")) and _DESKTOP_STATE.fullmatch(str(d.get("s", "")))):
+            return None
+        resp = RedirectResponse(f"{d['r']}?{urlencode({'error': code, 'state': d['s']})}", status_code=302, headers={"cache-control": "no-store"})
+        self.clear_cookie(resp, DESKTOP_COOKIE)
         self.clear_cookie(resp, FLOW_COOKIE)
         return resp
 
@@ -1435,7 +1450,9 @@ class Web:
                                     db.HANDOFF_TTL_SECONDS, bool(loopback))
         except Exception as e:
             print(f"[desktop] 앱 로그인 넘김 발급 실패: {type(e).__name__}", flush=True)
-            resp = self._desktop_fail("앱 로그인을 이어 가지 못했어요", 503)
+            resp = (RedirectResponse(f"{loopback}?{urlencode({'error': 'server_error', 'state': state})}", status_code=302,
+                                     headers={"cache-control": "no-store"})
+                    if loopback else self._desktop_fail("앱 로그인을 이어 가지 못했어요", 503))
         else:
             if loopback:
                 resp = RedirectResponse(f"{loopback}?{urlencode({'code': code, 'state': state})}", status_code=302,

@@ -241,28 +241,37 @@ def _installs(c, uid) -> list:
 
 
 def _default(rows):
-    """지목 규칙 — 최근 2분 안에 폴링한 설치본 중 가장 최근 로그인. 없으면 None."""
-    act = [r for r in rows if r["active"]]
+    """지목 규칙 — 해제 안 된 설치본 중 최근 2분 안에 폴링한 것 가운데 가장 최근 로그인. 없으면 None.
+    해제(pc_forget)한 PC 는 기본 대상이 아니다 — installation_id 로 지목할 때만 다시 연결한다(메인 판정 2026-11-02)."""
+    act = [r for r in rows if r["active"] and r["revoked_at"] is None]
     return max(act, key=lambda r: (r["last_login_at"], r["id"])) if act else None
 
 
 def _resolve(c, uid, installation_id):
-    """받을 설치본 → (행, 켜져 있나). 지목이 없으면 기본(켜진 앱 중 최근 로그인), 켜진 앱이 없으면 가장 최근 로그인 설치본(대기).
-    설치본이 하나도 없으면 NO-ACTIVE-APP(grant 없음 — 앱 설치·로그인 안내)."""
+    """받을 설치본 → (행, 켜져 있나). 지목이 없으면 기본(해제 안 된 켜진 앱 중 최근 로그인), 켜진 앱이 없으면 해제 안 된 설치본 중
+    가장 최근 로그인(대기). 해제한 PC 는 지목(installation_id)할 때만. 해제 안 된 설치본이 하나도 없으면 NO-ACTIVE-APP(grant 없음 —
+    앱 설치·로그인 안내, 해제한 PC 는 pc_list 로 보고 지목)."""
     if installation_id:
         r = _inst(c, uid, installation_id)
         return r, bool(r["active"])
-    rows = _installs(c, uid)
+    rows = [r for r in _installs(c, uid) if r["revoked_at"] is None]
     if not rows:
-        raise _err("NO-ACTIVE-APP", "이 계정으로 로그인한 MyCRM 앱이 없어요.", "PC 에 MyCRM 앱을 설치하고 로그인한 뒤 다시 말해 주세요.",
+        raise _err("NO-ACTIVE-APP", "연결할 수 있는 MyCRM 앱이 없어요.",
+                   "PC 에 MyCRM 앱을 설치하고 로그인하세요. 해제했던 PC 를 다시 연결하려면 pc_list 로 보고 installation_id 로 지목하세요.",
                    grant_id=None, installations=0)
     d = _default(rows)
     return (d, True) if d else (rows[0], False)
 
 
-def _grant_out(g, inst_name) -> dict:
-    return {"grant_id": g["id"], "scope": g["scope"], "sent_to": inst_name, "installation_id": g["installation_id"],
-            "expires_at": _iso(g["expires_at"])}
+REVIVE_NOTE = "해제했던 PC를 다시 연결해요"
+
+
+def _grant_out(g, inst) -> dict:
+    out = {"grant_id": g["id"], "scope": g["scope"], "sent_to": inst["client_name"], "installation_id": g["installation_id"],
+           "expires_at": _iso(g["expires_at"])}
+    if inst["revoked_at"] is not None:
+        out["note"] = REVIVE_NOTE
+    return out
 
 
 def _grant_create(uid, scope, installation_id) -> tuple:
@@ -285,7 +294,7 @@ def _grant_create(uid, scope, installation_id) -> tuple:
                         "VALUES (%s,%s,%s,%s,%s,now() + make_interval(mins => %s)) RETURNING id,scope,installation_id,expires_at",
                      (uid, gid, scope, inst["id"], VIA, GRANT_MINUTES))
             db._audit(c, "token_grant", uid, uid, {"grant_id": gid, "scope": scope, "via": VIA, "to": inst["client_name"], "result": "created"})
-        return _grant_out(g, inst["client_name"]), active
+        return _grant_out(g, inst), active
 
 
 def _no_app(out):
@@ -314,7 +323,8 @@ def pc_list(uid: str) -> dict:
 
 def pc_connect(uid: str, installation_id: str = "") -> dict:
     """이 PC(또는 지목한 PC)의 MyCRM 앱에 장치 토큰을 보낸다 — 토큰은 대화에 나오지 않고, 켜진 앱이 스스로 받아 연결한다.
-    사용자가 PC 연결(해제한 PC 다시 연결 포함)을 말할 때만 부른다. 지목이 없으면 최근 2분 안에 켜져 있던 앱 중 가장 최근 로그인한 PC.
+    사용자가 PC 연결(해제한 PC 다시 연결 포함)을 말할 때만 부른다. 지목이 없으면 해제 안 된 PC 중 최근 2분 안에 켜져 있던 앱 가운데 가장
+    최근 로그인한 PC. 해제했던 PC 는 installation_id 로 지목할 때만 — 그때 응답 note 「해제했던 PC를 다시 연결해요」.
     PC 가 둘 이상이고 사용자가 어느 PC 인지 말하지 않았으면 먼저 pc_list 로 보여 준다. 반환 {grant_id, scope:"device", sent_to(PC 이름),
     installation_id, expires_at} — 사용자에게 「PC 이름으로 보냈어요」라고 말하고 token_grant_status 로 확인한다. 켜진 앱이 없으면
     NO-ACTIVE-APP(요청은 10분 기다린다 — detail 에 grant_id·sent_to, 다시 부르지 말고 앱을 켜 달라고 안내)."""
