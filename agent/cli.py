@@ -1,4 +1,5 @@
-"""CLI — connect · validate · run-once · status · schedule install/remove · serve(원문 뷰어·--jobs 작업 실행) · disconnect.
+"""CLI — connect · validate · run-once · status · schedule install/remove · serve(원문 뷰어·--jobs 작업 실행) · disconnect
+· migrate(실자료 이관 업로더).
 
 사용: python3 -m agent [--home 경로] <명령> ...
 출력엔 토큰·HMAC 키·원문·실명·URL 을 쓰지 않는다.
@@ -81,6 +82,22 @@ def _parser() -> argparse.ArgumentParser:
     d.add_argument("--local-only", action="store_true", help="서버 폐기를 건너뛰고 로컬만 지운다")
     d.add_argument("--forget-hmac-key", action="store_true",
                    help="이 키 공간의 HMAC 키도 지운다(같은 사람 연결이 끊긴다)")
+
+    m = sub.add_parser("migrate", help="실자료 이관(board-migration/2) — login·logout·stage·status·cancel·receipt")
+    ms = m.add_subparsers(dest="mcmd")
+    ml = ms.add_parser("login", help="이관 토큰을 키 저장소에 넣는다(웹 이관 화면에서 발급)")
+    ml.add_argument("--token-stdin", action="store_true", help="토큰을 표준 입력 한 줄로 받는다(화면 표시 없음)")
+    ms.add_parser("logout", help="이 서버의 로컬 이관 토큰을 지운다")
+    mst = ms.add_parser("stage", help="입력 JSONL 검증 → plan 만들기 → 청크 업로드 → seal → dry-run 요약")
+    mst.add_argument("items", help="항목 JSONL(한 줄 = board-migration/2 항목 하나)")
+    mst.add_argument("--source-instance", help="plan 의 source_instance(항목에 없을 때 채운다)")
+    for name, hlp in (("status", "plan 상태·dry-run 집계"), ("cancel", "plan 취소(서버 스테이징 본문 삭제)")):
+        ms.add_parser(name, help=hlp).add_argument("plan_id")
+    mr = ms.add_parser("receipt", help="영수증 개수 · --verify 면 입력 항목과 대조(0 일치 / 1 불일치·오류 / 2 쓰는 법)")
+    mr.add_argument("plan_id")
+    mr.add_argument("--verify", metavar="ITEMS_JSONL", help="stage 에 쓴 같은 입력 파일")
+    for sp in ms.choices.values():
+        sp.add_argument("--server", required=True, help="서버 주소(https)")
     return p
 
 
@@ -476,9 +493,15 @@ def cmd_disconnect(ctx: Ctx, a) -> int:
     return EXIT_OK
 
 
+def cmd_migrate(ctx: Ctx, a) -> int:
+    """실자료 이관 업로더 — agent/migrate.py(설치 패키지 목록 밖이라 여기서만 불러온다)."""
+    from . import migrate
+    return migrate.run(ctx, a)
+
+
 COMMANDS = {"connect": cmd_connect, "validate": cmd_validate, "run-once": cmd_run_once, "status": cmd_status,
             "schedule": cmd_schedule, "serve": cmd_serve, "disconnect": cmd_disconnect,
-            "configure-cli": cmd_configure_cli}
+            "configure-cli": cmd_configure_cli, "migrate": cmd_migrate}
 
 
 def _utf8_stdio():
