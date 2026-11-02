@@ -536,8 +536,9 @@ ADMIN_LABELS = {"bootstrap": "첫 지정", "recover": "복구(CLI)", "role_grant
                 "delete_notify": "삭제 통지(CLI)", "delete_run": "계정 삭제(CLI)", "delete_cancel": "삭제 취소(CLI)",
                 # board 이전(2026-10-20) — 장치 토큰은 사용자 본인이 웹에서, 이전은 원작자가 CLI 로. 감사 detail 에 토큰·본문 없음
                 "device_connect": "장치 연결", "device_reissue": "장치 토큰 재발급", "device_revoke": "장치 연결 해제",
-                "device_policy": "장치 허용 규칙 변경", "migration_apply": "board 이전 적용(CLI)",
-                "migration_extend": "병행 기간 연장(CLI)", "migration_close": "병행 종료(CLI)"}
+                "device_policy": "장치 허용 규칙 변경", "migration_apply": "board 이전 적용(CLI·웹 반영)",
+                "migration_extend": "병행 기간 연장(CLI)", "migration_close": "병행 종료(CLI)",
+                "migration_token": "이관 토큰 발급"}
 # 연결 장치 허용 규칙의 변환 이름 — 화면 표시용(키 = imports.TRANSFORMS). 모르는 키는 키 그대로 보인다
 POLICY_MAX_BYTES = 4 * 1024   # 장치 허용 규칙(policy) JSON 상한 — WRITE_LIMITS 밖이라 웹이 write_gate 전에 직접 센다
 TRANSFORM_LABELS = {"board-likes/1": "좋아요 활동(바로 저장)", "self-text/1": "내 글(승인 대기)", "self-summary/1": "AI 요약(승인 대기)"}

@@ -39,7 +39,8 @@ CORE_FIELDS = {
                 "received_at": "받은 때", "source_created_at": "원본 시각", "source_date": "원본 날짜", "ingest_kind": "들어온 경로",
                 "generation_kind": "생성 경위", "generation_meta": "생성 정보(장치 신고)", "import_batch_id": "이전 배치",
                 # 휴지통 PR-1 — 업무 상태와 별개인 휴지통 상태 열(본문 아님). 화면 「복원 가능 기한」과 같은 말
-                "trashed_at": "휴지통에 넣은 때", "purge_at": "복원 가능 기한", "last_trashed_at": "마지막 휴지통 이동"},
+                "trashed_at": "휴지통에 넣은 때", "purge_at": "복원 가능 기한", "last_trashed_at": "마지막 휴지통 이동",
+                "date_kind": "원본 날짜 종류"},   # 이관 경로(2026-11-02 K6) — written·occurred·registered·heading
     "candidates": {"id": "ID", "record_id": "근거 기록", "question_id": "질문", "text": "판단 문장", "quote": "인용",
                    "quote_start": "인용 시작 위치", "quote_end": "인용 끝 위치", "origin": "누가 뽑았나", "decision": "결정 상태",
                    "edited_by_user": "사용자 수정 여부", "created": "만든 때", "updated": "고친 때", "revision": "변경 번호",

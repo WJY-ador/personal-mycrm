@@ -29,7 +29,7 @@ if _u.hostname not in ("localhost", "127.0.0.1", "::1", None) or not _u.path.lst
     raise SystemExit("중단: 로컬 시험 DB(이름 crm_test*)만 허용해요.")
 PUBLIC = "http://127.0.0.1:8800"
 os.environ["CRM_DEV"] = "1"
-os.environ.setdefault("CRM_DEV_USER", "mig-a@example.com")
+os.environ["CRM_DEV_USER"] = "mig-a@example.com"   # CI job env(tester@…)를 덮는다 — MCP 직접 호출이 env 의 DEV 사용자로 풀린다
 os.environ["AUTHKIT_ISSUER"] = "https://fake.authkit.test"
 os.environ["CRM_PUBLIC_URL"] = PUBLIC
 sys.path.insert(0, str(HERE))

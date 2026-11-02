@@ -164,6 +164,19 @@ jobs:
           PGPASSWORD: crm
         run: python server/test_migrate_cli.py
 
+      # 이관 경로(2026-11-02) — 토큰·plan 상태기계·dry-run·반영·영수증·만료·HTTP 경계(합성 PG). 시작 가드가 crm_test* 를 보므로
+      # 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
+      - name: "④-g 이관 경로 시험 (test_migration_path.py)"
+        env:
+          DATABASE_URL: postgresql://postgres:crm@localhost:5432/crm_test_migration
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:crm@localhost:5432/crm", autocommit=True) as c:
+              c.execute("CREATE DATABASE crm_test_migration")
+          PY
+          python server/test_migration_path.py
+
       # board 이전(2026-10-20) — 로컬 에이전트(agent/, 표준 라이브러리만). 서버 DB 를 쓰지 않는다
       - name: "④-b 로컬 에이전트 시험 (agent/tests)"
         run: python -m unittest discover -s agent/tests -t . -v

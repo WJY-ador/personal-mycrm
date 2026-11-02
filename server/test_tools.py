@@ -986,7 +986,7 @@ async def test_definition_tools():
         base = {"state_get", "question_add", "question_list", "record_add", "record_get", "candidates_propose", "candidate_decide",
                 "candidate_list", "profile_set"}
         legacy = base | new | {"help_get", "feedback_send", "ticket_list_mine", "ticket_get_mine"}   # 기존 15개 + help_get + feedback_send(desk-0) + 내 문의 읽기 2(P3)
-        assert len(legacy) == 19 and legacy <= tools and tools - legacy == PRB_TOOLS | BI_TOOLS | TRASH_TOOLS, tools   # PR B 코어 도구는 24절, board 이전 읽기 7은 25절, 휴지통 4는 30절이 본다
+        assert len(legacy) == 19 and legacy <= tools and tools - legacy == PRB_TOOLS | BI_TOOLS | TRASH_TOOLS | MIG_TOOLS, tools   # PR B 코어 도구는 24절, board 이전 읽기 7은 25절, 휴지통 4는 30절, 이관 영수증 1은 test_migration_path 가 본다
         assert val(await c.call_tool("definitions_get", {"object_ids": None, "include_archived": False})) == []
         p = val(await c.call_tool("definition_propose", {"object_id": None, "expected_revision": 0, "definition_json": json.dumps(
             {"key": "notes", "label": "메모", "semantic_kind": "principle", "fields": []})}))
@@ -2232,7 +2232,8 @@ async def test_daily_limits():
     site = main.site
     U = {k: db.user_by_email(LIM_EMAIL[k])["id"] for k in LIM_KINDS}
     assert db.DAILY_LIMITS == {"records": 50, "candidates": 150, "decisions": 300, "proposals": 100, "questions": 50,
-                               "people": 50, "reflections": 50}   # PR B ⓔ — 사람·출처 요약/반응은 24절이 본다
+                               "people": 50, "reflections": 50,   # PR B ⓔ — 사람·출처 요약/반응은 24절이 본다
+                               "migration": 200}   # 이관 경로(2026-11-02) 전용 — test_migration_path·25f·CLI C6 이 본다
     try:
         # 기록 50 — 관리자도 같다
         u = U["records"]

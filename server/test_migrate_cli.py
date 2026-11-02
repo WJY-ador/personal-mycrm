@@ -185,6 +185,18 @@ def section_a():
     self_ref = [r_pub(1, OID("pub1"))]
     expect_reject(M.order_rows, "self-reference", self_ref)
     ok("A6 순환·자기 참조 거절")
+    # A7 운영 은퇴 가드(2026-11-02) — run·resume·close 는 DB 이름 crm_test* 에서만. DB 에 붙기 전에 거절(연결 없음)
+    prev = os.environ.get("DATABASE_URL", "")
+    try:
+        for url in ("postgresql://localhost/crm", "postgresql://example.invalid:5432/prod_db", "postgresql://localhost/", "not a url"):
+            os.environ["DATABASE_URL"] = url
+            for cmd in ("run", "resume", "close"):
+                code, out, err = cli(cmd, "x.json", "--user", "u_x")
+                assert code == 1 and "[CLI-RETIRED]" in err and not out, (url, cmd, code, err)
+        assert M.db_name("postgresql://localhost/crm_test_bi_mig?sslmode=disable") == "crm_test_bi_mig"
+    finally:
+        os.environ["DATABASE_URL"] = prev
+    ok("A7 운영 은퇴: run·resume·close 는 DB 이름 crm_test* 아니면 연결 전에 CLI-RETIRED")
 
 
 # ── B) 픽스처 · 대상 해석 · validate-only ───────────────────

@@ -1,5 +1,8 @@
 """board 정본 이전 CLI (board-migration/1) — 원작자 Mac 에서만, DATABASE_URL 을 명시해 돌린다. 웹 실행 경로 없음.
 
+운영 반영 경로에서 은퇴(2026-11-02 이관 경로 — notes/2026-11-02_이관경로-구현계획.md): 쓰기 명령 run·resume·close 는 DB 이름이 crm_test 로
+시작할 때만 돈다(합성 시험용). 운영 이관은 이관 토큰 + 웹 확인·반영(server/migration.py). validate-only·status·init·extend 는 그대로.
+
     DATABASE_URL=… .venv/bin/python migrate_cli.py init --user <uid>                           # 이전 입력원만 만들고 ID 출력(명세 source_instance_id)
     DATABASE_URL=… .venv/bin/python migrate_cli.py validate-only <명세.json> --user <uid>      # 읽기만 — 스키마·해시·대상·순서·진행
     DATABASE_URL=… .venv/bin/python migrate_cli.py run    <명세.json> --user <uid> [--limit N]   # 적용(소량은 --limit)
@@ -34,6 +37,8 @@ TARGET_KINDS = ("item", "record")            # 정본 스키마 rows[].target_ki
 DONE_STATES = ("applied", "noop")
 PARTIAL_CODES = ("RATE-LIMIT",)                 # 일일 한도 — 미처리 행을 남기고 다음 KST 구간에 재개
 EXIT_OK, EXIT_ERR, EXIT_USAGE, EXIT_PARTIAL = 0, 1, 2, 3
+WRITE_CMDS = ("run", "resume", "close")       # 운영 은퇴 — 합성 시험 DB(crm_test*)에서만
+TEST_DB_PREFIX = "crm_test"
 
 USAGE = ("쓰는 법: migrate_cli.py validate-only|run|resume|close <명세.json> --user <uid> [--limit N]\n"
          "        migrate_cli.py status [<명세.json>] --user <uid>\n"
@@ -945,6 +950,15 @@ def _parse(argv: list[str]):
     return cmd, pos, opts
 
 
+def db_name(url: str) -> str:
+    """DATABASE_URL 의 DB 이름(URL 경로) — 못 읽으면 ""(가드는 거절 쪽)."""
+    from urllib.parse import unquote, urlsplit
+    try:
+        return unquote(urlsplit(url.strip()).path.lstrip("/"))
+    except ValueError:
+        return ""
+
+
 def main(argv: list[str]) -> int:
     parsed = _parse(argv)
     if parsed is None:
@@ -954,6 +968,10 @@ def main(argv: list[str]) -> int:
         _err("[DB-CONFIG] DATABASE_URL 을 명령 앞에 명시하세요(.env·기본 주소는 쓰지 않아요).")
         return EXIT_USAGE
     cmd, pos, opts = parsed
+    if cmd in WRITE_CMDS and not db_name(os.environ["DATABASE_URL"]).startswith(TEST_DB_PREFIX):
+        _err(f"[CLI-RETIRED] {cmd} 은 운영 반영 경로에서 은퇴했어요 — DB 이름이 {TEST_DB_PREFIX} 로 시작하는 합성 시험 DB 에서만 돌아요. "
+             "운영 이관은 웹에서 이관 토큰을 발급해 agent migrate stage → 웹 확인·반영으로 하세요.")
+        return EXIT_ERR
     import db
     try:
         if cmd == "validate-only":
