@@ -64,3 +64,11 @@ test('fresh=1 on the intercepted login is passed on to /desktop/login, otherwise
  assert.deepEqual([...fresh.searchParams.keys()],['challenge','state','fresh']);assert.equal(fresh.searchParams.get('fresh'),'1');
  assert(!new URL(h.loginUrl(HOSTED,p.challenge,p.state,false)).searchParams.has('fresh'));
 });
+test('claim request posts the form to /desktop/claim with the desktop header and nothing in the URL',()=>{
+ const {url,options}=h.claimRequest(HOSTED,CODE,'V'.repeat(43),STATE);
+ assert.equal(url,'https://personal-mycrm.onrender.com/desktop/claim');assert(!url.includes('?'));
+ assert.deepEqual(options.extraHeaders.split('\n'),['Content-Type: application/x-www-form-urlencoded','X-MyCRM-Desktop: 1']);
+ assert.equal(options.postData.length,1);assert.equal(options.postData[0].type,'rawData');
+ const q=new URLSearchParams(options.postData[0].bytes.toString());
+ assert.deepEqual(Object.fromEntries(q),{code:CODE,verifier:'V'.repeat(43),state:STATE});
+});

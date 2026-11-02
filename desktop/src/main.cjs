@@ -87,7 +87,8 @@ function deepLink(raw){
   }
   const {verifier}=pendingLogin;pendingLogin=null; // one-shot: cleared before the claim is sent, whatever its outcome
   log?.('login','claim');
-  dash.loadURL(new URL('desktop/claim',HOSTED).href,{postData:[{type:'rawData',bytes:Buffer.from(handoff.claimBody(parsed.code,verifier,parsed.state))}],extraHeaders:'Content-Type: application/x-www-form-urlencoded'}).catch(()=>{});
+  const claim=handoff.claimRequest(HOSTED,parsed.code,verifier,parsed.state);
+  dash.loadURL(claim.url,claim.options).catch(()=>{});
 }
 function history(wc){return wc.navigationHistory||{canGoBack:()=>wc.canGoBack(),canGoForward:()=>wc.canGoForward(),goBack:()=>wc.goBack(),goForward:()=>wc.goForward()};}
 function dashNav(action){

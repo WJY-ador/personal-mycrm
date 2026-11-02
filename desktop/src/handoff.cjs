@@ -52,6 +52,17 @@ function accept(pending, parsed, now = Date.now()) {
   return 'ok';
 }
 function claimBody(code, verifier, state) { return new URLSearchParams({code, verifier, state}).toString(); }
+// The claim is a browser-initiated POST whose Origin is "null"; a cross-site form in a sandboxed frame can send
+// the same Origin but cannot add a custom header, so the server requires X-MyCRM-Desktop: 1.
+function claimRequest(hosted, code, verifier, state) {
+  return {
+    url: new URL('desktop/claim', hosted).href,
+    options: {
+      postData: [{type: 'rawData', bytes: Buffer.from(claimBody(code, verifier, state))}],
+      extraHeaders: 'Content-Type: application/x-www-form-urlencoded\nX-MyCRM-Desktop: 1',
+    },
+  };
+}
 function findLink(argv) { return (Array.isArray(argv) ? argv : []).find(a => typeof a === 'string' && /^mycrm:/i.test(a)) || null; }
 // In-app navigations that start a login are taken over by the app: /login (any query) and /desktop/login.
 function isLoginNav(input, hosted) {
@@ -60,4 +71,4 @@ function isLoginNav(input, hosted) {
     return u.origin === new URL(hosted).origin && (u.pathname === '/login' || u.pathname === '/desktop/login');
   } catch { return false; }
 }
-module.exports = {TTL_MS, challengeOf, begin, loginUrl, wantsFresh, parseCallback, accept, claimBody, findLink, isLoginNav};
+module.exports = {TTL_MS, challengeOf, begin, loginUrl, wantsFresh, parseCallback, accept, claimBody, claimRequest, findLink, isLoginNav};
