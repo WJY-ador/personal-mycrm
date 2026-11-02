@@ -10,6 +10,7 @@ A. 서버 함수(migration.py): 정규화 벡터 · 토큰(스위치·allowlist�
    · 한도 초과 시작 안 함·일반 한도 분리) · 날짜 종류 매핑 · 적격 판정(_ELIGIBLE_SQL) · provenance_set 잠금 · 만료·취소 영구 삭제 · 사용자 격리
    · 영수증·read-back 해시.
 B. HTTP(web.py 라우트 — 토큰 경로·웹 세션 경로): test_http() — ③ 에서 더한다.
+C. 이관 MCP(가안 X): test_migration_mcp.run(A, B) — 업그레이드·스위치·웹=MCP·규칙·바인딩·revert.
 """
 import asyncio
 import datetime as dt
@@ -583,6 +584,8 @@ def main_():
         test_expiry(A)
         asyncio.run(test_http(A, B))
         test_mcp_tool(A)
+        import test_migration_mcp   # 이관 MCP(가안 X) — 같은 DB·사용자(CI ④-g 단계 하나로 돈다)
+        test_migration_mcp.run(A, B)
     finally:
         cleanup()
         db.close()
