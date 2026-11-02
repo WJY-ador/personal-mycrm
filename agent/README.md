@@ -16,6 +16,7 @@ python3 -m agent [--home 경로] <명령>
 |---|---|
 | `connect --server https://<주소>` | 토큰만 받습니다(비표시 입력). 입력원 ID·장치 이름·허용 규칙·정책 판·키 공간·만료는 서버 `GET /api/imports/device` 에서 받아 확인합니다. 확인되면 토큰을 Keychain 에 넣고, 그 키 공간의 HMAC 키가 없으면 새로 만들어 둡니다. 서버 확인이 실패하면 아무것도 저장하지 않습니다. `--label`·`--hmac-namespace`·`--policy-revision`·`--axis` 는 서버 값을 덮어쓸 때만 씁니다 |
 | `connect … --token-stdin` | 토큰을 표준 입력 한 줄로 받습니다(화면 표시 없음) |
+| `connect … --browser` | 앱 없이 브라우저 로그인으로 토큰을 받습니다(2절). 출력에 로그인한 계정이 나옵니다 |
 | `validate [파일 …]` | 설정과 전송 대기 파일(`pending/`)·지정 파일을 계약(`canon-inbox/1`)으로 검사합니다. 쓰지 않습니다 |
 | `run-once` | 수집 → 변환 → 계약 검증 → 전송 대기 저장 → (켰으면) 요약 → 업로드를 한 번 합니다. 같은 홈에서 겹쳐 돌면 뒤엣것은 건너뜁니다. 토큰 만료가 30일 안이면 업로드 뒤 토큰을 자동으로 바꿉니다(2절). 교체가 실패해도 종료 코드는 바뀌지 않습니다. `--no-rotate` 면 교체를 건너뜁니다(데스크톱 앱은 앱 세션으로 교체해 이 플래그를 넘깁니다) |
 | `run-once --no-upload` | 전송 대기 저장까지만 |
@@ -36,15 +37,16 @@ python3 -m agent [--home 경로] <명령>
 
 ## 2. 처음 연결하기 (macOS)
 
-연결 경로는 세 가지입니다. 어느 경로든 토큰은 화면·대화·명령줄에 나오지 않고 Keychain 에만 들어갑니다.
+연결 경로는 네 가지입니다. 어느 경로든 토큰은 화면·대화·명령줄에 나오지 않고 Keychain 에만 들어갑니다.
 
 | 상황 | 하는 일 |
 |---|---|
 | 데스크톱 앱이 있다 | 앱에 로그인한 뒤 수집을 처음 켜면(동기화·예약) 앱이 이 PC 를 자동으로 연결합니다. 할 일이 없습니다 |
 | 대화에서 먼저 연결하고 싶다 | 대화에서 「PC 연결해 줘」라고 말합니다. 켜져 있는 앱이 토큰을 받아 `connect --token-stdin` 으로 넣습니다. 앱이 꺼져 있으면 켜기만 하면 됩니다 |
-| 앱 없이 키트만 쓴다(원격 셸 포함) | 아래 1~2단계 — 웹에서 토큰을 발급해 `connect` 로 넣습니다. 원격 셸이면 `--token-stdin` 으로 표준 입력에 넘깁니다 |
+| 앱 없이 키트만 쓴다(이 PC 에 브라우저가 있다) | `python3 -m agent connect --server https://<주소> --browser` — 브라우저에서 로그인하면 끝납니다(아래 설명) |
+| 원격 셸(이 PC 에 브라우저가 없다) | 아래 1~2단계 — 웹에서 토큰을 발급해 `connect --token-stdin` 으로 표준 입력에 넘깁니다 |
 
-앱 없이 브라우저 로그인만으로 연결하는 `connect --browser` 는 아직 없습니다(다음 묶음).
+`--browser` 는 RFC 8252 loopback 입니다. 에이전트가 `127.0.0.1` 임의 포트에서 한 번만 기다리고, PKCE(S256)·state 를 만들어 시스템 브라우저로 서버 로그인(`/desktop/login`)을 엽니다. 로그인하면 서버가 `http://127.0.0.1:<포트>/cb` 로 일회용 코드(2분)를 돌려주고, 에이전트가 그 코드와 verifier 로 `POST /desktop/cli/claim` 을 불러 토큰을 받아 Keychain 에 넣습니다. 장치 이름은 `--label`, 없으면 이 PC 의 호스트 이름입니다. 5분 안에 로그인하지 않으면 멈춥니다. 브라우저가 안 열리면 출력된 주소를 **이 PC 의** 브라우저로 여세요. 이관 토큰도 같은 방식으로 받습니다: `migrate login --server https://<주소> --browser`.
 
 토큰 만료가 30일 안으로 들어오면 `run-once` 가 업로드 뒤 스스로 새 토큰으로 바꿉니다(`POST /api/device/rotate`). 새 토큰은 Keychain 대기 자리(`upload-token-pending:<입력원 ID>`)에 먼저 두고, 새 토큰으로 서버 확인이 되면 본 자리로 옮깁니다. 옛 토큰은 서버에서 새 토큰이 처음 쓰일 때 무효가 됩니다. 그래서 응답이 끊겨도 옛 토큰으로 계속 보내고, 다음 실행이 다시 확인합니다. 90일 동안 업로드가 없던 장치는 서버가 교체를 거절합니다 — 만료 전에 위 경로로 다시 연결하세요. 서버가 교체를 거절하면 24시간 동안 다시 묻지 않습니다(안내는 하루 한 번, 네트워크 실패는 다음 실행에 바로 다시). `connect` 로 새 토큰을 넣으면 이 기다림은 풀립니다. 다른 계정 토큰으로 `connect` 하면 이 PC 에서 옛 계정 토큰을 지웁니다.
 
@@ -228,6 +230,8 @@ python3 agent/board_manifest.py validate MANIFEST.json [--config CFG --state-dir
 ```bash
 # 1) 웹 이관 화면에서 토큰을 발급해 표준 입력으로 넣는다(화면·명령줄·로그에 남지 않는다)
 python3 -m agent migrate login   --server https://crm.example.invalid --token-stdin < 토큰을_담은_파일
+#    (또는 브라우저 로그인으로 받는다 — 토큰이 파일·화면을 거치지 않는다)
+python3 -m agent migrate login   --server https://crm.example.invalid --browser
 # 2) 검증 → plan 만들기 → 청크 업로드 → seal → dry-run 요약(plan_id 출력)
 python3 -m agent migrate stage   items.jsonl --server https://crm.example.invalid --source-instance pc-home-1
 python3 -m agent migrate status  mp_0123456789abcdef01234567 --server https://crm.example.invalid
