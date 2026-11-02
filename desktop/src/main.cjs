@@ -3,6 +3,7 @@ const {app,BrowserWindow,Menu,Tray,nativeImage,ipcMain,shell,dialog} = require('
 const {spawn} = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 const {pathToFileURL} = require('node:url');
 const {HOSTED,RELEASES,DASHBOARD,safeExternal,inAppAllowed,externalHttps,agentHome,checkUpdate} = require('./policy.cjs');
 const {Supervisor,diagnosticLog} = require('./supervisor.cjs');
@@ -15,7 +16,9 @@ let pendingLogin=null,queuedLink=handoff.findLink(process.argv);
 const PAGE=pathToFileURL(path.join(__dirname,'index.html')).href;
 // macOS delivers mycrm:// via open-url, also when the link itself launches the app — register before 'ready'.
 app.on('will-finish-launching',()=>app.on('open-url',(event,url)=>{event.preventDefault();deepLink(url);}));
-if(!app.requestSingleInstanceLock()) app.quit();
+// SPIKE: MYCRM_PTY_SPIKE=1 runs the node-pty self-test only — no window, tray, single-instance lock or protocol registration.
+if(process.env.MYCRM_PTY_SPIKE==='1') app.whenReady().then(ptySpikeSelfTest);
+else if(!app.requestSingleInstanceLock()) app.quit();
 else {
   // Windows (and Linux) hand the link to the running instance as an argument of the second launch.
   app.on('second-instance',(_event,argv)=>{const link=handoff.findLink(argv);if(link)deepLink(link);else showDashboard();});
@@ -23,6 +26,52 @@ else {
   else app.setAsDefaultProtocolClient('mycrm');
   app.whenReady().then(initialize).catch(()=> {dialog.showErrorBox('MyCRM','앱을 시작하지 못했어요. 다시 설치하거나 지원팀에 문의해 주세요.');app.exit(1);});
 }
+// ---- SPIKE (node-pty packaging check, not product code) ----
+// Spawns <cli> --version in a pty (argument array, no shell) and returns the first output line.
+function ptyVersion(cli){
+  return new Promise((resolve,reject)=>{
+    if(typeof cli!=='string'||!path.isAbsolute(cli)||!fs.statSync(cli).isFile())throw new Error('cli-path');
+    const pty=require('node-pty');
+    const env={...process.env};delete env.ANTHROPIC_API_KEY;delete env.OPENAI_API_KEY;
+    let out='',done=false;
+    const term=pty.spawn(cli,['--version'],{name:'xterm-256color',cols:120,rows:30,cwd:os.homedir(),env});
+    const finish=(err,code)=>{
+      if(done)return;done=true;clearTimeout(timer);
+      if(err)return reject(err);
+      // Data can trail the exit event on ConPTY; give it a moment.
+      setTimeout(()=>{
+        const plain=out.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g,'').replace(/\x1b\][^\x07]*\x07/g,'');
+        const firstLine=plain.split(/\r?\n/).map(l=>l.trim()).find(Boolean)||'';
+        resolve({code,firstLine:Array.from(firstLine).slice(0,200).join(''),bytes:out.length});
+      },300);
+    };
+    const timer=setTimeout(()=>{try{term.kill();}catch{}finish(new Error('pty-timeout'));},20000);
+    term.onData(d=>{out+=d;if(out.length>8192)out=out.slice(-8192);});
+    term.onExit(({exitCode})=>finish(null,exitCode));
+  });
+}
+function spikeCli(){
+  if(process.env.MYCRM_PTY_SPIKE_CLI)return process.env.MYCRM_PTY_SPIKE_CLI;
+  try{return JSON.parse(fs.readFileSync(path.join(home,'config.json'),'utf8')).summary?.cli_path||null;}catch{return null;}
+}
+function claudeOnPath(){
+  const names=process.platform==='win32'?['claude.exe','claude.cmd']:['claude'];
+  return String(process.env.PATH||'').split(path.delimiter).filter(Boolean).some(dir=>names.some(n=>{try{return fs.statSync(path.join(dir,n)).isFile();}catch{return false;}}));
+}
+async function ptySpikeSelfTest(){
+  const result={loaded:false,spawned:false,platform:process.platform,arch:process.arch,electron:process.versions.electron,napi:process.versions.napi,packaged:app.isPackaged,claudeOnPath:claudeOnPath()};
+  try{require('node-pty');result.loaded=true;}catch(e){result.loadError=String(e&&e.message||e).slice(0,400);}
+  const cli=process.env.MYCRM_PTY_SPIKE_CLI;
+  if(result.loaded&&cli){
+    try{const r=await ptyVersion(cli);result.spawned=true;result.exitCode=r.code;result.firstLine=r.firstLine;result.bytes=r.bytes;}
+    catch(e){result.spawnError=String(e&&e.message||e).slice(0,400);}
+  }
+  const line=JSON.stringify(result);
+  try{process.stdout.write(line+'\n');}catch{}
+  if(process.env.MYCRM_PTY_SPIKE_OUT)try{fs.writeFileSync(process.env.MYCRM_PTY_SPIKE_OUT,line+'\n');}catch{}
+  app.exit(result.loaded&&(!cli||result.spawned)?0:1);
+}
+// ---- end SPIKE ----
 function preferences() {
   try {const p=JSON.parse(fs.readFileSync(settingsFile,'utf8'));return {allowCli:p.allowCli===true};} catch {return {allowCli:false};}
 }
@@ -196,6 +245,8 @@ async function initialize(){
   register('disconnect',()=>exclusively(async()=>{await supervisor.stopAll();const {code,detail}=await command(['disconnect']);log('disconnect','completed',code);return {code,detail};}));
   register('update',()=>checkUpdate(app.getVersion()));
   register('download',url=>external(url));
+  // SPIKE: pty test button. Errors are returned as text so the spike can see the cause.
+  register('pty:start',async()=>{try{return await ptyVersion(spikeCli());}catch(e){return {error:String(e&&e.message||e).slice(0,400)};}});
   app.on('activate',showDashboard);
   app.on('before-quit',event=> {
     if(quitting)return;event.preventDefault();quitting=true;changed();
