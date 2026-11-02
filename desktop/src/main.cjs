@@ -4,15 +4,15 @@ const {spawn} = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const {pathToFileURL} = require('node:url');
-const {HOSTED,RELEASES,safeExternal,agentHome,checkUpdate} = require('./policy.cjs');
+const {HOSTED,RELEASES,DASHBOARD,safeExternal,inAppAllowed,externalHttps,agentHome,checkUpdate} = require('./policy.cjs');
 const {Supervisor,diagnosticLog} = require('./supervisor.cjs');
 const {OutputTail,failureLine,hasLiveProcess} = require('./sidecar.cjs');
-let win,tray,supervisor,log,prefs={},binary,home,settingsFile,quitting=false,ready=false;
+let win,dash,tray,supervisor,log,prefs={},binary,home,settingsFile,quitting=false,ready=false;
 let busy=false,trayLive=null; const commands=new Set();
 const PAGE=pathToFileURL(path.join(__dirname,'index.html')).href;
 if(!app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on('second-instance',()=>show());
+  app.on('second-instance',()=>showDashboard());
   app.whenReady().then(initialize).catch(()=> {dialog.showErrorBox('MyCRM','앱을 시작하지 못했어요. 다시 설치하거나 지원팀에 문의해 주세요.');app.exit(1);});
 }
 function preferences() {
@@ -31,9 +31,34 @@ function connection() {
 }
 function snapshot() {return {version:app.getVersion(),ready,busy,allowCli:prefs.allowCli===true,autoStart:app.isPackaged&&app.getLoginItemSettings().openAtLogin,connection:connection(),processes:supervisor?.snapshot()||{}};}
 function changed(){if(win&&!win.isDestroyed())win.webContents.send('status',snapshot());refreshTray();}
-function trayMenu(live){return Menu.buildFromTemplate([{label:'MyCRM 열기',click:show},{label:'대시보드 열기',click:()=>external(HOSTED).catch(()=>{})},{type:'separator'},{label:'연결 장치 중지',enabled:live,click:()=>exclusively(()=>supervisor.stopAll()).catch(()=>{})},{label:'종료',click:()=>app.quit()}]);}
+function trayMenu(live){return Menu.buildFromTemplate([{label:'대시보드 열기',click:showDashboard},{label:'연결 장치',click:show},{type:'separator'},{label:'연결 장치 중지',enabled:live,click:()=>exclusively(()=>supervisor.stopAll()).catch(()=>{})},{label:'종료',click:()=>app.quit()}]);}
 function refreshTray(){if(!tray||tray.isDestroyed())return;const live=hasLiveProcess(supervisor?.snapshot());if(live===trayLive)return;trayLive=live;tray.setContextMenu(trayMenu(live));}
 function show(){if(win){win.show();win.focus();}}
+function showDashboard(){if(dash&&!dash.isDestroyed()){dash.show();dash.focus();}}
+// Links that leave the hosted app + login chain go to the system browser, https only.
+function leave(url){if(externalHttps(url))shell.openExternal(url).catch(()=>{});}
+function guard(event,url){if(inAppAllowed(url))return;event.preventDefault();leave(url);}
+function history(wc){return wc.navigationHistory||{canGoBack:()=>wc.canGoBack(),canGoForward:()=>wc.canGoForward(),goBack:()=>wc.goBack(),goForward:()=>wc.goForward()};}
+function dashNav(action){
+  if(!dash||dash.isDestroyed())return;const wc=dash.webContents,h=history(wc);
+  if(action==='reload')wc.reload();else if(action==='back'&&h.canGoBack())h.goBack();else if(action==='forward'&&h.canGoForward())h.goForward();
+}
+function openInBrowser(){
+  const current=dash&&!dash.isDestroyed()?dash.webContents.getURL():'';
+  let target=HOSTED;try{if(new URL(current).origin===new URL(HOSTED).origin)target=current;}catch{}
+  leave(target);
+}
+function createDashboard(){
+  dash=new BrowserWindow({width:1200,height:800,minWidth:720,minHeight:520,title:'MyCRM',backgroundColor:'#ffffff',webPreferences:{partition:'persist:dashboard',nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true}});
+  const wc=dash.webContents;
+  wc.session.setPermissionRequestHandler((_wc,_p,callback)=>callback(false));
+  wc.setWindowOpenHandler(({url})=>{if(inAppAllowed(url))wc.loadURL(url).catch(()=>{});else leave(url);return {action:'deny'};});
+  wc.on('will-navigate',(e,url)=>guard(e,e.url||url));
+  // Subframes (captcha, provider widgets) are not gated; only top-level navigation is.
+  wc.on('will-redirect',(e,url,_inPlace,isMainFrame)=>{if(e.isMainFrame??isMainFrame)guard(e,e.url||url);});
+  dash.on('close',event=>{if(!quitting){event.preventDefault();dash.hide();}});
+  dash.loadURL(DASHBOARD).catch(()=>{});
+}
 async function external(url){if(!safeExternal(url))throw new Error('url');await shell.openExternal(url);}
 function command(args,input) {
   return new Promise((resolve,reject)=> {
@@ -78,13 +103,13 @@ async function initialize(){
   binary=app.isPackaged?path.join(process.resourcesPath,'agent',process.platform==='win32'?'mycrm-agent.exe':'mycrm-agent'):path.resolve(__dirname,'../../release/agent',process.platform==='win32'?'mycrm-agent.exe':'mycrm-agent');
   log=diagnosticLog(path.join(userData,'logs'));
   ready=await compatibleBinary();supervisor=new Supervisor({binary,home,log,changed});
-  win=new BrowserWindow({width:660,height:790,minWidth:520,minHeight:600,title:'MyCRM',backgroundColor:'#f6f7f9',webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true}});
+  win=new BrowserWindow({width:660,height:790,minWidth:520,minHeight:600,title:'MyCRM 연결 장치',show:false,backgroundColor:'#f6f7f9',webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true}});
   win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
   win.webContents.on('will-navigate',e=>e.preventDefault());
   win.webContents.session.setPermissionRequestHandler((_wc,_p,callback)=>callback(false));
   win.on('close',event=>{if(!quitting){event.preventDefault();win.hide();}});
   register('status',()=>snapshot());
-  register('dashboard',()=>external(HOSTED));
+  register('dashboard',()=>showDashboard());
   register('logs',()=>shell.openPath(path.join(userData,'logs')));
   register('connect',token=>exclusively(async()=>{
     if(!ready||typeof token!=='string'||token.length<16||token.length>1024||/[\r\n\x00]/.test(token))throw new Error('token');
@@ -119,14 +144,19 @@ async function initialize(){
   register('disconnect',()=>exclusively(async()=>{await supervisor.stopAll();const {code,detail}=await command(['disconnect']);log('disconnect','completed',code);return {code,detail};}));
   register('update',()=>checkUpdate(app.getVersion()));
   register('download',url=>external(url));
-  app.on('activate',show);
+  app.on('activate',showDashboard);
   app.on('before-quit',event=> {
     if(quitting)return;event.preventDefault();quitting=true;changed();
     const pending=[...commands].map(child=>new Promise(resolve=>child.once('close',resolve)));
     Promise.all([supervisor.stopAll({closing:true}),...pending]).finally(()=>{tray?.destroy();app.quit();});
   });
+  createDashboard();
   await win.loadFile(path.join(__dirname,'index.html'));
   const icon=nativeImage.createFromDataURL('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAIElEQVR42mNkYPj/n4ECwESJ5lEDRg0YNWDUgFEDBg0AADMSAh/0xSqxAAAAAElFTkSuQmCC');
-  tray=new Tray(icon);tray.setToolTip('MyCRM');refreshTray();tray.on('double-click',show);tray.on('click',show);
-  Menu.setApplicationMenu(Menu.buildFromTemplate([{label:'MyCRM',submenu:[{label:'MyCRM 열기',click:show},{label:'종료',accelerator:process.platform==='darwin'?'Command+Q':'Alt+F4',click:()=>app.quit()}]},{role:'editMenu'}]));
+  tray=new Tray(icon);tray.setToolTip('MyCRM');refreshTray();tray.on('double-click',showDashboard);tray.on('click',showDashboard);
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    {label:'MyCRM',submenu:[{label:'대시보드',accelerator:'CmdOrCtrl+1',click:showDashboard},{label:'연결 장치',accelerator:'CmdOrCtrl+2',click:show},{type:'separator'},{label:'종료',accelerator:process.platform==='darwin'?'Command+Q':'Alt+F4',click:()=>app.quit()}]},
+    {role:'editMenu'},
+    {label:'보기',submenu:[{label:'새로 고침',accelerator:'CmdOrCtrl+R',click:()=>dashNav('reload')},{label:'뒤로',accelerator:'CmdOrCtrl+[',click:()=>dashNav('back')},{label:'앞으로',accelerator:'CmdOrCtrl+]',click:()=>dashNav('forward')},{type:'separator'},{label:'브라우저에서 열기',click:openInBrowser}]}
+  ]));
 }

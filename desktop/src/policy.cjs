@@ -12,6 +12,33 @@ function safeExternal(input) {
       || (u.origin === 'https://github.com' && /^\/WJY-ador\/personal-mycrm\/releases(?:\/tag\/[A-Za-z0-9._-]+)?\/?$/.test(u.pathname) && !u.search && !u.hash);
   } catch { return false; }
 }
+// Dashboard window: only the hosted app and the login chain measured on 2026-11-02
+// (/login -> AuthKit -> api.workos.com -> provider -> back) load inside the app.
+const DASHBOARD = new URL('app', HOSTED).href;
+const IN_APP = new Map([
+  ['personal-mycrm.onrender.com', () => true],
+  ['wealthy-technology-63-staging.authkit.app', () => true],
+  ['api.workos.com', () => true],
+  ['accounts.google.com', () => true],
+  ['login.microsoftonline.com', () => true],
+  ['login.live.com', () => true],
+  ['appleid.apple.com', () => true],
+  // GitHub only for its login pages; any other github.com link opens in the browser.
+  ['github.com', p => /^\/(?:login(?:\/|$)|session(?:\/|$)|sessions\/)/.test(p)],
+]);
+function cleanHttps(input) {
+  try {
+    const u = new URL(input);
+    if (u.protocol !== 'https:' || u.username || u.password || u.port) return null;
+    return u;
+  } catch { return null; }
+}
+function inAppAllowed(input) {
+  const u = cleanHttps(input);
+  const rule = u && IN_APP.get(u.hostname);
+  return !!rule && rule(u.pathname);
+}
+function externalHttps(input) { return !!cleanHttps(input); }
 function newerVersion(remote, local) {
   const parse = v => /^v?(\d+)\.(\d+)\.(\d+)$/.exec(v || '')?.slice(1).map(Number);
   const a = parse(remote), b = parse(local);
@@ -49,4 +76,4 @@ function checkUpdate(current) {
     req.on('error',reject);
   });
 }
-module.exports={HOSTED,RELEASES,safeExternal,newerVersion,agentHome,checkUpdate};
+module.exports={HOSTED,RELEASES,DASHBOARD,safeExternal,inAppAllowed,externalHttps,newerVersion,agentHome,checkUpdate};
