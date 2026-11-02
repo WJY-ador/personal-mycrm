@@ -17,7 +17,7 @@ python3 -m agent [--home 경로] <명령>
 | `connect --server https://<주소>` | 토큰만 받습니다(비표시 입력). 입력원 ID·장치 이름·허용 규칙·정책 판·키 공간·만료는 서버 `GET /api/imports/device` 에서 받아 확인합니다. 확인되면 토큰을 Keychain 에 넣고, 그 키 공간의 HMAC 키가 없으면 새로 만들어 둡니다. 서버 확인이 실패하면 아무것도 저장하지 않습니다. `--label`·`--hmac-namespace`·`--policy-revision`·`--axis` 는 서버 값을 덮어쓸 때만 씁니다 |
 | `connect … --token-stdin` | 토큰을 표준 입력 한 줄로 받습니다(화면 표시 없음) |
 | `validate [파일 …]` | 설정과 전송 대기 파일(`pending/`)·지정 파일을 계약(`canon-inbox/1`)으로 검사합니다. 쓰지 않습니다 |
-| `run-once` | 수집 → 변환 → 계약 검증 → 전송 대기 저장 → (켰으면) 요약 → 업로드를 한 번 합니다. 같은 홈에서 겹쳐 돌면 뒤엣것은 건너뜁니다 |
+| `run-once` | 수집 → 변환 → 계약 검증 → 전송 대기 저장 → (켰으면) 요약 → 업로드를 한 번 합니다. 같은 홈에서 겹쳐 돌면 뒤엣것은 건너뜁니다. 토큰 만료가 30일 안이면 업로드 뒤 토큰을 자동으로 바꿉니다(2절). 교체가 실패해도 종료 코드는 바뀌지 않습니다 |
 | `run-once --no-upload` | 전송 대기 저장까지만 |
 | `run-once --resume <범위>` | 멈춘 범위(`auth`·`config`·`account`·`policy`·`forbidden`·`summary`)를 내가 조치한 뒤 풉니다 |
 | `run-once --scheduled` | 예약이 부르는 꼴(0~5분 지연, 무인 실행으로 신고). 손으로 쓰지 않습니다 |
@@ -35,6 +35,18 @@ python3 -m agent [--home 경로] <명령>
 출력에는 토큰·HMAC 키·원문·실명·URL 을 쓰지 않습니다.
 
 ## 2. 처음 연결하기 (macOS)
+
+연결 경로는 세 가지입니다. 어느 경로든 토큰은 화면·대화·명령줄에 나오지 않고 Keychain 에만 들어갑니다.
+
+| 상황 | 하는 일 |
+|---|---|
+| 데스크톱 앱이 있다 | 앱에 로그인한 뒤 수집을 처음 켜면(동기화·예약) 앱이 이 PC 를 자동으로 연결합니다. 할 일이 없습니다 |
+| 대화에서 먼저 연결하고 싶다 | 대화에서 「PC 연결해 줘」라고 말합니다. 켜져 있는 앱이 토큰을 받아 `connect --token-stdin` 으로 넣습니다. 앱이 꺼져 있으면 켜기만 하면 됩니다 |
+| 앱 없이 키트만 쓴다(원격 셸 포함) | 아래 1~2단계 — 웹에서 토큰을 발급해 `connect` 로 넣습니다. 원격 셸이면 `--token-stdin` 으로 표준 입력에 넘깁니다 |
+
+앱 없이 브라우저 로그인만으로 연결하는 `connect --browser` 는 아직 없습니다(다음 묶음).
+
+토큰 만료가 30일 안으로 들어오면 `run-once` 가 업로드 뒤 스스로 새 토큰으로 바꿉니다(`POST /api/device/rotate`). 새 토큰은 Keychain 대기 자리(`upload-token-pending:<입력원 ID>`)에 먼저 두고, 새 토큰으로 서버 확인이 되면 본 자리로 옮깁니다. 옛 토큰은 서버에서 새 토큰이 처음 쓰일 때 무효가 됩니다. 그래서 응답이 끊겨도 옛 토큰으로 계속 보내고, 다음 실행이 다시 확인합니다. 90일 동안 업로드가 없던 장치는 서버가 교체를 거절합니다 — 만료 전에 위 경로로 다시 연결하세요. 다른 계정 토큰으로 `connect` 하면 이 PC 에서 옛 계정 토큰을 지웁니다.
 
 1. 웹에서 새 탐색을 수락한 계정으로 로그인 → 계정 메뉴 「연결 장치」 → 장치 이름을 적고 연결. 토큰은 **그 화면에서 한 번만** 보입니다. 대화·문서·메신저에 붙여 넣지 마세요.
 2. 키트 루트에서:
@@ -127,7 +139,7 @@ python3 -m agent [--home 경로] <명령>
 - **홈** = `--home` > 환경변수 `MYCRM_AGENT_HOME`(에이전트 전용 이름 — 서버의 `CRM_*` 환경변수와 다른 접두입니다) > OS 기본. macOS `~/Library/Application Support/my-crm-agent` · Windows `%APPDATA%\my-crm-agent` · 그 밖 `~/.local/share/my-crm-agent`. 제품 폴더(레포) 밖입니다.
 - 홈 안: `config.json`·`state.sqlite`(현재 사용자만 읽기·쓰기) · `raw/`(다른 사람 원문·원 URL — **PC 에만**) · `pending/`(검증된 서버 요청만) · `locks/` · `logs/`(예약 실행 출력) · `summary-work/`. 폴더는 현재 사용자만 열 수 있게 만듭니다.
 - `state.sqlite` = 수집 이벤트 ↔ 불투명 원본 ID·개정·원문 ID·사람 HMAC 대응표와 전송 상태.
-- Keychain: 서비스 `my-crm-agent`, 항목 `upload-token:<입력원 ID>`(업로드 토큰) · `hmac-key:<키 공간 ID>`(HMAC 키, 256비트). 평문 파일로 대신 저장하지 않습니다.
+- Keychain: 서비스 `my-crm-agent`, 항목 `upload-token:<입력원 ID>`(업로드 토큰) · `upload-token-pending:<입력원 ID>`(자동 교체로 받아 서버 확인 전인 새 토큰, 있을 때만) · `hmac-key:<키 공간 ID>`(HMAC 키, 256비트). 평문 파일로 대신 저장하지 않습니다.
 - **HMAC** = `HMAC-SHA256(PC 키, JCS(["person/1", 제공자 코드, 계정 식별자]))`. 표시 이름만으로 사람을 정하지 않고, 제공자가 다르면 같은 사람으로 합치지 않습니다. 키를 잃으면 서버의 HMAC 으로 원래 사람을 되살릴 수 없습니다. 여러 PC 에서 같은 사람을 유지하려면 같은 키와 대응표를 내가 안전하게 옮겨야 합니다.
 - **예약**: `~/Library/LaunchAgents/local.mycrm.agent.plist`(현재 사용자 LaunchAgent 하나, 1시간마다). plist·명령줄·환경변수에 토큰이 없습니다. 실행 폴더는 등록할 때의 키트 위치와 Python 으로 고정되므로, 키트를 옮기거나 Python 을 바꾸면 `schedule install` 을 다시 합니다. 설치 패키지의 실행 파일(frozen)로 등록하면 실행 폴더는 키트 위치 대신 그 실행 파일의 폴더입니다. PC 가 잠들거나 꺼져 있으면 돌지 않습니다.
 
@@ -225,13 +237,13 @@ python3 -m agent migrate receipt mp_0123456789abcdef01234567 --server https://cr
 python3 -m agent migrate logout  --server https://crm.example.invalid
 ```
 
-- **토큰**: 이관 전용(`mig_mt_…`, 발급 뒤 14일 만료)입니다. 연결 장치 토큰과 다릅니다. Keychain(Windows 는 Credential Manager)의 계정 `migration-token:<서버 호스트>` 에 둡니다. `logout` 은 로컬만 지웁니다. 서버 쪽 폐기는 웹에서 합니다.
+- **토큰**: 이관 전용(`mig_mt_…`, 발급 뒤 14일 만료)입니다. 연결 장치 토큰과 다릅니다. Keychain(Windows 는 Credential Manager)의 계정 `migration-token:<서버 호스트>` 에 둡니다. `logout` 은 로컬만 지웁니다. 서버 쪽 폐기는 웹에서 합니다. 새 이관 토큰을 받아도 앞 토큰은 새 토큰이 서버에서 처음 인증될 때 폐기됩니다(그 전까지는 앞 토큰도 유효). 데스크톱 앱이 대화 발급으로 받은 이관 토큰은 앱이 `migrate login --token-stdin` 으로 같은 자리에 넣습니다.
 - **입력**: 한 줄에 계약 항목 하나입니다. `original_id` 는 꼭 있어야 합니다. 권장 공식은 `'o_' + sha256(source_instance + '\n' + 원천 경로 + '\n' + anchor)[:32]` 입니다. 비어 있는 값은 이렇게 채웁니다: `source_instance` 는 `--source-instance` 값, `content_hash` 는 정규화한 본문(출처는 `source.name`)의 SHA-256, `source_revision` 은 `'v_' + sha256(JCS(항목 − source_revision))[:32]` 입니다. 정규화 규칙은 서버와 같은 벡터 파일(`server/contract/imports/vectors/board-migration-2-normalize.json`)로 묶여 있습니다.
 - **올리기 전에 로컬에서 거절하는 것**: JSON 규칙 위반(중복 키·실수·NaN), 사용자 필드(`owner`·`user_id` 등 8개), `original_id` 없음·형식 틀림·중복, 모르는 `unit_kind`, 적힌 `content_hash` 가 다시 계산한 값과 다름, 본문 64KB·줄 96KB·항목 200개·합계 2MB 초과. 이 경우 서버에 아무것도 보내지 않습니다. 그 밖의 계약 구조 오류는 서버가 업로드 때 `400 CONTRACT-INVALID <경로>: <규칙>` 으로 알려 줍니다. 검토 미완·URL 등 의미 거절은 seal 뒤 dry-run 의 `reject` 사유로 보입니다.
 - **업로드**: 청크는 256KB 이하입니다. 응답이 끊겨 `409 CHUNK-OFFSET` 이 오면 서버가 받은 항목 수(`detail.received`)부터 이어 보냅니다. seal 뒤 서버의 `plan_hash` 를 로컬 계산과 맞춰 봅니다. 다르면 종료 코드 1입니다 — 반영하지 말고 취소하세요.
 - **오류**: 서버 코드와 안내를 그대로 보여 줍니다. `429` 는 `retry-after` 초만 알려 주고 자동으로 다시 보내지 않습니다. 업로드 중 실패하면 plan 이 열린 채 남습니다(`status`·`cancel` 로 처리, 만든 뒤 3일이면 서버가 만료시킵니다).
 - **`receipt --verify`**: 다음을 대조합니다 — 항목별 `original_id`·`source_revision`·`content_hash`, 결과가 `applied`·`noop` 인 항목의 `stored_hash == content_hash`(휴지통·없음이면 불일치), 자료군별 개수, `receipt_hash`·`plan_hash` 재계산. 불일치는 seq·original_id·사유만 보여 줍니다. 종료 코드: 0 일치 · 1 불일치·오류 · 2 쓰는 법.
-- 출력에는 토큰과 본문을 쓰지 않습니다. 이 모듈(`agent/migrate.py`)은 설치 패키지에 들어 있지 않습니다. 키트 루트에서 `python3 -m agent` 로 돌립니다.
+- 출력에는 토큰과 본문을 쓰지 않습니다. 이 모듈(`agent/migrate.py`)은 설치 패키지 sidecar 에도 들어 있습니다(`packaging/agent-files.json`). 키트에서는 키트 루트에서 `python3 -m agent` 로 돌립니다.
 
 ### 대화(MCP)에서 반영하기 (서버 스위치 `CRM_MIGRATION_MCP_ENABLED`, 기본 꺼짐)
 
