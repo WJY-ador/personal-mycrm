@@ -7,12 +7,20 @@ const {pathToFileURL} = require('node:url');
 const {HOSTED,RELEASES,DASHBOARD,safeExternal,inAppAllowed,externalHttps,agentHome,checkUpdate} = require('./policy.cjs');
 const {Supervisor,diagnosticLog} = require('./supervisor.cjs');
 const {OutputTail,failureLine,hasLiveProcess} = require('./sidecar.cjs');
+const handoff = require('./handoff.cjs');
 let win,dash,tray,supervisor,log,prefs={},binary,home,settingsFile,quitting=false,ready=false;
 let busy=false,trayLive=null; const commands=new Set();
+// Login handoff: one pending login (verifier never leaves memory) and a deep link that arrived before the window existed.
+let pendingLogin=null,queuedLink=handoff.findLink(process.argv);
 const PAGE=pathToFileURL(path.join(__dirname,'index.html')).href;
+// macOS delivers mycrm:// via open-url, also when the link itself launches the app — register before 'ready'.
+app.on('will-finish-launching',()=>app.on('open-url',(event,url)=>{event.preventDefault();deepLink(url);}));
 if(!app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on('second-instance',()=>showDashboard());
+  // Windows (and Linux) hand the link to the running instance as an argument of the second launch.
+  app.on('second-instance',(_event,argv)=>{const link=handoff.findLink(argv);if(link)deepLink(link);else showDashboard();});
+  if(process.defaultApp&&process.argv.length>=2)app.setAsDefaultProtocolClient('mycrm',process.execPath,[path.resolve(process.argv[1])]);
+  else app.setAsDefaultProtocolClient('mycrm');
   app.whenReady().then(initialize).catch(()=> {dialog.showErrorBox('MyCRM','앱을 시작하지 못했어요. 다시 설치하거나 지원팀에 문의해 주세요.');app.exit(1);});
 }
 function preferences() {
@@ -35,9 +43,52 @@ function trayMenu(live){return Menu.buildFromTemplate([{label:'대시보드 열�
 function refreshTray(){if(!tray||tray.isDestroyed())return;const live=hasLiveProcess(supervisor?.snapshot());if(live===trayLive)return;trayLive=live;tray.setContextMenu(trayMenu(live));}
 function show(){if(win){win.show();win.focus();}}
 function showDashboard(){if(dash&&!dash.isDestroyed()){dash.show();dash.focus();}}
-// Links that leave the hosted app + login chain go to the system browser, https only.
+// Links that leave the hosted origin go to the system browser, https only.
 function leave(url){if(externalHttps(url))shell.openExternal(url).catch(()=>{});}
-function guard(event,url){if(inAppAllowed(url))return;event.preventDefault();leave(url);}
+// Order matters: a login start is taken over first; it is same-origin and would otherwise load in-app,
+// then redirect to AuthKit outside the allow list and start a browser login that never comes back.
+function guard(event,url){
+  if(handoff.isLoginNav(url,HOSTED)){event.preventDefault();startLogin();return;}
+  if(inAppAllowed(url))return;event.preventDefault();leave(url);
+}
+const NOTICES={
+  waiting:['브라우저에서 로그인해 주세요','기본 브라우저에서 로그인을 마치면 이 창으로 돌아와요.','브라우저 다시 열기'],
+  failed:['브라우저를 열지 못했어요','기본 브라우저를 확인한 뒤 다시 시도해 주세요.','다시 시도'],
+  expired:['로그인 시간이 지났어요','로그인을 10분 안에 마치지 못했어요. 다시 로그인해 주세요.','다시 로그인'],
+  none:['로그인을 이어 가지 못했어요','로그인을 시작한 뒤 앱이 다시 시작됐거나, 이미 처리한 응답이에요. 다시 로그인해 주세요.','다시 로그인'],
+  mismatch:['다른 로그인 응답이에요','이 앱에서 시작한 로그인이 아니라서 사용하지 않았어요. 다시 로그인해 주세요.','다시 로그인'],
+  invalid:['로그인 응답을 읽지 못했어요','주소 형식이 맞지 않아요. 다시 로그인해 주세요.','다시 로그인'],
+};
+// Fixed text only — never the link, code, state or verifier. The buttons are plain links the guard handles:
+// /login starts a new handoff, / returns to the hosted start page.
+function notice(kind){
+  if(!dash||dash.isDestroyed())return;
+  const [title,body,retry]=NOTICES[kind];
+  const html='<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'"><title>MyCRM</title>'
+    +'<style>body{margin:0;font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#1f2328;background:#f6f7f9;display:grid;place-items:center;min-height:100vh}'
+    +'main{max-width:420px;padding:32px;background:#fff;border:1px solid #e4e7eb;border-radius:12px;text-align:center}h1{font-size:20px;margin:0 0 8px}p{margin:0 0 20px;color:#57606a}'
+    +'a{display:inline-block;margin:0 6px;padding:8px 14px;border-radius:8px;text-decoration:none;border:1px solid #d0d7de;color:#1f2328}a.primary{background:#1f6feb;border-color:#1f6feb;color:#fff}</style></head>'
+    +`<body><main><h1>${title}</h1><p>${body}</p><a class="primary" href="${new URL('login',HOSTED).href}">${retry}</a><a href="${HOSTED}">처음 화면으로</a></main></body></html>`;
+  dash.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent(html)).catch(()=>{});
+}
+function startLogin(){
+  pendingLogin=handoff.begin();
+  log?.('login','started');
+  // HOSTED is the fixed production origin (or a loopback E2E server), so this is not routed through leave().
+  shell.openExternal(handoff.loginUrl(HOSTED,pendingLogin.challenge,pendingLogin.state)).then(()=>notice('waiting'),()=>{pendingLogin=null;notice('failed');});
+}
+function deepLink(raw){
+  if(!dash||dash.isDestroyed()){queuedLink=raw;return;}
+  showDashboard();app.focus({steal:true});
+  const parsed=handoff.parseCallback(raw),result=handoff.accept(pendingLogin,parsed);
+  if(result!=='ok'){
+    if(result==='expired')pendingLogin=null;
+    log?.('login','rejected-'+result);notice({expired:'expired',format:'invalid',none:'none',state:'mismatch'}[result]);return;
+  }
+  const {verifier}=pendingLogin;pendingLogin=null; // one-shot: cleared before the claim is sent, whatever its outcome
+  log?.('login','claim');
+  dash.loadURL(new URL('desktop/claim',HOSTED).href,{postData:[{type:'rawData',bytes:Buffer.from(handoff.claimBody(parsed.code,verifier,parsed.state))}],extraHeaders:'Content-Type: application/x-www-form-urlencoded'}).catch(()=>{});
+}
 function history(wc){return wc.navigationHistory||{canGoBack:()=>wc.canGoBack(),canGoForward:()=>wc.canGoForward(),goBack:()=>wc.goBack(),goForward:()=>wc.goForward()};}
 function dashNav(action){
   if(!dash||dash.isDestroyed())return;const wc=dash.webContents,h=history(wc);
@@ -52,12 +103,12 @@ function createDashboard(){
   dash=new BrowserWindow({width:1200,height:800,minWidth:720,minHeight:520,title:'MyCRM',backgroundColor:'#ffffff',webPreferences:{partition:'persist:dashboard',nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true}});
   const wc=dash.webContents;
   wc.session.setPermissionRequestHandler((_wc,_p,callback)=>callback(false));
-  wc.setWindowOpenHandler(({url})=>{if(inAppAllowed(url))wc.loadURL(url).catch(()=>{});else leave(url);return {action:'deny'};});
+  wc.setWindowOpenHandler(({url})=>{if(handoff.isLoginNav(url,HOSTED))startLogin();else if(inAppAllowed(url))wc.loadURL(url).catch(()=>{});else leave(url);return {action:'deny'};});
   wc.on('will-navigate',(e,url)=>guard(e,e.url||url));
   // Subframes (captcha, provider widgets) are not gated; only top-level navigation is.
   wc.on('will-redirect',(e,url,_inPlace,isMainFrame)=>{if(e.isMainFrame??isMainFrame)guard(e,e.url||url);});
   dash.on('close',event=>{if(!quitting){event.preventDefault();dash.hide();}});
-  dash.loadURL(DASHBOARD).catch(()=>{});
+  if(queuedLink){const link=queuedLink;queuedLink=null;deepLink(link);}else dash.loadURL(DASHBOARD).catch(()=>{});
 }
 async function external(url){if(!safeExternal(url))throw new Error('url');await shell.openExternal(url);}
 function command(args,input) {

@@ -2,7 +2,22 @@
 const path = require('node:path');
 const os = require('node:os');
 const https = require('node:https');
-const HOSTED = 'https://personal-mycrm.onrender.com/';
+const PRODUCTION = 'https://personal-mycrm.onrender.com/';
+// Local E2E only: a loopback server set at build time (-c.extraMetadata.mycrmDevHosted=http://127.0.0.1:8800/)
+// or, when running unpackaged (`electron .`), MYCRM_DEV_HOSTED. Release builds carry neither, so they use PRODUCTION.
+function hostedBase({pkg={}, env={}, defaultApp=false}={}) {
+  const raw = pkg.mycrmDevHosted || (defaultApp ? env.MYCRM_DEV_HOSTED : '');
+  if (!raw) return PRODUCTION;
+  try {
+    const u = new URL(raw);
+    if (!['http:','https:'].includes(u.protocol) || u.username || u.password) return PRODUCTION;
+    if (!['127.0.0.1','localhost','[::1]'].includes(u.hostname)) return PRODUCTION;
+    return u.origin + '/';
+  } catch { return PRODUCTION; }
+}
+let pkg = {};
+try { pkg = require('../package.json'); } catch {}
+const HOSTED = hostedBase({pkg, env: process.env, defaultApp: !!process.defaultApp});
 const RELEASES = 'https://github.com/WJY-ador/personal-mycrm/releases';
 function safeExternal(input) {
   try {
@@ -12,20 +27,9 @@ function safeExternal(input) {
       || (u.origin === 'https://github.com' && /^\/WJY-ador\/personal-mycrm\/releases(?:\/tag\/[A-Za-z0-9._-]+)?\/?$/.test(u.pathname) && !u.search && !u.hash);
   } catch { return false; }
 }
-// Dashboard window: only the hosted app and the login chain measured on 2026-11-02
-// (/login -> AuthKit -> api.workos.com -> provider -> back) load inside the app.
+// Dashboard window: only the hosted origin loads in-app. Login itself runs in the system browser
+// (see handoff.cjs), so no identity-provider host is allowed here; everything else https goes to the browser.
 const DASHBOARD = new URL('app', HOSTED).href;
-const IN_APP = new Map([
-  ['personal-mycrm.onrender.com', () => true],
-  ['wealthy-technology-63-staging.authkit.app', () => true],
-  ['api.workos.com', () => true],
-  ['accounts.google.com', () => true],
-  ['login.microsoftonline.com', () => true],
-  ['login.live.com', () => true],
-  ['appleid.apple.com', () => true],
-  // GitHub only for its login pages; any other github.com link opens in the browser.
-  ['github.com', p => /^\/(?:login(?:\/|$)|session(?:\/|$)|sessions\/)/.test(p)],
-]);
 function cleanHttps(input) {
   try {
     const u = new URL(input);
@@ -34,9 +38,10 @@ function cleanHttps(input) {
   } catch { return null; }
 }
 function inAppAllowed(input) {
-  const u = cleanHttps(input);
-  const rule = u && IN_APP.get(u.hostname);
-  return !!rule && rule(u.pathname);
+  try {
+    const u = new URL(input);
+    return !u.username && !u.password && u.origin === new URL(HOSTED).origin;
+  } catch { return false; }
 }
 function externalHttps(input) { return !!cleanHttps(input); }
 function newerVersion(remote, local) {
@@ -76,4 +81,4 @@ function checkUpdate(current) {
     req.on('error',reject);
   });
 }
-module.exports={HOSTED,RELEASES,DASHBOARD,safeExternal,inAppAllowed,externalHttps,newerVersion,agentHome,checkUpdate};
+module.exports={HOSTED,PRODUCTION,hostedBase,RELEASES,DASHBOARD,safeExternal,inAppAllowed,externalHttps,newerVersion,agentHome,checkUpdate};

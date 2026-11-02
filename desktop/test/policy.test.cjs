@@ -15,22 +15,31 @@ test('agent home remains outside install directory across upgrades',()=>{
  assert.equal(agentHome('win32',{APPDATA:'/user/appdata'},'/user'),path.win32.join('/user/appdata','my-crm-agent'));
  assert.equal(agentHome('darwin',{MYCRM_AGENT_HOME:'~/existing'},'/Users/test'),'/Users/test/existing');
 });
-const {inAppAllowed,externalHttps,DASHBOARD}=require('../src/policy.cjs');
-test('dashboard window keeps the hosted app and the measured login chain in-app',()=>{
+const {inAppAllowed,externalHttps,DASHBOARD,hostedBase,PRODUCTION}=require('../src/policy.cjs');
+test('dashboard window keeps only the hosted origin in-app',()=>{
  assert.equal(DASHBOARD,'https://personal-mycrm.onrender.com/app');
  for(const url of [DASHBOARD,'https://personal-mycrm.onrender.com/','https://personal-mycrm.onrender.com/login',
-  'https://wealthy-technology-63-staging.authkit.app/oauth2/authorize?client_id=client_x&redirect_uri=https%3A%2F%2Fpersonal-mycrm.onrender.com%2Fauth%2Fcallback&response_type=code',
-  'https://wealthy-technology-63-staging.authkit.app/?authorization_session_id=01M6D55XBV1KMKTC5RJNSBSDSG&state=s',
+  'https://personal-mycrm.onrender.com/desktop/claim','https://personal-mycrm.onrender.com/auth/callback?code=x&state=y'])assert(inAppAllowed(url),url);
+});
+test('identity providers are no longer in-app; login runs in the system browser',()=>{
+ for(const url of ['https://wealthy-technology-63-staging.authkit.app/oauth2/authorize?client_id=client_x',
   'https://api.workos.com/user_management/authorize?provider=GoogleOAuth&client_id=client_x',
   'https://accounts.google.com/o/oauth2/v2/auth?client_id=x','https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize',
   'https://login.live.com/oauth20_authorize.srf','https://appleid.apple.com/auth/authorize',
-  'https://github.com/login/oauth/authorize?client_id=x','https://github.com/login','https://github.com/session','https://github.com/sessions/two-factor',
-  'https://personal-mycrm.onrender.com/auth/callback?code=x&state=y'])assert(inAppAllowed(url),url);
+  'https://github.com/login/oauth/authorize?client_id=x','https://github.com/login','https://github.com/session'])assert(!inAppAllowed(url),url);
 });
 test('dashboard window refuses everything else in-app',()=>{
- for(const url of ['http://personal-mycrm.onrender.com/app','https://wealthy-technology-63-staging.authkit.app.evil.com/','https://evil.com/?r=https://api.workos.com/',
+ for(const url of ['http://personal-mycrm.onrender.com/app','https://personal-mycrm.onrender.com.evil.com/','https://evil.com/?r=https://personal-mycrm.onrender.com/',
   'https://user:secret@personal-mycrm.onrender.com/app','https://personal-mycrm.onrender.com:8443/app','javascript:alert(1)','file:///etc/passwd','not a url',
-  'https://github.com/WJY-ador/personal-mycrm','https://github.com/loginx','https://google.com/','https://mail.google.com/'])assert(!inAppAllowed(url),url);
+  'https://github.com/WJY-ador/personal-mycrm','https://google.com/','mycrm://auth/callback?code=x&state=y'])assert(!inAppAllowed(url),url);
+});
+test('release builds always use production; a dev server must be loopback',()=>{
+ assert.equal(hostedBase(),PRODUCTION);
+ assert.equal(hostedBase({env:{MYCRM_DEV_HOSTED:'http://127.0.0.1:8800'}}),PRODUCTION); // packaged: env ignored
+ assert.equal(hostedBase({env:{MYCRM_DEV_HOSTED:'http://127.0.0.1:8800'},defaultApp:true}),'http://127.0.0.1:8800/');
+ assert.equal(hostedBase({pkg:{mycrmDevHosted:'http://localhost:8800/x'}}),'http://localhost:8800/');
+ for(const raw of ['https://evil.com/','http://127.0.0.1.evil.com:8800/','http://u:p@127.0.0.1:8800/','file:///tmp/x','nope'])
+  assert.equal(hostedBase({pkg:{mycrmDevHosted:raw}}),PRODUCTION,raw);
 });
 test('links leaving the dashboard go to the system browser only over https',()=>{
  assert(externalHttps('https://example.com/a?b=1'));
