@@ -157,14 +157,14 @@ def switch_state(uid: str) -> dict:
     return {"enabled": switch_on("BOARD_MIGRATION_ENABLED"), "allowed": uid in allowed_users()}
 
 
-# 가안 X — 대화(MCP) 이관 스위치. CRM_MIGRATION_MCP_ENABLED == "1" 만 켜짐(기본 꺼짐). envnames.SWITCHES 밖이라 env 로 직접 읽는다.
+# 가안 X — 대화(MCP) 이관 스위치. CRM_MIGRATION_MCP_ENABLED == "1" 만 켜짐(기본 꺼짐, envnames.SWITCHES).
 MCP_SWITCH = "MIGRATION_MCP_ENABLED"
 MCP_DEFER_MSG = ("대화 반영에선 기준이 모두 미확정으로 들어갑니다. 웹에서 체크한 기준도 같습니다. "
                  "한 번에 확정까지 하려면 웹에서 반영하세요.")
 
 
 def mcp_on() -> bool:
-    return (env(MCP_SWITCH, "") or "") == "1"
+    return switch_on(MCP_SWITCH)
 
 
 def mcp_gate(uid: str):

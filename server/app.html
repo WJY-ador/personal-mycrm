@@ -3507,7 +3507,7 @@ window.addEventListener("hashchange", () => { const R = route(); if (!(R.tab ===
 // 웹 세션(쿠키)만. 읽기 = getJSON, 쓰기 = corePost(실패 응답 j 에 code·detail·resume_at 이 그대로 온다). 서버 값은 전부 esc(…) 로만 HTML 에 넣는다.
 // 이관 토큰 원문은 발급 응답을 받은 그 화면에서만 그린다(migToken) — S·localStorage·coreFlash·주소·콘솔에 넣지 않고, 다른 화면으로 가면 지운다.
 // 항목 본문(payload)은 사용자가 펼칠 때 하나씩 받아 그 화면에서만 그린다(콘솔·로그 0). 기준(principle_c·wd) 체크는 하나씩만 — 일괄 체크 없음.
-const MIG_STATE = {staged: ["st-wait", "올리는 중"], sealed: ["st-wait", "확인 대기"], applied: ["st-mine", "반영함"], cancelled: ["st-off", "취소함"], expired: ["st-off", "만료"]};
+const MIG_STATE = {staged: ["st-wait", "올리는 중"], sealed: ["st-wait", "확인 대기"], applied: ["st-mine", "반영함"], cancelled: ["st-off", "취소함"], expired: ["st-off", "만료"], reverted: ["st-off", "되돌림"]};
 const MIG_ACTIONS = ["insert", "noop", "warn", "conflict", "reject"];
 const MIG_ACT = {insert: "새로 넣기", noop: "이미 있음", warn: "중복 의심", conflict: "충돌", reject: "거절"};
 const MIG_RESULTS = ["applied", "noop", "skipped_unchecked", "skipped_warn", "skipped_conflict", "skipped_reject"];
@@ -3571,7 +3571,8 @@ function migPlanRow(p) {
   const meta = [`${esc(p.item_count)}항목`, `${esc(mdhm(p.created_at))} 올림`, open ? `${esc(mdhm(p.expires_at))} 만료` : "",
     p.applied_at ? `${esc(mdhm(p.applied_at))} 반영` : "", a ? esc(a) : ""].filter(Boolean).join(" · ");
   return `<li class="inrow"><a href="#_setup/migration/${esc(p.plan_id)}">${migChip(p.state)}<b>${esc(p.source_instance)}</b><span class="tech"><code>${esc(p.plan_id)}</code></span></a>
-    <span class="meta">${meta}${p.state === "applied" ? ` · <a href="#_setup/migration/${esc(p.plan_id)}">영수증 보기</a>` : ""}</span></li>`;
+    <span class="meta">${meta}${p.state === "applied" ? ` · <a href="#_setup/migration/${esc(p.plan_id)}">영수증 보기</a>` : ""}</span>
+    ${p.via === "mcp" ? `<span class="badge" data-mig-via="mcp">대화에서 반영됨</span>` : ""}</li>`;
 }
 function migListHtml(t, p) {
   const off = migOffNote(t);

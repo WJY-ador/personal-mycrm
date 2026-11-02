@@ -116,7 +116,7 @@ PLANS = {"plans": [{"plan_id": "mp_" + "1" * 24, "state": "sealed", "item_count"
                     "summary": {"dry_run": {"actions": {"insert": 5, "warn": 2, "reject": 1}}}},
                    {"plan_id": "mp_" + "2" * 24, "state": "applied", "item_count": 1, "source_instance": "pc-test-1",
                     "created_at": "2026-11-01T01:00:00+00:00", "expires_at": "2026-11-04T01:00:00+00:00", "applied_at": "2026-11-01T02:00:00+00:00",
-                    "summary": {"dry_run": {"actions": {"insert": 1}}}}],
+                    "via": "mcp", "summary": {"dry_run": {"actions": {"insert": 1}}}}],
          "enabled": True, "allowed": True,
          "limits": {"daily": 200, "used_today": 7, "plan_items": 200, "plan_days": 3, "staging_bytes": 2097152, "open_plans": 3}}
 H = "a" * 64
@@ -172,6 +172,7 @@ const e = {{textContent: ""}}; REPLY = {{ok: false, code: "MIGRATION-OFF", msg: 
               "새로 넣기 5 · 중복 의심 2 · 거절 1"):
         assert w in txt, w
     assert f'href="#_setup/migration/mp_{"1" * 24}"' in on
+    assert on.count('data-mig-via="mcp"') == 1 and txt.count("대화에서 반영됨") == 1, "via=mcp plan 만 「대화에서 반영됨」(가안 X)"
     assert o["ask"] and "이전 토큰은 폐기돼요" in o["ask"][0] and o["api"] == [{"url": "/api/migration-tokens", "body": {}}]
     assert o["done"][0]["text"] == "새 이관 토큰을 발급했어요. 지금 옮겨 두세요."
     w = o["withTok"]
