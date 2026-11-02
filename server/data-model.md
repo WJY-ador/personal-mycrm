@@ -1,4 +1,4 @@
-# 데이터 모델 (2026-10-18 확정 · 2026-11-02 이관 경로까지 정정)
+# 데이터 모델 (2026-10-18 확정 · 2026-11-02 이관 경로·이관 MCP(가안 X)까지 정정)
 
 전제: 사용자 AI 클라이언트 → MCP → 이 서버 → Postgres. 서버 모델 호출 0. 사용자 10~100명, 1인당 월 기록 10~30편 — 작아서 파티션·아카이브 없음. DDL은 `schema.sql`. `db.py` 는 psycopg(Postgres) 판이다(끝 절).
 
@@ -121,13 +121,19 @@ Governor limit 없음. M-D 깊이 최대 2(users→candidates→candidate_histor
 | 대상 | 내용 | 관계 |
 |---|---|---|
 | migration_tokens | 이관 전용 토큰(`mig_<id>.<secret>`, 비밀값은 SHA-256 만). 웹 세션에서만 발급, 14일, 사용자당 살아 있는 1개. 일반 연결 장치 토큰(import_streams)과 분리 | users M-D |
-| migration_plans | 상태 staged → sealed → applied · cancelled · expired(만든 뒤 3일). `plan_hash`(seal 때 고정) · `summary`(dry-run·영수증 개수) · 열린 plan 사용자당 3 | users M-D |
-| migration_plan_items | 받은 순 `seq` · original_id·source_revision·unit_kind·target_kind·`content_hash`·`item_sha256` · `payload`(받은 항목 JSON — 반영은 이것만 쓴다) · action(insert/noop/conflict/reject/warn)+사유 · 기준 `checked` · `result`·`target_id`(FK 없음) | migration_plans M-D |
+| migration_plans | 상태 staged → sealed → applied → reverted · cancelled · expired(만든 뒤 3일). `plan_hash`(seal 때 고정) · `summary`(dry-run·영수증 개수) · 열린 plan 사용자당 3 · `via`(반영 경로 web·mcp, 옛 행 NULL) · `reverted_at`(`ck_migration_plans_reverted`). `ck_migration_plans_applied` = applied·reverted 둘 다 applied_at | users M-D |
+| migration_plan_items | 받은 순 `seq` · original_id·source_revision·unit_kind·target_kind·`content_hash`·`item_sha256` · `payload`(받은 항목 JSON — 반영은 이것만 쓴다) · action(insert/noop/conflict/reject/warn)+사유 · 기준 `checked` · `result`·`target_id`(FK 없음) · `created`(반영이 대상을 새로 만들었나 — 되돌리기 판정, 옛 행 NULL) · `decision_deferred`(MCP 가 confirmed 기준을 pending 으로 낮춤) | migration_plans M-D |
 | records `date_kind` | 원본 날짜 종류 written·occurred·registered·heading(`ck_records_date_kind`). NULL = 라벨 없음(옛 행·이관 밖) | — |
+| import_entries `reverted` | MCP `migration_revert` 가 되돌린 이관 접수 — 최신·현재 표시 없음(직전 판에 돌려준다). 판 유일성은 reverted 를 뺀 부분 UNIQUE `ux_import_revision`(옛 표 UNIQUE 는 init_schema 가 정의로 찾아 교체) — 같은 판을 다시 stage 하면 새 행. 영구 삭제 정리 뒤에도 reverted 그대로 | — |
 
 ### 판단 로그
 - **사용자는 서버가 토큰으로 정한다.** 요청에 owner·user 류 필드가 오면 거절. 켜는 조건 = 스위치 `CRM_BOARD_MIGRATION_ENABLED=1` + allowlist `CRM_BOARD_MIGRATION_USERS`(user id, 기본 비어 있음) — 발급·토큰 사용·반영 때마다 본다.
-- **stage 는 토큰, 확인·체크·반영은 웹 세션만.** MCP 는 읽기 `migration_receipt_get` 하나(해시·개수). 반영은 stage 때 저장한 바이트만 쓴다(plan_hash 재계산 대조).
+- **stage 는 토큰, 확인·체크·반영은 웹 세션 — 대화(MCP) 반영은 가안 X(2026-11-02).** 반영은 stage 때 저장한 바이트만 쓴다(plan_hash 재계산 대조). 기준 체크·토큰 발급·폐기는 웹에만.
+- **대화(MCP) 이관 = 가안 X** (`notes/2026-11-02_mcp-facade-이관반영-구현계획.md` §5, 레포 밖). 코드 `migration_mcp.py` — facade 이관 family op 8개(R list·get·item_get·apply_preview·receipt_get / D apply·cancel·revert). 스위치 `CRM_MIGRATION_MCP_ENABLED`(기본 꺼짐)를 읽기 포함 전부가 기존 스위치·allowlist 위에 본다. 웹과 같은 `migration.plan_apply` 에 `via` 만 다르다.
+  - 규칙(MCP 경로만, 웹 불변): 기준(principle_c·wd)은 체크와 무관하게 전부 반입 · `decision=confirmed` → pending 으로 낮춤(`decision_deferred`, 확정은 `item_decide(confirm)` 하나씩. 투영 해시는 받은 값 그대로 — 같은 판을 뒤에 웹으로 올려도 noop) · `decision=excluded` → 반입 안 함(`skipped_reject`, reason `decision_excluded`) · 그 기준을 가리키는 항목 = CHECK-DEPENDENCY.
+  - 바인딩: `migration_apply(plan_id, plan_hash, expected_counts)` — `migration_apply_preview` 의 값과 정확히 같아야 시작(`APPLY-MISMATCH` + `detail{field, server}`). facade `decide_preview`·bind 면제(예외 1건).
+  - 되돌리기 `migration_revert`(MCP 전용, 웹 API·버튼 없음): 한 트랜잭션 · 반영 뒤 대상 변화(항목 이력·연결 · 기록 후보·연결·출처 정정 · 더 새 판)가 하나라도 있으면 전체 `REVERT-MODIFIED` + `detail.seqs` · `created=true` 대상만 휴지통(168h, 휴지통 꺼짐 = SWITCH-OFF) · 출처·갱신분 유지 · 접수 reverted · plan reverted · 두 번째 호출 noop · 일일 한도는 reverted 행도 센다(돌려주지 않음).
+  - 감사: 영수증 항목·최상위 `via`, `item_history.event_meta.via`(`migration_mode(via)`), `admin_audit` migration_apply detail.via·result reverted. `receipt_hash` 정의 불변.
 - **dry-run = 실제 반영을 savepoint 에서 되돌린 것.** seal 결과와 반영 때 재계산이 같은 코드라 갈라지지 않는다. 반영 때 action 이 seal 과 다르면 시작하지 않고(PLAN-STALE) 전부 롤백 — 재stage.
 - **출처는 신고값 그대로.** 이관 기록을 self/verbatim 으로 고정하지 않는다. 적격은 `_ELIGIBLE_SQL` 이 판정. 검토 미완·unknown·external·internal·file_mtime·URL/이메일/경로·해시 불일치는 seal 에서 reject. ai/mixed + self + verbatim 은 모순으로 reject(ai/mixed 는 verbatim 이 아닐 때만 받아 기존 SQL 로 비적격). `record_provenance_set` 은 `ingest_kind='board_migration'` 기록을 거절(PROVENANCE-MIGRATION-LOCKED) — 정정은 새 source_revision 재이관만.
 - **날짜(K6).** written·occurred 시각 = `source_created_at` + created. 날짜만이거나 registered·heading = `source_date` + `date_kind`, created = 받은 시각(자정을 만들지 않는다). file_mtime 거절. 쓰지 않은 신고 날짜는 `provenance_history`. 항목(items)엔 `date_kind` 열이 없어 `generation_meta` 에 둔다.
