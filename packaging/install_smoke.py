@@ -95,6 +95,31 @@ def wait_until(condition, seconds, interval=1.0):
         time.sleep(interval)
 
 
+# ---------------------------------------------------------------- SPIKE: node-pty
+
+def pty_selftest(executable, scratch, cli, require_spawn):
+    """SPIKE (node-pty packaging check): load node-pty inside the installed app and spawn <cli> --version in a pty."""
+    out = Path(scratch) / "pty-selftest.json"
+    env = dict(os.environ)
+    for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "ELECTRON_RUN_AS_NODE"):
+        env.pop(name, None)
+    env.update(MYCRM_PTY_SPIKE="1", MYCRM_PTY_SPIKE_OUT=str(out), MYCRM_PTY_SPIKE_CLI=str(cli),
+               MYCRM_AGENT_HOME=str(Path(scratch) / "pty-agent-home"))
+    code = subprocess.run([str(executable), "--user-data-dir=" + str(Path(scratch) / "pty-user-data")], env=env,
+                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                          timeout=120).returncode
+    if not out.is_file():
+        raise SmokeError("pty self-test wrote no result (app exit " + str(code) + ")")
+    result = json.loads(out.read_text(encoding="utf-8"))
+    print("pty self-test: app exit " + str(code) + ", " + redact(json.dumps(
+        {k: result.get(k) for k in ("loaded", "spawned", "exitCode", "firstLine", "napi", "electron",
+                                    "loadError", "spawnError")}, ensure_ascii=False, sort_keys=True)))
+    if not result.get("loaded"):
+        raise SmokeError("node-pty did not load in the installed app")
+    if require_spawn and not (result.get("spawned") and result.get("exitCode") == 0 and result.get("firstLine")):
+        raise SmokeError("node-pty loaded but the pty spawn did not return output")
+
+
 # ---------------------------------------------------------------- Windows
 
 def uninstall_entries(winreg):
@@ -162,6 +187,10 @@ def windows(installer, version):
             raise SmokeError("installed app executable missing")
         smoke(install_dir / "resources" / "agent" / "mycrm-agent.exe", version)
         print("installed sidecar: --desktop-info contract matches, --help and status exit 0")
+        # SPIKE: ConPTY — load is the gate; the spawn result is reported only.
+        with tempfile.TemporaryDirectory(prefix="pty-smoke-") as pty_scratch:
+            pty_selftest(install_dir / (PRODUCT + ".exe"), pty_scratch,
+                         Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "whoami.exe", False)
 
         state["uninstaller_exit"] = subprocess.run(command, timeout=300).returncode
         if state["uninstaller_exit"] != 0:
@@ -265,6 +294,8 @@ def mac(installer, version):
         smoke(app / "Contents" / "Resources" / "agent" / "mycrm-agent", version)
         print("installed sidecar: --desktop-info contract matches, --help and status exit 0")
         launch(app, scratch)
+        # SPIKE: hardened-runtime app must load node-pty and run spawn-helper.
+        pty_selftest(app / "Contents" / "MacOS" / PRODUCT, scratch, "/bin/echo", True)
 
 
 RUNNERS = {"win32": windows, "darwin": mac}

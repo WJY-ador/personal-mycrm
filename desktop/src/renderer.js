@@ -30,4 +30,6 @@ $('disconnect').onclick=()=>act(()=>window.mycrm.disconnect(),'연결을 해제�
 $('logs').onclick=()=>act(()=>window.mycrm.logs());
 $('update').onclick=async()=>{const result=await act(()=>window.mycrm.update());if(!result)return;latestDownload=result.url;$('download').hidden=false;$('update-state').textContent=result.state==='available'?'새 버전 '+result.version+'을 받을 수 있어요. 연결 장치를 중지하고 앱을 종료한 뒤 설치하세요.':result.state==='not-published'?'아직 게시된 안정 버전이 없습니다.':'최신 안정 버전을 사용하고 있어요.';};
 $('download').onclick=()=>act(()=>window.mycrm.download(latestDownload));
+// SPIKE: pty test button.
+$('pty-test').onclick=async()=>{try{const r=await window.mycrm.ptyStart();if(!r.ok){say(r.error);return;}const v=r.value;say(v.error?'pty 시험 실패: '+v.error:'pty 시험: '+v.firstLine+' (exit '+v.code+')');}catch{say('pty 시험: 통신 실패');}};
 window.mycrm.onStatus(state);refresh();
