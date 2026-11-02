@@ -3893,6 +3893,7 @@ async def run():
         await test_prb_app()
         await test_prb_privacy()
         test_bi_schema()
+        test_mig_path_schema()
         test_bi_contract()
         await test_bi_imports()
         await test_bi_aggregate()
@@ -6870,7 +6871,7 @@ def test_prb_oldcode():
     ref = os.environ.get("CRM_TEST_OLD_REF", "5704546")   # PR #21 최종 커밋(feat/admin-setup) — 브랜치가 지워져도 돈다
     assert not subprocess.run(["git", "-C", str(HERE), "rev-parse", "--verify", "-q", ref + "^{commit}"], capture_output=True).returncode, \
         f"24e 옛 코드 호환: 커밋 {ref} 이 없어요(얕은 clone 이면 fetch-depth 0)"
-    tables = ("users", "admin_audit", "ticket_history", "sources", "records") + PRB_TABLES
+    tables = ("users", "admin_audit", "ticket_history", "sources", "records") + PRB_TABLES + MIG_PATH_TABLES   # 이관 경로 새 표도 옛 init 에 불변
     name = f"prbold_{secrets.token_hex(3)}"
     create_schema(name)
     try:
@@ -7160,6 +7161,57 @@ def _bi_values(x):
     if isinstance(x, list):
         return [v for y in x for v in _bi_values(y)]
     return [x] if isinstance(x, str) else []
+
+
+MIG_PATH_TABLES = ("migration_tokens", "migration_plans", "migration_plan_items")   # 이관 경로(2026-11-02) 새 표
+
+
+def test_mig_path_schema():
+    """이관 경로(2026-11-02) 스키마 — 옛 DB(records.date_kind 없음 · 새 표 3개 없음 · admin_audit 에 migration_token 없음)
+    → init_schema 2회 = 새 DB 모양(열·이름 붙은 CHECK·인덱스·새 표) · 옛 행 date_kind NULL(추측 백필 없음) · CHECK 가 모르는 날짜 종류를 막는다
+    · 삭제 목록에 새 표(항목 → plan 순)."""
+    tables = ("records", "admin_audit") + MIG_PATH_TABLES
+    fresh, old = f"mpf_{secrets.token_hex(3)}", f"mpo_{secrets.token_hex(3)}"
+    create_schema(fresh)
+    create_schema(old)
+    try:
+        with schema_conn(fresh) as c:
+            db.init_schema(c)
+            c.commit()
+            want = _prb_shape(c, tables)
+        with schema_conn(old) as c:
+            db.init_schema(c)
+            c.execute("DROP TABLE migration_plan_items, migration_plans, migration_tokens")
+            c.execute("ALTER TABLE records DROP CONSTRAINT ck_records_date_kind, DROP COLUMN date_kind")
+            c.execute("ALTER TABLE admin_audit DROP CONSTRAINT admin_audit_action_check")
+            c.execute("ALTER TABLE admin_audit ADD CONSTRAINT admin_audit_action_check CHECK (action IN ('bootstrap','recover','role_grant',"
+                      "'role_revoke','web_signout','block','unblock','delete_notify','delete_run','delete_cancel','device_connect',"
+                      "'device_reissue','device_revoke','device_policy','migration_apply','migration_extend','migration_close'))")
+            c.execute("INSERT INTO users (id,email,display_name) VALUES ('u_mp','mp@x.test','옛')")
+            c.execute("INSERT INTO records (id,user_id,title,body) VALUES ('r_mp','u_mp','t','옛 기록')")
+            c.commit()
+            assert not db._has_col(c, "records", "date_kind") and not db._has_table(c, "migration_plans"), "옛 모양 재현"
+            db.init_schema(c)
+            c.commit()
+            first = _prb_shape(c, tables)
+            db.init_schema(c)
+            c.commit()
+            assert _prb_shape(c, tables) == first == want, "옛 DB 2회 = 새 DB 모양(date_kind·CHECK·새 표 3개·인덱스·감사 action)"
+            assert c.execute("SELECT date_kind FROM records WHERE id='r_mp'").fetchone()["date_kind"] is None, "옛 행 = NULL"
+            c.execute("UPDATE records SET date_kind='heading' WHERE id='r_mp'")
+            c.execute("INSERT INTO admin_audit (action) VALUES ('migration_token')")
+            c.rollback()
+            try:
+                c.execute("UPDATE records SET date_kind='file_mtime' WHERE id='r_mp'")
+                raise AssertionError("ck_records_date_kind 가 file_mtime 을 막지 않았다")
+            except psycopg.errors.CheckViolation:
+                c.rollback()
+    finally:
+        drop_schema(fresh)
+        drop_schema(old)
+    order = {t: i for i, t in enumerate(db.DELETE_TABLES)}
+    assert set(MIG_PATH_TABLES) <= set(order) and order["migration_plan_items"] < order["migration_plans"], "삭제 목록 = 항목 → plan"
+    print("OK — 이관 경로 스키마(옛 DB → init 2회 = 새 DB · date_kind 옛 행 NULL · CHECK · 새 표 3개 · 감사 migration_token · 삭제 목록) 통과")
 
 
 def test_bi_schema():
