@@ -31,9 +31,10 @@ class Connector {
     this.poller = {lastAt: -Infinity, backoffUntil: 0, inFlight: false};
     this.nextRotateAt = 0;
   }
-  // Renderer-safe view. No ids, no tokens. "Released" is shown only while this PC has no working connection.
+  // Renderer-safe view. No ids, no tokens. A release reported by the server is always shown (the local token is dead);
+  // a disconnect made in this app only while this PC has no connection (a pasted token reconnects it).
   view() {
-    const blocked = (this.record.revoked || this.record.released) && !this.connection().connected;
+    const blocked = this.record.revoked || (this.record.released && !this.connection().connected);
     return {session: this.session, revoked: blocked, registered: this.registered};
   }
   save(patch) { this.record = {...this.record, ...patch}; this.store.save(this.record); this.changed(); }

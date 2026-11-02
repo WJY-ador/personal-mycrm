@@ -2,7 +2,7 @@
 const $=id=>document.getElementById(id);let latestDownload=null;
 function say(text){$('message').textContent=text;}
 function state(s){
-  $('version').textContent='v'+s.version;$('connection').textContent=s.connection.connected?'연결됨':'연결 안 됨';
+  $('version').textContent='v'+s.version;$('connection').textContent=s.pc?.revoked?'해제됨':s.connection.connected?'연결됨':'연결 안 됨';
   $('expiry').textContent=s.connection.expires?'토큰 만료 '+s.connection.expires:'';
   $('allow-cli').checked=s.allowCli;$('auto-start').checked=s.autoStart;
   $('cli-state').textContent=s.connection.cliConfigured?' 실행 파일 지정됨':' 실행 파일을 지정해 주세요';

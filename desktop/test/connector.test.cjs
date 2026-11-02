@@ -185,6 +185,7 @@ test('session rotate 30 days before expiry; NOT-FOUND, DEVICE-REVOKED, NOT-OWNER
   await withServer(async s=>{
     const h=harness(s,{expires:'2026-11-20T00:00:00Z'});await h.c.poll();await h.lock(()=>h.c.autoConnect());
     s.inst[h.inst()].revoked=true;s.inst[h.inst()].device.active=false;h.next();assert.equal(await h.c.maybeRotate(),'DEVICE-REVOKED');
+    assert.equal(h.c.view().revoked,true,'server release is shown even with a local (dead) token');
     h.tick(2*g.ROTATE_RETRY_MS);assert.equal(await h.c.maybeRotate(),'idle');
   });
   await withServer(async s=>{
