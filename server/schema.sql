@@ -342,6 +342,11 @@ CREATE TABLE IF NOT EXISTS import_streams (
   final_manifest_sha256 bytea,
   created_at            timestamptz NOT NULL DEFAULT now(),
   revoked_at            timestamptz,                -- 장치 연결 해제(되살리지 않는다)
+  -- M2 대기 토큰(PC 연결 2026-11-02) — 교체·재발급의 새 토큰. 첫 사용 때 token_* 로 올라가고 옛 토큰은 그때 무효. 1개(다음 교체가 덮어씀).
+  -- UNIQUE 인덱스(ux_import_streams_pending)·CHECK(ck_import_streams_pending) 는 db._migrate_pc_connect 가 만든다(옛 DB 와 같은 길)
+  pending_token_id      text,
+  pending_secret_hash   bytea,
+  pending_expires_at    timestamptz,
   PRIMARY KEY (user_id, id),
   UNIQUE (token_id),
   CHECK (secret_hash IS NULL OR octet_length(secret_hash) = 32),
@@ -589,7 +594,8 @@ CREATE TABLE IF NOT EXISTS admin_audit (
   action     text NOT NULL CHECK (action IN ('bootstrap','recover','role_grant','role_revoke','web_signout','block','unblock',
                                          'delete_notify','delete_run','delete_cancel',
                                          'device_connect','device_reissue','device_revoke','device_policy',
-                                         'migration_apply','migration_extend','migration_close','migration_token')),   -- 삭제 CLI(PR B) 3종 · board 이전 7종 · 이관 토큰 1종(2026-11-02). 옛 DB 는 init_schema 가 넓힌다
+                                         'migration_apply','migration_extend','migration_close','migration_token',
+                                         'token_grant','token_grant_redeem','pc_forget','device_rotate')),   -- 삭제 CLI(PR B) 3종 · board 이전 7종 · 이관 토큰 1종 · PC 연결 4종(2026-11-02). 옛 DB 는 init_schema 가 넓힌다
   target_id  text,
   detail     jsonb NOT NULL DEFAULT '{}'
 );
@@ -895,7 +901,50 @@ CREATE TABLE IF NOT EXISTS desktop_handoffs (
   created_at  timestamptz NOT NULL DEFAULT now(),
   expires_at  timestamptz NOT NULL,
   used_at     timestamptz,
+  loopback    boolean NOT NULL DEFAULT false,   -- PC 연결(2026-11-02) — CLI --browser(RFC 8252 loopback) 코드. /desktop/cli/claim 만 받는다(앱 코드와 섞지 않는다)
   CHECK (expires_at > created_at)
 );
 CREATE INDEX IF NOT EXISTS ix_desktop_handoffs_exp ON desktop_handoffs (expires_at);
 CREATE INDEX IF NOT EXISTS ix_desktop_handoffs_user ON desktop_handoffs (user_id);
+
+-- PC 연결·토큰 대화 발급(2026-11-02 가안 2 「상주 앱 수령형」, notes/2026-11-02_pc-connect-구현계획.md §4). 옛 DB 도 이 CREATE … IF NOT EXISTS 가 만든다.
+-- 설치본 = 로그인한 데스크톱 앱 하나(앱이 userData 에 id 보관). IP·호스트 이름·경로는 저장하지 않는다 — 이름·OS·시각만.
+-- device_id = 이 PC 의 연결 장치(import_streams.id, FK 없음 — 계정 삭제 순서로 지운다). revoked_at = 대화(pc_forget)로 해제한 기록 —
+-- 자동 연결·교체가 해제된 PC 를 되살리지 않게 지킨다(대화 pc_connect 수령 때만 풀린다). last_seen_at = 마지막 폴링(지목 규칙 「최근 2분」).
+CREATE TABLE IF NOT EXISTS desktop_installations (
+  user_id       text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  id            text NOT NULL CHECK (id ~ '^di_[0-9a-f]{24}$'),
+  client_name   text NOT NULL CHECK (char_length(client_name) BETWEEN 1 AND 80 AND client_name = btrim(client_name)),
+  os            text NOT NULL CHECK (os IN ('darwin','win32','linux')),
+  device_id     text,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  last_login_at timestamptz NOT NULL DEFAULT now(),
+  last_seen_at  timestamptz NOT NULL DEFAULT now(),
+  revoked_at    timestamptz,
+  PRIMARY KEY (user_id, id),
+  UNIQUE (id)
+);
+CREATE INDEX IF NOT EXISTS ix_desktop_installations_seen ON desktop_installations (user_id, last_seen_at DESC);
+
+-- 토큰 grant = 대화가 「이 PC 로 토큰을 보내라」고 남긴 대기 표. 토큰 값·해시는 없다 — 토큰은 앱이 redeem 하는 그 요청 안에서 발급된다.
+-- scope device(장치 토큰) · migration(이관 토큰). waiting → delivered(redeem) | expired(10분) | cancelled(pc_forget). via = 만든 경로.
+-- delivered_to = 받은 장치·설치본 이름(감사·상태 표시용). 만료 정리 = imports.expire_pending 회차(30일 지난 행 삭제).
+CREATE TABLE IF NOT EXISTS token_grants (
+  user_id          text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  id               text NOT NULL CHECK (id ~ '^tg_[0-9a-f]{24}$'),
+  scope            text NOT NULL CHECK (scope IN ('device','migration')),
+  installation_id  text NOT NULL,
+  state            text NOT NULL DEFAULT 'waiting' CHECK (state IN ('waiting','delivered','expired','cancelled')),
+  via              text NOT NULL CHECK (via IN ('mcp')),
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  expires_at       timestamptz NOT NULL,
+  delivered_at     timestamptz,
+  delivered_to     text CHECK (delivered_to IS NULL OR char_length(delivered_to) BETWEEN 1 AND 80),
+  PRIMARY KEY (user_id, id),
+  UNIQUE (id),
+  FOREIGN KEY (user_id, installation_id) REFERENCES desktop_installations(user_id, id) ON DELETE CASCADE,
+  CHECK (expires_at > created_at),
+  CHECK ((state = 'delivered') = (delivered_at IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS ix_token_grants_inst ON token_grants (user_id, installation_id, state);
+CREATE INDEX IF NOT EXISTS ix_token_grants_created ON token_grants (user_id, created_at);

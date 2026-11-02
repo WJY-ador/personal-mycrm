@@ -192,21 +192,32 @@ def token_status(uid: str) -> dict:
     return {"tokens": [_tok_out(r) for r in rows], **switch_state(uid), "token_days": TOKEN_DAYS}
 
 
-def token_issue(uid: str, label: str = "이관 업로더") -> dict:
-    """웹 세션만 — 새 이관 토큰(14일). 살아 있는 앞 토큰은 폐기(사용자당 1개). 반환 {"token": "mig_<id>.<secret>"(이 응답에서 한 번만),
-    "info": 토큰}. 감사 migration_token."""
-    gate(uid)
+def active_count(c, uid: str) -> int:
+    """살아 있는(폐기·만료 아닌) 이관 토큰 수 — 새 토큰이 처음 쓰일 때 폐기될 수(M2). 대화 발급 미리보기 「기존 이관 토큰 N개」."""
+    return _one(c, "SELECT count(*) AS n FROM migration_tokens WHERE user_id=%s AND revoked_at IS NULL AND expires_at > now()", (uid,))["n"]
+
+
+def token_issue_in(c, uid: str, label: str = "이관 업로더", via: str = "web") -> dict:
+    """발급 본체(트랜잭션 c 안, 사용자 잠금은 호출하는 쪽). M2(PC 연결 2026-11-02) — 새 토큰은 대기 토큰: 한 번도 안 쓴 앞 토큰(앞의 대기 토큰)만
+    지금 폐기하고(덮어쓰기), 쓰던 토큰은 새 토큰이 처음 인증될 때(authenticate) 폐기된다. 반환 {"token", "info"}. 감사 migration_token."""
     label = db._label(label or "이관 업로더", "토큰 이름")
     tid = "mt_" + secrets.token_hex(8)
     secret = secrets.token_urlsafe(32)
+    c.execute("UPDATE migration_tokens SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL AND last_used_at IS NULL", (uid,))
+    c.execute("INSERT INTO migration_tokens (user_id,id,secret_hash,label,expires_at) VALUES (%s,%s,%s,%s,now() + make_interval(days => %s))",
+              (uid, tid, hashlib.sha256(secret.encode("ascii")).digest(), label, TOKEN_DAYS))
+    db._audit(c, "migration_token", uid, uid, {"token_id": tid, "via": via, "result": "issued"})
+    r = _one(c, f"SELECT {_TOK_COLS},(expires_at <= now()) AS expired FROM migration_tokens WHERE user_id=%s AND id=%s", (uid, tid))
+    return {"token": f"mig_{tid}.{secret}", "info": _tok_out(r)}
+
+
+def token_issue(uid: str, label: str = "이관 업로더") -> dict:
+    """웹 세션 — 새 이관 토큰(14일). 앞 토큰은 새 토큰을 처음 쓸 때 폐기(M2 — 사용자당 살아 있는 토큰은 결국 1개).
+    반환 {"token": "mig_<id>.<secret>"(이 응답에서 한 번만), "info": 토큰}. 감사 migration_token."""
+    gate(uid)
     with tx() as c:
         db._user_lock(c, uid)
-        c.execute("UPDATE migration_tokens SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL", (uid,))
-        c.execute("INSERT INTO migration_tokens (user_id,id,secret_hash,label,expires_at) VALUES (%s,%s,%s,%s,now() + make_interval(days => %s))",
-                  (uid, tid, hashlib.sha256(secret.encode("ascii")).digest(), label, TOKEN_DAYS))
-        db._audit(c, "migration_token", uid, uid, {"token_id": tid, "result": "issued"})
-        r = _one(c, f"SELECT {_TOK_COLS},(expires_at <= now()) AS expired FROM migration_tokens WHERE user_id=%s AND id=%s", (uid, tid))
-    return {"token": f"mig_{tid}.{secret}", "info": _tok_out(r)}
+        return token_issue_in(c, uid, label)
 
 
 def token_revoke(uid: str, token_id: str) -> dict:
@@ -249,8 +260,13 @@ def authenticate(authorization: str) -> dict:
     with tx() as c:   # 요청 속도 — 별도 트랜잭션(뒤에서 실패해도 센다). 카운터 표는 연결 장치와 같고 키는 토큰 id
         if imports._bump(c, tok["user_id"], tid, "minute", "request")["n"] > RATE_PER_MINUTE:
             raise _err("RATE-LIMIT", f"요청이 너무 잦아요(분당 {RATE_PER_MINUTE}회).", "1분 뒤 다시 보내세요.")
-    with tx() as c:
+    with tx() as c:   # M2 — 이 토큰의 첫 사용이면 그 사용자의 다른 살아 있는 이관 토큰을 폐기한다(새 토큰 첫 사용 때 앞 토큰 무효)
+        first = _one(c, "SELECT last_used_at IS NULL AS first FROM migration_tokens WHERE user_id=%s AND id=%s FOR UPDATE",
+                     (tok["user_id"], tid))
         c.execute("UPDATE migration_tokens SET last_used_at=now() WHERE user_id=%s AND id=%s", (tok["user_id"], tid))
+        if first and first["first"]:
+            c.execute("UPDATE migration_tokens SET revoked_at=now() WHERE user_id=%s AND id<>%s AND revoked_at IS NULL",
+                      (tok["user_id"], tid))
     return tok
 
 

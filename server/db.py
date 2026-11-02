@@ -506,6 +506,7 @@ def _init_schema(c):
         _migrate_board_import(c)   # board 이전(2026-10-20) — 열·이름 붙은 CHECK·부분 UNIQUE·item_links 대상 확장
         _migrate_stack(c)   # PR ②-b — jobs 새 열·definitions_version text·items 판 포인터·generation_kind 넓히기
         _migrate_trash(c)   # 휴지통 PR-1 — 5종 휴지통 열·CHECK·부분 인덱스 · 사람 표식 · 접수 deleted 상태
+        _migrate_pc_connect(c)   # PC 연결(2026-11-02) — import_streams M2 대기 토큰 열·CHECK·UNIQUE. 새 표 2개는 schema.sql
         _migrate_migration_path(c)   # 이관 경로(2026-11-02) — records.date_kind · 가안 X(plan reverted·via · 항목 created · 접수 reverted). 새 표 3개는 schema.sql
         _init_tmp(c)   # PR ②-a 임시 보관 — schema.sql 의 jobs 뒤(FK 대상). 위치는 current_schema() 로 정한다
         _migrate_classify_roles(c)
@@ -535,7 +536,7 @@ _WIDEN_CHECKS = (
     ("admin_audit", "admin_audit_action_check", "action",
      ("bootstrap", "recover", "role_grant", "role_revoke", "web_signout", "block", "unblock", "delete_notify", "delete_run", "delete_cancel",
       "device_connect", "device_reissue", "device_revoke", "device_policy", "migration_apply", "migration_extend", "migration_close",
-      "migration_token")),
+      "migration_token", "token_grant", "token_grant_redeem", "pc_forget", "device_rotate")),
     ("ticket_history", "ticket_history_kind_check", "kind", ("status", "reply", "note", "reclassify", "deleted")),
     ("field_defs", "field_defs_target_kind_check", "target_kind", ("item", "record", "candidate", "person", "source", "activity")))
 
@@ -721,6 +722,27 @@ def _migrate_migration_path(c):
     for r in c.execute("SELECT conname FROM pg_constraint WHERE conrelid = 'import_entries'::regclass AND contype = 'u' "
                        "AND pg_get_constraintdef(oid) = 'UNIQUE (user_id, stream_id, original_id, source_revision)'").fetchall():
         c.execute(f'ALTER TABLE import_entries DROP CONSTRAINT "{r["conname"]}"')
+
+
+_STREAM_PENDING_COLS = (("pending_token_id", "text"), ("pending_secret_hash", "bytea"), ("pending_expires_at", "timestamptz"))
+_STREAM_PENDING_CHECK = ("CHECK ((pending_token_id IS NULL AND pending_secret_hash IS NULL AND pending_expires_at IS NULL) OR "
+                         "(channel = 'device' AND pending_token_id IS NOT NULL AND octet_length(pending_secret_hash) = 32 "
+                         "AND pending_expires_at IS NOT NULL))")
+
+
+def _migrate_pc_connect(c):
+    """PC 연결(2026-11-02 가안 2) — import_streams 에 M2 대기 토큰 열 3개(옛 행 NULL = 대기 없음) + 이름 붙은 CHECK + 부분 UNIQUE
+    · desktop_handoffs.loopback(CLI --browser 코드 표식, 옛 행 false).
+    새 DB 도 같은 길(schema.sql 은 열만 만든다). 매번 돌아도 된다. desktop_installations·token_grants 표는 schema.sql 이 만든다."""
+    for n, ddl in _STREAM_PENDING_COLS:
+        if not _has_col(c, "import_streams", n):
+            c.execute(f"ALTER TABLE import_streams ADD COLUMN {n} {ddl}")
+    if not _has_constraint(c, "import_streams", "ck_import_streams_pending"):
+        c.execute(f"ALTER TABLE import_streams ADD CONSTRAINT ck_import_streams_pending {_STREAM_PENDING_CHECK}")
+    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_import_streams_pending ON import_streams (pending_token_id) "
+              "WHERE pending_token_id IS NOT NULL")
+    if not _has_col(c, "desktop_handoffs", "loopback"):   # CLI --browser 코드 표식(옛 행 = 앱 코드)
+        c.execute("ALTER TABLE desktop_handoffs ADD COLUMN loopback boolean NOT NULL DEFAULT false")
 
 
 def _widen_check(c, t, name, col, vals):
@@ -3062,7 +3084,9 @@ AUDIT_LIST = 100                    # /admin/setup 감사 로그 최근 건수
 ADMIN_ACTIONS = ("bootstrap", "recover", "role_grant", "role_revoke", "web_signout", "block", "unblock",
                  "delete_notify", "delete_run", "delete_cancel",   # 삭제 CLI 3종(PR B) — detail 은 ticket_id·result 만
                  "device_connect", "device_reissue", "device_revoke", "device_policy",   # board 이전: 장치 토큰(actor = 사용자 본인)
-                 "migration_apply", "migration_extend", "migration_close")              # board 이전 CLI — detail 은 열거 키·건수·해시 앞자리만
+                 "migration_apply", "migration_extend", "migration_close",              # board 이전 CLI — detail 은 열거 키·건수·해시 앞자리만
+                 "migration_token",                                                     # 이관 토큰 발급(2026-11-02)
+                 "token_grant", "token_grant_redeem", "pc_forget", "device_rotate")    # PC 연결(2026-11-02) — detail 은 id·scope·via·장치 이름만(토큰 값 없음)
 _iat_missing_logged = False
 
 
@@ -3203,21 +3227,22 @@ def desktop_handoffs_purge(c=None) -> int:
     return c.execute("DELETE FROM desktop_handoffs WHERE expires_at <= now()").rowcount
 
 
-def desktop_handoff_create(uid, code_hash: bytes, challenge: str, state: str, ttl: int = HANDOFF_TTL_SECONDS):
-    """넘김 코드 1건 저장(코드 해시·challenge·state·만료). 같은 트랜잭션에서 만료 행 정리."""
+def desktop_handoff_create(uid, code_hash: bytes, challenge: str, state: str, ttl: int = HANDOFF_TTL_SECONDS, loopback: bool = False):
+    """넘김 코드 1건 저장(코드 해시·challenge·state·만료·loopback). 같은 트랜잭션에서 만료 행 정리.
+    loopback = CLI --browser(PC 연결 2026-11-02) 코드 — /desktop/cli/claim 만 받고 /desktop/claim 은 받지 않는다(반대도)."""
     with tx() as c:
         desktop_handoffs_purge(c)
-        c.execute("INSERT INTO desktop_handoffs (code_hash, user_id, challenge, state, expires_at) "
-                  "VALUES (%s,%s,%s,%s, now() + make_interval(secs => %s))", (code_hash, uid, challenge, state, ttl))
+        c.execute("INSERT INTO desktop_handoffs (code_hash, user_id, challenge, state, expires_at, loopback) "
+                  "VALUES (%s,%s,%s,%s, now() + make_interval(secs => %s), %s)", (code_hash, uid, challenge, state, ttl, loopback))
 
 
-def desktop_handoff_claim(code_hash: bytes, challenge: str, state: str):
+def desktop_handoff_claim(code_hash: bytes, challenge: str, state: str, loopback: bool = False):
     """넘김 코드 교환 → (user_id, None) · 실패 (None, 사유). 사유 = unknown·used·expired·mismatch(값 없음 — 로그용 분류).
     미사용·미만료·challenge·state 일치를 UPDATE 한 문장 조건으로 보고 used_at 을 찍는다(원자적 — 동시 두 번째는 0행).
     틀린 challenge·state 는 코드를 태우지 않는다(사유만 돌려준다)."""
     with tx() as c:
         r = _one(c, "UPDATE desktop_handoffs SET used_at=now() WHERE code_hash=%s AND used_at IS NULL AND expires_at > now() "
-                    "AND challenge=%s AND state=%s RETURNING user_id", (code_hash, challenge, state))
+                    "AND challenge=%s AND state=%s AND loopback=%s RETURNING user_id", (code_hash, challenge, state, loopback))
         if r:
             return r["user_id"], None
         r = _one(c, "SELECT used_at IS NOT NULL AS used, expires_at <= now() AS gone FROM desktop_handoffs WHERE code_hash=%s", (code_hash,))
@@ -3244,7 +3269,7 @@ DELETE_NOTICE = ("7일 뒤 자료를 모두 지우고 계정을 닫습니다. �
 # tickets 는 보존 문의 1건을 빼고 지운다(ticket_history 는 cascade). 시험이 「이 목록 = schema 의 user_id 테이블 − 예외」를 정적으로 본다.
 # board 이전(2026-10-20): 관계(activity_links) → 접수 대응표(import_entries) → 업무 자료(activities) → 한도·입력원(import_counters·import_streams).
 # PR ②-b: 판·stage(items 자식, 확인 이벤트를 가리킨다) → 확인 이벤트 → items.
-DELETE_TABLES = ("desktop_handoffs", "page_layouts", "stack_sessions", "jobs", "item_links", "activity_links", "import_entries", "activities", "import_counters",
+DELETE_TABLES = ("token_grants", "desktop_installations", "desktop_handoffs", "page_layouts", "stack_sessions", "jobs", "item_links", "activity_links", "import_entries", "activities", "import_counters",
                  "import_streams", "migration_plan_items", "migration_plans", "migration_tokens", "item_stage", "item_versions", "confirm_events", "item_history", "items", "user_roles", "field_defs",
                  "object_defs", "std_choices", "std_marks",
                  "candidate_history", "candidates", "source_reflections", "records", "sources", "questions", "profile", "tabs",
