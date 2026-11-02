@@ -8,7 +8,7 @@
 
 호출하는 곳
   · web.py — 토큰 경로(Bearer mig_…): plan 만들기·항목 청크·seal·상태·영수증·취소 · 웹 세션 경로: 토큰 발급·폐기, plan 목록·상세·항목 전문·
-             기준 체크·[반영]·[취소]·영수증. 확인·반영·체크는 웹 세션에서만(토큰·MCP 불가).
+             기준 체크·[반영]·[취소]·영수증. 체크·토큰 발급은 웹 세션에서만(토큰·MCP 불가), 반영·취소는 MCP 도(가안 X).
   · migration_mcp.py — MCP 이관 op 8개(가안 X, notes/2026-11-02_mcp-facade-이관반영-구현계획.md §5). 스위치 CRM_MIGRATION_MCP_ENABLED 를
              더 본다. 웹과 같은 함수(plan_apply·plan_cancel·…)에 via="mcp" — 차이는 기준 규칙(_rules)·반영 바인딩(expected_counts)·revert 뿐.
   · main.py — MCP 읽기 migration_receipt_get(영수증 해시·개수 — 본문 없음, migration_mcp 경유)
@@ -52,7 +52,7 @@ ALLOW_ENV = "BOARD_MIGRATION_USERS"   # CRM_BOARD_MIGRATION_USERS = 쉼표로 �
 
 ITEM_UNITS = ("principle_c", "principle_wd", "application_axis", "decision_index", "craft", "open_question", "publication", "axis",
               "application_doc")
-PRINCIPLE_UNITS = ("principle_c", "principle_wd")   # 확인 화면에서 항목마다 체크해야 반영
+PRINCIPLE_UNITS = ("principle_c", "principle_wd")   # 웹: 확인 화면에서 항목마다 체크해야 반영 · MCP(가안 X): 체크 무관, 확정하지 않는다
 RECORD_UNITS = ("record", "journal")
 DEFERRED_UNITS = ("session_story",)   # K8 — 받되 첫 반영 대상 아님(seal 에서 reject unit_deferred)
 SOURCE_UNITS = ("source",)
@@ -720,7 +720,9 @@ def _apply_source(c, uid, it):
 
 def _apply_one(c, uid, st, plan, r, defs, by_oid, srcmap, lower=False):
     """항목 하나 반영(호출자 savepoint 안) → {"action": insert|noop, "target_id", "created"}. 실패 = CrmError(conflict·reject 로 분류된다).
-    lower = MCP 경로(가안 X) — decision=confirmed 기준을 pending 으로 낮춰 넣는다(투영 해시는 받은 값 그대로 — seal 과 같은 action)."""
+    lower = MCP 경로(가안 X) — decision=confirmed 기준의 결정을 반영하지 않는다(decide 를 부르지 않음 — 새 기준은 기본 pending 으로 남고,
+    이미 확정된 기준은 그대로: 묶음 반영이 판단 상태를 올리지도 내리지도 않는다). 투영 해시는 받은 값 그대로(seal 과 같은 action).
+    deferred = 반영 뒤 그 기준이 확정이 아니다(확정 표시가 미뤄졌다)."""
     it = r["payload"]
     if r["target_kind"] == "source":
         act, sid = _apply_source(c, uid, it)
@@ -752,7 +754,7 @@ def _apply_one(c, uid, st, plan, r, defs, by_oid, srcmap, lower=False):
            "source_id": sid, "history": hist, "generation_meta": gm}
     row = {"original_id": it["original_id"], "revision": it["source_revision"], "target_kind": tk, "unit_kind": it["unit_kind"],
            "object_id": oid, "code": it.get("code"), "title": it.get("title"), "body": it.get("body") or "", "fields": it.get("fields"),
-           "decision": "pending" if lower and it.get("decision") == "confirmed" else it.get("decision"),
+           "decision": None if lower else it.get("decision"),
            "references": it.get("references"), "attach": it.get("attach"), "expected_target_revision": it.get("expected_target_revision")}
     proj = {k: it.get(k) for k in _PROJ_KEYS}
     proj["object_id"] = oid
@@ -760,7 +762,10 @@ def _apply_one(c, uid, st, plan, r, defs, by_oid, srcmap, lower=False):
     out = imports.mig_apply_in(c, uid, st, row, pr, tk, sca, sdate, plan["id"], None, CONTRACT, bytes(r["item_sha256"]),
                                hashlib.sha256(imports.jcs(proj)).digest(), window=False, gate=False, ext=ext)
     fresh = out["state"] == "applied" and not out["duplicate"]
-    return {"action": "insert" if fresh else "noop", "target_id": out["target_id"], "created": bool(fresh and out.get("created"))}
+    res = {"action": "insert" if fresh else "noop", "target_id": out["target_id"], "created": bool(fresh and out.get("created"))}
+    if lower and fresh and tk == "item":
+        res["deferred"] = _one(c, "SELECT decision FROM items WHERE user_id=%s AND id=%s", (uid, out["target_id"]))["decision"] != "confirmed"
+    return res
 
 
 def _order(rows) -> tuple:
@@ -1000,7 +1005,7 @@ def receipt(uid: str, plan_id: str | None = None) -> dict:
                 created, via, decision_deferred}]}.
     receipt_hash = SHA-256(JCS(seq 순 [original_id, source_revision, content_hash, result, target_id])) — 가안 X 에서도 정의 불변.
     created = 이 반영이 대상을 새로 만들었나(되돌리면 휴지통 · 옛 반영은 null = 모름) · via = 반영 경로 web·mcp(옛 반영 null)
-    · decision_deferred = MCP 반영이 확정(confirmed) 기준을 미확정(pending)으로 낮춰 넣었다 · kept_on_revert = 되돌려도 남는 갱신 수
+    · decision_deferred = MCP 반영이 확정(confirmed) 표시 기준을 확정하지 않고 넣었다(반영 뒤 미확정) · kept_on_revert = 되돌려도 남는 갱신 수
     (이전 판은 항목 이력 restore) · reason = decision_excluded(MCP 가 반입하지 않은 제외 기준) 또는 seal 사유."""
     _sweep(uid)
     with tx() as c:
@@ -1037,7 +1042,7 @@ def _rules(rows, via):
     """반영 대상 규칙 → (include, skipped{seq: result}, reasons{seq: reason}, lower). sealed 의 insert·noop 만 반영 후보.
     · web(불변): 기준(principle_c·principle_wd) 중 체크 안 한 것 = skipped_unchecked. decision 은 받은 그대로(confirmed 면 확정까지).
     · mcp(가안 X §5): 체크 표식과 무관하게 기준 전부 반입 — decision=excluded 는 반입 안 함(skipped_reject, reason decision_excluded),
-      decision=confirmed 는 pending 으로 낮춰 넣는다(lower). 확정은 item_decide(confirm) 하나씩."""
+      decision=confirmed 는 결정을 반영하지 않는다(lower — 새 기준은 미확정, 이미 확정된 기준은 그대로). 확정은 item_decide(confirm) 하나씩."""
     live = {r["seq"] for r in rows if r["action"] in ("insert", "noop")}
     skipped, reasons, lower = {}, {}, set()
     for r in rows:
@@ -1146,7 +1151,7 @@ def plan_apply(uid: str, plan_id: str, plan_hash, *, via: str = "web", expected_
                 s = r["seq"]
                 if s in include:
                     res, tid, cr = ("applied" if sim[s]["action"] == "insert" else "noop"), sim[s]["target_id"], sim[s].get("created", False)
-                    dd, why = s in lower and sim[s]["action"] == "insert", r["reason"]
+                    dd, why = bool(sim[s].get("deferred")), r["reason"]
                 else:
                     res, tid, cr, dd, why = skipped.get(s) or _SKIP[r["action"]], None, None, False, reasons.get(s, r["reason"])
                 c.execute("UPDATE migration_plan_items SET result=%s, target_id=%s, created=%s, decision_deferred=%s, reason=%s, "
@@ -1173,6 +1178,11 @@ def apply_preview(uid: str, plan_id: str) -> dict:
         pl = _plan_lock(c, uid, plan_id)
         rows = _items(c, uid, plan_id)
         used = _used_today(c, uid)
+        firm = {x["original_id"] for x in _all(
+            c, "SELECT e.original_id FROM import_entries e JOIN import_streams s ON s.user_id=e.user_id AND s.id=e.stream_id "
+               "JOIN items i ON i.user_id=e.user_id AND i.id=e.target_item_id WHERE e.user_id=%s AND s.channel='board_migration' "
+               "AND e.is_current_applied AND i.decision='confirmed' AND e.original_id = ANY(%s)",
+            (uid, [r["original_id"] for r in rows if r["unit_kind"] in PRINCIPLE_UNITS]))}
     out = {"plan_id": pl["id"], "state": pl["state"], "plan_hash": bytes(pl["plan_hash"]).hex() if pl["plan_hash"] else None,
            "counts": _counts(rows, "action"), "remaining_today": max(0, DAILY_LIMIT - used), "message": MCP_DEFER_MSG}
     blocked = []
@@ -1186,7 +1196,7 @@ def apply_preview(uid: str, plan_id: str) -> dict:
         if n > out["remaining_today"]:
             blocked.append("RATE-LIMIT")
         out.update({"expected_counts": _predict(rows, include, skipped), "will_apply_rows": n,
-                    "decision_deferred": sum(1 for s in lower if rows[s]["action"] == "insert"),
+                    "decision_deferred": sum(1 for s in lower if rows[s]["action"] == "insert" and rows[s]["original_id"] not in firm),
                     "decision_excluded": sum(1 for v in reasons.values() if v == "decision_excluded")})
     elif pl["state"] == "applied":
         out.update({"expected_counts": _counts(rows, "result")["actions"], "will_apply_rows": 0, "already_applied": True,

@@ -6,7 +6,7 @@ CI: test_migration_path.py 가 끝에서 run(A, B) 를 부른다(같은 DB 단�
 · 옛 스키마 업그레이드(옛 plan·항목·접수 모양 → init_schema 두 번 = 최종형, 멱등)
 · 스위치 CRM_MIGRATION_MCP_ENABLED 꺼짐 = 읽기 포함 op 8개 전부 거절 · 기존 스위치·allowlist 도 본다
 · 웹 = MCP 결과 동일(기준 결정 없는 plan — 결과·created·개수·receipt_hash 모양 같음, via 만 다름)
-· MCP 규칙: confirmed → pending 낮춤(decision_deferred) · excluded 반입 안 함(skipped_reject, decision_excluded) · 제외 기준 의존 거절
+· MCP 규칙: confirmed 를 확정하지 않음(새 기준 미확정 = decision_deferred · 이미 확정된 기준은 그대로) · excluded 반입 안 함(skipped_reject, decision_excluded) · 제외 기준 의존 거절
 · APPLY-MISMATCH(plan_hash·expected_counts, detail{field, server}) · 두 번째 반영 noop · 감사 via(영수증·item_history.event_meta)
 · migration_revert a~e: 출처 유지 · 접수 reverted → 재stage insert · 변경 뒤 REVERT-MODIFIED(기준 확정·후보) · reverted·두 번째 noop·한도 안 되돌림
   · 새로 만든 대상만 휴지통, 갱신분 kept_updated · 휴지통 꺼짐 SWITCH-OFF · 웹 revert 경로 없음
@@ -204,6 +204,24 @@ def test_rules_binding(B):
     return rc
 
 
+def test_keep_confirmed(A):
+    """이미 확정된 기준의 새 판을 대화로 반영 = 갱신만(확정 유지, 강등·ACTION-RETIRED 없음). 휴지통 켜짐에서."""
+    v1 = T.principle(360, "이미 확정한 기준", decision="confirmed")
+    st = stage(A, [v1])
+    M.plan_check(A, st["plan_id"], [0], True)
+    tid = M.plan_apply(A, st["plan_id"], st["plan_hash"], via="web")["items"][0]["target_id"]
+    assert sql("SELECT decision FROM items WHERE id=%s", (tid,))[0]["decision"] == "confirmed", "웹 반영은 확정까지(불변)"
+    v2 = T.principle(360, "이미 확정한 기준", decision="confirmed", body="고친 본문")
+    st2 = stage(A, [v2])
+    pv = X.migration_apply_preview(A, st2["plan_id"])
+    assert pv["decision_deferred"] == 0 and pv["expected_counts"] == {"applied": 1}
+    x = X.migration_apply(A, st2["plan_id"], pv["plan_hash"], pv["expected_counts"])["items"][0]
+    assert (x["result"], x["target_id"], x["created"], x["decision_deferred"]) == ("applied", tid, False, False), x
+    it = sql("SELECT decision, body FROM items WHERE id=%s", (tid,))[0]
+    assert (it["decision"], it["body"]) == ("confirmed", "고친 본문"), it
+    ok("MCP 규칙: 이미 확정된 기준의 새 판 = 본문만 갱신, 확정 유지(강등 없음·decision_deferred 0)")
+
+
 # ── 되돌리기 ────────────────────────────────────────────
 
 def test_revert(B):
@@ -290,6 +308,7 @@ def run(A, B):
         test_web_equals_mcp(A, B)
         test_rules_binding(B)
         trash(True)
+        test_keep_confirmed(A)
         test_revert(B)
         test_no_web_revert()
     finally:
