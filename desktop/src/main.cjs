@@ -37,10 +37,9 @@ function connection() {
     const file=path.join(home,'config.json');
     if(fs.statSync(file).size>1024*1024) throw new Error('large');
     const c=JSON.parse(fs.readFileSync(file,'utf8'));
-    const connected=typeof c.source_instance_id==='string' && !!c.source_instance_id;
-    return {connected,cliConfigured:typeof c.summary?.cli_path==='string' && path.isAbsolute(c.summary.cli_path),expires:c.token_expires_at||null,
-      streamId:connected?c.source_instance_id:null,deviceLabel:typeof c.device_label==='string'?c.device_label:''};
-  } catch {return {connected:false,cliConfigured:false,expires:null,streamId:null,deviceLabel:''};}
+    return {connected:typeof c.source_instance_id==='string' && !!c.source_instance_id,cliConfigured:typeof c.summary?.cli_path==='string' && path.isAbsolute(c.summary.cli_path),expires:c.token_expires_at||null,
+      deviceLabel:typeof c.device_label==='string'?c.device_label:''};
+  } catch {return {connected:false,cliConfigured:false,expires:null,deviceLabel:''};}
 }
 function snapshot() {
   const {connected,cliConfigured,expires}=connection();
@@ -151,7 +150,8 @@ function request(method,url,body){
     req.on('response',res=>{
       const chunks=[];let size=0;
       res.on('data',chunk=>{size+=chunk.length;if(size>BODY_LIMIT){req.abort();finish({status:0,body:null});return;}chunks.push(chunk);});
-      res.on('end',()=>{let parsed=null;try{parsed=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{}finish({status:res.statusCode,body:parsed});});
+      res.on('end',()=>{let parsed=null;try{parsed=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{}
+        const ra=res.headers['retry-after'];finish({status:res.statusCode,body:parsed,retryAfter:Array.isArray(ra)?ra[0]:ra});});
       res.on('error',()=>finish({status:0,body:null}));
     });
     req.on('error',()=>finish({status:0,body:null}));
@@ -193,6 +193,8 @@ const FAILURES={
   busy:'다른 작업이 진행 중이에요. 잠시 뒤 다시 시도해 주세요.',
   login:'로그인이 필요해요. 이 창의 [로그인]을 눌러 브라우저에서 로그인한 뒤 다시 시도해 주세요.',
   revoked:'이 PC 연결이 해제됐어요 — 대화에서 다시 연결해 주세요.',
+  limit:'연결된 PC가 이미 5대예요. 쓰지 않는 PC를 대화나 웹에서 해제한 뒤 다시 시도해 주세요.',
+  name:'웹에서 표시 이름을 먼저 정한 뒤 다시 시도해 주세요.',
   failed:'이 PC를 자동으로 연결하지 못했어요. 잠시 뒤 다시 시도하거나 진단 로그를 확인해 주세요.',
   default:'작업을 완료하지 못했어요. 연결 상태와 진단 로그를 확인해 주세요.',
 };
@@ -237,7 +239,7 @@ async function initialize(){
     if(!ready||typeof token!=='string'||token.length<16||token.length>1024||/[\r\n\x00]/.test(token))throw new Error('token');
     await supervisor.stopAll();
     const {code,detail}=await command(['connect','--server',HOSTED,'--token-stdin'],token);
-    log('connect','completed',code);if(code===0)connector.save({revoked:false,recheck:false});return {code,detail};
+    log('connect','completed',code);if(code===0)connector.manualConnected();return {code,detail};
   }));
   register('choose-cli',()=>exclusively(async()=>{
     const result=await dialog.showOpenDialog(win,{title:'Claude CLI 실행 파일 선택',properties:['openFile']});
@@ -275,7 +277,7 @@ async function initialize(){
     return {code,detail};
   }));
   // A disconnect made here is a release: automatic connection does not bring this PC back; a conversation does.
-  register('disconnect',()=>exclusively(async()=>{await supervisor.stopAll();const {code,detail}=await command(['disconnect']);log('disconnect','completed',code);if(code===0)connector.save({revoked:true,recheck:false});return {code,detail};}));
+  register('disconnect',()=>exclusively(async()=>{await supervisor.stopAll();const {code,detail}=await command(['disconnect']);log('disconnect','completed',code);if(code===0)connector.released();return {code,detail};}));
   register('update',()=>checkUpdate(app.getVersion()));
   register('download',url=>external(url));
   app.on('activate',showDashboard);

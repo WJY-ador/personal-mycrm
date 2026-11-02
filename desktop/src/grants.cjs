@@ -9,8 +9,9 @@ const ROTATE_BEFORE_MS = 30 * 24 * 60 * 60 * 1000;   // rotate the device token 
 const ROTATE_RETRY_MS = 60 * 60 * 1000;              // a failed rotate is retried at most hourly
 const ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 const SCOPES = new Set(['device', 'migration']);
-const CODES = new Set(['NO-ACTIVE-APP', 'INSTALLATION-UNKNOWN', 'GRANT-EXPIRED', 'GRANT-USED', 'NOT-OWNER', 'DEVICE-REVOKED',
-  'MIGRATION-NOT-ALLOWED', 'NAME-REQUIRED', 'RATE-LIMIT']);
+// Server contract v1 (S3): error body {code, msg, action}; only the code is read.
+const CODES = new Set(['INSTALLATION-UNKNOWN', 'NOT-FOUND', 'GRANT-EXPIRED', 'GRANT-USED', 'NOT-OWNER', 'DEVICE-REVOKED', 'DEVICE-LIMIT',
+  'MIGRATION-NOT-ALLOWED', 'MIGRATION-OFF', 'NAME-REQUIRED', 'RATE-LIMIT', 'ORIGIN', 'DESKTOP-HEADER', 'ARG-INVALID', 'PAYLOAD-LIMIT']);
 const HEADERS = Object.freeze({'X-MyCRM-Desktop': '1', 'Accept': 'application/json', 'Content-Type': 'application/json'});
 
 function endpoint(hosted, kind, id) {
@@ -23,16 +24,28 @@ function endpoint(hosted, kind, id) {
     default: throw new Error('endpoint');
   }
 }
-// Error classification: 'NO-SESSION' (401, sign in again), a known server code, or 'FAILED'.
+// Error classification: 'NO-SESSION' (any 401: sign in again), a known server code, or 'FAILED'.
 // The server body is read only for its code; nothing else from it is kept.
 function errorCode(status, body) {
-  const raw = body && typeof body === 'object' ? (typeof body.error === 'string' ? body.error : body.error?.code ?? body.code) : null;
-  if (typeof raw === 'string' && CODES.has(raw)) return raw;
   if (status === 401) return 'NO-SESSION';
+  const raw = body && typeof body === 'object' ? body.code : null;
+  if (typeof raw === 'string' && CODES.has(raw)) return raw;
   if (status === 429) return 'RATE-LIMIT';
   return 'FAILED';
 }
 const validId = v => typeof v === 'string' && ID_RE.test(v);
+// Retry-After in seconds (429), at least the default backoff, at most 10 minutes.
+function backoffMs(retryAfter) {
+  const n = Number(retryAfter);
+  return Number.isFinite(n) && n > 0 ? Math.min(Math.max(n * 1000, RATE_BACKOFF_MS), 10 * 60 * 1000) : RATE_BACKOFF_MS;
+}
+// Installation as the server reports it (registration answer, or the "installation" part of a poll).
+// revoked: the PC or its device was released — automatic connection must not bring it back.
+function installationState(inst) {
+  if (!inst || typeof inst !== 'object') return null;
+  const device = inst.device && typeof inst.device === 'object' ? inst.device : null;
+  return {revoked: inst.revoked === true || (device !== null && device.active === false), hasDevice: !!device && device.active !== false};
+}
 function parseInstallation(body) {
   const id = body && typeof body === 'object' ? body.installation_id : null;
   return validId(id) ? id : null;
@@ -52,7 +65,7 @@ function parseIssued(body, expectScope) {
   if (!body || typeof body !== 'object') return null;
   const scope = body.scope ?? expectScope;
   if (!SCOPES.has(scope) || (expectScope && scope !== expectScope) || !validToken(body.token)) return null;
-  return {scope, token: body.token, accountLabel: clip(body.account_label, 80)};
+  return {scope, token: body.token, accountLabel: clip(body.account_label, 80), deviceLabel: clip(body.device_label, 80)};
 }
 function sidecarArgs(scope, hosted) {
   if (scope === 'device') return ['connect', '--server', hosted, '--token-stdin'];
@@ -70,9 +83,9 @@ function needsRotate(expiresAt, now) {
   const t = Date.parse(expiresAt);
   return Number.isFinite(t) && t - now <= ROTATE_BEFORE_MS;
 }
+// os is process.platform as the server expects it: darwin | win32 | linux.
 function clientInfo(hostname, platform) {
-  const os = {darwin: 'macos', win32: 'windows', linux: 'linux'}[platform] || 'other';
-  return {client_name: clip(hostname, 80) || 'MyCRM PC', os};
+  return {client_name: clip(hostname, 80) || 'MyCRM PC', os: ['darwin', 'win32', 'linux'].includes(platform) ? platform : 'linux'};
 }
 // Notification text: account and device names only, never a token or grant id.
 function deliveredNotice(scope, accountLabel, deviceLabel) {
@@ -83,15 +96,16 @@ function deliveredNotice(scope, accountLabel, deviceLabel) {
 }
 function failedNotice(scope) {
   return scope === 'migration'
-    ? {title: '이관 토큰을 저장하지 못했어요', body: '연결 장치 창에서 상태를 확인한 뒤 대화에서 다시 요청해 주세요.'}
+    ? {title: '이관 토큰을 저장하지 못했어요', body: '앱을 최신 버전으로 업데이트한 뒤 대화에서 다시 요청해 주세요.'}
     : {title: '이 PC를 연결하지 못했어요', body: '연결 장치 창에서 상태를 확인한 뒤 대화에서 다시 요청해 주세요.'};
 }
 // Saved installation record (userData). Anything malformed reads as "not registered".
 function parseRecord(raw) {
   try {
     const j = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    return {installationId: validId(j?.installationId) ? j.installationId : null, revoked: j?.revoked === true, recheck: j?.recheck === true};
-  } catch { return {installationId: null, revoked: false, recheck: false}; }
+    return {installationId: validId(j?.installationId) ? j.installationId : null, revoked: j?.revoked === true, released: j?.released === true,
+      forget: j?.forget === true};
+  } catch { return {installationId: null, revoked: false, released: false, forget: false}; }
 }
-module.exports = {POLL_MS, MIN_GAP_MS, RATE_BACKOFF_MS, ROTATE_BEFORE_MS, ROTATE_RETRY_MS, HEADERS, endpoint, errorCode, parseInstallation,
+module.exports = {POLL_MS, MIN_GAP_MS, RATE_BACKOFF_MS, ROTATE_BEFORE_MS, ROTATE_RETRY_MS, HEADERS, endpoint, errorCode, backoffMs, installationState, parseInstallation,
   parseGrants, parseIssued, validToken, sidecarArgs, shouldPoll, needsRotate, clientInfo, deliveredNotice, failedNotice, parseRecord, clip};

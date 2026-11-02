@@ -11,12 +11,24 @@ test('endpoints stay on the hosted origin and escape ids',()=>{
  assert.throws(()=>g.endpoint(HOSTED,'other'));
  assert.equal(g.HEADERS['X-MyCRM-Desktop'],'1');
 });
-test('error codes: server code wins, otherwise 401 means sign in and 429 means slow down',()=>{
- assert.equal(g.errorCode(403,{error:'NOT-OWNER'}),'NOT-OWNER');
- assert.equal(g.errorCode(409,{error:{code:'DEVICE-REVOKED',message:'x'}}),'DEVICE-REVOKED');
- assert.equal(g.errorCode(404,{code:'INSTALLATION-UNKNOWN'}),'INSTALLATION-UNKNOWN');
- assert.equal(g.errorCode(401,null),'NO-SESSION');assert.equal(g.errorCode(401,{error:'whatever'}),'NO-SESSION');
- assert.equal(g.errorCode(429,{}),'RATE-LIMIT');assert.equal(g.errorCode(500,'boom'),'FAILED');assert.equal(g.errorCode(400,{error:'SOMETHING-ELSE'}),'FAILED');
+test('error codes: any 401 means sign in, otherwise the {code} of the body, 429 means slow down',()=>{
+ assert.equal(g.errorCode(403,{code:'NOT-OWNER',msg:'m',action:'a'}),'NOT-OWNER');
+ assert.equal(g.errorCode(409,{code:'DEVICE-REVOKED'}),'DEVICE-REVOKED');assert.equal(g.errorCode(404,{code:'INSTALLATION-UNKNOWN'}),'INSTALLATION-UNKNOWN');
+ assert.equal(g.errorCode(404,{code:'NOT-FOUND'}),'NOT-FOUND');assert.equal(g.errorCode(409,{code:'DEVICE-LIMIT'}),'DEVICE-LIMIT');
+ assert.equal(g.errorCode(401,{code:'UNAUTHORIZED'}),'NO-SESSION');assert.equal(g.errorCode(401,null),'NO-SESSION');
+ assert.equal(g.errorCode(429,{}),'RATE-LIMIT');assert.equal(g.errorCode(500,'boom'),'FAILED');assert.equal(g.errorCode(400,{code:'SOMETHING-ELSE'}),'FAILED');
+ assert.equal(g.errorCode(403,{error:'NOT-OWNER'}),'FAILED');
+});
+test('rate-limit backoff follows Retry-After within one to ten minutes',()=>{
+ assert.equal(g.backoffMs(undefined),60000);assert.equal(g.backoffMs('5'),60000);assert.equal(g.backoffMs('120'),120000);
+ assert.equal(g.backoffMs('99999'),600000);assert.equal(g.backoffMs('soon'),60000);
+});
+test('installation state: released PC or released device counts as revoked',()=>{
+ assert.deepEqual(g.installationState({revoked:false,device:{device_id:'is_1',active:true}}),{revoked:false,hasDevice:true});
+ assert.deepEqual(g.installationState({revoked:true,device:null}),{revoked:true,hasDevice:false});
+ assert.deepEqual(g.installationState({revoked:false,device:{active:false}}),{revoked:true,hasDevice:false});
+ assert.deepEqual(g.installationState({revoked:false,device:null}),{revoked:false,hasDevice:false});
+ assert.equal(g.installationState(null),null);
 });
 test('installation id is accepted only in the expected shape',()=>{
  assert.equal(g.parseInstallation({installation_id:'in_ABC-123'}),'in_ABC-123');
@@ -30,8 +42,8 @@ test('grant list accepts an array or {grants}, drops malformed entries, keeps or
  assert.equal(g.parseGrants(Array.from({length:30},(_,i)=>({grant_id:'g'+i,scope:'device'}))).length,10);
 });
 test('issued token: scope must match, token shape is checked, label is clipped',()=>{
- assert.deepEqual(g.parseIssued({scope:'device',token:TOKEN,account_label:'나\n'},'device'),{scope:'device',token:TOKEN,accountLabel:'나'});
- assert.deepEqual(g.parseIssued({token:TOKEN},'device'),{scope:'device',token:TOKEN,accountLabel:''});
+ assert.deepEqual(g.parseIssued({scope:'device',token:TOKEN,account_label:'나\n',device_label:'Studio',device_id:'is_1'},'device'),{scope:'device',token:TOKEN,accountLabel:'나',deviceLabel:'Studio'});
+ assert.deepEqual(g.parseIssued({token:TOKEN},'device'),{scope:'device',token:TOKEN,accountLabel:'',deviceLabel:''});
  assert.equal(g.parseIssued({scope:'migration',token:TOKEN},'device'),null);
  for(const t of ['short','x'.repeat(1025),TOKEN+'\n',TOKEN+' x',TOKEN+'\x00',42,null])assert.equal(g.parseIssued({scope:'device',token:t},'device'),null,String(t));
  assert.equal(g.parseIssued(null,'device'),null);
@@ -60,19 +72,21 @@ test('rotate starts 30 days before expiry; unknown or bad dates never rotate',()
  assert.equal(g.needsRotate(new Date(now-day).toISOString(),now),true);
  for(const v of [null,'','not a date',42])assert.equal(g.needsRotate(v,now),false);
 });
-test('client info names the PC and OS only',()=>{
- assert.deepEqual(g.clientInfo('Studio.local','darwin'),{client_name:'Studio.local',os:'macos'});
- assert.deepEqual(g.clientInfo('','win32'),{client_name:'MyCRM PC',os:'windows'});
- assert.equal(g.clientInfo('a'.repeat(200),'linux').client_name.length,80);assert.equal(g.clientInfo('x','sunos').os,'other');
+test('client info names the PC and OS (process.platform) only',()=>{
+ assert.deepEqual(g.clientInfo('Studio.local','darwin'),{client_name:'Studio.local',os:'darwin'});
+ assert.deepEqual(g.clientInfo('','win32'),{client_name:'MyCRM PC',os:'win32'});
+ assert.equal(g.clientInfo('a'.repeat(200),'linux').client_name.length,80);assert.equal(g.clientInfo('x','sunos').os,'linux');
+ assert.equal(g.clientInfo('a\nb','darwin').client_name,'a b');
 });
 test('notices name the account and device, never a token',()=>{
  assert.deepEqual(g.deliveredNotice('device','나','Studio'),{title:'연결됐어요',body:'나 · Studio'});
  assert.deepEqual(g.deliveredNotice('device','',''),{title:'연결됐어요',body:'이 PC를 연결했어요'});
  assert.equal(g.deliveredNotice('migration','나','Studio').title,'이관 토큰을 받았어요');
- assert.match(g.failedNotice('device').title,/연결하지 못했어요/);assert.match(g.failedNotice('migration').title,/저장하지 못했어요/);
+ assert.match(g.failedNotice('device').title,/연결하지 못했어요/);
+ assert.deepEqual(g.failedNotice('migration'),{title:'이관 토큰을 저장하지 못했어요',body:'앱을 최신 버전으로 업데이트한 뒤 대화에서 다시 요청해 주세요.'});
 });
 test('saved record: malformed input reads as not registered',()=>{
- assert.deepEqual(g.parseRecord('{"installationId":"in_1","revoked":true}'),{installationId:'in_1',revoked:true,recheck:false});
- assert.deepEqual(g.parseRecord('nope'),{installationId:null,revoked:false,recheck:false});
- assert.deepEqual(g.parseRecord({installationId:'a b',revoked:'yes'}),{installationId:null,revoked:false,recheck:false});
+ assert.deepEqual(g.parseRecord('{"installationId":"di_1","revoked":true,"forget":true}'),{installationId:'di_1',revoked:true,released:false,forget:true});
+ assert.deepEqual(g.parseRecord('nope'),{installationId:null,revoked:false,released:false,forget:false});
+ assert.deepEqual(g.parseRecord({installationId:'a b',revoked:'yes'}),{installationId:null,revoked:false,released:false,forget:false});
 });

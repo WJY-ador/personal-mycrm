@@ -12,7 +12,15 @@ test('manual stop cancels restart backoff and sends graceful control without res
  s.start('jobs',['serve','--jobs']);const c=calls.at(-1).child;await s.stop('jobs');assert.equal(c.input,'{"command":"stop"}\n');assert.equal(s.snapshot().jobs.state,'stopped');
 });
 test('authentication/config errors never enter automatic restart loop',async()=>{
- for(const code of [0,1,3]){const {s,calls}=setup();s.start('jobs',['serve','--jobs']);calls[0].child.emit('close',code,null);await delay(25);assert.equal(calls.length,1);assert.equal(s.snapshot().jobs.state,code===3?'authentication-required':code===1?'failed':'stopped');}
+ for(const code of [0,1]){const {s,calls}=setup();s.start('jobs',['serve','--jobs']);calls[0].child.emit('close',code,null);await delay(25);assert.equal(calls.length,1);assert.equal(s.snapshot().jobs.state,code===1?'failed':'stopped');}
+});
+test('exit 3 (token replaced or refused) restarts once; a quick second exit 3 stops, a long run earns one more restart',async()=>{
+ let clock=0;const {s,calls}=setup({authRestartDelay:1,authWindow:1000,now:()=>clock});s.start('jobs',['serve','--jobs']);
+ calls[0].child.emit('close',3,null);assert.equal(s.snapshot().jobs.state,'retry-wait');await delay(10);assert.equal(calls.length,2);
+ clock+=10;calls[1].child.emit('close',3,null);await delay(10);assert.equal(calls.length,2);assert.equal(s.snapshot().jobs.state,'authentication-required');
+ s.start('jobs',['serve','--jobs']);assert.equal(calls.length,3);clock+=5000;calls[2].child.emit('close',3,null);await delay(10);assert.equal(calls.length,4);
+ clock+=5000;calls[3].child.emit('close',3,null);await delay(10);assert.equal(calls.length,5,'ran longer than the window: one more restart');
+ clock+=10;calls[4].child.emit('close',3,null);await delay(10);assert.equal(calls.length,5);await s.stopAll();
 });
 test('unexpected crashes have bounded recovery and app shutdown prevents new children',async()=>{
  const {s,calls}=setup({restartDelay:1});s.start('viewer',['serve']);

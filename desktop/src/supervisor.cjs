@@ -3,8 +3,8 @@ const cp = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 class Supervisor {
-  constructor({binary,home,spawn=cp.spawn,log=()=>{},changed=()=>{},restartDelay=30000,stopGrace=50000}) {
-    Object.assign(this,{binary,home,spawn,log,changed,restartDelay,stopGrace}); this.entries=new Map(); this.closing=false;
+  constructor({binary,home,spawn=cp.spawn,log=()=>{},changed=()=>{},restartDelay=30000,stopGrace=50000,authRestartDelay=2000,authWindow=600000,now=Date.now}) {
+    Object.assign(this,{binary,home,spawn,log,changed,restartDelay,stopGrace,authRestartDelay,authWindow,now}); this.entries=new Map(); this.closing=false;
   }
   snapshot() { return Object.fromEntries([...this.entries].map(([k,v])=>[k,{state:v.state,restarts:v.restarts,code:v.code ?? null}])); }
   start(name,args,{allowCli=false}={}) {
@@ -22,7 +22,7 @@ class Supervisor {
     let child;
     try { child=this.spawn(this.binary,['--home',this.home,...e.args],{env,shell:false,windowsHide:true,stdio:['pipe','pipe','pipe']}); }
     catch { e.state='failed';e.intent=false;this.log(name,'spawn-error');this.changed();return; }
-    e.child=child;e.state='running';this.log(name,'started');this.changed();
+    e.child=child;e.state='running';e.launchedAt=this.now();this.log(name,'started');this.changed();
     // Child output can contain source material. Consume it without persisting it.
     child.stdout?.on('data',()=>{});child.stderr?.on('data',()=>{});child.stdin?.on('error',()=>{});
     child.once('error',()=> {e.state='failed';e.intent=false;this.log(name,'spawn-error');this.changed();});
@@ -32,6 +32,11 @@ class Supervisor {
       if(e.intent && !this.closing && signal && e.restarts<3) {
         e.restarts++;e.state='retry-wait';
         e.timer=setTimeout(()=> {e.timer=null;this._launch(name,e);},this.restartDelay*e.restarts);
+      } else if(code===3 && e.intent && !this.closing && (!e.authRetried || this.now()-e.launchedAt>this.authWindow)) {
+        // Exit 3 = the token it holds was replaced (rotate) or refused. Start once more so it reads the current token;
+        // a second exit 3 soon after stops it (authentication-required), so a revoked token never loops.
+        e.authRetried=true;e.state='retry-wait';this.log(name,'auth-restart');
+        e.timer=setTimeout(()=> {e.timer=null;this._launch(name,e);},this.authRestartDelay);
       } else {e.intent=false; if(code && code!==0) e.state=code===3?'authentication-required':'failed';}
       this.changed();
     });
