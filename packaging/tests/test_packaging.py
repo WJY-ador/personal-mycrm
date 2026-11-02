@@ -46,7 +46,8 @@ class PackagingTests(unittest.TestCase):
                 for t in targets:
                     if (ROOT / t).is_dir():
                         t = t / "__init__"
-                    rel = str(t.with_suffix(".py")) if not str(t).endswith(".py") else str(t)
+                    # allowlist 는 `/` 기준 — Windows 의 `\` 경로와 대조가 어긋나지 않게 posix 로 맞춘다
+                    rel = (t if t.suffix == ".py" else t.with_suffix(".py")).as_posix()
                     if (ROOT / rel).exists() and rel not in allow:
                         missing.add(name + " -> " + rel)
         self.assertEqual(missing, set())
