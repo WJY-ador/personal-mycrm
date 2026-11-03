@@ -8,7 +8,7 @@ export const NOCARD: Record<string, string> = { confirmed: "아직 확정한 판
 export const ITEM_SAVED: Record<string, string> = { apply: "적용했어요.", confirm: "남겼어요.", exclude: "반영 안 함으로 표시했어요.", pending: "아직 안 정함으로 돌렸어요.",
   discard: "제안을 제외했어요." };
 export const HIST_LABEL: Record<string, string> = { apply: "적용", confirm: "남김", exclude: "반영 안 함", pending: "아직 안 정함", archive: "보관", restore: "되돌림" };
-export const CONFLICT_TEXT = "다른 곳에서 먼저 바뀌었어요. 새로 고침해 다시 봐 주세요.";
+export { CONFLICT_TEXT } from "../../shared/postErr";
 export const TAB = "structure";   // 옛 BASE.structure — 대조 경로·카드 주소의 탭 id
 
 export const defById = (S: AppState, id: string) => (S.definitions || []).find(d => d.id === id);

@@ -12,6 +12,9 @@ export function md(iso: string | null | undefined): string {
   return d ? `${d.getMonth() + 1}월 ${d.getDate()}일` : "";
 }
 
+// 날짜 칸(옛 dayParts) — 일·월(못 읽으면 빈 칸)
+export function dayParts(iso: string | null | undefined) { const d = toDate(iso); return d ? { d: String(d.getDate()), mo: d.getMonth() + 1 } : { d: "", mo: 0 }; }
+
 export const timeOf = (iso: string | null | undefined) => toDate(iso)?.getTime() || 0;
 
 // "YYYY-MM-DD"(날짜만) → 「10월 20일」(올해가 아니면 연도까지)

@@ -108,7 +108,8 @@ console.log(JSON.stringify([R("map"), R("map", "review", "q1"), R("today"), R("t
         self.assertNotIn('"코어"', src)
 
     def test_standard_confirmation_uses_material_type_terms(self):
-        self.assertNotIn('오브젝트', (UI / "features" / "defs" / "text.ts").read_text(encoding="utf-8").split("\n", 2)[2])
+        code = [l for l in (UI / "features" / "defs" / "text.ts").read_text(encoding="utf-8").splitlines() if not l.lstrip().startswith("//")]
+        self.assertTrue(code and not [l for l in code if '오브젝트' in l])
 
     def test_lock_accessible_names_use_standard_category(self):
         self.assertFalse('aria-label="기본"' in HTML)

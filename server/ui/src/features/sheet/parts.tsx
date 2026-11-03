@@ -1,5 +1,7 @@
 // 질문·기록 탭 조각(옛 sayLine·nextLine·firstRun·evLine·recRow) — 글자 그대로. 원문 열기 = 화면의 원문 대화창(open).
 import { useState } from "react";
+import { dayParts } from "../../shared/date";
+import { press } from "../../shared/press";
 import { rich } from "../../shared/rich";
 import { recLabel } from "../../shared/RecDialog";
 import type { AppState, Cand } from "../../shared/state";
@@ -36,21 +38,18 @@ export function FirstRun({ S }: { S: AppState }) {
 // 근거 한 줄 — 글 이름(원문 열기) · 인용(굵게)
 export function EvLine({ S, c, open }: { S: AppState; c: Cand; open: Open }) {
   return (
-    <div className="ev">근거 <a tabIndex={0} role="button" onClick={() => open(c.record_id, c.quote)} onKeyDown={key(() => open(c.record_id, c.quote))}>{recLabel(S, c.record_id)}</a>
+    <div className="ev">근거 <a {...press(() => open(c.record_id, c.quote))}>{recLabel(S, c.record_id)}</a>
       {" · "}<q><mark>{rich(c.quote)}</mark></q></div>
   );
 }
 
-export const key = (go: () => void) => (e: React.KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } };
-const dayParts = (iso: string | undefined) => { const d = new Date(iso || ""); return isNaN(d.getTime()) ? { d: "", mo: 0 } : { d: String(d.getDate()), mo: d.getMonth() + 1 }; };
 
 export function RecRow({ S, id, open }: { S: AppState; id: string; open: Open }) {
   const r = (S.journal || []).find(j => j.id === id), dp = dayParts(r?.created);
   const title = !r ? "찾을 수 없는 글" : r.broken ? "읽지 못한 글" : r.title;
   return (
-    <li><a tabIndex={0} role="button" onClick={() => open(id)} onKeyDown={key(() => open(id))}>
+    <li><a {...press(() => open(id))}>
       <div className="d">{dp.d}<small>{dp.mo ? dp.mo + "월" : ""}</small></div>
       <div><div className="t">{title}</div><div className="s">{r?.excerpt || ""}</div></div></a></li>
   );
 }
-export { dayParts };
