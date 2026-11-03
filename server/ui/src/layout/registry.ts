@@ -15,6 +15,8 @@ import { TodayScreen } from "../features/today/TodayScreen";
 import { LayoutScreen } from "../features/me/layout/LayoutScreen";
 import { NameGate } from "../features/name/NameGate";
 import { NameDialog } from "../features/name/NameDialog";
+import { DeskDialog } from "../features/desk/DeskDialog";
+import { HelpScreen } from "../features/desk/HelpScreen";
 import type { Blocks } from "../features/me/summary/block";
 import { Heatmap } from "../features/me/summary/Heatmap";
 import { Kinds } from "../features/me/summary/Kinds";
@@ -36,6 +38,8 @@ export const SCREENS: Record<string, ComponentType<ScreenProps>> = {
   chat: ChatRoot,   // 상시 섬(#ui-chat) — #view 화면이 아니다
   name: NameGate,         // 이름 관문(표시 이름 없을 때 #view)
   namedlg: NameDialog,    // 상시 섬(#ui-namedlg) — 「표시 이름 바꾸기」 대화창
+  desk: DeskDialog,       // 상시 섬(#ui-desk, 관리자 응답엔 자리 없음) — 문의 보내기·내 문의
+  help: HelpScreen,       // 설정 「문의 및 개인정보」
   me: (p: ScreenProps) => createElement(MeScreen, { ...p, blocks: BLOCKS, layoutDefault: reg.pages.me.default }),
   layout: (p: ScreenProps) => createElement(LayoutScreen, { ...p, def: reg.pages.me.default, blockLabel: BLOCK_LABEL }),   // Setup 페이지 레이아웃
 };

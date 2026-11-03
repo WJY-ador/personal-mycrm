@@ -354,30 +354,13 @@ def test_static_moved():
     assert len(web.inline_script_hashes(html)) == 1 and html.count("<script>") == 1, "인라인 스크립트 1개"
     assert not re.search(r"\son[a-z]+\s*=", html, re.I), "app.html 인라인 이벤트 속성 0"
 
-    # A1 문의 데스크 — 문의 구간의 모든 보간은 esc(…) · innerHTML 우변은 템플릿 하나(이어 붙이기 없음) · 다른 HTML 삽입 API 없음
-    blk = html[html.index("// ── 문의 데스크 (desk-0) ──"):html.index("// ── /문의 데스크 ──")]
-    assert blk.count("${") == blk.count("${esc(") >= 4, re.findall(r"\$\{(?!esc\()[^}]*", blk)
-    for bad in ("insertAdjacentHTML", "outerHTML", "document.write", "DOMParser", "createContextualFragment"):
-        assert bad not in blk, bad
-    sites = list(re.finditer(r"\.innerHTML\s*=\s*", blk))
-    assert sites, "행은 innerHTML 템플릿으로 만든다"
-    for m in sites:
-        rest = blk[m.end():]
-        assert rest.startswith("`"), rest[:60]
-        end = rest.index("`", 1)
-        assert rest[end + 1:].lstrip().startswith(";"), rest[end:end + 40]
-    i = html.index('<dialog id="desk-dlg"')   # Q1b: 문의 폼·목록은 계정 메뉴에서 여는 대화창
-    sec = html[i:html.index("</dialog>", i)]
-    assert "${" not in sec and db.NOTICE in sec and 'href="/privacy"' in sec, "정적 대화창 — 고지 문장·처리방침 링크"
-    for w in ('value="bug"', 'value="request"', 'value="question"', 'value="privacy"', "개인정보 요청", "내 문의", "4096"):
-        assert w in sec, w
-    assert 'ticketStatus: {open: "접수", ack: "확인", doing: "처리중", done: "완료", wontfix: "보류"}' in html
-    assert "const DESK_MAX = 4096;" in html and db.LIMIT_TICKET == 4096
-    # 내 문의(P5): 상세는 본인 API 하나 · 글·답변은 esc · 이력은 textContent · 관리자 문의함·띠·옛 API 흔적 0
-    for w in ('fetch("/api/feedback/" + encodeURIComponent(id)', "${esc(j.text)}", "${esc(j.reply || ", "li.textContent = ",
-              "${esc(t.has_reply ? ", "${esc(md(t.public_updated)"):
-        assert w in blk, w
-    assert "${t." not in blk and "${j." not in blk
+    # A1 문의 데스크 = React(features/desk, R5b-2a) — 사용자 글은 글자로만(innerHTML·dangerouslySetInnerHTML 0 = arch.test.ts) · 화면 동작은 Vitest Desk.test.tsx.
+    # 옛 쪽 = 대화창 섬 자리(사용자 구간 안 — 관리자 응답엔 없음)와 여는 접점(deskDlg)만. 서버 정본 값(고지 문장·바이트 상한)은 TS 문구와 같아야 한다
+    assert '<!--user--><div id="ui-desk"></div><!--/user-->' in html and "desk-dlg" not in html and "desk-form" not in html
+    dtext = (HERE / "ui" / "src" / "features" / "desk" / "text.ts").read_text(encoding="utf-8")
+    assert f'DESK_NOTICE = "{db.NOTICE}";' in dtext and f"DESK_MAX = {db.LIMIT_TICKET};" in dtext and db.LIMIT_TICKET == 4096
+    assert 'TICKET_STATUS: Record<string, string> = { open: "접수", ack: "확인", doing: "처리중", done: "완료", wontfix: "보류" };' in dtext
+    assert '"/api/feedback"' in (HERE / "ui" / "src" / "features" / "desk" / "deskApi.ts").read_text(encoding="utf-8") and "/api/feedback" not in html
     for gone in ("admin-band", "deskBand", "deskAdmin", "/api/feedback/status", "/api/feedback/note", "admin_tickets", "admin_note",
                  "desk-admin", "DESK_NOTE_MAX", "j.admin"):
         assert gone not in html, ("app.html 에 관리자 문의함 흔적", gone)
@@ -396,8 +379,7 @@ def test_static_moved():
         assert w not in menu, w
     assert 'id="setup-link"' not in menu and 'id="setup-link"' in html, "⚙ 는 메뉴 밖에 그대로"
     assert re.search(r"#who \{[^}]*text-overflow: ellipsis[^}]*\}", html) and re.search(r"#who \{[^}]*min-width: 0", html), "#who 말줄임"
-    for w in ('fetch(url, {method: "POST"', '"/api/optional-consent", {kind: "struct_names"',
-              '[name="kind"][value="privacy"]', '$("desk-dlg").showModal()'):
+    for w in ('fetch(url, {method: "POST"', '"/api/optional-consent", {kind: "struct_names"', "deskDlg(act);", "else deskDlg(op.dataset.open);"):
         assert w in html, w
     for w in ("/api/desk-visibility", "desk_hidden", "deskPeek", 'id="desk"'):   # Q1b: 화면은 숨김 상태를 안 쓴다
         assert w not in html, w
@@ -457,7 +439,7 @@ def test_static_moved():
     for w in ('if (needName()) {', 'return uiMount("name");', 'uiIsland("namedlg", $("ui-namedlg"), dlgCtx("open"))',
               'id: "_me"', 'id: "_obj"', 'id: "_settings"',
               "const tabsList = () => [NAVTAB._me, NAVTAB._today];",   # PR ①-b 탭: 나 · 오늘 · Setup(톱니)
-              'if (R.tab === "_settings") return "#_setup/structure";', "function axisChips", "삭제 완료"):
+              'if (R.tab === "_settings") return "#_setup/structure";', "function axisChips"):   # 문의 공개 이력 「삭제 완료」 = React(features/desk — Vitest Desk.test.tsx)
         assert w in html, w
     # 사람·읽고 든 생각 쓰기·안내 문구 = React 자료 종류(R4-2 — features/objects, 화면 동작은 Vitest ObjectsScreen.test.tsx)
     objs = HERE / "ui" / "src" / "features" / "objects"
@@ -514,9 +496,14 @@ async def test_ui_samples():
     db.record_attach(uid, rec["id"], axes=[a["item_id"]])
     db.person_save(uid, "견본 사람")
     db.source_reflection_save(uid, src["id"], "summary", "견본 생각")
+    tk = db.ticket_add(uid, "bug", "견본 문의", "web")["id"]   # 문의(React features/desk) — 공개 상태 이력 1 + 답변
+    with db.tx() as c:   # SQL 로 — 상태·답변 쓰기는 관리자 함수(운영 경계)라 견본 사용자로는 못 부른다
+        c.execute("UPDATE tickets SET status='doing', reply='견본 답변', reply_at=now(), public_updated=now(), updated=now() WHERE id=%s", (tk,))
+        db._ticket_event(c, tk, uid, "public", "status", "open", "doing")
     ui = HERE / "ui" / "src"
     st_sample = json.loads((ui / "shared" / "state.sample.json").read_text(encoding="utf-8"))
     me_sample = json.loads((ui / "features" / "me" / "me.sample.json").read_text(encoding="utf-8"))
+    desk_sample = json.loads((ui / "features" / "desk" / "desk.sample.json").read_text(encoding="utf-8"))
     try:
         site.dev, site.dev_user = True, SAMPLE
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url=PUBLIC) as h:
@@ -525,6 +512,7 @@ async def test_ui_samples():
                    "journal": (await h.get("/api/journal", params={"id": rec["id"]})).json(),
                    "preview": (await h.post(f"/api/records/{rec['id']}/body/preview", headers={"origin": PUBLIC},
                                             json={"expected_revision": 1, "body": "견본 본문 입력 담당을 먼저 정했다. 덧붙임"})).json()}   # 판단과 겹치지 않는 자리(연결 걸린 겹침 = 잠금)
+            desk = {"list": (await h.get("/api/feedback")).json(), "one": (await h.get(f"/api/feedback/{tk}")).json()}
     finally:
         site.dev, site.dev_user = real
     for k in ("journal", "questions", "candidates", "items", "definitions", "record_links", "people", "reflections", "sources"):
@@ -537,7 +525,11 @@ async def test_ui_samples():
         bad = _cmp(me_sample[k], got[k], k, exact=True)
         assert not bad, (bad, "me.sample.json·features/me/meApi.ts 의 타입을 같이 고친다")
     assert got["journal"]["revision"] == 1 and got["journal"]["author_kind"] == "self", "수기 수정 — 저장 expected_revision · 남이 쓴 글 판정"
-    print("OK — API 견본 대조(state ⊆ 실제 · stats·layout·journal 키·값 타입 = me.sample.json · journal revision·author_kind) 통과")
+    assert desk["one"]["history"] and desk["one"]["reply"], desk["one"]
+    for k in ("list", "one"):
+        bad = _cmp(desk_sample[k], desk[k], "desk." + k, exact=True)
+        assert not bad, (bad, "desk.sample.json·features/desk/deskApi.ts 의 타입을 같이 고친다")
+    print("OK — API 견본 대조(state ⊆ 실제 · stats·layout·journal 키·값 타입 = me.sample.json · journal revision·author_kind · 문의 목록·상세 = desk.sample.json) 통과")
 
 
 async def run():

@@ -340,33 +340,6 @@ dialog .dh b { font-size: 1rem; }
 dialog .db { padding: .9rem 1.2rem; max-height: 72vh; overflow: auto; }
 .foot { color: var(--soft); font-size: .72rem; padding: .4rem 1.4rem 2.4rem; }
 
-/* 문의 데스크(desk-0) — 계정 메뉴에서 여는 대화창(desk-dlg, Q1b). 보드 토큰 그대로 */
-#desk-dlg .hint { margin: 0 0 .7rem; }
-.deskkinds { border: 0; padding: 0; margin: 0 0 .5rem; display: flex; flex-wrap: wrap; gap: .1rem 1rem; font-size: .84rem; }
-.deskkinds label { display: inline-flex; align-items: center; gap: .35rem; cursor: pointer; min-height: 32px; }
-.deskkinds input { accent-color: var(--accent); margin: 0; }
-#desk-text { display: block; width: 100%; min-height: 6.5rem; resize: vertical; font: inherit; font-size: .9rem; padding: .55rem;
-  border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); }
-.deskrow { display: flex; align-items: center; justify-content: space-between; gap: .6rem; margin-top: .45rem; }
-#desk-count { margin: 0; }
-#desk-count.over { color: var(--fail); font-weight: 600; }
-.desknote { font-size: .76rem; color: var(--muted); margin: .6rem 0 0; line-height: 1.6; }
-#desk-status { font-size: .82rem; color: var(--muted); margin: .4rem 0 0; }
-#desk-status:empty, #desk-error:empty, #desk-list-error:empty { margin: 0; }
-.desktbl-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-.desktbl { border-collapse: collapse; width: 100%; font-size: .82rem; }
-.desktbl th, .desktbl td { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
-.desktbl th { color: var(--muted); font-weight: 600; font-size: .74rem; white-space: nowrap; }
-.desktbl td:nth-child(-n+5) { white-space: nowrap; }
-/* 내 문의(P5) — 접수일 버튼으로 상세(dlg: 보낸 글·공개 답변·공개 이력) */
-.desktbl button.tkopen { border: 0; background: none; padding: 0; min-height: 0; font: inherit; color: var(--accent); text-decoration: underline;
-  text-underline-offset: 3px; cursor: pointer; }
-.desktk h3 { font-size: .8rem; font-weight: 600; color: var(--muted); margin: 1rem 0 .35rem; }
-.desktk h3:first-child { margin-top: 0; }
-.desktk .desktxt { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; font-size: .9rem; line-height: 1.65; }
-.desktk ul { margin: 0; padding-left: 1.1rem; font-size: .84rem; }
-@media (max-width: 700px) { #desk-text { font-size: 16px; } .desktbl th, .desktbl td { padding: .4rem .3rem; } }
-
 /* 출처 · 확정 전 재검토 (Q4) */
 .chip.src { font-family: inherit; letter-spacing: 0; white-space: normal; overflow-wrap: anywhere; }
 .chip.src.none { border-style: dashed; color: var(--soft); }
@@ -596,31 +569,7 @@ button.mmore { margin-top: .3rem; padding-left: .4rem; padding-right: .4rem; }
 <footer class="wrap foot"><span id="foot"></span> · <a href="/help">도움말</a> · <a href="/privacy">개인정보 처리방침</a></footer>
 <div id="ui-chat"></div>
 <div id="ui-namedlg"></div>
-<!--user--><dialog id="desk-dlg" aria-labelledby="desk-dlg-title"><div class="dh"><b id="desk-dlg-title">문의</b>
-  <button class="small" type="button" id="desk-dlg-close">닫기</button></div><div class="db">
-  <form id="desk-form" novalidate>
-    <p class="hint">안 되는 것·바라는 것·궁금한 것을 운영자에게 보내요. 처리 상태는 「내 문의」에서 보여요.</p>
-    <fieldset class="deskkinds"><legend class="sr">문의 종류</legend>
-      <label><input type="radio" name="kind" value="bug" checked> 버그</label>
-      <label><input type="radio" name="kind" value="request"> 요청</label>
-      <label><input type="radio" name="kind" value="question"> 질문</label>
-      <label><input type="radio" name="kind" value="privacy"> 개인정보 요청</label>
-    </fieldset>
-    <label for="desk-text" class="sr">문의 글</label>
-    <textarea id="desk-text" name="text" rows="4" aria-describedby="desk-notice desk-count"></textarea>
-    <div class="deskrow"><span id="desk-count" class="count" aria-live="polite">0 / 4096 바이트</span>
-      <button class="primary" type="submit" id="desk-send" disabled>보내기</button></div>
-    <p id="desk-notice" class="desknote">이 글은 서버에 저장되고 운영자가 직접 읽어요. 기록 원문이나 다른 사람 정보는 넣지 마세요. <a href="/privacy">개인정보 처리방침</a></p>
-    <p id="desk-status" role="status"></p><p id="desk-error" role="alert" class="blocked"></p>
-  </form>
-  <div id="desk-mine">
-    <p class="hint" id="desk-list-hint">처리 상태와 운영자 답변을 볼 수 있어요. 접수일을 누르면 열려요.</p>
-    <div class="desktbl-wrap"><table class="desktbl" id="desk-tbl"><thead id="desk-head"><tr><th scope="col">접수일</th><th scope="col">종류</th><th scope="col">상태</th><th scope="col">답변</th><th scope="col">최근 갱신</th><th scope="col">글</th></tr></thead>
-      <tbody id="desk-list"></tbody></table></div>
-    <p id="desk-empty" class="empty" hidden>아직 보낸 문의가 없어요.</p>
-    <p id="desk-list-error" role="alert" class="blocked"></p>
-  </div>
-</div></dialog><!--/user-->
+<!--user--><div id="ui-desk"></div><!--/user-->
 <dialog id="dlg" aria-labelledby="dlg-title"><div class="dh"><div><b id="dlg-title"></b><div id="dlg-meta" class="recmeta" style="margin:2px 0 0"></div></div>
   <button class="small" id="dlg-close">닫기</button></div><div class="db" id="dlg-body"></div></dialog>
 <dialog id="std-dlg" aria-labelledby="std-dlg-title" aria-describedby="std-dlg-lead"><div class="dh"><b id="std-dlg-title">표준으로 편입하기</b>
@@ -650,9 +599,6 @@ const LABELS = {
   candidate: "후보", mine: "내 판단", noQuestion: "질문 없음",
   principle: "기준", event: "결정", collection: "모음", item: "항목",
   aiWording: "AI 문안",
-  // 문의(desk-0) — 종류·처리 상태. 상태는 한 단어
-  ticketKind: {bug: "버그", request: "요청", question: "질문", privacy: "개인정보 요청"},
-  ticketStatus: {open: "접수", ack: "확인", doing: "처리중", done: "완료", wontfix: "보류"},
 };
 const recCache = {};
 // PR① 표시 용어(호스팅 웹 · 가이드 09·10 과 같은 말). NT = 라벨 한 덩이를 통째로 바꾼다
@@ -1704,6 +1650,7 @@ function roJosa(w) { const c = String(w).slice(-1).charCodeAt(0) - 0xAC00; retur
 // 열 때마다 새 ctx(args[0] = 어디로) — 그 대화창이 받아 연다. done = 결과 한 줄 + 상태 다시 받기(이름 관문·「나」 머리가 보여 준다)
 const dlgCtx = where => ({reload: load, state: S, args: [where], done: coreDone});
 const nameDlg = () => uiIsland("namedlg", $("ui-namedlg"), dlgCtx("open"));
+const deskDlg = where => { if ($("ui-desk")) uiIsland("desk", $("ui-desk"), dlgCtx(where)); };   // where = send | mine | privacy(features/desk)
 
 // ── 코어 쓰기 공통 (PR B) — 세션 + Origin(브라우저가 붙인다). 403 NAME-REQUIRED·400 CONFLICT·404 NOT-FOUND 는 다시 불러온다 ──
 const CORE_ERR = {
@@ -1790,26 +1737,9 @@ function renderSetup(tab, R) {
   else if (page === "map") renderMap(BASE.map);
   else if (page === "trash") uiMount("trash");
   else if (page === "migration") uiMount("migration", [R.b || ""]);   // 이관(React) — plan 하나 = R.b
-  else renderSetupHelp();
+  else uiMount("help");   // 문의 및 개인정보(React features/desk)
   return page;
 }
-function renderSetupHelp() {
-  const desk = !!$("desk-dlg");
-  $("view").innerHTML = `<div class="paper sheet"><h2 class="title">문의 및 개인정보</h2>
-    ${desk ? `<p class="hint">안 되는 것·바라는 것·궁금한 것을 운영자에게 보내요. 처리 상태는 「내 문의」에서 보여요.</p>
-    <div class="hacts" role="group" aria-label="문의"><button class="primary" type="button" data-setup-desk="send">문의 보내기</button>
-      <button class="secondary" type="button" data-setup-desk="mine">내 문의</button><button class="secondary" type="button" data-setup-desk="privacy">개인정보 요청</button></div>`
-      : `<p class="hint">이 계정에선 문의 창을 쓰지 않아요.</p>`}
-    <p class="hint"><a href="/privacy">개인정보 처리방침</a></p></div>`;
-}
-document.addEventListener("click", e => {
-  const d = e.target.closest("button[data-setup-desk]");
-  if (d) {
-    const act = d.dataset.setupDesk;
-    if (act === "privacy") document.querySelector('#desk-form input[name="kind"][value="privacy"]').checked = true;
-    deskOpen(act);
-  }
-});
 // ── /Setup ──
 // ── 휴지통 (trash PR-1) — 스위치 S.switches.trash 켜짐일 때만: 상세의 [삭제] → 휴지통 · Setup 「휴지통」 페이지([복원]·[영구 삭제]).
 // 꺼짐 = 버튼·페이지 0, 기존 동작(사람·생각 즉시 삭제 · 기준 [반영 안 함]·[되돌리기]) 그대로. 휴지통 대상을 일반 화면에서 숨기는 일은 서버 몫(화면은 거르지 않는다).
@@ -1859,7 +1789,7 @@ document.addEventListener("click", e => {
   if (op) {
     e.preventDefault();
     if (op.dataset.open === "logout") $("logout").click();
-    else if ($("desk-dlg")) deskOpen(op.dataset.open);
+    else deskDlg(op.dataset.open);   // 문의 대화창(관리자 = 자리 없음)
     return;
   }
   const dm = e.target.closest("[data-dmode]");
@@ -1929,15 +1859,6 @@ function acctApply() {
   if ($("acct-help-h")) $("acct-help-h").hidden = gate;
 }
 function acctClose() { $("acct").open = false; }
-// 「문의 보내기」·「개인정보 요청」은 보내기 폼, 「내 문의」는 목록 — 한 대화창에서 한쪽만 보인다. 상세는 그 위에 dlg 로 겹쳐 연다
-function deskOpen(where) {
-  const mine = where === "mine";
-  $("desk-dlg-title").textContent = mine ? "내 문의" : "문의 보내기";
-  $("desk-form").hidden = mine;
-  $("desk-mine").hidden = !mine;
-  if (!$("desk-dlg").open) $("desk-dlg").showModal();
-  if (mine) deskLoad(); else $("desk-text").focus();
-}
 $("acct-menu").addEventListener("click", async e => {
   const b = e.target.closest("button[data-acct]");
   if (!b || !S) return;
@@ -1952,9 +1873,8 @@ $("acct-menu").addEventListener("click", async e => {
     return;
   }
   if (act === "send" || act === "mine" || act === "privacy") {
-    if (act === "privacy") document.querySelector('#desk-form input[name="kind"][value="privacy"]').checked = true;
     acctClose();
-    deskOpen(act);
+    deskDlg(act);
   }
 });
 document.addEventListener("click", e => { if ($("acct").open && !$("acct").contains(e.target)) acctClose(); });
@@ -1962,100 +1882,6 @@ $("acct").addEventListener("keydown", e => {
   if (e.key === "Escape" && $("acct").open) { acctClose(); $("acct").querySelector("summary").focus(); }
 });
 // ── /계정 메뉴 ──
-// ── 문의 데스크 (desk-0) ──
-// 사용자 글은 ${esc(…)} 로만 HTML 에 넣는다 — 이 구간은 시험(test_feedback)이 정적으로 검사한다: 모든 보간은 esc, innerHTML 우변은 템플릿.
-const DESK_MAX = 4096;   // 서버 db.LIMIT_TICKET 과 같은 단위(UTF-8 바이트)
-const DESK_CHIP = {open: "st-wait", ack: "", doing: "flag", done: "st-mine", wontfix: "st-off"};
-const DESK_PAGE = {today: "today", question: "question", record: "record", structure: "structure", map: "map"};
-const deskBytes = s => new TextEncoder().encode(s).length;
-// 운영자 처리는 /admin/tickets(서버 렌더) — 관리자 /app 엔 문의 대화창이 없다(Q1, 서버가 사용자 전용 구간을 뺀다).
-function deskPage() {
-  if (!S) return "other";
-  const R = route();
-  if (R.a === "review") return "review";
-  return DESK_PAGE[pickTab(R, tabsList()).view] || "other";
-}
-function deskCount() {
-  const n = deskBytes($("desk-text").value), over = n > DESK_MAX;
-  $("desk-count").textContent = n + " / " + DESK_MAX + " 바이트" + (over ? " — 너무 길어요" : "");
-  $("desk-count").classList.toggle("over", over);
-  $("desk-send").disabled = over || !$("desk-text").value.trim();
-}
-function deskRow(t) {
-  const tr = document.createElement("tr");
-  tr.innerHTML = `<td><button type="button" class="tkopen" data-tk="${esc(t.id)}" aria-haspopup="dialog">${esc(md(t.created))}</button></td><td>${esc(LABELS.ticketKind[t.kind] || t.kind)}</td>
-    <td><span class="chip ${esc(DESK_CHIP[t.status] || "")}">${esc(LABELS.ticketStatus[t.status] || t.status)}</span></td><td>${esc(t.has_reply ? "있음" : "—")}</td>
-    <td>${esc(md(t.public_updated) || "—")}</td><td>${esc(clip(t.text, 60))}</td>`;
-  return tr;
-}
-// 행 상세 — GET /api/feedback/<id>(본인 것만): 보낸 글 · 공개 답변 · 공개 이력. 내부 메모·내부 이력은 서버가 주지 않는다
-function deskHistText(h) {
-  if (h.kind === "deleted") return "삭제 완료";
-  if (h.kind === "status") return "상태 " + (LABELS.ticketStatus[h.from_val] || h.from_val || "") + " → " + (LABELS.ticketStatus[h.to_val] || h.to_val || "");
-  return "운영자 답변이 바뀌었어요";
-}
-async function deskShow(id) {
-  $("dlg-title").textContent = "내 문의";
-  $("dlg-meta").textContent = "";
-  $("dlg-body").innerHTML = `<p class="hint">불러오는 중이에요…</p>`;
-  if (!$("dlg").open) $("dlg").showModal();
-  let r, j = {};
-  try { r = await fetch("/api/feedback/" + encodeURIComponent(id), {cache: "no-store"}); j = await r.json(); } catch (e) { r = null; }
-  if (r && r.status === 401) { location.href = "/"; return; }
-  if (!r || !r.ok) { $("dlg-body").innerHTML = `<p class="blocked">${esc((j && j.msg) || "문의를 불러오지 못했어요. 새로 고침해 주세요.")}</p>`; return; }
-  $("dlg-title").textContent = "내 문의 · " + (LABELS.ticketKind[j.kind] || j.kind);
-  $("dlg-meta").textContent = mdhm(j.created) + " 접수 · " + (LABELS.ticketStatus[j.status] || j.status);
-  $("dlg-body").innerHTML = `<div class="desktk"><h3>보낸 글</h3><p class="desktxt">${esc(j.text)}</p>
-    <h3>운영자 답변</h3><p class="desktxt">${esc(j.reply || "아직 답변이 없어요.")}</p><p class="hint">${esc(j.reply_at ? mdhm(j.reply_at) + " 답변" : "")}</p>
-    <h3>처리 이력</h3><ul id="desk-hist"></ul><p class="hint" id="desk-hist-empty">${esc((j.history || []).length ? "" : "아직 처리 이력이 없어요.")}</p></div>`;
-  for (const h of j.history || []) {
-    const li = document.createElement("li");
-    li.textContent = mdhm(h.at) + " · " + deskHistText(h);
-    $("desk-hist").append(li);
-  }
-}
-async function deskLoad() {
-  let r, j;
-  try { r = await fetch("/api/feedback", {cache: "no-store"}); j = await r.json(); } catch (e) { r = null; }
-  if (r && r.status === 401) return;   // 로그인이 풀렸으면 load() 가 시작 화면으로 보낸다
-  if (!r || !r.ok) { $("desk-list-error").textContent = "내 문의를 불러오지 못했어요. 새로 고침해 주세요."; return; }
-  $("desk-list-error").textContent = "";
-  const list = j.tickets || [];
-  $("desk-list").replaceChildren(...list.map(deskRow));
-  $("desk-empty").hidden = list.length > 0;
-}
-async function deskSend(e) {
-  e.preventDefault();
-  const text = $("desk-text").value, kind = (document.querySelector('#desk-form input[name="kind"]:checked') || {}).value || "bug";
-  if (!text.trim() || deskBytes(text) > DESK_MAX) return;
-  $("desk-error").textContent = "";
-  $("desk-status").textContent = "보내고 있어요…";
-  $("desk-send").disabled = true;
-  let r, j = {};
-  try {
-    r = await fetch("/api/feedback", {method: "POST", headers: {"content-type": "application/json"},
-      body: JSON.stringify({kind, text, page: deskPage()})});
-    j = await r.json().catch(() => ({}));
-  } catch (err) { r = null; }
-  if (r && r.status === 401) { location.href = "/"; return; }
-  if (!r || !r.ok) {
-    $("desk-status").textContent = "";
-    $("desk-error").textContent = (j && j.msg) || "보내지 못했어요. 잠시 뒤 다시 보내 주세요.";
-    deskCount();
-    return;
-  }
-  $("desk-text").value = "";
-  deskCount();
-  $("desk-status").textContent = "보냈어요. 처리 상태는 「내 문의」에서 볼 수 있어요.";
-  deskLoad();
-}
-if ($("desk-dlg")) {   // 관리자 응답엔 문의 대화창이 없다(Q1)
-  $("desk-dlg-close").addEventListener("click", () => $("desk-dlg").close());
-  $("desk-text").addEventListener("input", deskCount);
-  $("desk-form").addEventListener("submit", deskSend);
-  $("desk-list").addEventListener("click", e => { const b = e.target.closest("button[data-tk]"); if (b) deskShow(b.dataset.tk); });
-}
-// ── /문의 데스크 ──
 load();
 </script>
 </body>

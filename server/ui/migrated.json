@@ -1,6 +1,6 @@
 {
   "_doc": "React 전환 래칫(server/test_ui_build.py 가 읽는다). screens = 옮긴 화면 이름 → 옛 app.html 에서 지운 이름(하나라도 남으면 실패). app_html_function_max = app.html 최상위 function 수 상한 — 화면을 옮길 때마다 내린다. temp_duplicates = 옛 쪽에 다른 화면이 쓰는 같은 일이 남은 것(R5 에서 한쪽만 남긴다) — 래칫이 아니라 기록. removed = 옮기지 않고 지운 옛 코드(R5a 옛 탐색) — 이름이 app.html 에 다시 나오면 실패.",
-  "app_html_function_max": 93,
+  "app_html_function_max": 84,
   "screens": {
     "trash": [
       "renderTrash",
@@ -382,6 +382,37 @@
       "name-dlg-input",
       "name-dlg-close",
       "name-dlg-cancel"
+    ],
+    "desk": [
+      "deskOpen",
+      "deskPage",
+      "deskCount",
+      "deskRow",
+      "deskHistText",
+      "deskShow",
+      "deskLoad",
+      "deskSend",
+      "deskBytes",
+      "DESK_MAX",
+      "DESK_CHIP",
+      "DESK_PAGE",
+      "ticketKind",
+      "ticketStatus",
+      "desk-dlg",
+      "desk-form",
+      "desk-text",
+      "desk-count",
+      "desk-send",
+      "desk-list",
+      "desk-mine",
+      "desk-empty",
+      "desktbl",
+      "deskkinds",
+      "desktk"
+    ],
+    "help": [
+      "renderSetupHelp",
+      "data-setup-desk"
     ]
   },
   "removed": {

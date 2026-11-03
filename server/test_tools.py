@@ -1893,7 +1893,7 @@ async def test_feedback():
             assert ts == sorted(ts, key=lambda t: (t["public_updated"] or t["created"], t["created"]), reverse=True), "최근 공개 갱신(없으면 접수)부터"
             mine_other = db.tickets_mine(other)
             assert len(mine_other) == 1 and mine_other[0]["text"] == "다른 사람의 문의 글", mine_other
-            assert 'id="desk-form"' in (await h.get("/app")).text, "/app 에 문의 절"
+            assert 'id="ui-desk"' in (await h.get("/app")).text, "/app 에 문의 대화창 자리(React features/desk)"
             # QUOTA-GLOBAL 면제: 401MB 주입 → 기록은 거절, 문의는 웹·MCP 모두 접수
             db._measure_db_size = lambda: 401 * db.MB
             db.quota_cache_reset()

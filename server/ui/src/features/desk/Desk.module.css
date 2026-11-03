@@ -1,0 +1,27 @@
+/* 문의 데스크(desk-0) — 계정 메뉴·설정 「문의 및 개인정보」에서 여는 대화창. 옛 app.html #desk-dlg·.desk* 그대로 */
+.dlg :global(.hint) { margin: 0 0 .7rem; }
+.kinds { border: 0; padding: 0; margin: 0 0 .5rem; display: flex; flex-wrap: wrap; gap: .1rem 1rem; font-size: .84rem; }
+.kinds label { display: inline-flex; align-items: center; gap: .35rem; cursor: pointer; min-height: 32px; }
+.kinds input { accent-color: var(--accent); margin: 0; }
+.text { display: block; width: 100%; min-height: 6.5rem; resize: vertical; font: inherit; font-size: .9rem; padding: .55rem;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); }
+.row { display: flex; align-items: center; justify-content: space-between; gap: .6rem; margin-top: .45rem; }
+.count { margin: 0; }
+.over { color: var(--fail); font-weight: 600; }
+.note { font-size: .76rem; color: var(--muted); margin: .6rem 0 0; line-height: 1.6; }
+.status { font-size: .82rem; color: var(--muted); margin: .4rem 0 0; }
+.status:empty, .msg:empty { margin: 0; }
+.wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.tbl { border-collapse: collapse; width: 100%; font-size: .82rem; }
+.tbl th, .tbl td { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+.tbl th { color: var(--muted); font-weight: 600; font-size: .74rem; white-space: nowrap; }
+.tbl td:nth-child(-n+5) { white-space: nowrap; }
+/* 내 문의(P5) — 접수일 버튼으로 상세(보낸 글·공개 답변·공개 이력) */
+.tbl button.open { border: 0; background: none; padding: 0; min-height: 0; font: inherit; color: var(--accent); text-decoration: underline;
+  text-underline-offset: 3px; cursor: pointer; }
+.tk h3 { font-size: .8rem; font-weight: 600; color: var(--muted); margin: 1rem 0 .35rem; }
+.tk h3:first-child { margin-top: 0; }
+.tk .txt { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; font-size: .9rem; line-height: 1.65; }
+.tk ul { margin: 0; padding-left: 1.1rem; font-size: .84rem; }
+.tkdlg .meta { margin: 2px 0 0; }   /* 전역 .recmeta 글꼴·색 + 머리 줄 여백 */
+@media (max-width: 700px) { .text { font-size: 16px; } .tbl th, .tbl td { padding: .4rem .3rem; } }
