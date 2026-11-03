@@ -27,12 +27,12 @@ Claude Code 에서 붙이기: `claude mcp add --transport http my-crm http://127
 
 ## 화면 묶음 빌드 (server/ui, React)
 
-대시보드(`/app`)는 옛 `app.html` 껍데기 안에 옮긴 화면만 React 로 띄운다(지금은 Setup 「휴지통」·「이관」 `#_setup/migration[/<plan>]`·「연결 장치」 `#_setup/devices` · 「나」 `#_me` · 판단 검토 `#<탭>/review/…` · 활동 `#_obj/activity[/list/<쿼리>|/<id>]`·축 `#_obj/axis/<id>` · 「오늘」 `#_today[/inbox/<id>]`·지난 저장 승인 대기 `#_inbox/<상태>` · 자료 종류 `#_obj`(`#_setup/objects`)·사람·출처·읽고 든 생각 `#_obj/<person|source|reflection>[/…]` · 대화 서랍). 옮긴 화면 목록·옛 이름 래칫·일시 중복 기록은 `ui/migrated.json`.
+대시보드(`/app`)는 옛 `app.html` 껍데기 안에 옮긴 화면만 React 로 띄운다(지금은 Setup 「휴지통」·「이관」 `#_setup/migration[/<plan>]`·「연결 장치」 `#_setup/devices` · 「나」 `#_me` · 판단 검토 `#<탭>/review/…` · 활동 `#_obj/activity[/list/<쿼리>|/<id>]`·축 `#_obj/axis/<id>` · 「오늘」 `#_today[/inbox/<id>]`·지난 저장 승인 대기 `#_inbox/<상태>` · 자료 종류 `#_obj`(`#_setup/objects`)·사람·출처·읽고 든 생각 `#_obj/<person|source|reflection>[/…]` · Setup 「페이지 레이아웃」 `#_setup/layout`·「문의 및 개인정보」 `#_setup/help` · 이름 관문 · 대화 서랍 · 「표시 이름 바꾸기」·문의 대화창). 옮긴 화면 목록·옛 이름 래칫·일시 중복 기록은 `ui/migrated.json`.
 클릭 편집(값 + 상시 연필 → 입력 칸·[저장]·[취소])은 `ui/src/shared` 의 edit store·`Editable`·`Editor` 하나를 「나」·자료 종류가 같이 쓴다.
 장치·이관 토큰 원문과 이관 항목 본문은 받은 화면의 React 상태에만 둔다 — 조회 캐시·브라우저 저장소·주소·결과 문구에 넣지 않고, 화면을 떠나면(목록 ↔ plan 하나 포함) 지운다. 브라우저 저장소 쓰기는 원문 보기 포트 하나(`crm-raw-port`).
-`#view` 화면은 `uiMount` 로 하나씩(다른 화면으로 가면 앞 화면을 내린다), 대화 서랍은 상시 섬 — 껍데기 고정 자리 `#ui-chat`(서랍)·`#ui-chatnav`(탭 줄 「대화」 버튼)·`#ui-chatnote`(좁은 화면 안내)에 `uiIsland` 로 띄운다. 모듈보다 라우터가 먼저면 이름별로 자리를 맡긴다(`window.CrmUIPending`).
+`#view` 화면은 `uiMount` 로 하나씩(다른 화면으로 가면 앞 화면을 내린다), 대화 서랍은 상시 섬 — 껍데기 고정 자리 `#ui-chat`(서랍)·`#ui-chatnav`(탭 줄 「대화」 버튼)·`#ui-chatnote`(좁은 화면 안내)에 `uiIsland` 로 띄운다. 「표시 이름 바꾸기」(`#ui-namedlg`)·문의(`#ui-desk` — `<!--user-->` 구간 안이라 관리자 응답엔 자리가 없다) 대화창도 상시 섬 — 껍데기가 열 때마다 새 `ctx`(`args[0]` = 어디로)로 띄운다. 모듈보다 라우터가 먼저면 이름별로 자리를 맡긴다(`window.CrmUIPending`).
 「나」 요약 블록은 `server/layout_registry.json`(Python `layout_check` 와 같은 파일)을 `ui/src/layout/registry.ts` 가 직접 읽어 블록 id → 컴포넌트로 묶는다 — 블록을 더하면 이 JSON 과 `BLOCKS` 를 같이 고친다(`registry.test.ts`).
-옛 껍데기 → 옮긴 화면 `ctx` = `reload`·상태 `S`·주소 조각(`args`)·`setDirty`(고치던 글 주소 → 「저장하지 않은 변경」 대화창)·`flash`(결과 한 줄). `/api/journal` 응답에 `revision`·`author_kind`(수기 수정 저장·남이 쓴 글 판정).
+옛 껍데기 → 옮긴 화면 `ctx` = `reload`·상태 `S`·주소 조각(`args`)·`setDirty`(고치던 글 주소 → 「저장하지 않은 변경」 대화창)·`flash`(결과 한 줄)·`done`(결과 한 줄 + 상태 다시 받기 — 표시 이름 저장). 페이지 레이아웃은 「나」와 같은 조회 캐시(`/api/me/layout`)를 쓰고 v2 계약 그대로 PUT·DELETE 한다. `/api/journal` 응답에 `revision`·`author_kind`(수기 수정 저장·남이 쓴 글 판정).
 node 는 `ui/package.json` engines 범위(24.x) — Render·CI 는 24.22.1 로 고정한다(`render.yaml` `NODE_VERSION`, `ci.yml` setup-node).
 
 ```bash
