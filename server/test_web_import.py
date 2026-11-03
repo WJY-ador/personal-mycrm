@@ -240,10 +240,7 @@ def test_static():
     # Vitest(server/ui/src/arch.test.ts·features/activity·devices). 옛 쪽엔 원문 링크·저장소 쓰기·토큰이 없다
     assert "127.0.0.1" not in js and "localStorage.setItem" not in js and "sessionStorage" not in js
     assert not re.search(r"coreFlash\s*=\s*\{[^}]*token", js) and not re.search(r"location\.hash[^;\n]*token", js)
-    # AI 요약 승인 문구는 서버 문장(inbox_get.approve_notice) 그대로
-    assert "e.approve_notice" in js and "날짜 미확인" in js
-    # AI 생성 정보 — 계약 열거값은 사람 말로(원값 노출 금지), 모르는 값은 「기타」 + 원값
-    assert 'method: {ai_summary: "AI 요약"' in js and 'input_scope: {self_only: "내 글만"}' in js and "기타 <span" in js
+    # 승인 대기(서버 문장 approve_notice 그대로 · 생성 정보 열거값 = 사람 말, 모르는 값 = 「기타」 + 원값)는 React — Vitest TodayScreen.test.tsx(R4-2)
     # 감사 라벨 — schema.sql admin_audit CHECK 의 모든 action 에 표시 이름
     sql = (HERE / "schema.sql").read_text(encoding="utf-8")
     blk = re.search(r"CREATE TABLE IF NOT EXISTS admin_audit \((.*?)\n\);", sql, re.S).group(1)
@@ -375,7 +372,8 @@ def test_aggregate():
 async def test_ui_samples():
     """API 견본 대조(R4) — React 활동·연결 장치 화면이 읽는 응답의 손 사본 견본과 실제 응답(키 집합·값 타입).
     ui/src/features/activity/activity.sample.json = /api/activities·/api/activities/{id}·/api/me/aggregate·/api/axes/{id}/context ·
-    ui/src/features/devices/devices.sample.json = /api/devices. TS 쪽은 *.sample.test.ts 의 satisfies(tsc)."""
+    ui/src/features/devices/devices.sample.json = /api/devices · (R4-2) ui/src/features/objects/objects.sample.json = /api/people/{id}/context·
+    /api/sources/{id}/context · ui/src/features/today/today.sample.json = /api/inbox?state=·/api/inbox/{id}. TS 쪽은 *.sample.test.ts 의 satisfies(tsc)."""
     import json
     uid = db.user_by_email(SAMPLE)["id"]
     db.display_name_set(uid, "견본")
@@ -384,6 +382,11 @@ async def test_ui_samples():
     ui = HERE / "ui" / "src" / "features"
     act = json.loads((ui / "activity" / "activity.sample.json").read_text(encoding="utf-8"))
     dev = json.loads((ui / "devices" / "devices.sample.json").read_text(encoding="utf-8"))
+    objs = json.loads((ui / "objects" / "objects.sample.json").read_text(encoding="utf-8"))
+    today = json.loads((ui / "today" / "today.sample.json").read_text(encoding="utf-8"))
+    add_pending(uid, "ie_sample", "self_summary", {"title": "견본 요약", "body": "견본 본문", "source_created_at": None, "source_date": None,
+                                                   "execution": "unattended", "transform_version": "self-summary/1",
+                                                   "generation": {"method": "ai_summary", "tool": "t", "model": "m", "input_scope": "self_only", "inputs": ["a"]}})
     site = main.site
     real = site.dev, site.dev_user
     try:
@@ -393,6 +396,8 @@ async def test_ui_samples():
                    "agg": (await h.get("/api/me/aggregate", params={"period": "7d"})).json(),
                    "axis": (await h.get(f"/api/axes/{ids['X1']}/context")).json()}
             devs = (await h.get("/api/devices")).json()
+            ctxs = {"person": (await h.get(f"/api/people/{ids['P1']}/context")).json(), "source": (await h.get(f"/api/sources/{ids['S1']}/context")).json()}
+            inbox = {"list": (await h.get("/api/inbox", params={"state": "pending"})).json(), "one": (await h.get("/api/inbox/ie_sample")).json()}
     finally:
         site.dev, site.dev_user = real
     assert got["list"]["activities"] and got["one"]["versions"] and got["agg"]["by_axis"] and got["axis"]["activities"] and devs["devices"], "견본 대조에 쓸 행"
@@ -401,7 +406,14 @@ async def test_ui_samples():
         assert not bad, (bad, "activity.sample.json·features/activity/actApi.ts·shared/activity.ts 의 타입을 같이 고친다")
     bad = cmp(dev, devs, "devices", exact=True)
     assert not bad, (bad, "devices.sample.json·features/devices/devApi.ts 의 타입을 같이 고친다")
-    print("OK — API 견본 대조(활동 목록·하나·현황·축 · 연결 장치 = 견본 키·값 타입) 통과")
+    assert ctxs["person"]["activities"] and ctxs["source"]["by_action"] and inbox["list"]["entries"] and inbox["one"]["generation"], "견본 대조에 쓸 행"
+    for k in ("person", "source"):
+        bad = cmp(objs[k], ctxs[k], k, exact=True)
+        assert not bad, (bad, "objects.sample.json·features/objects/objApi.ts 의 타입을 같이 고친다")
+    for k in ("list", "one"):
+        bad = cmp(today[k], inbox[k], k, exact=True)
+        assert not bad, (bad, "today.sample.json·features/today/todayApi.ts 의 타입을 같이 고친다")
+    print("OK — API 견본 대조(활동 목록·하나·현황·축 · 연결 장치 · 사람·출처 문맥 · 승인 대기 목록·하나 = 견본 키·값 타입) 통과")
 
 
 def add_pending(uid, eid, kind, payload):

@@ -17,7 +17,8 @@
    "source_id": null,
    "question_id": null,
    "source_date": null,
-   "author_kind": "self"
+   "author_kind": "self",
+   "ingest_kind": null
   }
  ],
  "journal_next_before": "2026-11-03T02:25:02.942533+00:00|r_sample",
@@ -100,7 +101,8 @@
    "id": "p_yXoEvh1Ihn4",
    "alias": "민수",
    "revision": 0,
-   "created": "2026-11-03T11:25:02.981341+09:00"
+   "created": "2026-11-03T11:25:02.981341+09:00",
+   "updated": "2026-11-03T11:25:02.981341+09:00"
   }
  ],
  "reflections": [
@@ -112,7 +114,8 @@
    "review": "pending",
    "revision": 0,
    "created": "2026-11-03T11:25:02.981943+09:00",
-   "updated": "2026-11-03T11:25:02.981943+09:00"
+   "updated": "2026-11-03T11:25:02.981943+09:00",
+   "reviewed_at": null
   }
  ],
  "sources": [
@@ -200,5 +203,26 @@
     }
    ]
   }
+ },
+ "tabs": [],
+ "structure": {
+  "objects": [
+   {
+    "id": "od_principles",
+    "key": "principles",
+    "label": "기준",
+    "origin": "standard"
+   }
+  ]
+ },
+ "me": {
+  "counts": {
+   "people": 1,
+   "sources": 1,
+   "reflections": 1
+  }
+ },
+ "inbox": {
+  "pending": 0
  }
 }

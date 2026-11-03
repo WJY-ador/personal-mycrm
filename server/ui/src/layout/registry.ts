@@ -10,6 +10,8 @@ import { ChatRoot } from "../features/chat/ChatRoot";
 import { MigrationScreen } from "../features/migration/MigrationScreen";
 import { DevicesScreen } from "../features/devices/DevicesScreen";
 import { ActivityScreen } from "../features/activity/ActivityScreen";
+import { ObjectsScreen } from "../features/objects/ObjectsScreen";
+import { TodayScreen } from "../features/today/TodayScreen";
 import type { Blocks } from "../features/me/summary/block";
 import { Heatmap } from "../features/me/summary/Heatmap";
 import { Kinds } from "../features/me/summary/Kinds";
@@ -25,6 +27,8 @@ export const SCREENS: Record<string, ComponentType<ScreenProps>> = {
   migration: MigrationScreen,
   devices: DevicesScreen,
   activity: ActivityScreen,   // 활동 목록·하나·축 하나(ctx.args = [activity|axis, …])
+  objects: ObjectsScreen,     // 자료 종류 색인·사람·출처·읽고 든 생각(ctx.args = [a, b, c])
+  today: TodayScreen,         // 오늘·저장 승인 대기(ctx.args = [today, a, b] | [inbox, 상태])
   chat: ChatRoot,   // 상시 섬(#ui-chat) — #view 화면이 아니다
   me: (p: ScreenProps) => createElement(MeScreen, { ...p, blocks: BLOCKS, layoutDefault: reg.pages.me.default }),
 };

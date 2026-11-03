@@ -174,7 +174,7 @@ async def test_records_api():
 
 def test_static():
     """옛 app.html 에 남은 「나」 접점(R2 2026-11-03 — 「나」 화면은 React server/ui/src/features/me, 시험은 Vitest MeScreen·MeEdit·MeActs)
-    · Setup 「페이지 레이아웃」(S4) · 오늘(S5) · 탭 3 · 축 색 토큰 · 표시 낱말."""
+    · Setup 「페이지 레이아웃」(S4) · 오늘(S5 — 화면은 React features/today, R4-2: 라우팅만) · 탭 3 · 축 색 토큰 · 표시 낱말."""
     html = (HERE / "app.html").read_text(encoding="utf-8")
     js = re.search(r"<script>(.*?)</script>", html, re.S).group(1)
     assert html.count("<script>") == 1
@@ -185,19 +185,20 @@ def test_static():
     for w in ("저장하지 않은 변경이 있어요", "계속 편집", "변경 버리기"):
         assert w in html, w
     assert "if (uiLeaveGuard()) return;" in js and 'addEventListener("beforeunload", e => { if (uiDirty)' in js and "setDirty: at => { uiDirty = at; }" in js
-    assert "@media (max-width: 767px)" in html and 'const HOME_MOBILE = "(max-width: 767px)";' in js, "모바일 분기점 = 768 미만(JS·React view.ts 와 같은 값)"
+    mobile = (HERE / "ui" / "src" / "shared" / "mobile.ts").read_text(encoding="utf-8")
+    assert "@media (max-width: 767px)" in html and 'export const MOBILE = "(max-width: 767px)";' in mobile, "모바일 분기점 = 768 미만(CSS·React shared/mobile.ts 와 같은 값)"
     assert "<script src" not in html.replace('<script src="{{asset:theme.js}}"></script>', ""), "외부 스크립트 0(테마 자산만)"
     # 타입 그래프 기본 = 그래프(새 탐색) · 영속 없음(저장소에 쓰지 않는다)
     assert 'let defsMode = "graph", defsAt = "";' in js and 'defsMode = navNew() ? "graph" : "list"' in js
     assert not re.search(r"localStorage\.setItem\([^)]*defs", js)
     assert "if (navNew()) return [NAVTAB._me, NAVTAB._today];" in js, "탭 나·오늘 — 설정은 톱니"
     # S6: 글 이름 하나 「내 글」(v9 P1) — 사용자 표시 라벨 자리별. 「내 글 AI 요약」·「내가 쓴 메모」(판단 출처 표시)는 그대로
-    assert "내가 쓴 글" not in js and 'input_scope: {self_only: "내 글만"}' in js, "「내가 쓴 글」 0 — 생성 정보 입력 범위도 「내 글만」"
+    today_text = (HERE / "ui" / "src" / "features" / "today" / "text.ts").read_text(encoding="utf-8")
+    assert "내가 쓴 글" not in js and "내가 쓴 글" not in today_text and 'input_scope: { self_only: "내 글만" }' in today_text, "「내가 쓴 글」 0 — 생성 정보 입력 범위도 「내 글만」(React 오늘)"
     import activity
     assert activity.NOTICE in (HERE / "ui" / "src" / "features" / "activity" / "text.ts").read_text(encoding="utf-8"), "ME_NOTICE(React 활동) = 서버 activity.NOTICE 미러"
-    for w in ('"기록": "내 글"', 'kind: "내 글"', '"내 글 AI 요약"', '"내가 쓴 메모"', 'r.act', '"today:" + day',
-              "const ME_SHOW = 5;", "data-me-open=", "a.action_label || actLabel(a.action)"):
-        assert w in js, w
+    for w in ('"기록": "내 글"', '"내가 쓴 메모"'):
+        assert w in js, w   # 오늘 줄(글 종류 「내 글」·「내 글 AI 요약」·활동 5줄 + 더 N)은 React — Vitest TodayScreen.test.tsx
     # S4 Setup — 페이지 6 · 레이아웃 쓰기는 layFetch 한 곳(PUT·DELETE /api/me/layout) · PUT version = 마지막 응답 version(복원 뒤 포함) ·
     # 한 번에 하나(보내는 중이면 마지막 배치만 줄 세움) · 실패 = 마지막 저장 배치로 복원 · STALE = 서버 배치 다시 받기 · 옛 묶음 주소 replace ·
     # 저장 뒤 crm:state(React 「나」가 배치를 다시 받는다)
@@ -215,20 +216,16 @@ def test_static():
     assert js.count('getJSON("/api/me/layout")') == 2, "읽기 = meSync + STALE 때 다시 받기"
     assert "corePost(" not in setup and "/api/" not in setup.replace("/api/me/layout", ""), "Setup 의 다른 쓰기·API 0"
     assert "if (navNew()) { const to = navReplace(R); if (to) { location.replace(to); return; } }" in js
-    # S5 오늘 — 대기(승인 대기) + 보관됨(ingest_kind=inbox 글 · 활동) · 들어온 날(KST) 머리글 · [삭제] 0 · 동작 = 기존 승인·제외(inboxOne) · 읽기만
-    today = js[js.index("// ── 오늘 (PR ①-b S5)"):js.index("// ── /오늘 ──")]
-    for w in ('getJSON("/api/inbox?state=pending")', 'getJSON("/api/activities?limit=50")', 'r.ingest_kind === "inbox"', 'st: "대기"', 'st: "보관됨"',
-              '"Asia/Seoul"', "class=\"tday\"", "inboxOne", "#_inbox/all", "ME_EMPTY"):
-        assert w in today, w
-    code = "\n".join(l for l in today.splitlines() if not l.lstrip().startswith("//"))
-    assert "삭제" not in code and "corePost(" not in today and "fetch(" not in today, "오늘: [삭제] 0 · 새 쓰기 0(승인·제외는 기존 data-core 경로)"
-    assert 'if (R.tab === "_inbox" && !INBOX_STATE[R.a]) return "#_today/inbox/" + encodeURIComponent(R.a);' in js
-    assert 'hash = navNew() ? "#_today" : "#_inbox";' in js
+    # S5 오늘·저장 승인 대기 = React(features/today, R4-2) — 옛 쪽은 라우팅만. 줄·날짜 머리글·삭제 0·승인·제외는 Vitest TodayScreen.test.tsx
+    assert 'else if (tab.view === "today2") uiMount("today", ["today", R.a || "", R.b || ""]);' in js
+    assert 'else if (tab.view === "inbox") uiMount("today", ["inbox", R.a || ""]);' in js
+    assert 'if (R.tab === "_inbox" && !["pending", "applied", "excluded", "expired", "all"].includes(R.a)) return "#_today/inbox/" + encodeURIComponent(R.a);' in js
+    assert "// ── 오늘 (PR ①-b S5)" not in js and "/api/inbox" not in js, "옛 쪽 오늘·승인 대기 코드·API 0"
     for i, (lt, dk) in enumerate(zip(("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"),
                                      ("#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767")), 1):
         assert f"--ax{i}: {lt};" in html and f"--ax{i}: {dk};" in html, ("축 색", i)
     print("OK — 옛 쪽 「나」 접점(uiMount·통계 0·미저장 uiDirty·분기점) · Setup 페이지 6·레이아웃 쓰기 한 곳·version·crm:state·옛 주소 replace · "
-          "오늘 대기/보관됨·날짜 머리글·삭제 0 · 축 색 토큰 · 표시 낱말 통과")
+          "오늘·승인 대기 라우팅(React) · 축 색 토큰 · 표시 낱말 통과")
 
 
 TRASH_ASK = "삭제하면 휴지통으로 이동해요. 삭제 시각부터 168시간 동안 복원할 수 있고, 이후 서버 정리 때 영구 삭제돼요."   # r4 §8 글자 그대로
@@ -248,14 +245,9 @@ def test_static_trash():
     assert "처리 중" not in code and "재시도 중" not in code and "예정" not in code, "「영구 삭제 처리 중·재시도 중·예정」 화면 상태 0(r4 §8)"
     assert tr.count("/api/trash") == 1 and js.count("/api/trash") == 1 and 'corePost("/api/trash/move"' in tr, "옛 쪽 휴지통 API = 이동(trashApi.del) 하나"
     assert "localStorage" not in tr and "Storage" not in tr
-    # 진입점 — 상세마다 trashBtn(꺼짐 = 빈 문자열) · 사람·생각은 켜짐이면 휴지통, 꺼짐이면 기존 즉시 삭제(data-core) 그대로
-    # 「나」 상세의 [삭제](내 글·항목·생각)는 React — Vitest MeActs.test.tsx(R2 2026-11-03) · 활동 하나의 [삭제]도 React — Vitest ActivityScreen.test.tsx(R4)
-    for w in ('trashOn() ? trashBtn("person", p.id, p.revision, "#_obj/person") : `<button class="secondary" type="button" data-core="person-del"',
-              'trashOn() ? trashBtn("reflection", x.id, x.revision, `#_obj/source/${x.source_id}`) : `<button class="secondary" type="button" data-core="refl-del"',
-              'trashBtn("item", it.id, it.revision, `#${tab.id}/${d.id}`)', "j.old_revision_links && !trashOn()"):
-        assert w in js, w
-    assert 'if (!window.confirm("이 사람을 지울까요? 되돌릴 수 없어요.")) return;' in js and 'if (!window.confirm("이 읽고 든 생각을 지울까요? 되돌릴 수 없어요.")) return;' in js, \
-        "꺼짐 = 기존 즉시 삭제 경로 유지"
+    # 진입점 — 옛 쪽에 남은 상세 = 항목 서랍 trashBtn(꺼짐 = 빈 문자열). 「나」 상세의 [삭제]는 Vitest MeActs.test.tsx(R2) · 활동 하나는
+    # ActivityScreen.test.tsx(R4) · 사람·읽고 든 생각(켜짐 = 휴지통, 꺼짐 = 기존 즉시 삭제 + 확인창 문구 그대로)은 ObjectsScreen.test.tsx(R4-2)
+    assert 'trashBtn("item", it.id, it.revision, `#${tab.id}/${d.id}`)' in js
     assert not re.search(r'trashBtn\("cand', js) and "data-trash=\"cand" not in js, "후보 = 독립 휴지통 대상 아님(r4 D3) — 새 거절 버튼 0"
     # 기준 — 서랍·「나」 상세 모두 켜짐이면 [남기지 않기]·[되돌리기] 대신 [남기기]만(+[삭제]). 꺼짐 분기는 옛 버튼 그대로
     drawer = js[js.index("function drawerHtml(tab, it)"):js.index("function proposalHtml(")]
@@ -274,7 +266,7 @@ def test_static_trash():
     assert js.count("반영 안 함으로 표시했어요.") == 1 and "반영 안 함으로 저장했어요." not in js, "옛 쪽 = 서랍 ITEM_SAVED 하나(판단 검토 = React features/review)"
     assert "근거를 이용할 수 없어요." in js and "찾을 수 없는 대상" not in js, "삭제된 근거 = 「근거를 이용할 수 없어요.」"
     # PR-2 몫은 그대로 — 승인 대기 [제외] · 제안 [제외] · 대화 「뺀 것」
-    assert 'act === "inbox-exclude"' in js and '<button class="secondary" type="button" data-iact="discard">제외</button>' in js   # 대화 「뺀 것」 = React features/chat
+    assert '<button class="secondary" type="button" data-iact="discard">제외</button>' in js   # 승인 대기 [제외] = React features/today · 대화 「뺀 것」 = React features/chat
     print("OK — 휴지통 정적(스위치 게이트·r4 §8 문구 그대로·처리 중 상태 0·접점 한 곳·진입점 5·후보 버튼 0·기준 버튼 변경·Setup 페이지·반영 안 함·근거 이용 불가·PR-2 몫 그대로) 통과")
 
 
@@ -467,14 +459,17 @@ def test_static_moved():
     assert "FEATURE-OFF" not in html, "플래그 제거 — 화면에도 FEATURE-OFF 0"
     for w in ('if (needName()) return renderNameGate();', 'data-form="name"',
               "실명이 아니어도 돼요. 다른 사람에게 보이지 않고 운영자 화면에도 나오지 않아요.",
-              '"/api/nav/accept"', '"/api/me/name"', '"/api/people', '"/api/reflections',
+              '"/api/nav/accept"', '"/api/me/name"',
               'id: "_me"', 'id: "_obj"', 'id: "_settings"',
               "if (navNew()) return [NAVTAB._me, NAVTAB._today];",   # PR ①-b 탭 3: 나 · 오늘 · Setup(B1)
-              'if (R.tab === "_settings") return "#_setup/structure";', "function axisChips",
-              "출처를 접한 뒤 내가 한 생각만 적어요. 다른 사람의 말·경험·생각을 옮기는 곳이 아니에요.",
-              "별칭도 그 사람을 알아볼 수 있으면 개인정보예요.", "삭제 완료"):
+              'if (R.tab === "_settings") return "#_setup/structure";', "function axisChips", "삭제 완료"):
         assert w in html, w
-    assert re.search(r"REFL_HELP\s*=\s*\"출처를 접한 뒤 내가 한 생각만 적어요", html) and re.search(r"PERSON_HELP\s*=\s*\"별칭도", html)
+    # 사람·읽고 든 생각 쓰기·안내 문구 = React 자료 종류(R4-2 — features/objects, 화면 동작은 Vitest ObjectsScreen.test.tsx)
+    objs = HERE / "ui" / "src" / "features" / "objects"
+    otext, oapi = (objs / "text.ts").read_text(encoding="utf-8"), (objs / "objApi.ts").read_text(encoding="utf-8")
+    assert '"/api/people"' in oapi and '"/api/reflections"' in oapi
+    assert re.search(r"REFL_HELP\s*=\s*\"출처를 접한 뒤 내가 한 생각만 적어요\. 다른 사람의 말·경험·생각을 옮기는 곳이 아니에요\.\"", otext)
+    assert re.search(r"PERSON_HELP\s*=\s*\"별칭도 그 사람을 알아볼 수 있으면 개인정보예요\.\"", otext)
     assert html.count("${reviewNote(c)}") >= 3, "오늘·질문·기록 화면 재검토 표시(판단 검토 화면 = React shared/ReviewNote, R3)"
     for dlg_id in ("name-dlg", "nav-dlg"):
         outside_marks(html.index(f'<dialog id="{dlg_id}"'), dlg_id)

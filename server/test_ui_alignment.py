@@ -131,8 +131,15 @@ console.log(JSON.stringify(out));
 
     def test_legend_and_list_use_two_categories(self):
         self.assertEqual(structure_svg.legend_origins(), ("standard", "template"))
-        self.assertIn('grp("표준 🔒"', JS)
-        self.assertNotIn('grp("기본 🔒"', JS)
+        # 자료 종류 색인은 React(features/objects, R4-2) — 묶음 이름 표준 🔒 · 카드 칩 = structure_svg 범주(손 사본 대조)
+        objs = HERE / "ui" / "src" / "features" / "objects"
+        index = (objs / "Index.tsx").read_text(encoding="utf-8")
+        self.assertIn('title="표준 🔒"', index)
+        self.assertNotIn("기본 🔒", index)
+        chip = re.search(r"export const ORIGIN_CHIP[^=]*= (\{.*?\});", (objs / "text.ts").read_text(encoding="utf-8")).group(1)
+        chip = json.loads(re.sub(r"(\w+):", r'"\1":', chip))
+        self.assertEqual({k: v[1] for k, v in chip.items()}, structure_svg.ORIGIN_TEXT)
+        self.assertEqual({k: v[0] == "o-std" for k, v in chip.items()}, {k: c == "standard" for k, c in structure_svg.ORIGIN_CATEGORY.items()})
 
     def test_body_bold_renders_safely(self):
         """사용자 글 본문의 **굵게** 는 <strong>, 그 밖은 escape. 홀수·빈 ** 는 그대로, 인용 mark 안에서도 짝이 맞는다.

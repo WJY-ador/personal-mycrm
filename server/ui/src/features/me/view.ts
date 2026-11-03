@@ -1,10 +1,7 @@
 // 「나」 보기 상태(쓰기 아님) — 연결 보기 방식(그래프/목록: 이 화면에 머무는 동안) · 종류 거르기·「더 N」 펼침(같은 가운데 데이터인 동안).
-// 1열(좁은 폭) 여부는 미디어 질의(768 미만 — CSS 분기점과 같은 값).
-import { createContext, useContext, useState, useSyncExternalStore } from "react";
-
-export const MOBILE = "(max-width: 767px)";
-const mq = () => window.matchMedia(MOBILE);
-export const useMobile = () => useSyncExternalStore(cb => { const m = mq(); m.addEventListener("change", cb); return () => m.removeEventListener("change", cb); }, () => mq().matches);
+// 1열(좁은 폭) 여부 = shared/mobile.ts.
+import { createContext, useContext, useState } from "react";
+export { useMobile } from "../../shared/mobile";
 
 export function useViewStore(center: string) {
   const [mode, setMode] = useState<"graph" | "list">("graph");

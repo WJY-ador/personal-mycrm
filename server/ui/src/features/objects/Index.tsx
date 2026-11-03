@@ -1,0 +1,55 @@
+// 자료 종류 색인(옛 renderObjects 목록) — 표준 🔒(코어 + 표준 정의) · 내 탭(새 탐색) · 커스텀. 카드 = 그 화면으로 이동, 「문의」 카드 = 껍데기 문의 대화창(data-open)
+import type { KeyboardEvent } from "react";
+import { meCount, navNew, qTabId, recTabId, userTabs } from "./model";
+import type { P } from "./props";
+import { ORIGIN_CHIP } from "./text";
+import css from "./Objects.module.css";
+
+type Card = { label: string; api: string; href: string; n: string | number; oc?: string };
+
+function CardView({ c }: { c: Card }) {
+  const go = () => { if (c.href) location.hash = c.href; };
+  const key = (e: KeyboardEvent) => { if (c.href && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); go(); } };
+  const chip = c.oc ? ORIGIN_CHIP[c.oc] || ["", c.oc] : null;
+  return (
+    <article className="asset-card" tabIndex={0} role="button" {...(c.href ? { onClick: go, onKeyDown: key } : { "data-open": "mine" })}>
+      <div className="top">{chip ? <span className={`chip ${chip[0]}`}>{chip[1]}</span> : null}</div><h3>{c.label}</h3>
+      <div className="meta"><span className="tech">{c.api}</span><span>{c.n}{c.href ? "" : " · 내 문의 열기"}</span></div>
+    </article>
+  );
+}
+
+function Group({ title, cards, empty }: { title: string; cards: Card[]; empty: string }) {
+  return (
+    <section className={css.grp}><h3>{title}<span className="count">{cards.length}</span></h3>
+      {cards.length ? <div className={css.grid}>{cards.map((c, i) => <CardView key={i} c={c} />)}</div> : <div className="empty">{empty}</div>}</section>
+  );
+}
+
+export function Index({ S, msg }: P) {
+  const cnt = S.source_counts || { by_source: {}, unconfirmed: 0 };
+  const recTotal = Object.values(cnt.by_source || {}).reduce((s, n) => s + n, 0) + (cnt.unconfirmed || 0);
+  const desk = !!document.getElementById("desk-dlg");   // 문의 대화창은 껍데기 몫(계정에 따라 없다)
+  const core: Card[] = [
+    { label: "나", api: "users", href: "#_me", n: "1" },
+    { label: "질문", api: "questions", href: `#${qTabId(S)}`, n: (S.questions || []).length },
+    { label: "내 글", api: "records", href: `#${recTabId(S)}`, n: recTotal || (S.journal || []).length },
+    { label: "검토할 판단", api: "candidates", href: "#structure/cand/pending", n: (S.candidates || []).filter(c => c.status === "pending").length },
+    { label: "출처", api: "sources", href: "#_obj/source", n: meCount(S, "sources") },
+    { label: "사람", api: "people", href: "#_obj/person", n: meCount(S, "people") },
+    { label: "읽고 든 생각", api: "source_reflections", href: "#_obj/reflection", n: meCount(S, "reflections") },
+    { label: "활동", api: "activities", href: "#_obj/activity", n: S.activity ? `최근 30일 ${S.activity.total}` : "—" },
+    ...(desk ? [{ label: "문의", api: "tickets", href: "", n: "—" }] : []),
+  ];
+  const st = Array.isArray(S.structure?.objects) ? S.structure.objects : [];
+  const nItems = (id: string) => (S.items || []).filter(it => it.object_id === id).length;
+  const def = (o: (typeof st)[number], oc = ""): Card => ({ label: o.label, api: o.key, href: `#structure/${o.id}`, n: `항목 ${nItems(o.id)}`, oc });
+  const tabs = navNew(S) ? userTabs(S) : [];
+  return (
+    <div className="paper">{msg}<h2 className="title">자료 종류</h2>
+      <Group title="표준 🔒" cards={[...core, ...st.filter(o => o.origin === "standard").map(o => def(o))]} empty="" />
+      {tabs.length ? <Group title="내 탭" cards={tabs.map(t => ({ label: t.label, api: t.view === "record" ? "글 탭" : "질문 탭", href: `#${t.id}`, n: "열기" }))} empty="" /> : null}
+      <Group title="커스텀" cards={st.filter(o => o.origin !== "standard").map(o => def(o, o.origin))} empty="아직 내가 만든 자료 종류가 없어요." />
+    </div>
+  );
+}
