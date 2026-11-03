@@ -1827,6 +1827,7 @@ class Web:
         except db.CrmError as e:
             return JSONResponse({"code": e.code, "msg": e.message}, status_code=404)
         return JSONResponse({"id": r["id"], "title": r["title"], "body": r["body"],
+                             "revision": r["revision"], "author_kind": r["author_kind"],   # R2 수기 수정 — 저장 expected_revision · 남이 쓴 글이면 고치기 숨김
                              "meta": {"created": r["created"], "source": r["source"], "question_id": r["question_id"]}},
                             headers={"cache-control": "no-store"})
 

@@ -7,8 +7,9 @@ DB 는 /app 의 개발 사용자 조회에만 쓴다.
 A. manifest 허용 목록 — 진입 JS·CSS 만 /app/assets/<이름> 200 · 1년 immutable · JS/CSS MIME · nosniff · 목록 밖·경로 꼴 = 404.
 B. /app — <!--{{ui}}--> 자리를 manifest 의 <link>·<script type="module" src> 로 채움 · 인라인 스크립트 수 ∈ {0, 1} · 번들 인라인 0 · CSP 해시 = 옛 인라인 1개.
 C. manifest 없음 — 서버가 죽지 않고 ({}, "") · 자리는 빈 문자열 · app.html 이 「화면 파일 없음」 한 줄을 그린다.
-D. 래칫 — migrated.json 의 옛 이름이 app.html 에 0 · 최상위 function 수 ≤ 상한 · 옮긴 화면은 uiMount("<이름>") 로 띄움.
-E. 옛 쪽 다리(node 실행) — uiMount 세 갈래 · 같은 화면 자리 유지 · 떠나면 unmount · applyState 뒤 crm:state 1번.
+D. 래칫 — migrated.json 의 옛 이름이 app.html 에 0 · 최상위 function 수 ≤ 상한 · 옮긴 화면은 uiMount("<이름>"…) 로 띄움.
+E. 옛 쪽 다리(node 실행) — uiMount 세 갈래 · 같은 화면 자리 유지 · 떠나면 unmount · applyState 뒤 crm:state 1번 ·
+   ctx = 상태 S·주소 조각(args)·setDirty(고치던 글 주소 → uiDirty)·flash(껍데기 결과 한 줄, 한 번) · applyState = 옛 본문 캐시 비움.
 """
 import asyncio
 import json
@@ -49,7 +50,7 @@ def test_ratchet():
     for screen, names in MIGRATED["screens"].items():
         left = [n for n in names if re.search(rf"\b{re.escape(n)}\b", APP)]
         assert not left, f"옮긴 화면 {screen} 의 옛 이름이 app.html 에 남았어요: {left}"
-        assert f'uiMount("{screen}")' in JS, f"옮긴 화면 {screen} 은 uiMount 로 띄운다"
+        assert re.search(rf'uiMount\("{screen}"[,)]', JS), f"옮긴 화면 {screen} 은 uiMount 로 띄운다"
     n = len(re.findall(r"^(?:async\s+)?function\s+\w+", JS, re.M))
     cap = MIGRATED["app_html_function_max"]
     assert n <= cap, f"app.html 최상위 function {n}개 > 상한 {cap} — 새 화면 코드는 server/ui 에(옛 쪽을 늘리지 않는다)"
@@ -96,7 +97,7 @@ def test_bridge_old_side():
     bridge = JS[a:JS.index("\n}\n", b) + 3]
     m = re.search(r"function applyState\(next\) \{.*?\n\}\n", JS, re.S).group(0)
     stub = """const esc = s => String(s); const LOADING = "LOADING"; const load = async () => true; let S = null, loadedAt = "";
-const meRec = {}; const mdhm = () => ""; let renders = 0; const render = () => { renders++; };
+const recCache = {r1: 1}; let coreFlash = {text: "결과"}; const mdhm = () => ""; let renders = 0; const render = () => { renders++; };
 const nodes = {}; let made = 0;
 const view = {set innerHTML(h) { for (const k of Object.keys(nodes)) delete nodes[k]; const m = /id="([^"]+)"/.exec(h); if (m) { made++; nodes[m[1]] = {id: m[1], innerHTML: ""}; } }};
 const $ = id => id === "view" ? view : nodes[id] || null;
@@ -105,13 +106,18 @@ const log = []; const events = [];
 const window = {dispatchEvent: e => events.push(e.type)};
 class Event { constructor(t) { this.type = t; } }"""
     scen = """const out = {};
-uiMount("trash"); out.none = $("ui-trash").innerHTML; out.noneOn = uiOn;
+uiMount("trash"); out.none = $("ui-trash").innerHTML; out.noneOn = uiOn; out.afterNone = coreFlash;
 view.innerHTML = "<p>다른 화면</p>"; uiSweep(); out.sweptOn = uiOn;
 MODULE = true; uiMount("trash"); out.pending = [window.CrmUIPending && window.CrmUIPending[0], $("ui-trash").innerHTML];
-window.CrmUI = {mount: (n, el, ctx) => log.push(["mount", n, el.id, typeof ctx.reload]), unmount: n => log.push(["unmount", n])};
+window.CrmUI = {mount: (n, el, ctx) => { log.push(["mount", n, el.id, typeof ctx.reload]); out.ctx = ctx; out.flashes.push(ctx.flash); }, unmount: n => log.push(["unmount", n])};
+out.pendFlash = window.CrmUIPending && window.CrmUIPending[2].flash; coreFlash = {text: "결과"}; out.flashes = [];
 const before = made; uiMount("trash"); uiMount("trash"); out.made = made - before; uiSweep(); out.kept = log.length;
 view.innerHTML = "<p>다른 화면</p>"; uiSweep(); out.log = log; out.pendingAfter = window.CrmUIPending === undefined; out.on = uiOn;
-applyState({generated: ""}); out.events = events; out.renders = renders;
+out.flashLeft = coreFlash;
+S = {id: "S1"}; uiMount("me", ["principle", "p1"]); out.me = [out.ctx.state.id, out.ctx.args, out.ctx.flash];
+out.ctx.setDirty("#_me/principle/p1"); out.dirty = uiDirty; out.ctx.setDirty(null); out.clean = uiDirty;
+view.innerHTML = "<p>다른 화면</p>"; uiSweep(); log.length = 3;
+applyState({generated: ""}); out.events = events; out.renders = renders; out.cache = Object.keys(recCache);
 console.log(JSON.stringify(out));"""
     r = subprocess.run([node, "-"], input=f"{stub}\n{bridge}\n{m}\n{scen}", capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr[-800:]
@@ -123,7 +129,12 @@ console.log(JSON.stringify(out));"""
     assert o["log"] == [["mount", "trash", "ui-trash", "function"], ["mount", "trash", "ui-trash", "function"], ["unmount", "trash"]]
     assert o["pendingAfter"] and o["on"] == ""
     assert o["events"] == ["crm:state"] and o["renders"] == 1, "새 상태 = render 뒤 crm:state 1번"
-    print("OK — 옛 쪽 다리(빌드 없음 안내 · 모듈 아직 = 맡김 · 같은 화면 = 자리 유지 · 떠나면 unmount · crm:state 1번) 통과")
+    assert o["afterNone"] == {"text": "결과"} and o["pendFlash"] == {"text": "결과"}, "빌드 없음 = 결과 문구를 넘기지 않음(남김) · 맡긴 자리 = 넘김"
+    assert o["flashes"] == [{"text": "결과"}, None, None] and o["flashLeft"] is None, "껍데기 결과 한 줄 = 띄운 화면에 한 번(넘긴 뒤 비움)"
+    assert o["me"] == ["S1", ["principle", "p1"], None], "ctx = 상태 S · 주소 조각 · (넘긴 결과 문구는 다시 안 감)"
+    assert o["dirty"] == "#_me/principle/p1" and o["clean"] is None, "setDirty = 껍데기 미저장 보호 주소"
+    assert o["cache"] == [], "새 상태 = 옛 기록 본문 캐시 비움(React 에서 고친 글)"
+    print("OK — 옛 쪽 다리(빌드 없음 안내 · 모듈 아직 = 맡김 · 같은 화면 = 자리 유지 · 떠나면 unmount · crm:state 1번 · ctx 상태·주소·미저장·결과 한 줄 · 본문 캐시) 통과")
 
 
 async def test_serving():

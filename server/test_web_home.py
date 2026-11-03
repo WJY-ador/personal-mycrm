@@ -5,9 +5,9 @@
 
 A. /api/records — 401 · no-store · 기본(before 없음) = /api/state journal 과 같은 50편 · next_before 커서로 겹침·빠짐 없이 이어 받기 ·
    created 동률 블록(한 tx 의 now())이 페이지 경계에 걸쳐도 겹침·누락 0 · limit 끝값 · 틀린 before 400 · 남의 기록 0 · db.records 기본 호출 결과 불변.
-B. app.html 정적 — 「나」 상세(PR①: 빈 상태 문구·옛 링크 #_me/<출처> 이동·쓰기는 저장·동작 버튼 두 곳) +
-   「나」 v9(PR ①-b S2: 탭 나·오늘·Setup · 하위 탭 7 = 레이아웃 순서 · 서버 접점 meSync 한 곳(GET 만) · 축 색 코드 순 8 + 회색 ·
-   렌즈 3 + 커스텀·출처 목록/상세 · 추정 연결 0).
+B. app.html 정적 — 옛 쪽에 남은 「나」 접점(uiMount("me") · 미저장 보호 uiDirty · Setup 레이아웃 · 오늘 · 축 색 토큰).
+   「나」 화면 자체(R2 2026-11-03 React)는 Vitest — server/ui/src/features/me/MeScreen·MeEdit·MeActs.test.tsx.
+G. API 견본 대조(R2) — ui/src/shared/state.sample.json ⊆ /api/state · ui/src/features/me/me.sample.json = /api/me/stats·layout·journal.
 C. app.html 정적 — 대화 서랍(PR ②-b B5: 스위치 · 버튼 3 · 기본 포함 · 자동 확정 0 · 쓰기 3곳 · 편집 잠금 → 이탈 재정리 · 최신 결과만).
 D. 대화 서랍 실행(③-0.2, node — 대화 절 함수를 가짜 DOM 으로 돌린다): 장치 상태 없음/최근 연결/오프라인 · 스위치 꺼짐 = 현행 · 남 장치 0 ·
    뺀 변경 표시 = 확정 미리보기의 excluded.
@@ -42,8 +42,8 @@ import httpx  # noqa: E402
 import db  # noqa: E402
 import main  # noqa: E402
 
-MAIN, OTHER, TIE = "wh-main@example.com", "wh-other@example.com", "wh-tie@example.com"
-EMAILS = (MAIN, OTHER, TIE)
+MAIN, OTHER, TIE, SAMPLE = "wh-main@example.com", "wh-other@example.com", "wh-tie@example.com", "wh-sample@example.com"
+EMAILS = (MAIN, OTHER, TIE, SAMPLE)
 N = 120   # 50 + 50 + 20
 
 
@@ -173,90 +173,45 @@ async def test_records_api():
 
 
 def test_static():
+    """옛 app.html 에 남은 「나」 접점(R2 2026-11-03 — 「나」 화면은 React server/ui/src/features/me, 시험은 Vitest MeScreen·MeEdit·MeActs)
+    · Setup 「페이지 레이아웃」(S4) · 오늘(S5) · 탭 3 · 축 색 토큰 · 표시 낱말."""
     html = (HERE / "app.html").read_text(encoding="utf-8")
     js = re.search(r"<script>(.*?)</script>", html, re.S).group(1)
     assert html.count("<script>") == 1
-    home = js[js.index("// ── 「나」 상세 (PR①)"):js.index("// ── /「나」 홈 (PR①)")]
-    # 빈 상태 문구(r1 T2) · 상세 종류 이름 · 옛 링크
-    for w in ("아직 표시할 데이터가 없어요. 데이터가 들어오면 여기서 볼 수 있어요.", "이 데이터를 열 수 없어요.",
-              '"내 글"', '"질문"', '"검토할 판단"', '"확정한 판단"', '"읽고 든 생각"',
-              'location.replace("#_obj/source/"', "(max-width: 767px)"):
-        assert w in home, w
-    # S5: 홈 쓰기는 두 곳(저장 homeSave · 동작 버튼 homeDo)에서만 기존 엔드포인트로 — 그 밖(선택·입력·포커스 이탈·취소·전환)은 요청 0.
-    # 목록 위치·종류·편집 중인 글은 메모리에만
-    assert home.count("corePost(") == 2 and "method: \"POST\"" not in home and "localStorage" not in home
-    for f in ("async function homeSave()", "async function homeDo(b)"):
-        body = home[home.index(f):home.index("\n}\n", home.index(f))]
-        assert body.count("corePost(") == 1, f
-    for w in ('"/api/me/name"', "/api/reflections/${encodeURIComponent(x.id)}", '"/api/candidate/decide"', '"edit_confirm"', '"/api/item/decide"',
-              "/review`", "확인했어요", "확인 전으로", "고쳐서 남기기", "반영 안 함", "저장", "취소"):
-        assert w in home, w
-    assert not re.search(r"corePost\([^)]*/api/(people|sources)", home), "출처·사람 쓰기 없음(홈) — 고치기는 기존 화면(#_obj/person·#_obj/source) 링크로"
-    # 미저장 보호 — 대화창 문구 · hashchange 가드 · 새로 고침 경고
+    # 「나」 = React 섬 — 라우터는 주소 조각만 넘기고, 화면 코드·통계 접점은 옛 쪽에 없다
+    assert 'else if (tab.view === "me") { subnav(""); uiMount("me", [R.a || "", R.b || ""]); }' in js
+    assert "renderMeV9" not in js and '"/api/me/stats"' not in js and "/api/records?" not in js, "「나」 화면·통계·이어 받기 = React"
+    # 미저장 보호 — 옮긴 화면이 ctx.setDirty 로 알린 주소(uiDirty) · 대화창 문구 · hashchange 가드 · 새로 고침 경고
     for w in ("저장하지 않은 변경이 있어요", "계속 편집", "변경 버리기"):
         assert w in html, w
-    assert "if (homeLeaveGuard()) return;" in js and 'addEventListener("beforeunload"' in js
-    pr1 = home[:home.index("// ── 「나」 v9 (PR ①-b)")]   # PR① 상세 — 「최근」 금지(섞인 정렬). v9 요약 「최근 변경 5」는 PRD v9 B6 이 정한 이름
-    assert "「최근" not in pr1 and "최근 " not in pr1, "「최근」 표현 금지"
-    assert "@media (max-width: 767px)" in html, "모바일 분기점 = 768 미만(JS 와 같은 값)"
-    # S4 연결 그래프 — 빈 상태 2종 · 상한(넓은 25·40 / 1열 12·18) · 생략 문구 · 기존 읽기 API 만 · 외부 라이브러리 0
-    for w in ("연결된 데이터가 없어요.", "연결을 불러오지 못했어요.", "다시 시도", 'wide: [25, 40], narrow: [12, 18]', "개·연결 ",
-              "/api/axes/${encodeURIComponent(id)}/context", "/api/activities/${encodeURIComponent(id)}", "목록으로 보기", "그래프로 보기"):
-        assert w in home, w
+    assert "if (uiLeaveGuard()) return;" in js and 'addEventListener("beforeunload", e => { if (uiDirty)' in js and "setDirty: at => { uiDirty = at; }" in js
+    assert "@media (max-width: 767px)" in html and 'const HOME_MOBILE = "(max-width: 767px)";' in js, "모바일 분기점 = 768 미만(JS·React view.ts 와 같은 값)"
     assert "<script src" not in html.replace('<script src="{{asset:theme.js}}"></script>', ""), "외부 스크립트 0(테마 자산만)"
     # 타입 그래프 기본 = 그래프(새 탐색) · 영속 없음(저장소에 쓰지 않는다)
     assert 'let defsMode = "graph", defsAt = "";' in js and 'defsMode = navNew() ? "graph" : "list"' in js
     assert not re.search(r"localStorage\.setItem\([^)]*defs", js)
-    # PR ①-b S2 — 탭 3 · 하위 탭 7(기본 레이아웃 = 계약 §3 JSON) · 서버 접점 한 곳(GET 만, 실패는 폴백) · 축 색 · 렌즈 · 추정 연결 0
-    v9 = home[home.index("// ── 「나」 v9 (PR ①-b)"):]
     assert "if (navNew()) return [NAVTAB._me, NAVTAB._today];" in js, "탭 나·오늘 — 설정은 톱니"
-    for w in ('const ME_TABS = ["summary", "principle", "decision", "axis", "custom", "person", "source"];',
-              'const ME_BLOCKS = ["heatmap", "kinds", "waiting", "recent"];', "const ME_LAYOUT_DEFAULT = {v: 1, tabs: ME_TABS.slice(), blocks: {summary: ME_BLOCKS.slice()}};",
-              'getJSON("/api/me/layout").then(meV1), getJSON("/api/me/stats")', "const meLayout = () => ME.layout || ME_LAYOUT_DEFAULT;",
-              "const meStats = () => ME.stats;", "meLayout().tabs.map(", "통계를 불러오지 못했어요. 새로 고침해 주세요.", "항목·글",
-              "const ME_AX_COLORS = 8;", 'i < ME_AX_COLORS ? `var(--ax${i + 1})` : "var(--soft)"', '"근거 역추적"', '"축 묶음"', '"사람 관계"',
-              "/api/people/${encodeURIComponent(id)}/context", "/api/sources/${encodeURIComponent(sel.id)}/context",
-              'location.replace(`#_me/${meTabOfItem(it)}/', "GRAPH_CAP.narrow : GRAPH_CAP.wide"):
-        assert w in v9, w
-    assert js.count("async function meSync()") == 1 and js.count("= meSync();") == 1, "서버 접점 = meSync 한 곳(정의 + load 호출)"
-    assert js.count('getJSON("/api/me/layout")') == 2 and js.count('"/api/me/stats"') == 1, "읽기 = meSync(+ STALE 때 레이아웃 다시 받기) — 통계는 meSync 안에만"
-    assert "corePost(" not in v9 and "fetch(" not in v9 and "PUT" not in v9, "S2 「나」 화면 쓰기 요청 0"
-    assert not re.search(r"가정|hyp|추천 연결", v9), "추정 연결·가정 연결 표시 0(B21)"
-    assert "meStatsFromS" not in js, "통계 규칙은 서버 한 곳(S2 판정 ③ — 폴백 제거)"
-    # S2 스크린샷 판정: 옆 묶음 = 종류별 5 + 「더 N」 1(그 목록만 펼침) · 활동 = 행동 · 날짜(문맥 API 값) + 부제 관계·사람 별칭
     # S6: 글 이름 하나 「내 글」(v9 P1) — 사용자 표시 라벨 자리별. 「내 글 AI 요약」·「내가 쓴 메모」(판단 출처 표시)는 그대로
     assert "내가 쓴 글" not in js and 'input_scope: {self_only: "내 글만"}' in js, "「내가 쓴 글」 0 — 생성 정보 입력 범위도 「내 글만」"
     assert "연결된 활동과 내 글을 정해진 계산 규칙으로 보여 줍니다." in js, "ME_NOTICE = 서버 activity.NOTICE 미러"
-    for w in ('"기록": "내 글"', 'kind: "내 글"', '"내 글 AI 요약"', '"내가 쓴 메모"', 'r.act', '"today:" + day'):
+    for w in ('"기록": "내 글"', 'kind: "내 글"', '"내 글 AI 요약"', '"내가 쓴 메모"', 'r.act', '"today:" + day',
+              "const ME_SHOW = 5;", "data-me-open=", "a.action_label || actLabel(a.action)"):
         assert w in js, w
-    for w in ("const ME_SHOW = 5;", "data-me-open=", "meActs[a.id] = a", "a.action_label || actLabel(a.action)", "x.id !== selfPerson"):
-        assert w in js, w
-    assert "<details" not in v9, "접힘(details) 대신 「더 N」 버튼"
-    # S2 판정 ①: 51편 이후 글 = 출처 상세 「더 보기」 1개가 PR① 읽기 API(/api/records 커서)로 이어 받는다(새 API 0)
-    for w in ('getJSON("/api/records?before=" + encodeURIComponent(cur) + "&limit=50")', "data-me-more", "S.journal_next_before",
-              "meRec.extra = []; meRec.next = undefined;"):
-        assert w in js, w
-    # S3 요약 — 차트 4(블록 순서 = layout.blocks.summary) · 서버 값 그대로 · 버튼 0 · 미래 칸 비움 · 색만으로 구분하지 않음(글자 범례)
-    for w in ("function meHeat(st)", "function meKinds(st)", "function meWaiting(st)", "function meRecent()",
-              "draw = {heatmap: meHeat, kinds: meKinds, waiting: meWaiting, recent: meRecent}", "(meLayout().blocks || {}).summary",
-              "future: c.d > today", 'cells.filter(c => !c.future)', '"Asia/Seoul"', "(c.records || 0) + (c.activities || 0)",
-              '"candidates_pending"', '"principles_pending"', '"inbox_pending"', "이 기간에 날짜가 있는 글·활동이 없어요.", "기다리는 결정이 없어요."):
-        assert w in v9, w
-    summ = v9[v9.index("// 요약 — 차트 4"):]
-    assert "<button" not in summ, "요약 버튼 0"
-    assert "created" not in summ[:summ.index("function meRecent()")], "히트맵·막대·띠에 생성일 대체 없음(서버 값만)"
     # S4 Setup — 페이지 6 · 레이아웃 쓰기는 layFetch 한 곳(PUT·DELETE /api/me/layout) · PUT version = 마지막 응답 version(복원 뒤 포함) ·
-    # 한 번에 하나(보내는 중이면 마지막 배치만 줄 세움) · 실패 = 마지막 저장 배치로 복원 · STALE = 서버 배치 다시 받기 · 옛 묶음 주소 replace
+    # 한 번에 하나(보내는 중이면 마지막 배치만 줄 세움) · 실패 = 마지막 저장 배치로 복원 · STALE = 서버 배치 다시 받기 · 옛 묶음 주소 replace ·
+    # 저장 뒤 crm:state(React 「나」가 배치를 다시 받는다)
     setup = js[js.index("// ── Setup (PR ①-b S4)"):js.index("// ── /Setup ──")]
     for w in ('["layout", "페이지 레이아웃"]', '["structure", "내 구조 설정"]', '["objects", "자료 종류"]', '["devices", "연결 장치"]', '["map", "지도"]',
               '["help", "문의 및 개인정보"]', 'fetch("/api/me/layout"', '{layout: meV2(op.layout), version: ME.version}', 'layFetch("DELETE")',
               "ME.version = Number(res.j.version) || 0;", "if (LAY.busy) LAY.queued = op; else laySend(op);", 'res.code === "LAYOUT-STALE"',
-              "ME.layout = LAY.saved.layout; ME.version = LAY.saved.version;", "기본으로 되돌리기", "e.altKey",
+              "ME.layout = LAY.saved.layout; ME.version = LAY.saved.version;", "기본으로 되돌리기", "e.altKey", 'window.dispatchEvent(new Event("crm:state"));',
               'if (R.tab === "_obj" && !R.a) return "#_setup/objects";', 'if (R.tab === "_settings") return "#_setup/structure";',
               'if (R.tab === "_devices") return "#_setup/devices";', 'if (R.tab === "map") return "#_setup/map";',
               'if (R.tab === "_inbox" && !R.a) return "#_today";', 'if (R.tab === "structure") {'):
         assert w in setup, w
     assert js.count('fetch("/api/me/layout"') == 1, "레이아웃 쓰기 = layFetch 한 곳"
+    assert js.count("async function meSync()") == 1 and js.count("= meSync();") == 1, "레이아웃 읽기 접점 = meSync 한 곳(정의 + load 호출)"
+    assert js.count('getJSON("/api/me/layout")') == 2, "읽기 = meSync + STALE 때 다시 받기"
     assert "corePost(" not in setup and "/api/" not in setup.replace("/api/me/layout", ""), "Setup 의 다른 쓰기·API 0"
     assert "if (navNew()) { const to = navReplace(R); if (to) { location.replace(to); return; } }" in js
     # S5 오늘 — 대기(승인 대기) + 보관됨(ingest_kind=inbox 글 · 활동) · 들어온 날(KST) 머리글 · [삭제] 0 · 동작 = 기존 승인·제외(inboxOne) · 읽기만
@@ -271,7 +226,8 @@ def test_static():
     for i, (lt, dk) in enumerate(zip(("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"),
                                      ("#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767")), 1):
         assert f"--ax{i}: {lt};" in html and f"--ax{i}: {dk};" in html, ("축 색", i)
-    print("OK — 홈 정적(빈 상태 문구·옛 링크·쓰기 두 곳·「최근」 0·분기점·연결 그래프 상한·읽기 API·타입 그래프 기본 · v9 탭 3·하위 탭 7·접점 한 곳·축 색·렌즈·추정 0 · 요약 차트 4·버튼 0·서버 값만 · Setup 페이지 6·레이아웃 쓰기 한 곳·version·옛 주소 replace · 오늘 대기/보관됨·날짜 머리글·삭제 0) 통과")
+    print("OK — 옛 쪽 「나」 접점(uiMount·통계 0·미저장 uiDirty·분기점) · Setup 페이지 6·레이아웃 쓰기 한 곳·version·crm:state·옛 주소 replace · "
+          "오늘 대기/보관됨·날짜 머리글·삭제 0 · 축 색 토큰 · 표시 낱말 통과")
 
 
 def test_static_chat():
@@ -554,12 +510,11 @@ def test_static_trash():
     assert tr.count("/api/trash") == 1 and js.count("/api/trash") == 1 and 'corePost("/api/trash/move"' in tr, "옛 쪽 휴지통 API = 이동(trashApi.del) 하나"
     assert "localStorage" not in tr and "Storage" not in tr
     # 진입점 — 상세마다 trashBtn(꺼짐 = 빈 문자열) · 사람·생각은 켜짐이면 휴지통, 꺼짐이면 기존 즉시 삭제(data-core) 그대로
-    for w in ('trashBtn("record", x.id, null, "#_me")', 'trashBtn("item", x.id, x.revision, "#_me/" + meTabOfItem(x))',
-              'trashBtn("reflection", x.id, x.revision, "#_me")', 'trashBtn("activity", a.id, null, "#_obj/activity")',
+    # 「나」 상세의 [삭제](내 글·항목·생각)는 React — Vitest MeActs.test.tsx(R2 2026-11-03)
+    for w in ('trashBtn("activity", a.id, null, "#_obj/activity")',
               'trashOn() ? trashBtn("person", p.id, p.revision, "#_obj/person") : `<button class="secondary" type="button" data-core="person-del"',
               'trashOn() ? trashBtn("reflection", x.id, x.revision, `#_obj/source/${x.source_id}`) : `<button class="secondary" type="button" data-core="refl-del"',
-              'trashBtn("item", it.id, it.revision, `#${tab.id}/${d.id}`)', "j.old_revision_links && !trashOn()",
-              '(trashOn() ? homeActs(r) : "")', '${trashOn() ? homeActs({k: "journal", id, x: {id}}) : ""}'):   # 내 글 동작 칸 = 켜짐일 때만(꺼짐 = 현행)
+              'trashBtn("item", it.id, it.revision, `#${tab.id}/${d.id}`)', "j.old_revision_links && !trashOn()"):
         assert w in js, w
     assert 'if (!window.confirm("이 사람을 지울까요? 되돌릴 수 없어요.")) return;' in js and 'if (!window.confirm("이 읽고 든 생각을 지울까요? 되돌릴 수 없어요.")) return;' in js, \
         "꺼짐 = 기존 즉시 삭제 경로 유지"
@@ -574,12 +529,11 @@ def test_static_trash():
     assert "setupPages().some(p => p[0] === R.a)" in js and "else if (page === \"trash\") uiMount(\"trash\");" in js
     # 「반영 안 함」 — 칩·필터·저장 메시지·이력·메타(스위치 무관). 기존 상태 표시만 바꾸고 동작은 그대로
     for w in ('<span class="badge b-off">반영 안 함</span>', '["excluded", "반영 안 함"]', 'excluded: ["st-off", "반영 안 함"]',
-              'exclude: "반영 안 함으로 표시했어요."', '"반영 안 함으로 표시했어요. 목록에서 빠졌어요."', 'btn("tertiary", "exclude", "반영 안 함")',
-              'data-act="exclude" disabled>반영 안 함</button>', '["exclude", "secondary", "반영 안 함"]', 'exclude: "반영 안 함", pending: "아직 안 정함"', '"반영 안 함" : "확정 전"',
+              'exclude: "반영 안 함으로 표시했어요."', 'data-act="exclude" disabled>반영 안 함</button>', 'exclude: "반영 안 함", pending: "아직 안 정함"',
               '["반영 안 함", cs.filter(c => c.status === "excluded").length, "--soft"]'):
         assert w in js, w
-    assert "남기지 않" not in html, "「남기지 않음·않기·않았어요」 0 — 표현은 「반영 안 함」 하나(동작 exclude 는 그대로)"
-    assert js.count("반영 안 함으로 표시했어요.") == 5 and "반영 안 함으로 저장했어요." not in js
+    assert "남기지 않" not in html, "「남기지 않음·않기·않았어요」 0 — 표현은 「반영 안 함」 하나(동작 exclude 는 그대로). React 쪽은 Vitest MeActs"
+    assert js.count("반영 안 함으로 표시했어요.") == 3 and "반영 안 함으로 저장했어요." not in js
     assert "근거를 이용할 수 없어요." in js and "찾을 수 없는 대상" not in js, "삭제된 근거 = 「근거를 이용할 수 없어요.」"
     # PR-2 몫은 그대로 — 승인 대기 [제외] · 제안 [제외] · 대화 「뺀 것」
     assert 'act === "inbox-exclude"' in js and '<button class="secondary" type="button" data-iact="discard">제외</button>' in js and "뺀 것 ${" in js
@@ -587,7 +541,7 @@ def test_static_trash():
 
 
 def trash_run(scenario):
-    """휴지통 절 실행(node) — 휴지통 절(상세 [삭제]) + Setup 페이지 목록 + 「나」 상세 동작 칸(homeActs) + 날짜·esc 도우미.
+    """휴지통 절 실행(node) — 휴지통 절(상세 [삭제]) + Setup 페이지 목록 + 날짜·esc 도우미. 「나」 상세 동작 칸은 React(Vitest MeActs).
     서버·DOM 은 가짜: api = 보낸 요청 기록, confirmAsk = 확인창 문구 기록, done/fail = coreDone·coreFail 호출 기록."""
     import json
     import shutil
@@ -598,12 +552,9 @@ def trash_run(scenario):
     js = re.search(r"<script>(.*?)</script>", html, re.S).group(1)
     helpers = "\n".join(re.search(rf"^{p}.*$", js, re.M).group(0) for p in (
         r"const esc = ", r"const toDate = ", r"const pad2 = ", r"function mdhm\(", r"const SETUP_PAGES = ", r"const setupPages = "))
-    a = js.index("function homeActs(r) {")
-    acts = js[a:js.index("\n}\n", a) + 3]
     b = js.index("// ── 휴지통 (trash PR-1)")
     tr = js[b:js.index("// ── /휴지통 ──", b)]   # 클릭 연결은 가짜 document 가 받고 버린다 · hashchange 는 HASH 로
-    stub = """let S = null, NAVNEW = true, homeEdit = null, homeAct = null, coreFlash = null; const navNew = () => NAVNEW;
-const location = {hash: "#_me/principle/i1"}; const meTabOfItem = () => "principle";
+    stub = """let S = null, NAVNEW = true, coreFlash = null; const navNew = () => NAVNEW;
 const WHAT = {OFFLINE: "서버에 연결하지 못했어요."};
 const els = {}; const $ = id => els[id] || (els[id] = {id, textContent: "", innerHTML: "", hidden: false});
 const document = {querySelectorAll: () => [], querySelector: () => null, addEventListener() {}};
@@ -617,42 +568,29 @@ const done = [], fail = [];
 const coreDone = async (text, hash) => { done.push({text, hash}); }; const coreFail = async (res, err) => { fail.push(res.code); };
 const coreFlashShow = () => {}; const load = async () => { S = Object.assign({}, S); };
 const fakeBtn = (d, err) => ({dataset: d, disabled: false, closest: () => ({querySelector: () => err})});"""
-    src = f"{stub}\n{helpers}\n{acts}\n{tr}\nconst out = {{}};\n(async () => {{\n{scenario}\n}})().then(() => console.log(JSON.stringify(out)), e => {{ console.error(e); process.exit(1); }});"
+    src = f"{stub}\n{helpers}\n{tr}\nconst out = {{}};\n(async () => {{\n{scenario}\n}})().then(() => console.log(JSON.stringify(out)), e => {{ console.error(e); process.exit(1); }});"
     r = subprocess.run([node, "-"], input=src, capture_output=True, text=True, timeout=60, env=dict(os.environ, TZ="Asia/Seoul"))
     assert r.returncode == 0, r.stderr[-800:]
     return json.loads(r.stdout)
 
 
 def test_trash_switch():
-    """스위치별 차이 — 꺼짐(또는 옛 탐색) = [삭제]·휴지통 페이지 0, 기준 [남기기]·[남기지 않기]·[되돌리기] 그대로 ·
-    켜짐 = 내 글·항목·생각 상세에 [삭제] · 기준은 [남기기](확정이면 없음) + [삭제] · 후보는 [삭제] 0(r4 D3)."""
+    """스위치별 차이 — 꺼짐(또는 옛 탐색) = [삭제]·휴지통 페이지 0 · 켜짐 = [삭제] 버튼·Setup 「휴지통」.
+    「나」 상세의 버튼(기준 [남기기]+[삭제] · 후보 [삭제] 0 · 꺼짐 = 옛 버튼)은 React — Vitest MeActs.test.tsx."""
     o = trash_run("""
-const it = (dec) => ({k: "item", id: "i1", x: {id: "i1", revision: 3, semantic_kind: "principle", decision: dec}});
-const rows = {journal: {k: "journal", id: "r1", x: {id: "r1"}}, refl: {k: "refl", id: "f1", x: {id: "f1", revision: 2, review: "pending"}},
-  cand: {k: "cand", id: "c1", x: {id: "c1", status: "pending", revision: 1}}, plain: {k: "item", id: "i2", x: {id: "i2", revision: 1, semantic_kind: "event"}}};
-const snap = () => ({on: trashOn(), pages: setupPages().map(p => p[0]), btn: trashBtn("record", "r1", null, "#_me"),
-  pend: homeActs(it("pending")), conf: homeActs(it("confirmed")), excl: homeActs(it("excluded")),
-  journal: homeActs(rows.journal), refl: homeActs(rows.refl), cand: homeActs(rows.cand), plain: homeActs(rows.plain)});
+const snap = () => ({on: trashOn(), pages: setupPages().map(p => p[0]), btn: trashBtn("record", "r1", null, "#_me")});
 S = {switches: {converse: true}}; out.none = snap();
 S = {switches: {trash: false}}; out.off = snap();
 S = {switches: {trash: true}}; NAVNEW = false; out.old = snap();
 NAVNEW = true; out.on = snap();
 """)
-    btns = lambda h: re.findall(r"<button[^>]*>([^<]+)</button>", h)   # noqa: E731
     for k in ("none", "off", "old"):
         s = o[k]
         assert s["on"] is False and "trash" not in s["pages"] and s["btn"] == "", (k, "꺼짐·옛 탐색 = 버튼·페이지 0")
-        assert btns(s["pend"]) == ["남기기", "반영 안 함"] and btns(s["conf"]) == ["반영 안 함", "되돌리기"] and btns(s["excl"]) == ["남기기", "되돌리기"], (k, "기준 = 옛 버튼(글자만 「반영 안 함」)")
-        assert "data-trash" not in s["journal"] + s["refl"] + s["cand"] + s["plain"], (k, "[삭제] 0")
     s = o["on"]
     assert s["on"] is True and s["pages"][-1] == "trash" and s["pages"][:6] == ["layout", "structure", "objects", "devices", "map", "help"]
     assert s["btn"] == '<button class="secondary" type="button" data-trash="record" data-id="r1" data-back="#_me">삭제</button>'
-    assert btns(s["pend"]) == ["남기기", "삭제"] and btns(s["excl"]) == ["남기기", "삭제"] and btns(s["conf"]) == ["삭제"], "기준 = [남기기] + [삭제], [남기지 않기]·[되돌리기] 0"
-    assert 'data-trash="item" data-id="i1" data-rev="3" data-back="#_me/principle"' in s["pend"]
-    assert btns(s["journal"]) == ["삭제"] and 'data-trash="record"' in s["journal"]
-    assert btns(s["refl"]) == ["확인했어요", "삭제"] and 'data-trash="reflection" data-id="f1" data-rev="2"' in s["refl"]
-    assert btns(s["plain"]) == ["삭제"] and "data-trash" not in s["cand"] and btns(s["cand"]) == ["남기기", "고쳐서 남기기", "반영 안 함"], "후보 = [삭제] 0 · 기존 결정 그대로(글자만)"
-    print("OK — 휴지통 스위치(꺼짐·필드 없음·옛 탐색 = [삭제]·페이지 0·기준 옛 버튼 · 켜짐 = 내 글·항목·생각 [삭제]·기준 [남기기]+[삭제]·후보 [삭제] 0) 통과")
+    print("OK — 휴지통 스위치(꺼짐·필드 없음·옛 탐색 = [삭제]·페이지 0 · 켜짐 = [삭제]·Setup 휴지통) 통과")
 
 
 def test_trash_flow():
@@ -825,6 +763,79 @@ def test_static_moved():
     print("OK — test_tools 에서 옮긴 app.html 정적(A1 문의 esc·A2 계정 메뉴·A3 구조 정의·편입 대화창·A4 LABELS·A5 24h 화면·B1 라이트 기본·B2 셰이더 0·B3 동의 0·B4 재인증 0) 통과")
 
 
+def _shape(v):
+    return "null" if v is None else type(v).__name__
+
+
+def _cmp(sample, real, path, exact):
+    """견본 ⊆ 실제(exact = 키 집합까지 같다) — 키가 있어야 하고, 값 타입은 둘 다 null 이 아닐 때 같아야 한다(null 허용은 TS 타입이 tsc 로 본다).
+    목록은 둘 다 비지 않았을 때 첫 원소끼리. 차이 = [경로] 목록."""
+    bad = []
+    if isinstance(sample, dict) and isinstance(real, dict):
+        if exact and set(sample) != set(real):
+            bad.append(f"{path} 키 {sorted(set(sample) ^ set(real))}")
+        for k, v in sample.items():
+            if k not in real:
+                bad.append(f"{path}.{k} 없음")
+            elif "null" not in (_shape(v), _shape(real[k])) and _shape(v) != _shape(real[k]):
+                bad.append(f"{path}.{k} {_shape(v)}≠{_shape(real[k])}")
+            elif k not in ("by_source", "actions", "data", "p", "kinds", "waiting"):   # 자유 키 사전(값 모양만 같은 종류)은 안으로 들어가지 않는다
+                bad += _cmp(v, real[k], f"{path}.{k}", exact)
+    elif isinstance(sample, list) and isinstance(real, list) and sample and real:
+        bad += _cmp(sample[0], real[0], path + "[0]", exact)
+    return bad
+
+
+async def test_ui_samples():
+    """API 견본 대조(R2) — React 「나」가 읽는 응답 조각의 손 사본 타입(TS)과 실제 응답을 대조한다.
+    ui/src/shared/state.sample.json ⊆ /api/state(AppState 는 쓰는 조각만) · ui/src/features/me/me.sample.json = /api/me/stats·/api/me/layout·/api/journal
+    (키 집합까지). TS 쪽은 satisfies(tsc) — 서버 응답이 바뀌면 여기서, TS 타입이 바뀌면 tsc 에서 잡힌다."""
+    import json
+    site = main.site
+    real = site.dev, site.dev_user
+    uid = db.user_by_email(SAMPLE)["id"]
+    db.display_name_set(uid, "견본")
+    db.nav_accept(uid)
+    q = db.question_add(uid, "견본 질문")
+    src = db.source_create(uid, "url", "견본 출처")
+    rec = db.record_add(uid, "견본 글", "견본 본문 입력 담당을 먼저 정했다.", q["id"])
+    with db.tx() as c:
+        c.execute("UPDATE records SET source_id=%s WHERE user_id=%s AND id=%s", (src["id"], uid, rec["id"]))
+    cid = db.candidates_propose(uid, rec["id"], q["id"], [{"text": "담당 먼저", "quote": "입력 담당을 먼저"}], "ai")[0][0]
+    defs = {d["std_id"]: d for d in db.definitions(uid)}
+    pd, ax = defs["std:principles"], defs["std:axes"]
+    ref = next((f for f in pd["fields"] if f["value_type"] == "reference" and f["target_kind"] == "candidate"), None)
+    links = [{"field_key": ref["key"], "target_kind": "candidate", "target_id": cid}] if ref else []
+    p = db.item_propose(uid, pd["id"], pd["revision"], None, 0, "P-1", "견본 기준", "본문", {}, links)
+    db.item_decide(uid, p["item_id"], 0, p["proposal_id"], "apply")
+    a = db.item_propose(uid, ax["id"], ax["revision"], None, 0, None, "견본 축", "", {}, [])
+    db.item_decide(uid, a["item_id"], 0, a["proposal_id"], "apply")
+    db.record_attach(uid, rec["id"], axes=[a["item_id"]])
+    db.person_save(uid, "견본 사람")
+    db.source_reflection_save(uid, src["id"], "summary", "견본 생각")
+    ui = HERE / "ui" / "src"
+    st_sample = json.loads((ui / "shared" / "state.sample.json").read_text(encoding="utf-8"))
+    me_sample = json.loads((ui / "features" / "me" / "me.sample.json").read_text(encoding="utf-8"))
+    try:
+        site.dev, site.dev_user = True, SAMPLE
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url=PUBLIC) as h:
+            st = (await h.get("/api/state")).json()
+            got = {"stats": (await h.get("/api/me/stats")).json(), "layout": (await h.get("/api/me/layout")).json(),
+                   "journal": (await h.get("/api/journal", params={"id": rec["id"]})).json()}
+    finally:
+        site.dev, site.dev_user = real
+    for k in ("journal", "questions", "candidates", "items", "definitions", "record_links", "people", "reflections", "sources"):
+        assert st[k], ("견본 대조에 쓸 행이 없어요", k)
+    assert not ref or st["items"][0]["links"] or any(i["links"] for i in st["items"]), "항목 연결 행"
+    bad = _cmp(st_sample, st, "state", exact=False)
+    assert not bad, (bad, "state.sample.json·shared/state.ts 의 AppState 를 같이 고친다")
+    for k in ("stats", "layout", "journal"):
+        bad = _cmp(me_sample[k], got[k], k, exact=True)
+        assert not bad, (bad, "me.sample.json·features/me/meApi.ts 의 타입을 같이 고친다")
+    assert got["journal"]["revision"] == 1 and got["journal"]["author_kind"] == "self", "수기 수정 — 저장 expected_revision · 남이 쓴 글 판정"
+    print("OK — API 견본 대조(state ⊆ 실제 · stats·layout·journal 키·값 타입 = me.sample.json · journal revision·author_kind) 통과")
+
+
 async def run():
     db.init_schema()
     cleanup()
@@ -840,6 +851,7 @@ async def run():
         test_trash_flow()
         test_static_moved()
         await test_records_api()
+        await test_ui_samples()
     finally:
         cleanup()
         db.close()

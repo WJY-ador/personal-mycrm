@@ -1,8 +1,20 @@
-// 옮긴 화면 목록 — features 를 import 하는 유일한 곳. 이름은 server/ui/migrated.json 의 screens 키와 같다.
-import type { ComponentType } from "react";
+// 옮긴 화면 목록 + 「나」 요약 블록 레지스트리 — features 를 import 하는 유일한 곳. 화면 이름은 server/ui/migrated.json 의 screens 키와 같다.
+// 블록 id 정본 = server/layout_registry.json(Python layout_check 와 같은 파일 하나 — 사본 금지). 키가 같은지는 registry.test.ts 가 본다.
+import { createElement, type ComponentType } from "react";
 import type { ScreenProps } from "../shared/ctx";
+import reg from "../../../layout_registry.json";
 import { TrashScreen } from "../features/trash/TrashScreen";
+import { MeScreen } from "../features/me/MeScreen";
+import type { Blocks } from "../features/me/summary/block";
+import { Heatmap } from "../features/me/summary/Heatmap";
+import { Kinds } from "../features/me/summary/Kinds";
+import { Waiting } from "../features/me/summary/Waiting";
+import { Recent } from "../features/me/summary/Recent";
+
+export const REGISTRY = reg;
+export const BLOCKS: Blocks = { heatmap: Heatmap, kinds: Kinds, waiting: Waiting, recent: Recent };
 
 export const SCREENS: Record<string, ComponentType<ScreenProps>> = {
   trash: TrashScreen,
+  me: (p: ScreenProps) => createElement(MeScreen, { ...p, blocks: BLOCKS, layoutDefault: reg.pages.me.default }),
 };

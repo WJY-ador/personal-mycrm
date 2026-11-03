@@ -135,24 +135,24 @@ console.log(JSON.stringify(out));
         self.assertNotIn('grp("기본 🔒"', JS)
 
     def test_body_bold_renders_safely(self):
-        """사용자 글 본문의 **굵게** 는 <strong>, 그 밖은 escape. 홀수·빈 ** 는 그대로, 인용 mark 안에서도 짝이 맞는다."""
+        """사용자 글 본문의 **굵게** 는 <strong>, 그 밖은 escape. 홀수·빈 ** 는 그대로, 인용 mark 안에서도 짝이 맞는다.
+        사례 = ui/src/shared/rich.cases.json — 새 TS(rich.test.tsx)가 같은 사례를 통과한다. 옛 rich·paraHtml 은 R5 까지 일시 중복(migrated.json)."""
+        cases = json.loads((HERE / "ui" / "src" / "shared" / "rich.cases.json").read_text(encoding="utf-8"))
         funcs = JS[JS.index("const esc ="):JS.index("const $ = id")] + JS[JS.index("function paraHtml"):JS.index("function attachHtml")]
-        result = js_run(funcs + '''
-console.log(JSON.stringify({
-  bold: rich("- **사실**: Lost에 **a**"), xss: rich("<b>x</b> **<img src=x onerror=1>**"),
-  odd: rich("a ** b"), empty: rich("****"), multi: rich("**a\\nb**"), plain: rich("- 목록"),
-  para: paraHtml("앞 **굵게** 뒤 인용구 끝", "인용구"), head: paraHtml("## **제목**", ""),
-}));''')
-        self.assertEqual(result["bold"], "- <strong>사실</strong>: Lost에 <strong>a</strong>")
-        self.assertEqual(result["xss"], "&lt;b&gt;x&lt;/b&gt; <strong>&lt;img src=x onerror=1&gt;</strong>")
-        self.assertNotIn("<b>", result["xss"])
-        self.assertNotIn("<img", result["xss"])
-        self.assertEqual(result["odd"], "a ** b")
-        self.assertEqual(result["empty"], "****")
-        self.assertEqual(result["multi"], "**a\nb**")
-        self.assertEqual(result["plain"], "- 목록")
-        self.assertEqual(result["para"], '<p class="">앞 <strong>굵게</strong> 뒤 <mark>인용구</mark> 끝</p>')
-        self.assertEqual(result["head"], '<p class="h"><strong>제목</strong></p>')
+        result = js_run(funcs + "\nconst C = " + json.dumps(cases, ensure_ascii=False) + ";\n" +
+                        "console.log(JSON.stringify({rich: C.rich.map(c => rich(c.in)), para: C.para.map(c => paraHtml(c.in, c.quote))}));")
+
+        def esc(t):
+            return html.escape(t, quote=True).replace("&#x27;", "&#39;")
+
+        def want(out):
+            return "".join(f"<{tag}>{esc(t)}</{tag}>" if tag else esc(t) for tag, t in out)
+        self.assertEqual(len(result["rich"]), len(cases["rich"]))
+        for c, got in zip(cases["rich"], result["rich"]):
+            self.assertEqual(got, want(c["out"]), c["in"])
+            self.assertNotIn("<img", got)
+        for c, got in zip(cases["para"], result["para"]):
+            self.assertEqual(got, f'<p class="{"h" if c["h"] else ""}">{want(c["out"])}</p>', c["in"])
         self.assertNotIn("${esc(x.body)}", JS.replace('esc(x.body) : ""', ""))
         self.assertNotIn("${esc(cur.body)}", JS)
 

@@ -27,17 +27,23 @@ test("import 방향 layout → features → shared, features 끼리 금지", () 
   for (const [p, src] of Object.entries(files)) {
     const from = area(p);
     for (const spec of imports(src).filter(s => s.startsWith("."))) {
-      const to = area(resolve(p, spec));
+      const at = resolve(p, spec);
       seen++;
+      // src 밖은 하나만 — 요약 블록 레지스트리 정본(server/layout_registry.json, Python 과 같은 파일)을 layout 이 읽는다
+      if (!at.startsWith("./")) { if (!(from === "layout" && spec === "../../../layout_registry.json")) bad.push(`${p} → ${spec}`); continue; }
+      const to = area(at);
       if (to === from) continue;
       const ok =
         (from === "main.tsx" && (to === "layout" || to === "shared")) ||
         (from === "layout" && (to.startsWith("features/") || to === "shared")) ||
-        (from.startsWith("features/") && to === "shared");
+        (from.startsWith("features/") && to === "shared") ||
+        from === "test";   // 시험 도우미(src/test — 화면이 import 하지 않는다, 아래 검사) 는 어디든 띄워 본다
       if (!ok) bad.push(`${p} → ${spec}`);
     }
   }
   expect(bad).toEqual([]);
+  const toTest = Object.entries(files).filter(([p, src]) => area(p) !== "test" && imports(src).some(s => s.startsWith(".") && area(resolve(p, s)) === "test")).map(([p]) => p);
+  expect(toTest).toEqual([]);   // 화면 코드는 시험 도우미를 쓰지 않는다
   expect(Object.keys(files)).toContain("./main.tsx");
   expect(seen).toBeGreaterThan(10);   // 빈 검사 방지 — 실제 import 를 읽었다
 });

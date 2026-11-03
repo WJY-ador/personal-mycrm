@@ -1,0 +1,49 @@
+// 「나」 서버 접점 — 읽기(통계·레이아웃·기록 본문·이어 받기·문맥) + 쓰기(기존 경로 + 수기 수정). 응답 모양 정본 = server/web.py·db.py.
+// 견본 대조 = me.sample.json(stats·layout·journal) ↔ server/test_web_home.py test_me_samples.
+import { getJSON, postJSON } from "../../shared/api";
+import type { Rec } from "../../shared/state";
+
+export type Stats = {
+  axes: { id: string; code: string | null; title: string; items: number; records: number; readings: number; n: number }[];
+  heatmap: { from: string; to: string; cells: { d: string; records: number; activities: number }[] };
+  kinds: Record<string, number>;
+  waiting: Record<string, number>;
+};
+export type Slot = { c: string; p: Record<string, unknown> };
+export type MePage = { tabs: string[]; regions: Record<string, Slot[]> };
+export type Layout = { layout: { v: number; pages: { me: MePage } }; version: number };
+export type Journal = { id: string; title: string; body: string; revision: number; author_kind: string; meta: { created: string; source: string | null; question_id: string | null } };
+export type Act = {
+  id: string; action: string; action_label?: string; occurred_on: string | null; observed_on?: string | null; state?: string;
+  source?: { id: string; name: string } | null; people?: { id: string; alias: string; role?: string }[];
+  axes?: { id: string; title: string | null }[]; memo_count?: number;
+};
+export type PersonCtx = { activities: Act[]; activity_count: number; records: { id: string; title: string | null }[];
+  items: { id: string; object_id: string; title: string | null; field_key: string }[] };
+export type AxisCtx = { activities: Act[]; activity_count: number };
+export type SourceCtx = { activity_count: number; by_action: { action: string; label: string; n: number }[]; activities: Act[] };
+
+const enc = encodeURIComponent;
+export const meApi = {
+  stats: () => getJSON<Stats>("/api/me/stats"),
+  layout: () => getJSON<Layout>("/api/me/layout"),
+  journal: (id: string) => getJSON<Journal>("/api/journal?id=" + enc(id)),
+  records: (before: string) => getJSON<{ records: Rec[]; next_before: string | null }>(`/api/records?before=${enc(before)}&limit=50`),
+  person: (id: string) => getJSON<PersonCtx>(`/api/people/${enc(id)}/context`),
+  axis: (id: string) => getJSON<AxisCtx>(`/api/axes/${enc(id)}/context`),
+  source: (id: string) => getJSON<SourceCtx>(`/api/sources/${enc(id)}/context`),
+  activity: (id: string) => getJSON<Act>(`/api/activities/${enc(id)}`),
+  // 쓰기 — 기존 경로
+  name: (display_name: string) => postJSON("/api/me/name", { display_name }),
+  reflection: (id: string, body: object) => postJSON(`/api/reflections/${enc(id)}`, body),
+  review: (id: string, reviewed: boolean, expected_revision: number) => postJSON(`/api/reflections/${enc(id)}/review`, { reviewed, expected_revision }),
+  candidate: (body: object) => postJSON("/api/candidate/decide", body),
+  itemDecide: (body: object) => postJSON("/api/item/decide", body),
+  trash: (kind: string, id: string, rev: number | null) =>
+    postJSON("/api/trash/move", rev == null ? { kind, id } : { kind, id, expected_revision: rev }),
+  // 쓰기 — 수기 수정(A0′, R2)
+  recordTitle: (id: string, expected_revision: number, title: string) => postJSON(`/api/records/${enc(id)}/title`, { expected_revision, title }),
+  recordBody: (id: string, expected_revision: number, body: string) => postJSON(`/api/records/${enc(id)}/body`, { expected_revision, body }),
+  itemEdit: (item_id: string, expected_revision: number, title: string, body: string) =>
+    postJSON("/api/item/edit", { item_id, expected_revision, title, body }),
+};

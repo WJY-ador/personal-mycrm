@@ -1,0 +1,15 @@
+/* 연결 그래프 — 방사형 SVG. 색은 전역 토큰(라이트·다크 같이). 노드 = 링크(키보드 Tab·Enter). 옛 app.html .hgraph 를 옮김(R2) */
+.graph { display: block; width: 100%; height: auto; max-height: 460px; }
+.graph line { stroke: var(--soft); stroke-width: 1.2; }
+.graph marker path { fill: var(--soft); }
+.graph circle { fill: var(--card); stroke: var(--muted); stroke-width: 1.5; }
+.graph circle.center { fill: var(--accent); stroke: var(--accent); }
+.graph circle.k-cand { stroke: var(--warn); }
+.graph circle.k-item { stroke: var(--accent); }
+.graph circle.k-journal { stroke: var(--ink); }
+.graph circle.k-person, .graph circle.k-source, .graph circle.k-activity { stroke-dasharray: 3 2; }
+.graph text { font-size: 12px; fill: var(--ink); paint-order: stroke; stroke: var(--card); stroke-width: 4px; stroke-linejoin: round; }   /* 선 위 글자도 읽히게 */
+.graph.narrow text { font-size: 13px; }
+.graph a.node:hover circle, .graph a.node:focus circle { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 2.5; }
+.graph a.node:focus { outline: none; }
+.graph a.node:focus text { fill: var(--accent); font-weight: 700; }
