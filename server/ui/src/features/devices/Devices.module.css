@@ -1,0 +1,8 @@
+/* 연결 장치 — 장치 카드(상태 칩·날짜·허용 규칙 접힘). 색은 app.html 전역 CSS 변수 */
+.off { margin: 0 0 .9rem; }
+.card h3 { margin: .1rem 0 .2rem; font-size: 1rem; }
+.card :global(dl.kv) { margin: .3rem 0 .4rem; }
+.card :global(.pacts) { display: flex; flex-wrap: wrap; gap: .4rem; margin: .2rem 0 .4rem; }
+.pol summary { cursor: pointer; font-size: .8rem; color: var(--accent); font-weight: 600; }
+.pol :global(.fform) { margin-top: .5rem; }
+.pol input[type="checkbox"] { accent-color: var(--accent); margin: 0; }

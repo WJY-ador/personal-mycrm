@@ -24,6 +24,34 @@ class PackagingTests(unittest.TestCase):
             for relative, digest in hashes.items():
                 self.assertEqual(build.sha256(ROOT / relative), digest)
 
+    def test_allowlist_covers_agent_imports(self):
+        # 앱 sidecar 가 `migrate login --token-stdin` 을 돌린다 — cli 가 부르는 agent 모듈이 목록에서 빠지면 ImportError
+        import ast
+        allow = set(json.loads((ROOT / "packaging/agent-files.json").read_text()))
+        self.assertIn("agent/migrate.py", allow)
+        missing = set()
+        for name in sorted(allow):
+            tree = ast.parse((ROOT / name).read_text(encoding="utf-8"))
+            pkg = Path(name).parent
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ImportFrom) or node.level == 0:
+                    continue
+                base = pkg
+                for _ in range(node.level - 1):
+                    base = base.parent
+                if node.module:
+                    targets = [base.joinpath(*node.module.split("."))]
+                else:
+                    targets = [base / a.name for a in node.names]
+                for t in targets:
+                    if (ROOT / t).is_dir():
+                        t = t / "__init__"
+                    # allowlist 는 `/` 기준 — Windows 의 `\` 경로와 대조가 어긋나지 않게 posix 로 맞춘다
+                    rel = (t if t.suffix == ".py" else t.with_suffix(".py")).as_posix()
+                    if (ROOT / rel).exists() and rel not in allow:
+                        missing.add(name + " -> " + rel)
+        self.assertEqual(missing, set())
+
     def test_checksum_manifest_is_stable_and_excludes_its_own_output(self):
         checksums = load("checksums")
         with tempfile.TemporaryDirectory(dir=ROOT / "release") as temp:

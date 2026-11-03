@@ -1,0 +1,93 @@
+{
+ "list": {
+  "entries": [
+   {
+    "id": "ie_s1",
+    "kind": "self_summary",
+    "state": "pending",
+    "title": "이번 주 요약",
+    "received_at": "2026-11-03T13:51:59.897089+09:00",
+    "expires_at": "2026-12-03T13:51:59.897089+09:00",
+    "device": {
+     "id": "is_sample",
+     "label": "견본 장치"
+    },
+    "execution": "unattended",
+    "source_created_at": null,
+    "source_date": null,
+    "generation": {
+     "method": "ai_summary",
+     "tool": "demo-tool",
+     "model": "demo-model",
+     "input_scope": "self_only",
+     "inputs": 3
+    },
+    "activity_ref": null,
+    "is_latest": true,
+    "approvable": true,
+    "payload_bytes": 327,
+    "resolved_at": null,
+    "resolved_by": null,
+    "target_record_id": null
+   },
+   {
+    "id": "ie_t2",
+    "kind": "self_text",
+    "state": "applied",
+    "title": null,
+    "received_at": "2026-11-03T13:51:59.897890+09:00",
+    "expires_at": "2026-12-03T13:51:59.897890+09:00",
+    "device": {
+     "id": "is_sample",
+     "label": "견본 장치"
+    },
+    "execution": "attended",
+    "source_created_at": null,
+    "source_date": null,
+    "generation": null,
+    "activity_ref": null,
+    "is_latest": true,
+    "approvable": false,
+    "payload_bytes": 0,
+    "resolved_at": "2026-11-03T13:51:59.898619+09:00",
+    "resolved_by": "user",
+    "target_record_id": "r_KHsjhhOSWFw"
+   }
+  ],
+  "next_cursor": "",
+  "counts": {
+   "pending": 1
+  }
+ },
+ "one": {
+  "id": "ie_s1",
+  "kind": "self_summary",
+  "state": "pending",
+  "title": "이번 주 요약",
+  "received_at": "2026-11-03T13:51:59.897089+09:00",
+  "expires_at": "2026-12-03T13:51:59.897089+09:00",
+  "device": {
+   "id": "is_sample",
+   "label": "견본 장치"
+  },
+  "execution": "unattended",
+  "source_created_at": null,
+  "source_date": null,
+  "generation": {
+   "method": "ai_summary",
+   "tool": "demo-tool",
+   "model": "demo-model",
+   "input_scope": "self_only",
+   "inputs": 3
+  },
+  "activity_ref": null,
+  "is_latest": true,
+  "approvable": true,
+  "payload_bytes": 327,
+  "resolved_at": null,
+  "resolved_by": null,
+  "target_record_id": null,
+  "body": "AI 가 만든 요약 한 단락.",
+  "approve_notice": "AI 요약을 보관합니다. 승인해도 직접 작성한 원문이나 인용 가능한 기록으로 바뀌지 않습니다."
+ }
+}

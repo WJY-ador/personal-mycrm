@@ -1,0 +1,106 @@
+{
+ "_doc": "API 응답 견본 — 「나」가 읽는 /api/me/stats · /api/me/layout · /api/journal · POST /api/records/{id}/body/preview. server/test_web_home.py test_me_samples 가 실제 응답과 키·값 타입을 대조하고, me.sample.test.ts 가 TS 타입에 satisfies 로 묶는다.",
+ "stats": {
+  "axes": [
+   {
+    "id": "i_sample",
+    "code": "X1",
+    "title": "실행 속도",
+    "items": 0,
+    "records": 1,
+    "readings": 0,
+    "n": 1
+   }
+  ],
+  "heatmap": {
+   "from": "2026-08-10",
+   "to": "2026-11-08",
+   "cells": [
+    {
+     "d": "2026-08-10",
+     "records": 0,
+     "activities": 0
+    },
+    {
+     "d": "2026-08-11",
+     "records": 0,
+     "activities": 0
+    }
+   ]
+  },
+  "kinds": {
+   "principle": 1,
+   "decision": 1,
+   "axis": 2,
+   "custom": 0,
+   "records": 2,
+   "readings": 0,
+   "people": 1,
+   "sources": 1
+  },
+  "waiting": {
+   "candidates_pending": 1,
+   "principles_pending": 1,
+   "inbox_pending": 0
+  }
+ },
+ "layout": {
+  "layout": {
+   "v": 2,
+   "pages": {
+    "me": {
+     "tabs": [
+      "summary",
+      "principle",
+      "decision",
+      "axis",
+      "custom",
+      "person",
+      "source"
+     ],
+     "regions": {
+      "summary": [
+       {
+        "c": "heatmap",
+        "p": {}
+       },
+       {
+        "c": "kinds",
+        "p": {}
+       },
+       {
+        "c": "waiting",
+        "p": {}
+       },
+       {
+        "c": "recent",
+        "p": {}
+       }
+      ]
+     }
+    }
+   }
+  },
+  "version": 0
+ },
+ "journal": {
+  "id": "r_sample",
+  "title": "견본 글",
+  "body": "견본 본문",
+  "revision": 1,
+  "author_kind": "self",
+  "meta": {
+   "created": "2026-11-03T11:25:02.942533+09:00",
+   "source": "대화에서 입력",
+   "question_id": "q_sample"
+  }
+ },
+ "preview": {
+  "record_id": "r_sample",
+  "revision": 1,
+  "before": "가나다라마",
+  "after": "가나!다라마",
+  "drop": 2,
+  "msg": "검토할 판단 2개가 지워져요(다시 뽑을 수 있어요)"
+ }
+}

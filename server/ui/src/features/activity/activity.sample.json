@@ -1,0 +1,195 @@
+{
+ "list": {
+  "activities": [
+   {
+    "id": "a_a1",
+    "action": "like",
+    "action_label": "좋아요",
+    "state": "active",
+    "occurred_on": "2026-11-03",
+    "observed_on": "2026-11-03",
+    "received_at": "2026-11-03T13:11:15.160205+09:00",
+    "source": {
+     "id": "s_s1_Vp5msE",
+     "name": "합성 sns",
+     "provider": "sns"
+    },
+    "people": [
+     {
+      "id": "p_p1",
+      "alias": "사람-P1",
+      "role": "author"
+     }
+    ],
+    "axes": [
+     {
+      "id": "i_x1",
+      "title": "축 X1"
+     }
+    ],
+    "memo_count": 0,
+    "raw_id": "e85b91788b4309aa200e3c50c061dd0a7a49e3e694ddd04e"
+   }
+  ],
+  "next_cursor": ""
+ },
+ "one": {
+  "id": "a_a2",
+  "action": "like",
+  "action_label": "좋아요",
+  "state": "active",
+  "occurred_on": "2026-10-31",
+  "observed_on": "2026-10-31",
+  "received_at": "2026-11-03T13:11:15.160205+09:00",
+  "source": {
+   "id": "s_s1_Vp5msE",
+   "name": "합성 sns",
+   "provider": "sns"
+  },
+  "people": [
+   {
+    "id": "p_p1",
+    "alias": "사람-P1",
+    "role": "author"
+   }
+  ],
+  "axes": [
+   {
+    "id": "i_x1",
+    "title": "축 X1"
+   }
+  ],
+  "memo_count": 0,
+  "raw_id": "6704c8d2d4301393bd9d5bf6809524ea9ae770a8f7f04a5c",
+  "current": true,
+  "current_id": "a_a2",
+  "versions": [
+   {
+    "id": "a_a2",
+    "received_at": "2026-11-03T13:11:15.160205+09:00",
+    "state": "active",
+    "current": true
+   }
+  ],
+  "memos": [
+   {
+    "record_id": "r_sample",
+    "title": "견본 메모",
+    "created": "2026-11-03T13:11:15.160205+09:00"
+   }
+  ],
+  "raw": {
+   "raw_id": "6704c8d2d4301393bd9d5bf6809524ea9ae770a8f7f04a5c",
+   "local_only": true
+  }
+ },
+ "agg": {
+  "period": "7d",
+  "from": "2026-10-28",
+  "to": "2026-11-03",
+  "total": 3,
+  "by_action": [
+   {
+    "action": "like",
+    "label": "좋아요",
+    "n": 3
+   }
+  ],
+  "by_axis": [
+   {
+    "item_id": "i_x1",
+    "title": "축 X1",
+    "n": 2
+   }
+  ],
+  "axis_unclassified": 1,
+  "axis_sum_differs": true,
+  "top_people": [
+   {
+    "person_id": "p_p1",
+    "alias": "사람-P1",
+    "n": 2
+   }
+  ],
+  "by_source": [
+   {
+    "source_id": "s_s1_Vp5msE",
+    "name": "합성 sns",
+    "provider": "sns",
+    "n": 3
+   }
+  ],
+  "undated": {
+   "n": 3,
+   "observed": [
+    {
+     "observed_on": "2026-11-02",
+     "n": 2
+    }
+   ]
+  },
+  "grounds": {
+   "principles": [
+    {
+     "item_id": "i_sample",
+     "title": "견본 기준",
+     "records": 1,
+     "activities": 0
+    }
+   ]
+  },
+  "notice": "연결된 활동과 내 글을 정해진 계산 규칙으로 보여 줍니다. 활동량을 성격이나 능력으로 해석하지 않습니다. AI가 작성한 설명은 저장 승인 대기에 표시합니다."
+ },
+ "axis": {
+  "axis": {
+   "id": "i_x1",
+   "title": "축 X1"
+  },
+  "activity_count": 2,
+  "activities": [
+   {
+    "id": "a_a1",
+    "action": "like",
+    "action_label": "좋아요",
+    "state": "active",
+    "occurred_on": "2026-11-03",
+    "observed_on": "2026-11-03",
+    "received_at": "2026-11-03T13:11:15.160205+09:00",
+    "source": {
+     "id": "s_s1_Vp5msE",
+     "name": "합성 sns",
+     "provider": "sns"
+    },
+    "people": [
+     {
+      "id": "p_p1",
+      "alias": "사람-P1",
+      "role": "author"
+     }
+    ],
+    "axes": [
+     {
+      "id": "i_x1",
+      "title": "축 X1"
+     }
+    ],
+    "memo_count": 0,
+    "raw_id": "e85b91788b4309aa200e3c50c061dd0a7a49e3e694ddd04e"
+   }
+  ],
+  "records": [
+   {
+    "id": "r_sample",
+    "title": "견본 글"
+   }
+  ],
+  "items": [
+   {
+    "id": "i_sample",
+    "object_id": "od_principles",
+    "title": "견본 기준",
+    "field_key": "axes"
+   }
+  ]
+ }
+}

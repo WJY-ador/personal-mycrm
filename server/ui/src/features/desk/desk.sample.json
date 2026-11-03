@@ -1,0 +1,13 @@
+{
+  "list": {
+    "tickets": [
+      {"id": "tk_sample1", "kind": "bug", "text": "견본 문의", "status": "doing", "via": "web", "created": "2026-11-03T01:00:00+00:00", "updated": "2026-11-03T02:00:00+00:00",
+       "has_reply": true, "reply_at": "2026-11-03T02:00:00+00:00", "public_updated": "2026-11-03T02:00:00+00:00"}
+    ]
+  },
+  "one": {
+    "id": "tk_sample1", "kind": "bug", "text": "견본 문의", "status": "doing", "via": "web", "created": "2026-11-03T01:00:00+00:00", "updated": "2026-11-03T02:00:00+00:00",
+    "reply": "견본 답변", "reply_at": "2026-11-03T02:00:00+00:00", "public_updated": "2026-11-03T02:00:00+00:00",
+    "history": [{"at": "2026-11-03T02:00:00+00:00", "kind": "status", "from_val": "open", "to_val": "doing"}]
+  }
+}

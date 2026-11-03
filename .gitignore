@@ -16,3 +16,7 @@ notes/
 
 # 시작 화면 렌더 도구의 npm 설치물(37MB) — package-lock.json 으로 재현 (2026-10-18)
 tools/**/node_modules/
+
+# React 화면 묶음 — 빌드 산출물·npm 설치물(Render·CI 가 package-lock.json 으로 만든다) (2026-11-03)
+server/ui/dist/
+server/ui/node_modules/

@@ -1,0 +1,195 @@
+{
+ "job": {
+  "id": "c1778f3a-5f3f-478a-8444-a186a940a4b6",
+  "session_id": "2ccb297b-8281-4491-a662-3e252708b3a3",
+  "kind": "converse",
+  "status": "result_ready",
+  "input_version": 1,
+  "attempts": 1,
+  "reason_code": null,
+  "created_at": "2026-11-03T12:51:13.576429+09:00",
+  "expires_at": "2026-11-04T12:51:13.576429+09:00",
+  "terminal_at": null,
+  "result": {
+   "result_version": "ee77e8c1-b188-418f-b4a4-cf8f2faa1647",
+   "summary_text": "기준 하나를 남겨요.\n\n결정 하나를 적어요."
+  },
+  "preview": {
+   "id": "e9c1ee84-a147-4681-a851-e38385e5b420",
+   "job_id": "c1778f3a-5f3f-478a-8444-a186a940a4b6",
+   "session_id": "2ccb297b-8281-4491-a662-3e252708b3a3",
+   "preview_version": 1,
+   "preview_sha": "a68118e361cb64c6abab21c71b1cff3bc8ddb43862ef7e3e06f9341c3790bbb7",
+   "edit_generation": 0,
+   "units": [
+    {
+     "uid": "u1",
+     "text": "기준 하나를 남겨요.",
+     "change_ids": [
+      "c1"
+     ]
+    },
+    {
+     "uid": "u2",
+     "text": "결정 하나를 적어요.",
+     "change_ids": [
+      "c2"
+     ]
+    }
+   ],
+   "text": "기준 하나를 남겨요.\n\n결정 하나를 적어요.",
+   "changes": [
+    {
+     "cid": "c1",
+     "op": "create",
+     "object_id": "od_principles",
+     "object_label": "기준",
+     "summary": "새 기준: 견본 기준",
+     "ref_kind": "none",
+     "inferred": false,
+     "depends_on": [],
+     "unit_ids": [
+      "u1"
+     ]
+    },
+    {
+     "cid": "c2",
+     "op": "create",
+     "object_id": "od_events",
+     "object_label": "결정",
+     "summary": "새 결정: 견본 결정",
+     "ref_kind": "none",
+     "inferred": false,
+     "depends_on": [],
+     "unit_ids": [
+      "u2"
+     ]
+    }
+   ],
+   "blocked": [],
+   "blocked_open": false,
+   "excluded": [],
+   "excluded_changes": [],
+   "latest": true
+  }
+ },
+ "session": {
+  "session_id": "2ccb297b-8281-4491-a662-3e252708b3a3",
+  "input_kind": "converse",
+  "expires_at": "2026-11-04T12:51:13.576429+09:00",
+  "edit_generation": 0,
+  "latest_job": {
+   "id": "c1778f3a-5f3f-478a-8444-a186a940a4b6",
+   "status": "result_ready"
+  },
+  "preview": {
+   "id": "e9c1ee84-a147-4681-a851-e38385e5b420",
+   "job_id": "c1778f3a-5f3f-478a-8444-a186a940a4b6",
+   "session_id": "2ccb297b-8281-4491-a662-3e252708b3a3",
+   "preview_version": 1,
+   "preview_sha": "a68118e361cb64c6abab21c71b1cff3bc8ddb43862ef7e3e06f9341c3790bbb7",
+   "edit_generation": 0,
+   "units": [
+    {
+     "uid": "u1",
+     "text": "기준 하나를 남겨요.",
+     "change_ids": [
+      "c1"
+     ]
+    },
+    {
+     "uid": "u2",
+     "text": "결정 하나를 적어요.",
+     "change_ids": [
+      "c2"
+     ]
+    }
+   ],
+   "text": "기준 하나를 남겨요.\n\n결정 하나를 적어요.",
+   "changes": [
+    {
+     "cid": "c1",
+     "op": "create",
+     "object_id": "od_principles",
+     "object_label": "기준",
+     "summary": "새 기준: 견본 기준",
+     "ref_kind": "none",
+     "inferred": false,
+     "depends_on": [],
+     "unit_ids": [
+      "u1"
+     ]
+    },
+    {
+     "cid": "c2",
+     "op": "create",
+     "object_id": "od_events",
+     "object_label": "결정",
+     "summary": "새 결정: 견본 결정",
+     "ref_kind": "none",
+     "inferred": false,
+     "depends_on": [],
+     "unit_ids": [
+      "u2"
+     ]
+    }
+   ],
+   "blocked": [],
+   "blocked_open": false,
+   "excluded": [],
+   "excluded_changes": [],
+   "latest": true
+  },
+  "confirmed": false
+ },
+ "exclude": {
+  "preview": {
+   "id": "470901c2-42ff-4961-ab33-eb529f662185",
+   "job_id": "c1778f3a-5f3f-478a-8444-a186a940a4b6",
+   "session_id": "2ccb297b-8281-4491-a662-3e252708b3a3",
+   "preview_version": 2,
+   "preview_sha": "ea68231fdc0203f9995890c350a7ea6d62b9d3253b1d266075011b1f6e8e4510",
+   "edit_generation": 0,
+   "units": [
+    {
+     "uid": "u1",
+     "text": "기준 하나를 남겨요.",
+     "change_ids": [
+      "c1"
+     ]
+    }
+   ],
+   "text": "기준 하나를 남겨요.",
+   "changes": [
+    {
+     "cid": "c1",
+     "op": "create",
+     "object_id": "od_principles",
+     "object_label": "기준",
+     "summary": "새 기준: 견본 기준",
+     "ref_kind": "none",
+     "inferred": false,
+     "depends_on": [],
+     "unit_ids": [
+      "u1"
+     ]
+    }
+   ],
+   "blocked": [],
+   "blocked_open": false,
+   "excluded": [
+    "c2"
+   ],
+   "excluded_changes": [
+    {
+     "cid": "c2",
+     "summary": "새 결정: 견본 결정"
+    }
+   ],
+   "latest": true
+  },
+  "removed": [
+   "c2"
+  ]
+ }
+}

@@ -38,6 +38,7 @@ import migration
 import service_schema
 import stack_service
 import structure_svg
+import token_grants
 from envnames import env
 
 SESSION_COOKIE = "crm_session"
@@ -54,7 +55,17 @@ DEV_EMAIL_MAX = 254
 DESKTOP_FORM_MAX = 2048
 DESKTOP_HEADER = "x-mycrm-desktop"   # claim 필수 요청 헤더(값 "1") — 앱이 loadURL extraHeaders 로 붙인다. 다른 사이트의 폼은 못 싣는다
 _B64_43 = re.compile(r"[A-Za-z0-9_-]{43}")   # challenge = base64url(sha256(verifier)) · 넘김 코드(32바이트) · verifier(32바이트), 패딩 없음
-_DESKTOP_STATE = re.compile(r"[A-Za-z0-9_-]{16,64}")   # 앱 state(16바이트 base64url = 22자). 길이 상한만 두고 값 그대로 저장
+_DESKTOP_STATE = re.compile(r"[A-Za-z0-9_-]{16,64}")
+# CLI --browser(PC 연결 2026-11-02, RFC 8252) — 돌아갈 곳은 loopback 만: http://127.0.0.1:<port>/cb · http://[::1]:<port>/cb(port 1024~65535)
+_LOOPBACK = re.compile(r"http://(?:127\.0\.0\.1|\[::1\]):([0-9]{4,5})/cb")
+
+
+def _loopback_ok(v) -> bool:
+    m = _LOOPBACK.fullmatch(v or "") if isinstance(v, str) else None
+    return bool(m) and 1024 <= int(m.group(1)) <= 65535
+# PC 연결(2026-11-02 가안 2) — /desktop/installations·grants·device/* 는 claim 과 같은 앱 검사(Origin·X-MyCRM-Desktop) + 세션. 값 = token_grants
+DESKTOP_JSON_MAX = 4096        # /desktop/* JSON 본문 상한(BodyLimit 밖이라 핸들러가 센다)
+DESKTOP_GRANT_PER_MIN = 10     # 폴링·redeem IP 당 분당(공유, 메모리 — 인스턴스 1개). 폴링 30초 = 앱 하나 분 2회   # 앱 state(16바이트 base64url = 22자). 길이 상한만 두고 값 그대로 저장
 
 
 class _DesktopQueryRedact(logging.Filter):
@@ -127,6 +138,56 @@ def _fill_assets(html: str) -> str:
     return re.sub(r"\{\{asset:([A-Za-z0-9._-]+)\}\}", lambda m: asset_url(m.group(1)), html)
 
 
+# ── React 화면 묶음(server/ui, 2026-11-03 R1~) ─────────────────
+# 빌드 산출물 dist/.vite/manifest.json 을 시작 때 1회 읽어 허용 목록을 만든다(진입 + 화면별 지연 불러오기 묶음·CSS 전부). 요청 name 은 이 dict 키 조회만 —
+# 경로를 잇지 않는다. 파일 이름에 내용 해시가 있어 1년 immutable. /app 의 <!--{{ui}}--> 자리는 진입 <link>·<script type="module" src> 로 채운다(인라인 0).
+# manifest 가 없으면(빌드 안 한 로컬) 서버는 그대로 뜨고, 자리는 비고, 화면 자리의 「불러오는 중」 줄을 「화면 파일 없음」 한 줄로 바꾼다.
+UI_DIST = Path(__file__).parent / "ui" / "dist"
+UI_ENTRY = "src/main.tsx"
+UI_SLOT = "<!--{{ui}}-->"
+UI_BOOT = '<p class="hint" id="boot">불러오는 중이에요…</p>'   # app.html 화면 자리(#view)의 첫 줄 — 화면 묶음이 뜨면 덮는다
+UI_MISSING = '<p class="hint" id="boot">이 화면 파일이 서버에 없어요. 새로 고침해도 그대로면 운영자에게 알려 주세요.</p>'
+UI_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8"}
+_UI_FILE = re.compile(r"assets/([A-Za-z0-9._-]+)")
+
+
+def load_ui(dist: Path) -> tuple[dict, str]:
+    """({name: (path, content_type)}, /app 에 넣을 태그). manifest 를 못 읽으면 ({}, "") + 로그 1줄."""
+    mf = dist / ".vite" / "manifest.json"
+    try:
+        man = json.loads(mf.read_text(encoding="utf-8"))
+        entry = man[UI_ENTRY]
+        chunks = list(man.values())
+        refs = [r for c in chunks for r in [c.get("file", ""), *c.get("css", []), *c.get("assets", [])]]
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+        print(f"[web] 화면 묶음 manifest 를 못 읽었어요({type(e).__name__}) — 옮긴 화면은 「화면 파일 없음」만 떠요: {mf}", flush=True)
+        return {}, ""
+    files = {}
+    for ref in refs:
+        m = _UI_FILE.fullmatch(ref) if isinstance(ref, str) else None
+        ctype = UI_TYPES.get(Path(m.group(1)).suffix) if m else None
+        if ctype and (dist / "assets" / m.group(1)).is_file():
+            files[m.group(1)] = (dist / "assets" / m.group(1), ctype)
+    js = _UI_FILE.fullmatch(str(entry.get("file", "")))
+    if not js or js.group(1) not in files:
+        print(f"[web] 화면 묶음 진입 파일이 없어요 — 옮긴 화면은 「화면 파일 없음」만 떠요: {dist}", flush=True)
+        return {}, ""
+    css, seen, todo = [], set(), [UI_ENTRY]   # 진입과 그 정적 import 묶음의 CSS(지연 불러오기 묶음의 CSS 는 화면을 열 때 번들이 붙인다)
+    while todo:
+        c = man.get(todo.pop(0)) or {}
+        css += [m.group(1) for m in map(_UI_FILE.fullmatch, c.get("css", [])) if m and m.group(1) in files and m.group(1) not in css]
+        todo += [i for i in c.get("imports", []) if isinstance(i, str) and i not in seen and not seen.add(i)]
+    tags = "".join(f'<link rel="stylesheet" href="/app/assets/{n}">' for n in css) + f'<script type="module" src="/app/assets/{js.group(1)}"></script>'
+    return files, tags
+
+
+UI_ASSETS, UI_TAGS = load_ui(UI_DIST)
+
+
+def _fill_ui(html: str) -> str:
+    return html.replace(UI_SLOT, UI_TAGS, 1) if UI_TAGS else html.replace(UI_SLOT, "", 1).replace(UI_BOOT, UI_MISSING, 1)
+
+
 def _b64(b: bytes) -> str:
     return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
 
@@ -136,8 +197,8 @@ def _unb64(s: str) -> bytes:
 
 
 # 웹 HTML 응답(/, /app, /help, /privacy, /download, _page)에만 붙인다. MCP·/health·JSON API·리다이렉트는 그대로.
-# script-src 'self' — 외부(self) theme.js 만. /app 은 응답 본문의 인라인 스크립트 1개 해시를 더한다(app_csp).
-# 'unsafe-inline'·'unsafe-eval' 은 어떤 경우에도 넣지 않는다. style-src·default-src 는 아직 없다(인라인 style).
+# script-src 'self' — 외부(self) 스크립트만(theme.js · /app 화면 묶음). 어느 화면도 인라인 스크립트를 두지 않는다(/app 포함 — 시험이 0 을 본다).
+# 'unsafe-inline'·'unsafe-eval' 은 어떤 경우에도 넣지 않는다. style-src·default-src 는 아직 없다(시작·도움말·운영 화면의 인라인 <style>, 화면 묶음이 붙이는 CSS link).
 CSP_BASE = "frame-ancestors 'none'; base-uri 'none'; object-src 'none'; script-src 'self'"
 SECURITY_HEADERS = {
     "x-content-type-options": "nosniff",
@@ -145,23 +206,6 @@ SECURITY_HEADERS = {
     "content-security-policy": CSP_BASE,
     "referrer-policy": "same-origin",
 }
-_SCRIPT_RE = re.compile(r"<script\b([^>]*)>(.*?)</script>", re.S | re.I)
-_SRC_ATTR_RE = re.compile(r"\bsrc\s*=", re.I)
-
-
-def inline_script_hashes(html: str) -> list[str]:
-    """src 없는 <script> 의 태그 사이 내용(공백·개행 그대로, UTF-8) sha256 → 표준 base64(패딩 포함). CSP 해시는 urlsafe 가 아니다."""
-    return [base64.b64encode(hashlib.sha256(body.encode("utf-8")).digest()).decode()
-            for attrs, body in _SCRIPT_RE.findall(html) if not _SRC_ATTR_RE.search(attrs)]
-
-
-def app_csp(html: str) -> str:
-    """/app CSP. 보낼 바로 그 문자열에서 계산한다. 인라인이 정확히 1개가 아니면 닫는 쪽 — 해시 없이 'self' 만 + 로그 1줄."""
-    hs = inline_script_hashes(html)
-    if len(hs) != 1:
-        print(f"[web] /app 인라인 스크립트가 {len(hs)}개라 CSP 해시를 넣지 않았어요(script-src 'self' 만 — 화면 스크립트가 막힌다)", flush=True)
-        return CSP_BASE
-    return f"{CSP_BASE} 'sha256-{hs[0]}'"
 
 
 def _html_resp(content: str, status: int = 200, headers: dict | None = None) -> HTMLResponse:
@@ -565,7 +609,10 @@ ADMIN_LABELS = {"bootstrap": "첫 지정", "recover": "복구(CLI)", "role_grant
                 "device_connect": "장치 연결", "device_reissue": "장치 토큰 재발급", "device_revoke": "장치 연결 해제",
                 "device_policy": "장치 허용 규칙 변경", "migration_apply": "board 이전 적용(CLI·웹 반영)",
                 "migration_extend": "병행 기간 연장(CLI)", "migration_close": "병행 종료(CLI)",
-                "migration_token": "이관 토큰 발급"}
+                "migration_token": "이관 토큰 발급",
+                # PC 연결(2026-11-02) — 대화 요청(grant)·앱 수령·PC 해제·장치 토큰 교체. detail 에 토큰 값 없음
+                "token_grant": "토큰 전달 요청(대화)", "token_grant_redeem": "토큰 앱 수령", "pc_forget": "PC 연결 해제",
+                "device_rotate": "장치 토큰 교체"}
 # 연결 장치 허용 규칙의 변환 이름 — 화면 표시용(키 = imports.TRANSFORMS). 모르는 키는 키 그대로 보인다
 POLICY_MAX_BYTES = 4 * 1024   # 장치 허용 규칙(policy) JSON 상한 — WRITE_LIMITS 밖이라 웹이 write_gate 전에 직접 센다
 TRANSFORM_LABELS = {"board-likes/1": "좋아요 활동(바로 저장)", "self-text/1": "내 글(승인 대기)", "self-summary/1": "AI 요약(승인 대기)"}
@@ -1224,11 +1271,11 @@ class Web:
         uid = await self.uid_of(request)
         if uid is None:
             return RedirectResponse("/", status_code=302)
-        html = structure_svg.fill_origin_labels(_fill_assets(APP_HTML.read_text(encoding="utf-8")))   # 요청마다 읽는다 — 헤더 해시와 본문이 같은 내용에서 나온다
+        html = _fill_ui(_fill_assets(APP_HTML.read_text(encoding="utf-8")))   # 요청마다 읽는다(정적 뼈대 — 화면은 묶음이 그린다)
         # Q1: 관리자는 <!--user-->(문의·이름 공유 메뉴·문의 섹션)를, 그 밖은 <!--admin-->(운영 콘솔)를 보내지 않는다. 표식도 남기지 않는다
         drop, keep = ("user", "admin") if getattr(request.state, "role", None) == "admin" else ("admin", "user")
         html = re.sub(rf"<!--{drop}-->.*?<!--/{drop}-->", "", html, flags=re.S).replace(f"<!--{keep}-->", "").replace(f"<!--/{keep}-->", "")
-        return _html_resp(html, headers={"cache-control": "no-store", "content-security-policy": app_csp(html)})
+        return _html_resp(html, headers={"cache-control": "no-store"})
 
     async def root(self, request):
         """시작 화면. 세션 있으면 /app. ?out=1(로그아웃 직후)일 때만 <!--out-->…<!--/out--> 띠를 남기고 [로그인]을 /login?fresh=1 로."""
@@ -1249,6 +1296,13 @@ class Web:
         path, ctype, sha = a
         cc = ASSET_IMMUTABLE if request.query_params.get("v") == sha else "no-cache"
         return FileResponse(path, media_type=ctype, headers={"cache-control": cc, "x-content-type-options": "nosniff"})
+
+    async def ui_asset(self, request):
+        """React 화면 묶음 자산(/app/assets/<해시 이름>). manifest 허용 목록 밖 = 404. 이름이 내용 해시라 늘 1년 immutable."""
+        a = UI_ASSETS.get(request.path_params["name"])
+        if a is None:
+            return Response("없는 자산이에요.", status_code=404, media_type="text/plain; charset=utf-8")
+        return FileResponse(a[0], media_type=a[1], headers={"cache-control": ASSET_IMMUTABLE, "x-content-type-options": "nosniff"})
 
     async def help(self, request):
         """도움말. 로그인 불필요. DB 를 건드리지 않는다 — 세션은 쿠키 서명만 본다(DEV 는 dev_user 가 있으면 세션으로 친다)."""
@@ -1355,24 +1409,39 @@ class Web:
         qp = request.query_params
         again = '<p><a href="/login">다시 로그인하기</a></p>'
         if qp.get("error"):
-            return _page("로그인이 취소됐거나 실패했어요", f"<p>{_esc(qp.get('error_description') or qp['error'])}</p>{again}", 400)
+            lb = self._loopback_error(request, "access_denied" if qp.get("error") == "access_denied" else "login_failed")
+            return lb or _page("로그인이 취소됐거나 실패했어요", f"<p>{_esc(qp.get('error_description') or qp['error'])}</p>{again}", 400)
         if not flow or not qp.get("code") or qp.get("state") != flow.get("s"):
-            return _page("로그인 절차가 맞지 않아요", "<p>로그인 창을 10분 안에 끝내지 않았거나, 다른 탭에서 시작한 로그인이에요.</p>" + again, 400)
+            return self._loopback_error(request, "login_expired") or _page(
+                "로그인 절차가 맞지 않아요", "<p>로그인 창을 10분 안에 끝내지 않았거나, 다른 탭에서 시작한 로그인이에요.</p>" + again, 400)
         status, tok = await self.token_post({
             "grant_type": "authorization_code", "code": qp["code"], "redirect_uri": f"{self.public_url}/auth/callback",
             "client_id": self.client_id, "code_verifier": flow["v"], "resource": f"{self.public_url}/mcp"})
         access = tok.get("access_token") if isinstance(tok, dict) else None
         if status != 200 or not access:
-            return _page("로그인 서버가 토큰을 주지 않았어요", f"<p>{_esc(tok.get('error_description') or tok.get('error') or status)}</p>{again}", 502)
+            return self._loopback_error(request, "login_failed") or _page("로그인 서버가 토큰을 주지 않았어요", f"<p>{_esc(tok.get('error_description') or tok.get('error') or status)}</p>{again}", 502)
         verified = await self.verifier.verify_token(access)
         if verified is None:
-            return _page("받은 토큰을 믿을 수 없어요", "<p>토큰의 발급자·대상이 이 서버와 맞지 않아요.</p>" + again, 502)
+            return self._loopback_error(request, "login_failed") or _page("받은 토큰을 믿을 수 없어요", "<p>토큰의 발급자·대상이 이 서버와 맞지 않아요.</p>" + again, 502)
         try:
             uid = await run_in_threadpool(auth.user_id_for, verified)
         except Exception as e:   # ToolError·CrmError — 메시지만 보인다
             msg = getattr(e, "message", None) or str(e)
-            return _page("사용자를 연결하지 못했어요", f"<p>{_esc(msg)}</p>{again}", 502)
+            return self._loopback_error(request, "account_unavailable") or _page("사용자를 연결하지 못했어요", f"<p>{_esc(msg)}</p>{again}", 502)
         resp = await self._finish_login(request, uid)
+        self.clear_cookie(resp, FLOW_COOKIE)
+        return resp
+
+    LOOPBACK_ERRORS = ("access_denied", "login_failed", "login_expired", "account_unavailable", "server_error")
+
+    def _loopback_error(self, request, code: str) -> Response | None:
+        """CLI --browser(loopback) 로그인이 실패·취소되면 302 <redirect_uri>?error=<code>&state=<state> — 값·메시지 없이 짧은 식별자만
+        (LOOPBACK_ERRORS). crm_desktop 쿠키에 검사된 loopback 이 없으면(앱 mycrm:// 흐름·일반 로그인) None — 호출하는 쪽이 종전 오류 페이지."""
+        d = self.unsign(request.cookies.get(DESKTOP_COOKIE))
+        if not (d and _loopback_ok(d.get("r")) and _DESKTOP_STATE.fullmatch(str(d.get("s", "")))):
+            return None
+        resp = RedirectResponse(f"{d['r']}?{urlencode({'error': code, 'state': d['s']})}", status_code=302, headers={"cache-control": "no-store"})
+        self.clear_cookie(resp, DESKTOP_COOKIE)
         self.clear_cookie(resp, FLOW_COOKIE)
         return resp
 
@@ -1380,8 +1449,9 @@ class Web:
         """로그인 성공 뒤 — 세션 쿠키 + (crm_desktop 쿠키가 살아 있으면 「앱으로 돌아가요」, 없거나 만료·변조면 종전대로 302 /app).
         /auth/callback 과 개발 로그인(/dev/login, CRM_DEV 만)이 같이 쓴다."""
         d = self.unsign(request.cookies.get(DESKTOP_COOKIE))
-        if d and _B64_43.fullmatch(str(d.get("c", ""))) and _DESKTOP_STATE.fullmatch(str(d.get("s", ""))):
-            resp = await self._handoff_page(uid, d["c"], d["s"])
+        if d and _B64_43.fullmatch(str(d.get("c", ""))) and _DESKTOP_STATE.fullmatch(str(d.get("s", ""))) \
+                and (d.get("r") is None or _loopback_ok(d.get("r"))):
+            resp = await self._handoff_page(uid, d["c"], d["s"], d.get("r"))
         else:
             resp = RedirectResponse("/app", status_code=302)
         self.set_cookie(resp, SESSION_COOKIE, self.session_value(uid), SESSION_TTL)
@@ -1397,32 +1467,43 @@ class Web:
         ch, st = request.query_params.get("challenge", ""), request.query_params.get("state", "")
         if not (_B64_43.fullmatch(ch) and _DESKTOP_STATE.fullmatch(st)):
             return self._desktop_fail("앱 로그인 요청이 올바르지 않아요", 400)
+        ru = request.query_params.get("redirect_uri")   # CLI --browser(RFC 8252) — loopback 만. 없으면 앱 흐름(mycrm://) 그대로
+        if ru is not None and not _loopback_ok(ru):
+            return self._desktop_fail("돌아갈 주소가 올바르지 않아요", 400)
         fresh = request.query_params.get("fresh") == "1"
         if not fresh and await self.uid_of(request) is not None:
-            return await self._handoff_page(request.state.uid, ch, st)
+            return await self._handoff_page(request.state.uid, ch, st, ru)
         if self.dev and not self.login_ready:
             resp = RedirectResponse("/dev/login", status_code=302)
         else:
             resp = await self._authkit_redirect(request)   # login_ready 아니면 503 페이지 — 그때는 쿠키를 붙이지 않는다. fresh=1 은 여기서 읽는다
         if resp.status_code == 302:
-            self.set_cookie(resp, DESKTOP_COOKIE, self.sign({"c": ch, "s": st}, DESKTOP_TTL), DESKTOP_TTL)
+            self.set_cookie(resp, DESKTOP_COOKIE, self.sign({"c": ch, "s": st, **({"r": ru} if ru else {})}, DESKTOP_TTL), DESKTOP_TTL)
         return resp
 
-    async def _handoff_page(self, uid: str, challenge: str, state: str) -> Response:
-        """넘김 코드(32바이트) 발급 — 서버엔 SHA-256 만(2분·일회용) → 「MyCRM 앱으로 돌아가요」(링크 + meta refresh, 스크립트 없음, no-store)."""
+    async def _handoff_page(self, uid: str, challenge: str, state: str, loopback: str | None = None) -> Response:
+        """넘김 코드(32바이트) 발급 — 서버엔 SHA-256 만(2분·일회용) → 「MyCRM 앱으로 돌아가요」(링크 + meta refresh, 스크립트 없음, no-store).
+        loopback(CLI --browser, 검사된 http://127.0.0.1|[::1]:<port>/cb) 이면 페이지 대신 그 주소로 302 ?code&state(코드 표식 loopback)."""
         code = _b64(secrets.token_bytes(32))
         try:
-            await run_in_threadpool(db.desktop_handoff_create, uid, hashlib.sha256(code.encode()).digest(), challenge, state)
+            await run_in_threadpool(db.desktop_handoff_create, uid, hashlib.sha256(code.encode()).digest(), challenge, state,
+                                    db.HANDOFF_TTL_SECONDS, bool(loopback))
         except Exception as e:
             print(f"[desktop] 앱 로그인 넘김 발급 실패: {type(e).__name__}", flush=True)
-            resp = self._desktop_fail("앱 로그인을 이어 가지 못했어요", 503)
+            resp = (RedirectResponse(f"{loopback}?{urlencode({'error': 'server_error', 'state': state})}", status_code=302,
+                                     headers={"cache-control": "no-store"})
+                    if loopback else self._desktop_fail("앱 로그인을 이어 가지 못했어요", 503))
         else:
-            link = _esc(f"{DESKTOP_DEEPLINK}?{urlencode({'code': code, 'state': state})}")
-            body = (f'<p>로그인을 마쳤어요. MyCRM 앱이 열리면 대시보드가 이어서 보여요.</p>'
-                    f'<p><a href="{link}"><strong>MyCRM 앱 열기</strong></a></p>'
-                    '<p>앱이 안 열리면 위 버튼을 눌러 주세요. 2분 안에 열어야 해요. 앱이 열린 뒤 이 창은 닫아도 돼요.</p>')
-            resp = _page("MyCRM 앱으로 돌아가요", body, head=f'<meta http-equiv="refresh" content="0;url={link}">',
-                         headers={"cache-control": "no-store"})
+            if loopback:
+                resp = RedirectResponse(f"{loopback}?{urlencode({'code': code, 'state': state})}", status_code=302,
+                                        headers={"cache-control": "no-store"})
+            else:
+                link = _esc(f"{DESKTOP_DEEPLINK}?{urlencode({'code': code, 'state': state})}")
+                body = (f'<p>로그인을 마쳤어요. MyCRM 앱이 열리면 대시보드가 이어서 보여요.</p>'
+                        f'<p><a href="{link}"><strong>MyCRM 앱 열기</strong></a></p>'
+                        '<p>앱이 안 열리면 위 버튼을 눌러 주세요. 2분 안에 열어야 해요. 앱이 열린 뒤 이 창은 닫아도 돼요.</p>')
+                resp = _page("MyCRM 앱으로 돌아가요", body, head=f'<meta http-equiv="refresh" content="0;url={link}">',
+                             headers={"cache-control": "no-store"})
         self.clear_cookie(resp, DESKTOP_COOKIE)
         return resp
 
@@ -1433,20 +1514,36 @@ class Web:
                      headers={"cache-control": "no-store"})
 
     _claims: dict = {}   # IP → (분, 횟수) — /desktop/claim 분당 상한
+    _grant_ips: dict = {}   # IP → (분, 횟수) — /desktop/grants 폴링·redeem 분당 상한(PC 연결)
 
     def _claim_rate_ok(self, request) -> bool:
-        """IP 당 분당 DESKTOP_CLAIM_PER_MIN. IP = X-Forwarded-For 마지막 값(Render 프록시 1단이 붙인 값이라 가정) → 없으면 접속 주소.
-        지난 분 키는 부를 때마다 지운다(무한 성장 없음)."""
+        """IP 당 분당 DESKTOP_CLAIM_PER_MIN(/desktop/claim)."""
+        return self._ip_rate_ok(request, self._claims, DESKTOP_CLAIM_PER_MIN)
+
+    @staticmethod
+    def _ip_rate_ok(request, store: dict, limit: int) -> bool:
+        """IP 당 분당 limit. IP = X-Forwarded-For 마지막 값(Render 프록시 1단이 붙인 값이라 가정) → 없으면 접속 주소.
+        지난 분 키는 부를 때마다 지운다(무한 성장 없음). IP 는 메모리에만(저장·로그 없음)."""
         xff = request.headers.get("x-forwarded-for", "")
         ip = xff.rsplit(",", 1)[-1].strip() if xff.strip() else ((request.client.host if request.client else None) or "local")
         m = int(time.time() // 60)
-        for k in [k for k, (mm, _) in self._claims.items() if mm != m]:
-            del self._claims[k]
-        if ip not in self._claims and len(self._claims) >= DESKTOP_CLAIM_IPS_MAX:
+        for k in [k for k, (mm, _) in store.items() if mm != m]:
+            del store[k]
+        if ip not in store and len(store) >= DESKTOP_CLAIM_IPS_MAX:
             return False
-        n = self._claims.get(ip, (m, 0))[1] + 1
-        self._claims[ip] = (m, n)
-        return n <= DESKTOP_CLAIM_PER_MIN
+        n = store.get(ip, (m, 0))[1] + 1
+        store[ip] = (m, n)
+        return n <= limit
+
+    def _desktop_gate(self, request) -> str | None:
+        """앱 요청 검사(claim·PC 연결 공통) — Origin 은 없음·"null"·자기 origin 만, X-MyCRM-Desktop: 1 필수. 통과 None, 아니면 "origin"·"header".
+        null 허용·헤더 필수의 이유는 desktop_claim docstring."""
+        origin = request.headers.get("origin")
+        if origin is not None and origin != "null" and origin not in self.origins:
+            return "origin"
+        if request.headers.get(DESKTOP_HEADER) != "1":
+            return "header"
+        return None
 
     async def desktop_claim(self, request):
         """POST form(code·verifier·state) → 코드 해시 조회 · 미사용 · 미만료 · sha256(verifier)==challenge · state 일치 → used_at(원자적)
@@ -1461,11 +1558,11 @@ class Web:
         Origin·헤더 거절은 코드를 태우지 않는다."""
         if not self.secret:
             return self._desktop_fail("아직 로그인을 열지 않았어요", 503)
-        origin = request.headers.get("origin")
-        if origin is not None and origin != "null" and origin not in self.origins:
+        why = self._desktop_gate(request)
+        if why == "origin":
             print("[desktop] 앱 로그인 교환 거절: origin", flush=True)
             return self._desktop_fail("다른 사이트에서 온 요청이에요", 403)
-        if request.headers.get(DESKTOP_HEADER) != "1":
+        if why == "header":
             print("[desktop] 앱 로그인 교환 거절: header", flush=True)
             return self._desktop_fail("MyCRM 앱에서 온 요청이 아니에요", 403)
         if not self._claim_rate_ok(request):
@@ -1488,6 +1585,140 @@ class Web:
         resp = RedirectResponse("/app", status_code=303)
         self.set_cookie(resp, SESSION_COOKIE, self.session_value(uid), SESSION_TTL)
         return resp
+
+    async def desktop_cli_claim(self, request):
+        """POST /desktop/cli/claim form(code·verifier·state·scope·client_name) — CLI --browser(RFC 8252 loopback, PC 연결 2026-11-02 계획 §6).
+        /desktop/login?…&redirect_uri=http://127.0.0.1:<port>/cb 가 준 loopback 코드만 받는다(앱 mycrm:// 코드는 거절). PKCE S256·state·
+        2분·일회용은 /desktop/claim 과 같은 db.desktop_handoff_claim. 세션 쿠키를 주지 않고 scope 별 토큰을 응답 본문에만 준다
+        (token_grants.cli_issue — device = 새 연결 장치 · migration = 스위치·allowlist·표시 이름 재검사 뒤 이관 토큰).
+        X-MyCRM-Desktop 헤더는 보지 않는다(CLI) — Origin 은 없음·"null"·자기 origin 만. IP 분당 상한은 /desktop/claim 과 공유.
+        오류 = JSON {code, msg, action}. code·verifier·state·토큰 값은 로그·오류에 넣지 않는다."""
+        def err(c, m, st, a="", h=None):
+            return self._json_err(c, m, st, a, h)
+        if not self.secret:
+            return err("LOGIN-OFF", "아직 로그인을 열지 않았어요.", 503)
+        origin = request.headers.get("origin")
+        if origin is not None and origin != "null" and origin not in self.origins:
+            return err("ORIGIN", "다른 사이트에서 온 요청이에요.", 403)
+        if not self._claim_rate_ok(request):
+            return err("RATE-LIMIT", f"요청이 너무 잦아요(분당 {DESKTOP_CLAIM_PER_MIN}회).", 429, "1분 뒤 다시 하세요.", self._retry_after())
+        form = await self._admin_form(request, DESKTOP_FORM_MAX) or {}
+        code, verifier, st, scope = (form.get(k, "") for k in ("code", "verifier", "state", "scope"))
+        name = form.get("client_name")
+        if not (_B64_43.fullmatch(code) and _B64_43.fullmatch(verifier) and _DESKTOP_STATE.fullmatch(st)) or scope not in ("device", "migration"):
+            return err("ARG-INVALID", "form 본문이 필요해요: code, verifier, state, scope(device|migration), client_name(device).", 400)
+        if scope == "device":
+            try:
+                name = db._label(name, "PC 이름")
+            except db.CrmError as e:
+                return err(e.code, e.message, 400)
+        challenge = _b64(hashlib.sha256(verifier.encode()).digest())
+        try:
+            uid, why = await run_in_threadpool(db.desktop_handoff_claim, hashlib.sha256(code.encode()).digest(), challenge, st, True)
+        except Exception as e:
+            print(f"[desktop] CLI 로그인 교환 실패: {type(e).__name__}", flush=True)
+            return err("LOGIN-OFF", "로그인을 마치지 못했어요.", 503)
+        if uid is None:
+            print(f"[desktop] CLI 로그인 교환 거절: {why}", flush=True)   # 사유 분류만 — 값 없음
+            return err("HANDOFF-INVALID", "로그인 시간이 지났거나 이미 쓴 요청이에요.", 400, "CLI 에서 --browser 로 다시 로그인하세요.")
+        try:
+            out = await run_in_threadpool(token_grants.cli_issue, uid, scope, name)
+        except db.CrmError as e:
+            return err(e.code, e.message, token_grants.http_status(e.code), e.action)
+        return JSONResponse(out, headers={"cache-control": "no-store"})
+
+    # ── PC 연결·토큰 수령(2026-11-02 가안 2, notes/2026-11-02_pc-connect-구현계획.md §2~§4) ──
+    # 순서 = 앱 검사(Origin·헤더 403) → 세션(401) → (폴링·redeem) IP 분당 상한(429) → JSON 본문(413·400) → token_grants.
+    # 오류 = {code, msg, action} + token_grants.http_status. 응답 전부 no-store. 토큰 값은 redeem·auto·rotate 응답 본문에만(로그·오류 없음).
+    @staticmethod
+    def _json_err(code, msg, status, action="", headers=None):
+        return JSONResponse({"code": code, "msg": msg, "action": action}, status_code=status,
+                            headers={"cache-control": "no-store", **(headers or {})})
+
+    @staticmethod
+    def _retry_after() -> dict:
+        return {"retry-after": str(max(1, 60 - int(time.time()) % 60))}
+
+    async def _desktop_api(self, request, call, *, ip_limit=False, shape=None):
+        why = self._desktop_gate(request)
+        if why == "origin":
+            return self._json_err("ORIGIN", "다른 사이트에서 온 요청이에요.", 403)
+        if why == "header":
+            return self._json_err("DESKTOP-HEADER", "MyCRM 앱에서 온 요청이 아니에요.", 403)
+        uid, err = await self._need(request)
+        if err:
+            err.headers["cache-control"] = "no-store"
+            return err
+        if ip_limit and not self._ip_rate_ok(request, self._grant_ips, DESKTOP_GRANT_PER_MIN):
+            return self._json_err("RATE-LIMIT", f"요청이 너무 잦아요(분당 {DESKTOP_GRANT_PER_MIN}회).", 429, "1분 뒤 다시 하세요.",
+                                  self._retry_after())
+        body = {}
+        if request.method == "POST":
+            raw = b""
+            async for chunk in request.stream():
+                raw += chunk
+                if len(raw) > DESKTOP_JSON_MAX:
+                    return self._json_err("PAYLOAD-LIMIT", f"요청 본문이 너무 커요 (상한 {DESKTOP_JSON_MAX} 바이트).", 413)
+            try:
+                body = json.loads(raw.decode("utf-8")) if raw.strip() else {}
+                assert isinstance(body, dict)
+                for k, (types, need) in (shape or {}).items():
+                    v = body.get(k)
+                    assert (v is None and not need) or (v is not None and isinstance(v, types) and not isinstance(v, bool))
+            except Exception:
+                want = ", ".join(f"{k}({'/'.join(t.__name__ for t in ts)}{'' if need else ' 선택'})" for k, (ts, need) in (shape or {}).items())
+                return self._json_err("ARG-INVALID", f"JSON 본문이 필요해요: {want or '{}'}.", 400)
+        try:
+            out = await run_in_threadpool(call, uid, body)
+        except db.CrmError as e:
+            return self._json_err(e.code, e.message, token_grants.http_status(e.code), e.action,
+                                  self._retry_after() if e.code == "RATE-LIMIT" else None)
+        return JSONResponse(out, headers={"cache-control": "no-store"})
+
+    async def desktop_installations(self, request):
+        """POST /desktop/installations {client_name, os, installation_id?} — 앱 로그인 직후 설치본 등록(upsert). M3: 다른 계정 id = 403 NOT-OWNER."""
+        return await self._desktop_api(request, lambda uid, b: token_grants.installation_register(
+            uid, b["client_name"], b["os"], b.get("installation_id")),
+            shape={"client_name": ((str,), True), "os": ((str,), True), "installation_id": ((str,), False)})
+
+    async def desktop_grants(self, request):
+        """GET /desktop/grants?installation=di_… — 30초 + 창 포커스 폴링. 이 설치본 앞 대기 grant 목록(토큰 값 없음)."""
+        iid = request.query_params.get("installation", "")
+        return await self._desktop_api(request, lambda uid, b: token_grants.grants_poll(uid, iid), ip_limit=True)
+
+    async def desktop_grant_redeem(self, request):
+        """POST /desktop/grants/{gid}/redeem {installation_id} — 그 자리에서 토큰 발급(일회용). 응답 본문에만 토큰."""
+        gid = request.path_params["gid"]
+        return await self._desktop_api(request, lambda uid, b: token_grants.grant_redeem(uid, gid, b["installation_id"]), ip_limit=True,
+                                       shape={"installation_id": ((str,), True)})
+
+    async def desktop_device_auto(self, request):
+        """POST /desktop/device/auto {installation_id, client_name?, os?} — 수집을 처음 켤 때 자동 연결. 표시 이름 관문·전역 크기 = write_gate."""
+        def run(uid, b):
+            db.write_gate("device_connect", {"label": b.get("client_name") or ""}, uid)
+            return token_grants.device_auto(uid, b["installation_id"], b.get("client_name"), b.get("os"))
+        return await self._desktop_api(request, run, shape={"installation_id": ((str,), True), "client_name": ((str,), False),
+                                                            "os": ((str,), False)})
+
+    async def desktop_device_rotate(self, request):
+        """POST /desktop/device/rotate {installation_id} — 앱 main 자동 교체(세션). 새 토큰은 대기 토큰(M2)."""
+        return await self._desktop_api(request, lambda uid, b: token_grants.device_rotate_session(uid, b["installation_id"]),
+                                       shape={"installation_id": ((str,), True)})
+
+    async def api_device_rotate(self, request):
+        """POST /api/device/rotate — Bearer 장치 토큰(CLI·uploader)으로 자기 토큰 교체(M2). 웹 쿠키·MCP 토큰은 받지 않는다. 본문은 보지 않는다.
+        오류 = {code, msg} + token_grants.http_status. 사용 집계 name = api:device_rotate."""
+        code = "EXC"
+        try:
+            out = await run_in_threadpool(token_grants.device_rotate_bearer, request.headers.get("authorization", ""))
+            code = "OK"
+            return JSONResponse(out, headers={"cache-control": "no-store"})
+        except db.CrmError as e:
+            code = e.code
+            return JSONResponse({"code": e.code, "msg": e.message}, status_code=token_grants.http_status(e.code),
+                                headers={"cache-control": "no-store", **(self._retry_after() if e.code == "RATE-LIMIT" else {})})
+        finally:
+            db.usage_count(None, "api:device_rotate", code)
 
     async def dev_login(self, request):
         """개발 로그인 — CRM_DEV 만(아니면 404, 없는 경로와 같은 모양). AuthKit 없이 이메일로 세션 쿠키를 만든다(앱 로그인 넘김 로컬 E2E용).
@@ -1550,8 +1781,9 @@ class Web:
             "definitions": st["definitions"], "sources": srcs, "std_choices": std["objects"],
             "std_marks": {"version": std["version"], "state": std["state"]} if std["version"] else None}, "self")
         st["structure_svg"] = structure_svg.render(st["structure"])   # 같은 응답의 DMO 그래프(서버 결정적 배치) — 목록과 같은 순번 앵커. /app 전용
+        st["origin_labels"] = {"text": structure_svg.ORIGIN_TEXT, "category": structure_svg.ORIGIN_CATEGORY}   # 출처 칩·그래프 범례 표시 정의(정본 하나 — 화면은 사본을 두지 않는다). /app 전용
         st["user"] = {"email": me["email"], "struct_names": flags["struct_names"], "desk_hidden": flags["desk_hidden"],   # /app 계정 메뉴용 — MCP state_get 에는 넣지 않는다
-                      "display_name": home["display_name"], "nav": home["nav"]}   # PR B: 표시 이름(null = 이름 입력 화면) · 새 탐색 new|old
+                      "display_name": home["display_name"], "nav": home["nav"]}   # PR B: 표시 이름(null = 이름 입력 화면) · nav = 항상 "new"(옛 탐색 삭제, 화면은 읽지 않는다)
         st["switches"] = {"converse": db.job_switch_on("converse"),   # PR ②-b — 「대화」 버튼 표시(켜짐일 때만). /app 전용, MCP state_get 에는 넣지 않는다
                           "trash": db.trash_on()}                     # 휴지통 PR-1 — 새 [삭제]·Setup 휴지통 표시(켜짐일 때만). 꺼짐 = 기존 버튼 그대로
         st["stack_session"] = await run_in_threadpool(db.stack_session_current, uid)   # ②-b 새로 고침 복원·두 탭 공유 — {id, expires_at} | null
@@ -1585,6 +1817,7 @@ class Web:
         except db.CrmError as e:
             return JSONResponse({"code": e.code, "msg": e.message}, status_code=404)
         return JSONResponse({"id": r["id"], "title": r["title"], "body": r["body"],
+                             "revision": r["revision"], "author_kind": r["author_kind"],   # R2 수기 수정 — 저장 expected_revision · 남이 쓴 글이면 고치기 숨김
                              "meta": {"created": r["created"], "source": r["source"], "question_id": r["question_id"]}},
                             headers={"cache-control": "no-store"})
 
@@ -1762,14 +1995,42 @@ class Web:
             return self._crm_err(e)
         return JSONResponse(out, headers={"cache-control": "no-store"})
 
+    # ── 수기 수정 A0′ (2026-11-03, React 전환 §5-1) — 화면(R2)이 부를 서버 경로. MCP record_edit·record_title_set 과 같은 db 함수(via=web).
+    # 본문 = 새 본문 전체를 받아 서버가 공통 앞·뒤를 뺀 한 구간으로 바꾼다. 항목 = propose+apply 한 트랜잭션(item_edit).
+    # 세션 401 → Origin 403 → 모양 400 → db.write_gate → db. 오류는 공용 매핑(NAME-REQUIRED 403 · NOT-FOUND 404 · 그 밖 400).
+    async def api_record_body(self, request):
+        """POST /api/records/{rid}/body {expected_revision, body} — 본문 수정. 반환 = 기록 + trashed_candidates·restore_until."""
+        rid = request.path_params["rid"]
+        return await self._core_write(request, "record_edit", {"expected_revision": ((int,), True), "body": ((str,), True)},
+                                      lambda uid, b: db.record_body_set(uid, rid, b["expected_revision"], b["body"], via="web"))
+
+    async def api_record_body_preview(self, request):
+        """POST /api/records/{rid}/body/preview {expected_revision, body} — 본문 저장 전 미리보기(쓰기 없음, 저장과 같은 판정 db.record_body_preview).
+        반환 = 전·후 + drop(지워질 미결 후보 수) + msg(지워질 때만 서버 문구 — 화면은 그대로 보이고 확인 1번, 0이면 빈 문자열 = 바로 저장)."""
+        rid = request.path_params["rid"]
+
+        def pv(uid, b):
+            out = db.record_body_preview(uid, rid, b["body"], b["expected_revision"])
+            out["msg"] = db.edit_drop_msg(out["drop"])   # facade 미리보기 shown 과 같은 함수
+            return out
+        return await self._core_write(request, "record_edit", {"expected_revision": ((int,), True), "body": ((str,), True)}, pv)
+
+    async def api_record_title(self, request):
+        """POST /api/records/{rid}/title {expected_revision, title} — 제목 바꾸기(판단 잠금과 무관)."""
+        rid = request.path_params["rid"]
+        return await self._core_write(request, "record_title_set", {"expected_revision": ((int,), True), "title": ((str,), True)},
+                                      lambda uid, b: db.record_title_set(uid, rid, b["title"], b["expected_revision"], via="web"))
+
+    async def api_item_edit(self, request):
+        """POST /api/item/edit {item_id, expected_revision, title, body} — 항목 인라인 편집 [저장] 1번(제안+적용 한 트랜잭션)."""
+        return await self._core_write(request, "item_edit", {"item_id": ((str,), True), "expected_revision": ((int,), True),
+                                                              "title": ((str,), True), "body": ((str,), True)},
+                                      lambda uid, b: db.item_edit(uid, b["item_id"], b["expected_revision"], b["title"], b["body"]))
+
     async def api_me_name(self, request):
         """POST {display_name} — 표시 이름 저장. 관문 면제(이름을 정하는 경로)."""
         return await self._core_write(request, "display_name_set", {"display_name": ((str,), True)},
                                       lambda uid, b: db.display_name_set(uid, b["display_name"]))
-
-    async def api_nav_accept(self, request):
-        """POST {} — 새 탐색 수락(멱등). 표준 편입과 별개."""
-        return await self._core_write(request, "nav_accept", {}, lambda uid, b: db.nav_accept(uid))
 
     async def api_people(self, request):
         """POST {alias} — 사람 만들기."""
@@ -1921,7 +2182,7 @@ class Web:
         return await self._core_read(request, read)
 
     async def api_device_reissue(self, request):
-        """POST /api/devices/{id}/reissue {} — 토큰 재발급(옛 토큰 즉시 무효). 응답에 새 토큰 1회."""
+        """POST /api/devices/{id}/reissue {} — 토큰 재발급(대기 토큰 M2 — 옛 토큰은 새 토큰 첫 사용 때 무효). 응답에 새 토큰 1회."""
         did = request.path_params["did"]
         return await self._core_write(request, "device_reissue", {}, lambda uid, b: imports.device_reissue(uid, did))
 
@@ -2061,7 +2322,7 @@ class Web:
         return JSONResponse(out, headers={"cache-control": "no-store"})
 
     async def api_mig_tokens(self, request):
-        """GET = 이관 토큰 목록(원문·해시 없음) + enabled·allowed · POST {label?} = 발급(스위치·allowlist, 앞 토큰 폐기). 응답 token 은 한 번만."""
+        """GET = 이관 토큰 목록(원문·해시 없음) + enabled·allowed · POST {label?} = 발급(스위치·allowlist, 앞 토큰은 새 토큰 첫 사용 때 폐기 — M2). 응답 token 은 한 번만."""
         if request.method == "POST":
             return await self._mig_web(request, "migration_token_issue", {"label": ((str,), False)},
                                        lambda uid, b: migration.token_issue(uid, b.get("label") or "이관 업로더"))
@@ -2088,7 +2349,7 @@ class Web:
                                        lambda uid, b: migration.plan_check(uid, pid, b["seqs"], b["checked"]))
         if (op, request.method) == ("apply", "POST"):
             return await self._mig_web(request, "migration_apply", {"plan_hash": ((str,), True)},
-                                       lambda uid, b: migration.plan_apply(uid, pid, b["plan_hash"]))
+                                       lambda uid, b: migration.plan_apply(uid, pid, b["plan_hash"], via="web"))   # 감사 via=web(가안 X)
         if (op, request.method) == ("cancel", "POST"):
             return await self._mig_web(request, "migration_cancel", {}, lambda uid, b: migration.plan_cancel(uid, pid), quota=False)
         return JSONResponse({"code": "NOT-FOUND", "msg": "그런 경로는 없어요."}, status_code=404, headers={"cache-control": "no-store"})
@@ -2981,6 +3242,7 @@ class Web:
         return [
             Route("/", self.root),
             Route("/app", self.app),
+            Route("/app/assets/{name}", self.ui_asset),   # React 화면 묶음 — manifest 허용 목록만
             Route("/help", self.help),
             Route("/privacy", self.privacy),
             Route("/download", self.download),
@@ -2990,14 +3252,25 @@ class Web:
             Route("/auth/callback", self.callback),
             Route("/desktop/login", self.desktop_login),
             Route("/desktop/claim", self.desktop_claim, methods=["POST"]),
+            Route("/desktop/cli/claim", _usage("desktop:cli_claim", self.desktop_cli_claim), methods=["POST"]),   # CLI --browser(loopback)
+            # PC 연결(2026-11-02 가안 2) — 앱 세션 + X-MyCRM-Desktop. 경로 순서: 더 긴 경로가 먼저
+            Route("/desktop/installations", _usage("desktop:installations", self.desktop_installations), methods=["POST"]),
+            Route("/desktop/grants/{gid}/redeem", _usage("desktop:grant_redeem", self.desktop_grant_redeem), methods=["POST"]),
+            Route("/desktop/grants", _usage("desktop:grants", self.desktop_grants)),
+            Route("/desktop/device/auto", _usage("desktop:device_auto", self.desktop_device_auto), methods=["POST"]),
+            Route("/desktop/device/rotate", _usage("desktop:device_rotate", self.desktop_device_rotate), methods=["POST"]),
             Route("/dev/login", self.dev_login, methods=["GET", "POST"]),   # CRM_DEV 만(아니면 404)
             Route("/logout", self.logout, methods=["POST"]),
             Route("/api/state", u("web:state", self.api_state)),
             Route("/api/journal", u("web:journal", self.api_journal)),
             Route("/api/records", u("web:records", self.api_records)),   # PR① 홈 기록 「더 보기」 — 읽기만
+            Route("/api/records/{rid}/body", u("web:record_body", self.api_record_body), methods=["POST"]),   # 수기 수정 A0′
+            Route("/api/records/{rid}/body/preview", u("web:record_body_preview", self.api_record_body_preview), methods=["POST"]),   # 쓰기 없음 — 저장 전 확인
+            Route("/api/records/{rid}/title", u("web:record_title", self.api_record_title), methods=["POST"]),
             Route("/api/candidate/decide", u("web:candidate_decide", self.api_decide), methods=["POST"]),
             Route("/api/item", u("web:item", self.api_item)),
             Route("/api/item/decide", u("web:item_decide", self.api_item_decide), methods=["POST"]),
+            Route("/api/item/edit", u("web:item_edit", self.api_item_edit), methods=["POST"]),   # 수기 수정 — 항목 인라인 편집
             Route("/api/std/preview", u("web:std_preview", self.api_std_preview)),
             Route("/api/std/choose", u("web:std_choose", self.api_std_choose), methods=["POST"]),
             Route("/api/feedback", u("web:feedback", self.api_feedback), methods=["GET", "POST"]),
@@ -3005,7 +3278,6 @@ class Web:
             Route("/api/optional-consent", u("web:optional_consent", self.api_optional_consent), methods=["POST"]),
             Route("/api/desk-visibility", u("web:desk_visibility", self.api_desk_visibility), methods=["POST"]),
             Route("/api/me/name", u("web:me_name", self.api_me_name), methods=["POST"]),   # PR B 코어 쓰기
-            Route("/api/nav/accept", u("web:nav_accept", self.api_nav_accept), methods=["POST"]),
             Route("/api/people", u("web:people", self.api_people), methods=["POST"]),
             Route("/api/people/{pid}", u("web:person", self.api_person), methods=["POST"]),
             Route("/api/people/{pid}/delete", u("web:person_delete", self.api_person_delete), methods=["POST"]),
@@ -3040,6 +3312,7 @@ class Web:
             Route("/api/trash/{op}", u("web:trash_op", self.api_trash_op), methods=["POST"]),
             Route("/api/trash/{kind}/{tid}", u("web:trash_get", self.api_trash_one)),
             # PR ②-a 작업 전달 — 장치(Bearer 장치 토큰) 2 · 웹(세션) 3
+            Route("/api/device/rotate", self.api_device_rotate, methods=["POST"]),   # PC 연결 — Bearer 장치 토큰 교체(M2)
             Route("/api/device/jobs", self.api_device_jobs),
             Route("/api/device/jobs/{jid}/{op}", self.api_device_job, methods=["GET", "POST"]),
             Route("/api/jobs", u("web:jobs", self.api_jobs), methods=["POST"]),

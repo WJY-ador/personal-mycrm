@@ -3,28 +3,21 @@ import ast
 import html
 import json
 import re
-import subprocess
 import unittest
 from pathlib import Path
 
 import structure_svg
 
 HERE = Path(__file__).parent
-HTML = structure_svg.fill_origin_labels((HERE / "app.html").read_text())
-JS = re.search(r"<script>(.*?)</script>", HTML, re.S).group(1)
-
-
-def js_run(code):
-    result = subprocess.run(["node", "-e", code], text=True, capture_output=True, check=True)
-    return json.loads(result.stdout)
+HTML = (HERE / "app.html").read_text()   # 정적 뼈대(인라인 스크립트·스타일 0) — 화면·라우터는 React(server/ui), CSS 는 번들(tokens.css·global.css)
+UI = HERE / "ui" / "src"
+CSS = (UI / "shared" / "tokens.css").read_text(encoding="utf-8") + (UI / "shared" / "global.css").read_text(encoding="utf-8")
 
 
 class UIAlignmentTest(unittest.TestCase):
     def test_type_labels_keep_origins_and_protection(self):
-        chips = JS[JS.index("const ORIGIN_TEXT"):JS.index("const VTYPE")]
-        result = js_run('const esc = x => x, NT = x => x, navNew = () => true;\n' + chips +
-                        '\nconsole.log(JSON.stringify(["core","standard","template","custom"].map(originChip)));')
-        self.assertEqual([re.sub('<[^>]+>', '', x) for x in result], ["표준", "표준", "커스텀", "커스텀"])
+        # 칩 글자 = 서버 ORIGIN_TEXT(/api/state origin_labels) — React shared/origin.tsx 가 그대로 쓴다(Vitest DefsScreen·ObjectsScreen)
+        self.assertEqual([structure_svg.ORIGIN_TEXT[k] for k in ("core", "standard", "template", "custom")], ["표준", "표준", "커스텀", "커스텀"])
         fixture = {"objects": [{"id": "o1", "label": "샘플", "origin": "standard", "locked": True, "fields": []}],
                    "core": [{"kind": "record"}], "relations": []}
         before = json.dumps(fixture, ensure_ascii=False)
@@ -33,84 +26,45 @@ class UIAlignmentTest(unittest.TestCase):
         self.assertIn("표준 정의 보호", svg)
         self.assertEqual(before, json.dumps(fixture, ensure_ascii=False))
 
-    def test_single_settings_entry_for_all_roles_and_nav_versions(self):
-        navigation = JS[JS.index("const BASE ="):JS.index("function tabCount(")]
-        setup = JS[JS.index("const SETUP_PAGES"):JS.index("function renderSetup(")]
-        result = js_run('const LABELS = {}, ok = () => true, esc = x => x, trashOn = () => false;\n'
-                        'let S;\n' + navigation + '\n' + setup + '\n' + '''
-const out = [];
-for (const admin of [false, true]) for (const nav of ["old", "new"]) {
-  S = {user: {admin, nav}, tabs: []};
-  out.push({admin, nav, tabs: tabsList().map(t => t.id), view: pickTab({tab: "_setup"}, tabsList()).view,
-    subnav: setupNav("layout")});
-}
-console.log(JSON.stringify(out));
-''')
-        for row in result:
-            self.assertEqual(row['view'], 'setup', row)
-            self.assertNotIn('_setup', row['tabs'], row)
-            self.assertEqual('/admin/setup' in row['subnav'], row['admin'], row)
-            self.assertEqual('/admin"' in row['subnav'], row['admin'], row)
-            for slug in ('layout', 'structure', 'objects', 'devices', 'map', 'help'):
-                self.assertIn('#_setup/' + slug, row['subnav'])
+    def test_single_settings_entry_for_all_roles(self):
+        """설정 = 모든 역할에서 톱니 하나(탭 줄에 없음). Setup 페이지 줄·관리자 운영 링크는 Vitest layout/App.test.tsx · shared/route.test.ts."""
         gear = re.search(r'<a[^>]+id="setup-link"[^>]*>.*?</a>', HTML).group()
         self.assertIn('href="#_setup"', gear)
         self.assertIn('aria-label="설정"', gear)
         self.assertNotIn(' hidden', gear)
-        self.assertNotIn('$("setup-link").hidden', JS)
-
-    def test_settings_core_routes_keep_old_navigation(self):
-        navigation = JS[JS.index("const BASE ="):JS.index("function tabCount(")]
-        result = js_run('const LABELS = {}, ok = () => true; let S;\n' + navigation + """
-S = {user: {nav: "old"}, tabs: []};
-const before = tabsList().map(t => t.id);
-const views = ["_setup", "_obj", "_me", "_today"].map(id => pickTab({tab: id}, tabsList()).view);
-console.log(JSON.stringify({views, before, after: tabsList().map(t => t.id), nav: S.user.nav}));
-""")
-        self.assertEqual(result['views'][:3], ['setup', 'objects', 'me'])
-        self.assertNotEqual(result['views'][3], 'today2')
-        self.assertEqual(result['before'], result['after'])
-        self.assertEqual(result['nav'], 'old')
 
     def test_official_font_with_swap_and_system_fallback(self):
         self.assertRegex(HTML, r'https://fonts.googleapis.com/css2\?family=Noto\+Sans\+KR[^" ]*display=swap')
-        self.assertRegex(HTML, r'font: 14px/1.55 "Noto Sans KR", -apple-system, "Apple SD Gothic Neo", sans-serif')
+        self.assertRegex(CSS, r'font: 14px/1.55 "Noto Sans KR", -apple-system, "Apple SD Gothic Neo", sans-serif')
         self.assertIn('referrerpolicy="no-referrer"', HTML)
 
     def test_account_settings_do_not_duplicate_gear(self):
-        account = JS[JS.index("function acctApply()"):JS.index("function acctClose()")]
-        result = js_run("""
-const out = [], document = {querySelectorAll: () => []};
-let S, nodes, gate;
-const $ = id => nodes[id], needName = () => gate, navNew = () => S.user.nav === "new";
-""" + account + """
-for (const admin of [false, true]) for (const nav of ["old", "new"]) for (gate of [false, true]) {
-  S = {user: {admin, nav, display_name: gate ? "" : "합성 사용자"}};
-  nodes = new Proxy({}, {get: (obj, key) => obj[key] ||= {hidden: true, href: "#_setup",
-    classList: {toggle() {}}, setAttribute() {}}});
-  acctApply();
-  out.push({admin, nav, gate, settings: nodes["acct-settings"].hidden, devices: nodes["acct-devices"].hidden, gear: nodes["setup-link"].href});
-}
-console.log(JSON.stringify(out));
-""")
-        for row in result:
-            self.assertTrue(row['settings'], row)
-            self.assertTrue(row['devices'], row)
-            self.assertEqual(row['gear'], '/admin/setup' if row['gate'] and row['admin'] else '#_setup', row)
+        """설정 하위 화면은 톱니 하나에서만 — 계정 메뉴의 「내 구조 설정」·「연결 장치」는 늘 숨김(화면 코드가 켜지 않는다).
+        톱니 주소(관리자 이름 관문 = /admin/setup, 그 밖 #_setup)는 Vitest layout/App.test.tsx."""
+        for i in ("acct-settings", "acct-devices"):
+            tag = re.search(rf'<button[^>]+id="{i}"[^>]*>', HTML)
+            self.assertTrue(tag and re.search(r"\shidden(\s|>)", tag.group()), i)
+        src = "".join(p.read_text(encoding="utf-8") for p in UI.rglob("*.ts*") if ".test." not in p.name)
+        self.assertNotIn("acct-settings", src)
+        self.assertNotIn("acct-devices", src)
         console = re.search(r'<a[^>]+id="acct-console"[^>]*>', HTML)
         self.assertTrue(console is None or ' hidden' in console.group())
 
     def test_one_origin_definition_for_app_and_graph(self):
-        self.assertTrue(hasattr(structure_svg, 'fill_origin_labels'))
-        rendered = structure_svg.fill_origin_labels(HTML)
-        self.assertNotIn('/*{{origin-text}}*/ {}', rendered)
-        labels = re.search(r'const ORIGIN_TEXT = (.*?);', rendered).group(1)
-        self.assertEqual(json.loads(labels), structure_svg.ORIGIN_TEXT)
-        self.assertNotIn('"코어"', rendered)
+        """출처 표시 정의는 서버 하나(structure_svg) — /api/state origin_labels 로 내려 주고, 화면(app.html·React)엔 사본·자리표가 없다(R5b-1)."""
+        web = (HERE / "web.py").read_text(encoding="utf-8")
+        self.assertIn('st["origin_labels"] = {"text": structure_svg.ORIGIN_TEXT, "category": structure_svg.ORIGIN_CATEGORY}', web)
+        self.assertNotIn("fill_origin_labels(", web)
+        self.assertNotIn("{{origin-text}}", HTML)
+        self.assertNotIn("ORIGIN_TEXT", HTML)
+        src = "".join(p.read_text(encoding="utf-8") for p in UI.rglob("*.ts*") if ".test." not in p.name)
+        self.assertNotIn("ORIGIN_CHIP", src)
+        self.assertIn("S.origin_labels", (UI / "shared" / "origin.tsx").read_text(encoding="utf-8"))
+        self.assertNotIn('"코어"', src)
 
     def test_standard_confirmation_uses_material_type_terms(self):
-        confirmation = JS[JS.index("const STRUCT_TEXT"):JS.index("async function stdChoose(")]
-        self.assertNotIn('오브젝트', confirmation)
+        code = [l for l in (UI / "features" / "defs" / "text.ts").read_text(encoding="utf-8").splitlines() if not l.lstrip().startswith("//")]
+        self.assertTrue(code and not [l for l in code if '오브젝트' in l])
 
     def test_lock_accessible_names_use_standard_category(self):
         self.assertFalse('aria-label="기본"' in HTML)
@@ -131,8 +85,16 @@ console.log(JSON.stringify(out));
 
     def test_legend_and_list_use_two_categories(self):
         self.assertEqual(structure_svg.legend_origins(), ("standard", "template"))
-        self.assertIn('grp("표준 🔒"', JS)
-        self.assertNotIn('grp("기본 🔒"', JS)
+        # 자료 종류 색인은 React(features/objects, R4-2) — 묶음 이름 표준 🔒 · 카드 칩 = 서버 origin_labels(shared/origin.tsx, 손 사본 없음 R5b-1)
+        index = (UI / "features" / "objects" / "Index.tsx").read_text(encoding="utf-8")
+        self.assertIn('title="표준 🔒"', index)
+        self.assertNotIn("기본 🔒", index)
+        self.assertIn("originChip(S, c.oc)", index)
+
+    def test_body_bold_renders_safely(self):
+        """사용자 글 본문의 **굵게** 는 <strong>, 그 밖은 글자 그대로 — 화면은 전부 React(shared/rich.tsx·Para.tsx, 사례 rich.cases.json = Vitest rich.test.tsx).
+        app.html 은 정적 뼈대 — 인라인 스크립트가 없어 사용자 본문을 HTML 로 꽂는 자리가 없다(innerHTML 0 = arch.test.ts)."""
+        self.assertIsNone(re.search(r"<script\b(?![^>]*\bsrc\s*=)[^>]*>", HTML, re.I))
 
 
 if __name__ == '__main__':

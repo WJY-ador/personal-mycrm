@@ -1,0 +1,69 @@
+/* 「나」 — 하위 탭 · 축 띠 · 렌즈(목록 | 가운데 | 옆 묶음) · 상세(인용·연결·편집). 옛 app.html 「나」 전용 규칙을 옮김(R2).
+   색은 app.html 전역 CSS 변수를 그대로 쓴다(복사하지 않음). 「오늘」과 같이 쓰는 틀(.hhead·.hlist·.hrows·.hdetail·.hback)은 전역에 남는다.
+   분기점 768 미만 = view.ts MOBILE 과 같은 값. 축 색 8(--ax1~8)은 전역 토큰(라이트·다크). */
+.kind { font-size: .76rem; color: var(--muted); }
+.body { white-space: pre-wrap; font-size: .9rem; line-height: 1.75; margin: .6rem 0 0; }
+.quote { margin: .7rem 0 0; padding: .6rem .8rem; border-left: 3px solid var(--line); background: var(--paper); border-radius: 0 6px 6px 0; font-size: .86rem; }
+.quote a { font-weight: 600; text-decoration: none; }
+.headEdit { display: block; }
+.headEdit form { max-width: 32rem; margin: 0; }   /* 표시 이름 편집 칸(shared Editor) */
+/* 연결 */
+.conn { margin-top: 1.2rem; padding-top: .8rem; border-top: 1px solid var(--line); }
+.conn :global(.sechead) h3 { margin: 0; }
+.connf { margin-top: .4rem; }
+.connf select { font: inherit; font-size: .8rem; min-height: 32px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); }
+.connlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .35rem; }
+.connlist li { border: 1px solid var(--line); border-radius: 6px; padding: .4rem .6rem; font-size: .84rem; }
+.connlist a { font-weight: 600; text-decoration: none; }
+.connlist :global(.hk) { display: block; font-size: .72rem; color: var(--muted); }
+.lensChip { margin-left: .5rem; }
+/* 하위 탭 */
+.sub { display: flex; gap: .15rem; overflow-x: auto; border-bottom: 1px solid var(--line); margin: 0 0 .8rem; scrollbar-width: thin; }
+.sub a { flex: none; display: inline-flex; align-items: center; gap: .3rem; min-height: 36px; padding: .4rem .75rem; margin-bottom: -1px;
+  font-size: .84rem; color: var(--muted); text-decoration: none; border-bottom: 2px solid transparent; }
+.sub a:hover { color: var(--ink); }
+.sub a.on { color: var(--ink); font-weight: 600; border-bottom-color: var(--accent); }
+.n { font-family: var(--mono); font-size: .7rem; color: var(--muted); }
+/* 축 띠 */
+.axis { margin: 0 0 1rem; }
+.axrow { display: flex; align-items: center; gap: .6rem; }
+.axl { flex: none; font-size: .76rem; font-weight: 600; color: var(--muted); }
+.strip { flex: 1; display: flex; gap: 2px; height: 10px; border-radius: 4px; overflow: hidden; }
+.strip.none { background: var(--line); }
+.strip span { min-width: 3px; }
+.chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: .1rem .9rem; margin-top: .45rem; }
+.chips a { display: flex; align-items: center; gap: .35rem; min-width: 0; min-height: 28px; padding: .15rem .3rem; border-radius: 6px;
+  font-size: .78rem; color: var(--ink); text-decoration: none; }
+.chips a:hover { background: var(--accent-soft); }
+.chips a[aria-current="true"] { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+.chips a.zero { color: var(--muted); }
+.chips i, .axdot { flex: none; display: inline-block; width: 9px; height: 9px; border-radius: 50%; }
+.chips b, .chips .v { flex: none; font-family: var(--mono); font-size: .74rem; }
+.chips .axt { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fail { margin: .4rem 0 0; }
+/* 렌즈 */
+.lens { display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); gap: 1rem; align-items: start; }
+.lens.three { grid-template-columns: minmax(240px, 300px) minmax(0, 1fr) minmax(220px, 300px); }
+.lens > * { min-width: 0; }
+.list :global(.htools) .count { font-family: var(--mono); font-size: .74rem; color: var(--muted); }
+.cd { font-family: var(--mono); font-size: .76rem; font-weight: 600; color: var(--muted); }
+.list .axdot { margin-right: .35rem; vertical-align: .05em; }
+.list :global(ul.hrows) li.grph { display: flex; gap: .4rem; padding: .7rem .55rem .25rem; font-size: .74rem; font-weight: 600; color: var(--muted); }
+.list :global(ul.hrows) li.grph + li { border-top: none; }
+.groups { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: .8rem; }
+.gh { font-size: .82rem; margin: 0 0 .5rem; }
+.grp + .grp { margin-top: .8rem; }
+.grp h4 { display: flex; gap: .4rem; margin: 0 0 .35rem; font-size: .76rem; color: var(--muted); }
+.grp h4 :global(.count), .sec h3 :global(.count) { font-family: var(--mono); font-weight: 500; }
+.sec { margin-top: 1rem; }
+.sec h3 { display: flex; gap: .4rem; align-items: baseline; margin: 0 0 .4rem; font-size: .86rem; }
+.solo { max-width: 860px; }
+@media (max-width: 1099px) {
+  .lens.three { grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); }
+  .lens.three > .groups { grid-column: 2; }
+}
+@media (max-width: 767px) {
+  .lens, .lens.three { grid-template-columns: minmax(0, 1fr); }
+  .lens.three > .groups { grid-column: auto; }
+  .chips { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

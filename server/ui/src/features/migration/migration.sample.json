@@ -1,0 +1,218 @@
+{
+ "tokens": {
+  "tokens": [
+   {
+    "id": "mt_9a39f7e4f27b85ea",
+    "label": "이관 업로더",
+    "created_at": "2026-11-03T13:11:15.174876+09:00",
+    "expires_at": "2026-11-17T13:11:15.174876+09:00",
+    "revoked_at": null,
+    "last_used_at": null,
+    "active": true
+   }
+  ],
+  "enabled": true,
+  "allowed": true,
+  "token_days": 14
+ },
+ "plans": {
+  "plans": [
+   {
+    "token_id": null,
+    "contract": "board-migration/2",
+    "source_instance": "pc-demo-1",
+    "state": "sealed",
+    "item_count": 6,
+    "staged_bytes": 2596,
+    "plan_hash": "b6469acc4f62bf40b9b1a4815b458ade15e68de7401d6baf0e0ff59b90795772",
+    "summary": {
+     "dry_run": {
+      "units": {
+       "record": {
+        "warn": 2,
+        "insert": 2,
+        "reject": 1
+       },
+       "principle_c": {
+        "insert": 1
+       }
+      },
+      "actions": {
+       "warn": 2,
+       "insert": 3,
+       "reject": 1
+      }
+     }
+    },
+    "created_at": "2026-11-03T13:11:15.201696+09:00",
+    "expires_at": "2026-11-06T13:11:15.201696+09:00",
+    "sealed_at": "2026-11-03T13:11:15.210915+09:00",
+    "applied_at": null,
+    "closed_at": null,
+    "reverted_at": null,
+    "via": null,
+    "plan_id": "mp_b8198b82f6d4b10041259e10"
+   }
+  ],
+  "enabled": true,
+  "allowed": true,
+  "mcp_enabled": false,
+  "limits": {
+   "daily": 200,
+   "used_today": 2,
+   "plan_items": 200,
+   "plan_days": 3,
+   "staging_bytes": 2097152,
+   "open_plans": 3
+  }
+ },
+ "detail": {
+  "token_id": null,
+  "contract": "board-migration/2",
+  "source_instance": "pc-demo-1",
+  "state": "sealed",
+  "item_count": 6,
+  "staged_bytes": 2596,
+  "plan_hash": "b6469acc4f62bf40b9b1a4815b458ade15e68de7401d6baf0e0ff59b90795772",
+  "summary": {
+   "dry_run": {
+    "units": {
+     "record": {
+      "warn": 2,
+      "insert": 2,
+      "reject": 1
+     },
+     "principle_c": {
+      "insert": 1
+     }
+    },
+    "actions": {
+     "warn": 2,
+     "insert": 3,
+     "reject": 1
+    }
+   }
+  },
+  "created_at": "2026-11-03T13:11:15.201696+09:00",
+  "expires_at": "2026-11-06T13:11:15.201696+09:00",
+  "sealed_at": "2026-11-03T13:11:15.210915+09:00",
+  "applied_at": null,
+  "closed_at": null,
+  "reverted_at": null,
+  "via": null,
+  "plan_id": "mp_b8198b82f6d4b10041259e10",
+  "counts": {
+   "actions": {
+    "insert": 3,
+    "reject": 1,
+    "warn": 2
+   },
+   "units": {
+    "record": {
+     "insert": 2,
+     "reject": 1,
+     "warn": 2
+    },
+    "principle_c": {
+     "insert": 1
+    }
+   }
+  },
+  "items": [
+   {
+    "seq": 0,
+    "original_id": "o_d9f2480a867b596e2f5534f137429574",
+    "source_revision": "v_8c47f3df0904dc068128f8f8e6c52677",
+    "unit_kind": "record",
+    "target_kind": "record",
+    "content_hash": "ca0204e0c693859fa82f0d69de5464af76d7d93510dcbb2c2759dff65aebea5b",
+    "action": "insert",
+    "reason": null,
+    "title": "응대 원칙 메모",
+    "has_body": true,
+    "needs_check": false,
+    "checked": false,
+    "result": null,
+    "target_id": null
+   }
+  ]
+ },
+ "item": {
+  "seq": 0,
+  "original_id": "o_d9f2480a867b596e2f5534f137429574",
+  "source_revision": "v_8c47f3df0904dc068128f8f8e6c52677",
+  "unit_kind": "record",
+  "target_kind": "record",
+  "content_hash": "ca0204e0c693859fa82f0d69de5464af76d7d93510dcbb2c2759dff65aebea5b",
+  "action": "insert",
+  "reason": null,
+  "payload": {
+   "body": "고객 요청은 하루 안에 답한다.",
+   "title": "응대 원칙 메모",
+   "review": {
+    "state": "reviewed",
+    "decision_ref": "rv-1"
+   },
+   "unit_kind": "record",
+   "author_kind": "self",
+   "original_id": "o_d9f2480a867b596e2f5534f137429574",
+   "sensitivity": "normal",
+   "content_hash": "ca0204e0c693859fa82f0d69de5464af76d7d93510dcbb2c2759dff65aebea5b",
+   "primary_date": {
+    "kind": "written",
+    "value": "2025-03-01T10:00:00+09:00"
+   },
+   "text_process": "verbatim",
+   "generation_kind": "human",
+   "source_instance": "pc-demo-1",
+   "source_revision": "v_8c47f3df0904dc068128f8f8e6c52677"
+  },
+  "checked": false,
+  "needs_check": false,
+  "result": null,
+  "target_id": null
+ },
+ "receipt": {
+  "plan_id": "mp_888077a640a9c46efb787d05",
+  "import_batch_id": "mp_888077a640a9c46efb787d05",
+  "plan_hash": "7e66e79dcc4a527b72baf07321c5fe318445b0a5ba48609cfdc8d59806153a03",
+  "receipt_hash": "63d3385c1d1365375839ebc0d0bc4c18c834c2a9ede978cbb08fa2c1b59b80a4",
+  "applied_at": "2026-11-03T13:11:15.190065+09:00",
+  "state": "applied",
+  "via": "web",
+  "reverted_at": null,
+  "counts": {
+   "results": {
+    "applied": 2
+   },
+   "units": {
+    "record": {
+     "applied": 1
+    },
+    "source": {
+     "applied": 1
+    }
+   },
+   "decision_deferred": 0,
+   "kept_on_revert": 0
+  },
+  "items": [
+   {
+    "seq": 0,
+    "original_id": "o_fccf7dd9230096a24b6b7c8ae343a1c1",
+    "source_revision": "v_fca55b7eb9403e924abedb900aaddc4b",
+    "unit_kind": "record",
+    "target_kind": "record",
+    "content_hash": "7db8ecceff300f1b6f5e8b663a3b2217d2512facaba0722a6ffc4d7eefa89cb0",
+    "reason": null,
+    "result": "applied",
+    "target_id": "r_yqvHMz6zBE0",
+    "stored_hash": "7db8ecceff300f1b6f5e8b663a3b2217d2512facaba0722a6ffc4d7eefa89cb0",
+    "target_state": "live",
+    "created": true,
+    "via": "web",
+    "decision_deferred": false
+   }
+  ]
+ }
+}

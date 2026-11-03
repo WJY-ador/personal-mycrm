@@ -19,6 +19,7 @@ import urllib.parse
 from pathlib import Path
 
 HERE = Path(__file__).parent
+INLINE_SCRIPT = re.compile(r"<script\b(?![^>]*\bsrc\s*=)[^>]*>", re.I)   # src 없는 <script>(인라인)
 URL = os.environ.get("DATABASE_URL", "")
 if not URL:
     raise SystemExit("중단: DATABASE_URL 을 명시하세요(예: postgresql://localhost/crm_test_bi_web). server/.env 는 읽지 않아요.")
@@ -39,9 +40,10 @@ import db  # noqa: E402
 import imports  # noqa: E402
 import main  # noqa: E402
 import web  # noqa: E402
+from test_sample_shape import cmp  # noqa: E402
 
-MAIN, NONAME, INBOX = "wi-main@example.com", "wi-noname@example.com", "wi-inbox@example.com"
-EMAILS = (MAIN, NONAME, "wi-agg@example.com", INBOX)
+MAIN, NONAME, INBOX, SAMPLE = "wi-main@example.com", "wi-noname@example.com", "wi-inbox@example.com", "wi-sample@example.com"
+EMAILS = (MAIN, NONAME, "wi-agg@example.com", INBOX, SAMPLE)
 H = {"origin": PUBLIC}
 
 
@@ -211,9 +213,9 @@ async def test_web_layer():
             fk.put(activity, "state_part", {"activity": {"total": 3}, "inbox": {"pending": 2}, "devices": {"active": 1, "max": 5}})
             s = (await h.get("/api/state")).json()
             assert s["activity"] == {"total": 3} and s["inbox"] == {"pending": 2} and s["devices"]["max"] == 5 and "activity" not in s.get("read", {})
-            # 9) /app — 인라인 스크립트 1개 · 관리자 응답에도 「연결 장치」 메뉴가 남는다
+            # 9) /app — 인라인 스크립트 0 · 관리자 응답에도 「연결 장치」 메뉴가 남는다
             r = await h.get("/app")
-            assert r.status_code == 200 and len(web.inline_script_hashes(r.text)) == 1 and 'id="acct-devices"' in r.text
+            assert r.status_code == 200 and not INLINE_SCRIPT.search(r.text) and 'id="acct-devices"' in r.text
             with db.tx() as c:
                 c.execute("UPDATE users SET role='admin' WHERE id=%s", (uid,))
             try:
@@ -230,25 +232,14 @@ async def test_web_layer():
 
 def test_static():
     html = (HERE / "app.html").read_text(encoding="utf-8")
-    assert html.count("<script>") == 1 and len(web.inline_script_hashes(html)) == 1, "인라인 스크립트 1개"
+    assert not INLINE_SCRIPT.search(html), "인라인 스크립트 0(정적 뼈대)"
     # 「연결 장치」 메뉴는 <!--user--> 구간 밖(관리자도 연결한다)
     for m in re.finditer(r"<!--user-->(.*?)<!--/user-->", html, re.S):
         assert "acct-devices" not in m.group(1)
-    js = re.search(r"<script>(.*?)</script>", html, re.S).group(1)
-    # 원문: 127.0.0.1 은 링크 한 곳뿐이고 fetch 로 가져오지 않는다(구현계획 §3 — 브라우저→localhost fetch 제외)
-    assert js.count("127.0.0.1") == 1 and re.search(r'href="http://127\.0\.0\.1:\$\{port\}/raw/\$\{id\}"', js), "원문 링크"
-    assert 'rel="noopener noreferrer"' in js and "원문을 보관한 PC에서 열 수 있습니다" in js
-    for call in re.findall(r"fetch\(([^,)]*)", js):
-        assert "127.0.0.1" not in call and "RAW" not in call, call
-    # 토큰: 저장소·주소·흘림 문구에 넣지 않는다. localStorage 에는 원문 포트만 쓴다
-    assert re.findall(r"localStorage\.setItem\(([^,]+),", js) == ["RAW_PORT_KEY"], re.findall(r"localStorage\.setItem\(([^,]+),", js)
-    assert "sessionStorage" not in js and not re.search(r"coreFlash\s*=\s*\{[^}]*token", js) and not re.search(r"location\.hash[^;\n]*token", js)
-    assert "devToken = null; if (S)" in js, "화면을 떠나면 토큰을 지운다(hashchange)"
-    # 「나」 홈 설명 문장(r3 T3) · AI 요약 승인 문구는 서버 문장(inbox_get.approve_notice) 그대로
-    assert "연결된 활동과 내 글을 정해진 계산 규칙으로 보여 줍니다. 활동량을 성격이나 능력으로 해석하지 않습니다. AI가 작성한 설명은 저장 승인 대기에 표시합니다." in js
-    assert "e.approve_notice" in js and "처음 수집한 날" in js and "날짜 미확인" in js
-    # AI 생성 정보 — 계약 열거값은 사람 말로(원값 노출 금지), 모르는 값은 「기타」 + 원값
-    assert 'method: {ai_summary: "AI 요약"' in js and 'input_scope: {self_only: "내 글만"}' in js and "기타 <span" in js
+    # 활동 목록·하나(원문 127.0.0.1 링크·포트)·연결 장치(토큰)는 React(R4) — 원문 링크 한 곳·fetch 0·저장소 = 포트 하나·토큰 미저장은
+    # Vitest(server/ui/src/arch.test.ts·features/activity·devices). 정적 뼈대엔 원문 링크가 없다
+    assert "127.0.0.1" not in html
+    # 승인 대기(서버 문장 approve_notice 그대로 · 생성 정보 열거값 = 사람 말, 모르는 값 = 「기타」 + 원값)는 React — Vitest TodayScreen.test.tsx(R4-2)
     # 감사 라벨 — schema.sql admin_audit CHECK 의 모든 action 에 표시 이름
     sql = (HERE / "schema.sql").read_text(encoding="utf-8")
     blk = re.search(r"CREATE TABLE IF NOT EXISTS admin_audit \((.*?)\n\);", sql, re.S).group(1)
@@ -264,7 +255,7 @@ def test_static():
         assert [ln["target"] for ln in a["links"]] == ["sources"], a["links"]
     finally:
         web.CORE_OBJECTS = saved
-    print("OK — 정적(인라인 1개·메뉴 위치·원문 링크만·토큰 미저장·설명 문장·감사 라벨·활동 코어 정의 숨긴 열) 통과")
+    print("OK — 정적(인라인 0·메뉴 위치·뼈대 원문 링크 0·승인 문구·감사 라벨·활동 코어 정의 숨긴 열) 통과")
 
 
 # ── B. 합성 활동 집계 손계산 대조(실제 activity.me_aggregate) ──────────────
@@ -377,6 +368,53 @@ def test_aggregate():
     return True
 
 
+async def test_ui_samples():
+    """API 견본 대조(R4) — React 활동·연결 장치 화면이 읽는 응답의 손 사본 견본과 실제 응답(키 집합·값 타입).
+    ui/src/features/activity/activity.sample.json = /api/activities·/api/activities/{id}·/api/me/aggregate·/api/axes/{id}/context ·
+    ui/src/features/devices/devices.sample.json = /api/devices · (R4-2) ui/src/features/objects/objects.sample.json = /api/people/{id}/context·
+    /api/sources/{id}/context · ui/src/features/today/today.sample.json = /api/inbox?state=·/api/inbox/{id}. TS 쪽은 *.sample.test.ts 의 satisfies(tsc)."""
+    import json
+    uid = db.user_by_email(SAMPLE)["id"]
+    db.display_name_set(uid, "견본")
+    ids, _T = seed_aggregate(uid)
+    imports.device_connect(uid, "견본 장치")
+    ui = HERE / "ui" / "src" / "features"
+    act = json.loads((ui / "activity" / "activity.sample.json").read_text(encoding="utf-8"))
+    dev = json.loads((ui / "devices" / "devices.sample.json").read_text(encoding="utf-8"))
+    objs = json.loads((ui / "objects" / "objects.sample.json").read_text(encoding="utf-8"))
+    today = json.loads((ui / "today" / "today.sample.json").read_text(encoding="utf-8"))
+    add_pending(uid, "ie_sample", "self_summary", {"title": "견본 요약", "body": "견본 본문", "source_created_at": None, "source_date": None,
+                                                   "execution": "unattended", "transform_version": "self-summary/1",
+                                                   "generation": {"method": "ai_summary", "tool": "t", "model": "m", "input_scope": "self_only", "inputs": ["a"]}})
+    site = main.site
+    real = site.dev, site.dev_user
+    try:
+        site.dev, site.dev_user = True, SAMPLE
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url=PUBLIC) as h:
+            got = {"list": (await h.get("/api/activities")).json(), "one": (await h.get(f"/api/activities/{ids['A2']}")).json(),
+                   "agg": (await h.get("/api/me/aggregate", params={"period": "7d"})).json(),
+                   "axis": (await h.get(f"/api/axes/{ids['X1']}/context")).json()}
+            devs = (await h.get("/api/devices")).json()
+            ctxs = {"person": (await h.get(f"/api/people/{ids['P1']}/context")).json(), "source": (await h.get(f"/api/sources/{ids['S1']}/context")).json()}
+            inbox = {"list": (await h.get("/api/inbox", params={"state": "pending"})).json(), "one": (await h.get("/api/inbox/ie_sample")).json()}
+    finally:
+        site.dev, site.dev_user = real
+    assert got["list"]["activities"] and got["one"]["versions"] and got["agg"]["by_axis"] and got["axis"]["activities"] and devs["devices"], "견본 대조에 쓸 행"
+    for k in ("list", "one", "agg", "axis"):
+        bad = cmp(act[k], got[k], k, exact=True)
+        assert not bad, (bad, "activity.sample.json·features/activity/actApi.ts·shared/activity.ts 의 타입을 같이 고친다")
+    bad = cmp(dev, devs, "devices", exact=True)
+    assert not bad, (bad, "devices.sample.json·features/devices/devApi.ts 의 타입을 같이 고친다")
+    assert ctxs["person"]["activities"] and ctxs["source"]["by_action"] and inbox["list"]["entries"] and inbox["one"]["generation"], "견본 대조에 쓸 행"
+    for k in ("person", "source"):
+        bad = cmp(objs[k], ctxs[k], k, exact=True)
+        assert not bad, (bad, "objects.sample.json·features/objects/objApi.ts 의 타입을 같이 고친다")
+    for k in ("list", "one"):
+        bad = cmp(today[k], inbox[k], k, exact=True)
+        assert not bad, (bad, "today.sample.json·features/today/todayApi.ts 의 타입을 같이 고친다")
+    print("OK — API 견본 대조(활동 목록·하나·현황·축 · 연결 장치 · 사람·출처 문맥 · 승인 대기 목록·하나 = 견본 키·값 타입) 통과")
+
+
 def add_pending(uid, eid, kind, payload):
     """승인 대기 행 하나(합성 — 장치 접수와 같은 모양의 payload). 입력원은 seed_aggregate 의 is_agg."""
     from psycopg.types.json import Jsonb
@@ -457,6 +495,7 @@ async def run():
         test_static()
         await test_web_layer()
         test_aggregate()
+        await test_ui_samples()
         await test_approve()
     finally:
         cleanup()

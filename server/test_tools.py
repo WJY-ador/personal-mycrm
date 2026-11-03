@@ -37,7 +37,7 @@
    · 관리자 세션으로도 /app·/api 에 관리자 데이터 0 · 이름 공유(사용자 상세에만·리포트 0·철회 뒤 0) · 「내 문의」 공개 갱신순(웹=MCP)
 17) R1(PR #20 2단계): 기능 플래그 CRM_FEATURE_STANDARD·SOURCES 둘 다 미설정(off)에서 로그인(웹·DEV) · /admin 권한(일반 404·관리자 바로·재인증 없음)
    · /admin 문의 처리(상태·답변) · Q1 관리자 /app = ⚙ + 「운영 콘솔」·로그아웃만(문의·이름 공유 메뉴·문의 대화창은 보내지 않음)
-   · Q1b 일반 사용자 /app = 하단 문의 섹션 없음 · 「문의 보내기」·「내 문의」는 대화창(desk-dlg) · 「문의 섹션 숨기기」 없음
+   · Q1b 일반 사용자 /app = 하단 문의 섹션 없음 · 「문의 보내기」·「내 문의」는 대화창(React #ui-desk) · 「문의 섹션 숨기기」 없음
 18) R2(PR #20 3단계, DB 없이): 기능 플래그 제거(PR B — 코드·render.yaml 참조 0) · 수신자별 응답(본인·운영자 비동의·동의) 허용 목록
    · 이름 누출 0(비동의: label·key·선택지·출처 name·location·id / 동의: key·선택지 값·출처·id) · origin·관계 파생 · std 모양 · 오류 코드 문구 · 예제 동결 일치
 19) R3(PR #20 4단계): 표준 편입 미리보기 판정(누락·일치·확장·충돌 사유·참조 의존·초안·보관) · 쓰기 0(READ ONLY·전 테이블 해시)·플래그 무관
@@ -52,7 +52,7 @@
    — 새 GET 404 · 노출·key 0 · DB 조회 0 · 결정성 · 정의 일치 · std@1·사용자 DMO 바이트 · 옛 URL·POST · cascade 회귀
 
 24) PR B: 스키마(옛 DB 2회 멱등 = 새 DB 모양·CHECK 확장) · 표시 이름 관문(MCP 쓰기 16 NAME-REQUIRED·허용 17·분류 누락 0·웹 403·예외 경로)
-   · 새 탐색 수락 · 사람·출처·출처 요약/반응(남의 id = 없는 id·revision·검토 상태·인용 차단 4곳·한도 50·50) · 「나」 개수
+   · 옛 탐색 계정 = 새 탐색(R5a) · 사람·출처·출처 요약/반응(남의 id = 없는 id·revision·검토 상태·인용 차단 4곳·한도 50·50) · 「나」 개수
    · 삭제 CLI(거절·통지·유예·미리보기≠실행·재조회 중단·③~⑦ 실패 주입·경쟁·결과·인증·파기) · 옛 코드 호환(CRM_TEST_OLD_REF, 없으면 SKIP) · 처리방침 v5
    — 기존 절은 시험 배선 두 개로 돈다: 새 시험 사용자 표시 이름 자동(_autoname, prb-* 제외) · 신규 표준 시드는 SEED_ON() 안에서만
 실행: server/.venv/bin/python server/test_tools.py   (어느 폴더에서든)
@@ -153,6 +153,8 @@ TRASH_TOOLS = {"trash_list", "trash_move", "trash_restore", "trash_purge"}
 TRASH_WRITES = TRASH_TOOLS - {"trash_list"}
 # 이관 경로(2026-11-02) MCP 읽기 1 — 영수증 해시·개수. 이관 쓰기 도구 없음(확인·반영은 웹 세션에서만)
 MIG_TOOLS = {"migration_receipt_get"}
+# facade 겉면 5(2026-11-02) — 이름 관문·쓰기 표 밖(안쪽 op 의 guard 가 건다). 등급·카탈로그는 test_facade.py 가 본다
+FACADE_TOOLS = {"find", "read", "write", "decide", "purge"}
 BI = {k: f"bi-{k}@example.com" for k in ("a", "b", "agg", "adm", "del", "mig")}   # 25절: a 장치·수신 · b 남 · agg 집계 · adm 삭제 실행 · del 삭제 대상 · mig 이전
 # 처리방침 머리글(`vN · 날짜`) — PR B 부터 v5. 날짜는 문서가 정본이라 파일에서 읽는다(시험이 날짜를 따로 들지 않는다)
 PRIVACY_VERSION = "v7"   # board 이전(2026-10-20) v6 → PR ②-b(2026-10-22) v7
@@ -727,23 +729,9 @@ async def test_web():
                         assert r.headers.get(k) == v, (r.url, k, r.headers.get(k))
                     csp = r.headers["content-security-policy"]
                     assert "script-src 'self'" in csp and "unsafe-inline" not in csp and "unsafe-eval" not in csp, (r.url, csp)
-                # /app: 공통 + 'sha256-…' 하나. 기대값은 응답 본문 인라인 스크립트에서 직접 계산(web 함수를 쓰지 않는다)
-                import base64 as _b64m
-                import hashlib as _hl
-                bodies = [b for a, b in re.findall(r"<script\b([^>]*)>(.*?)</script>", app_r.text, flags=re.S | re.I) if "src=" not in a]
-                assert len(bodies) == 1, len(bodies)
-                want = _b64m.b64encode(_hl.sha256(bodies[0].encode("utf-8")).digest()).decode()
-                assert app_r.headers["content-security-policy"] == f"{csp_base} 'sha256-{want}'", app_r.headers["content-security-policy"]
-                # 해시 함수 단위: 한 글자 바꾸면 다름 · 인라인 0개·2개 → 해시 없음('self' 만) · <script src=…> 는 세지 않음
-                one = '<script src="/assets/theme.js?v=1"></script><p>x</p><script>\n  let a = 1;\n</script>'
-                h1 = web.inline_script_hashes(one)
-                assert h1 == [_b64m.b64encode(_hl.sha256(b"\n  let a = 1;\n").digest()).decode()], h1
-                assert web.inline_script_hashes(one.replace("a = 1", "a = 2")) != h1, "한 글자 바꾸면 해시가 달라진다"
-                assert web.app_csp(one) == f"{csp_base} 'sha256-{h1[0]}'"
-                assert web.inline_script_hashes(one.replace("a = 1", "한 = 1")) == [_b64m.b64encode(_hl.sha256("\n  let 한 = 1;\n".encode("utf-8")).digest()).decode()], "UTF-8 바이트"
-                for bad in ('<script src="/a.js"></script><p>인라인 없음</p>', one + "<script>b()</script>", "<p>스크립트 없음</p>"):
-                    assert web.app_csp(bad) == csp_base, bad
-                assert web.inline_script_hashes('<SCRIPT type="module" src="/m.js"></SCRIPT>') == [], "src 있는 태그는 세지 않는다(대소문자 무관)"
+                # /app: 다른 화면과 같은 CSP 그대로(해시 없음) — 본문 인라인 스크립트 0(R5b-2b, 화면 = 외부 묶음)
+                assert not re.search(r"<script\b(?![^>]*\bsrc\s*=)[^>]*>", app_r.text, re.I), "/app 인라인 스크립트 0"
+                assert app_r.headers["content-security-policy"] == csp_base, app_r.headers["content-security-policy"]
                 for r in (await h.get("/api/state"), await h.get("/health")):
                     assert r.headers.get("content-type", "").startswith("application/json"), (r.url, r.headers)
                     assert not any(k in r.headers for k in sec), (r.url, r.headers)
@@ -986,7 +974,7 @@ async def test_definition_tools():
         base = {"state_get", "question_add", "question_list", "record_add", "record_get", "candidates_propose", "candidate_decide",
                 "candidate_list", "profile_set"}
         legacy = base | new | {"help_get", "feedback_send", "ticket_list_mine", "ticket_get_mine"}   # 기존 15개 + help_get + feedback_send(desk-0) + 내 문의 읽기 2(P3)
-        assert len(legacy) == 19 and legacy <= tools and tools - legacy == PRB_TOOLS | BI_TOOLS | TRASH_TOOLS | MIG_TOOLS, tools   # PR B 코어 도구는 24절, board 이전 읽기 7은 25절, 휴지통 4는 30절, 이관 영수증 1은 test_migration_path 가 본다
+        assert len(legacy) == 19 and legacy <= tools and tools - legacy == PRB_TOOLS | BI_TOOLS | TRASH_TOOLS | MIG_TOOLS | FACADE_TOOLS, tools   # PR B 코어 도구는 24절, board 이전 읽기 7은 25절, 휴지통 4는 30절, 이관 영수증 1은 test_migration_path 가 본다
         assert val(await c.call_tool("definitions_get", {"object_ids": None, "include_archived": False})) == []
         p = val(await c.call_tool("definition_propose", {"object_id": None, "expected_revision": 0, "definition_json": json.dumps(
             {"key": "notes", "label": "메모", "semantic_kind": "principle", "fields": []})}))
@@ -1570,8 +1558,8 @@ async def test_limits():
     assert names - set(db.WRITE_LIMITS) == {"state_get", "question_list", "candidate_list", "record_get", "definitions_get", "help_get",
                                             "ticket_list_mine", "ticket_get_mine",
                                             "me_get", "person_list", "person_get", "source_list", "source_get",   # PR B 읽기
-                                            "source_reflection_list", "source_reflection_get", "trash_list"} | BI_TOOLS | MIG_TOOLS, names
-    assert len(names) == 19 + len(PRB_TOOLS) + len(BI_TOOLS) + len(TRASH_TOOLS) + len(MIG_TOOLS) \
+                                            "source_reflection_list", "source_reflection_get", "trash_list"} | BI_TOOLS | MIG_TOOLS | FACADE_TOOLS, names
+    assert len(names) == 19 + len(PRB_TOOLS) + len(BI_TOOLS) + len(TRASH_TOOLS) + len(MIG_TOOLS) + len(FACADE_TOOLS) \
         and db.QUOTA_EXEMPT == {"feedback_send"} | TRASH_WRITES <= set(db.WRITE_LIMITS), (len(names), db.QUOTA_EXEMPT)
 
     def nrec():
@@ -1891,7 +1879,7 @@ async def test_feedback():
             assert ts == sorted(ts, key=lambda t: (t["public_updated"] or t["created"], t["created"]), reverse=True), "최근 공개 갱신(없으면 접수)부터"
             mine_other = db.tickets_mine(other)
             assert len(mine_other) == 1 and mine_other[0]["text"] == "다른 사람의 문의 글", mine_other
-            assert 'id="desk-form"' in (await h.get("/app")).text, "/app 에 문의 절"
+            assert 'id="ui-desk"' in (await h.get("/app")).text, "/app 에 문의 대화창 자리(React features/desk)"
             # QUOTA-GLOBAL 면제: 401MB 주입 → 기록은 거절, 문의는 웹·MCP 모두 접수
             db._measure_db_size = lambda: 401 * db.MB
             db.quota_cache_reset()
@@ -4026,16 +4014,16 @@ async def test_app_account_menu():
         async with Client(main.mcp) as mc:
             st = val(await mc.call_tool("state_get", {}))
         assert "desk_hidden" not in json.dumps(st) and "struct_names" not in json.dumps(st), "MCP state_get 응답에 두 키 없음"
-        # app.html 정적(메뉴 항목·⚙·#who 말줄임)은 test_web_home.py test_static_moved(A2)로 옮겼다(③-0.2) — 여기는 응답 CSP 해시만
+        # app.html 정적(메뉴 항목·⚙·#who 말줄임)은 test_web_home.py test_static_moved(A2)로 옮겼다(③-0.2) — 여기는 응답 CSP 만
         async with client(U["user"]) as h:
             r = await h.get("/app")
-            assert r.status_code == 200 and f"'sha256-{web.inline_script_hashes(r.text)[0]}'" in r.headers["content-security-policy"], "CSP 해시 = 보낸 본문"
+            assert r.status_code == 200 and r.headers["content-security-policy"] == web.CSP_BASE, "CSP = script-src 'self'(해시 없음)"
     finally:
         site.dev, site.dev_user = real
         wipe()
     with db.tx() as c:
         assert c.execute("SELECT count(*) AS n FROM users WHERE email = ANY(%s)", (emails,)).fetchone()["n"] == 0
-    print("OK — /app 계정 메뉴(desk_hidden·/api/desk-visibility·state 두 키·MCP 없음·CSP 해시) 통과")
+    print("OK — /app 계정 메뉴(desk_hidden·/api/desk-visibility·state 두 키·MCP 없음·CSP self) 통과")
 
 
 # ── 16) 통합(P5-6) — 운영 콘솔 묶음 최종 ─────────────────
@@ -4189,7 +4177,7 @@ async def test_integration_p5():
 R1 = {"a": "r1-admin@example.com", "u": "r1-user@example.com"}
 R1_FLAGS = ("CRM_FEATURE_STANDARD", "CRM_FEATURE_SOURCES")
 R1_USER_ONLY = ('data-acct="send"', 'data-acct="mine"', 'data-acct="privacy"', 'data-acct="names"',
-                'id="acct-names"', 'id="desk-dlg"', 'id="desk-form"', 'id="desk-list"', "구조 이름 공유")
+                'id="acct-names"', 'id="ui-desk"', "구조 이름 공유")   # 문의 대화창 = React features/desk 상시 섬 자리(#ui-desk, R5b-2a)
 R1_GONE = ('id="desk"', '<section class="wrap desk"', 'data-acct="desk"', 'id="acct-desk"', "문의 섹션", "deskPeek", "/api/desk-visibility")   # Q1b — 둘 다
 R1_ADMIN_ONLY = ('id="acct-console"', '<a class="btn" href="/admin" id="acct-console" hidden>운영 콘솔</a>')
 
@@ -4198,7 +4186,7 @@ async def test_r1_flags_off():
     """두 플래그 미설정에서: 웹 로그인(/login → 콜백 → /app)·DEV 경로 · /admin 무세션·일반·DEV 404, 관리자 GET 화면 전부 바로(재인증 없음,
     /admin/reauth → /admin) · 문의 처리 POST(상태·답변, 일반 사용자 404) → 소유자 「내 문의」에 반영 · Q1: 관리자 /app 계정 메뉴 = 운영 콘솔·로그아웃,
     문의·이름 공유 메뉴·문의 대화창은 본문에 없음(서버가 안 보냄) · Q1b: 일반 사용자는 하단 문의 섹션 없이 「문의 보내기」·「내 문의」 메뉴가
-    대화창(desk-dlg)을 연다, 숨기기 메뉴 없음 · 표식 0 · CSP 해시 = 보낸 본문 · API 모양은 그대로."""
+    대화창(React #ui-desk)을 연다, 숨기기 메뉴 없음 · 표식 0 · CSP 해시 = 보낸 본문 · API 모양은 그대로."""
     from urllib.parse import parse_qs, urlparse
     site = main.site
     fake_jwks(main._auth_kwargs["token_verifier"])
@@ -4233,8 +4221,7 @@ async def test_r1_flags_off():
     def q1(r, admin):
         """Q1·Q1b — /app 본문. 관리자 = ⚙ + 운영 콘솔·로그아웃만, 일반 = 문의 메뉴 + 문의 대화창(하단 섹션 없음). 표식은 어느 쪽에도 남지 않는다."""
         assert r.status_code == 200 and r.headers.get("cache-control") == "no-store", r.status_code
-        hs = web.inline_script_hashes(r.text)
-        assert len(hs) == 1 and f"'sha256-{hs[0]}'" in r.headers["content-security-policy"], "CSP 해시 = 보낸 본문"
+        assert r.headers["content-security-policy"] == web.CSP_BASE, "CSP = script-src 'self'(인라인 스크립트 0 — 해시 없음)"
         assert not re.search(r"<!--/?(user|admin)-->", r.text), "표식 0"
         for w in ('id="setup-link"', 'id="acct-menu"', 'id="logout"'):
             assert w in r.text, w
@@ -4244,21 +4231,19 @@ async def test_r1_flags_off():
             assert (w in r.text) is admin, (admin, w)
         for w in R1_GONE:
             assert w not in r.text, (admin, w)
-        if not admin:   # Q1b: 문의 폼·목록은 대화창 안에만 있다
-            i = r.text.index('<dialog id="desk-dlg"')
-            dlg = r.text[i:r.text.index("</dialog>", i)]
-            for w in ('id="desk-form"', 'id="desk-list"', 'id="desk-text"', 'id="desk-send"'):
-                assert r.text.count(w) == 1 and w in dlg, w
+        if not admin:   # Q1b: 문의 폼·목록은 대화창 안에만 있다 — 대화창 = React(features/desk)가 #ui-desk 자리에 띄운다(폼·목록 = Vitest Desk.test.tsx)
+            assert r.text.count('<!--user--><div id="ui-desk"></div>') == 0 and r.text.count('<div id="ui-desk"></div>') == 1, "표식 없이 자리 하나"
             menu = r.text[r.text.index('id="acct-menu"'):r.text.index("</details>")]
             for act in ("send", "mine"):
                 assert f'data-acct="{act}" aria-haspopup="dialog"' in menu, act
-        if admin:   # PR B 결정 3: 표시 이름 관문은 관리자도 — 이름·새 탐색·내 구조 설정 메뉴(hidden 이어도 마크업엔 있다)
+        if admin:   # PR B 결정 3: 표시 이름 관문은 관리자도 — 이름·내 구조 설정 메뉴(hidden 이어도 마크업엔 있다). 새 탐색 수락 메뉴는 R5a 에서 삭제
             menu = r.text[r.text.index('id="acct-menu"'):r.text.index("</details>")]
-            assert re.findall(r"<(?:a|button)\b[^>]*>([^<]*)", menu) == ["운영 콘솔", "표시 이름 바꾸기", "새 탐색으로 바꾸기", "내 구조 설정",
+            assert re.findall(r"<(?:a|button)\b[^>]*>([^<]*)", menu) == ["운영 콘솔", "표시 이름 바꾸기", "내 구조 설정",
                                                                       "저장 승인 대기", "연결 장치", "로그아웃"], menu   # PR① 저장 승인 대기 = 관리자도(연결 장치와 같은 구간 밖)
-            for w in ('id="acct-name"', 'id="acct-nav"', 'id="acct-settings"', '<dialog id="name-dlg"', '<dialog id="nav-dlg"'):
+            for w in ('id="acct-name"', 'id="acct-settings"'):   # 「표시 이름 바꾸기」 대화창 = React(features/name — 껍데기가 모든 역할에 띄운다)
                 assert r.text.count(w) == 1, w
-            assert '<dialog id="desk-dlg"' not in r.text
+            assert 'id="acct-nav"' not in r.text and 'id="nav-dlg"' not in r.text, "새 탐색 수락 메뉴·대화창 0(R5a)"
+            assert 'id="ui-desk"' not in r.text
     try:
         assert not any(k in os.environ for k in R1_FLAGS), "두 플래그 미설정"
         # ── 로그인 — 웹(세션 쿠키) · DEV ──
@@ -5768,15 +5753,14 @@ async def test_q45_user():
         assert "<script" not in svg.lower() and "&lt;script&gt;" in svg and "&lt;b onclick=y&gt;" in svg, "label 은 escape — 글자로만 남는다"
         assert "Q45B" not in svg and "Q45B" not in json.dumps(st, ensure_ascii=False), "다른 사용자 이름 0"
 
-        # /app — 일반·관리자 모두 편입 대화창·구조 정의 보기 코드가 있다(CSP 해시 = 보낸 본문)
+        # /app — 일반·관리자 모두 React 자리가 있다(CSP = self). 그래프 토큰 = 화면 묶음 CSS(ui/src/shared/tokens.css). 화면 동작은 Vitest features/defs
+        assert tokens in (HERE / "ui" / "src" / "shared" / "tokens.css").read_text(encoding="utf-8"), "그래프 토큰 = structure_svg.tokens_css 그대로"
         for admin in (False, True):
             _set_role(A, "admin" if admin else "user")
             r = await get("/app", A)
-            hs = web.inline_script_hashes(r.text)
-            assert len(hs) == 1 and f"'sha256-{hs[0]}'" in r.headers["content-security-policy"]
-            assert r.text.count('<dialog id="std-dlg"') == 1 and "renderDefs" in r.text, admin
-            assert tokens in r.text and "defsJump" in r.text, ("그래프 전환·토큰", admin)
-            assert ('id="desk-dlg"' in r.text) is not admin, "Q1b·Q1 분기 유지"
+            assert r.headers["content-security-policy"] == web.CSP_BASE
+            assert 'id="ui-mast"' in r.text and 'id="view"' in r.text, ("React 화면 자리(내 구조 설정·편입 대화창 = server/ui features/defs, R5b-1)", admin)
+            assert ('id="ui-desk"' in r.text) is not admin, "Q1b·Q1 분기 유지"
         _set_role(A, "user")
     finally:
         site.dev, site.dev_user = real
@@ -5988,7 +5972,7 @@ async def test_prA_setup():
         assert svg.count("<line ") == 2 * len(drawn), "관계마다 선(+투명 넓은 선) 하나"
         assert [(r["name"], r["to_text"] or r["from_text"]) for o in sd["objects"] for r in o["relations"] if not r["graph"]] == [
             ("붙는 곳 · 관심 축", "항목 — 대상 오브젝트 모름(정의 미확인) · 분류 대상은 사용자별 역할로 정함"), ("변경 이력", "문의 변경 이력(오브젝트 아님)")]
-        # 코어 표시명 = 기존 정본(web.CORE_LABEL · app.html LABELS — 화면 몫은 test_web_home.py A4). 출처는 두 정본에 없다(보고)
+        # 코어 표시명 = 기존 정본(web.CORE_LABEL · 화면 라벨 ui/src/shared/route.ts LABELS — 화면 몫은 test_web_home.py A4). 출처는 두 정본에 없다(보고)
         assert [o["name"] for o in sd["objects"][:4]] == [web.CORE_LABEL[t_] for _, t_, _, _ in service_schema.CORE[:4]]
         # API 이름 = 코어 열·테이블 · std@1 key(Salesforce API Name 꼴) — 표시명과 함께
         assert [o["api"] for o in sd["objects"]] == ["questions", "records", "candidates", "tickets", "sources", "users", "people", "source_reflections",
@@ -6165,7 +6149,7 @@ class pytest_raises:
 # ── 24) PR B — 코어(나·사람·출처·출처 요약/반응) · 표시 이름 관문 · 새 탐색 수락 · 삭제 CLI · 플래그 제거 · 옛 코드 호환 ─────────
 PRB = {k: f"prb-{k}@example.com" for k in ("a", "b", "noname", "web", "mcp", "del", "dela", "delb", "adm", "race", "old", "nav")}
 # a·b = 사람·요약/반응 소유자 둘 · noname = 관문(MCP) · web = 관문(웹)·새 경로 · mcp = 이름 정한 뒤 MCP 쓰기 · del·dela·delb = 삭제 대상
-# adm = 삭제 실행 관리자 · race = 삭제 경쟁 · old = 옛 코드 호환(임시 스키마 안) · nav = 새 탐색 수락
+# adm = 삭제 실행 관리자 · race = 삭제 경쟁 · old = 옛 코드 호환(임시 스키마 안) · nav = 옛 탐색 계정(nav_accepted_at NULL)
 PRB_TABLES = ("people", "source_reflections", "deletion_contacts")
 # MCP 도구별 「모양은 맞고 대상은 없는」 인자 — 관문은 도구 본문 전에 걸린다. 키 집합 = main 의 분류 상수(누락이면 시험 실패)
 PRB_WRITE_ARGS = {
@@ -6311,10 +6295,27 @@ async def test_prb_gate():
         # ── 분류 상수 = 등록된 도구 ──
         async with Client(main.mcp) as c:
             names = {t.name for t in (await c.list_tools()).tools}
-        assert main.WRITE_TOOLS | main.ALLOWED_TOOLS == names and not main.WRITE_TOOLS & main.ALLOWED_TOOLS, names ^ (main.WRITE_TOOLS | main.ALLOWED_TOOLS)
+        # 등록 도구 = WRITE ∪ ALLOWED ∪ FACADE(겉면 5 — 2026-11-02), 셋은 서로 겹치지 않는다
+        assert main.FACADE_TOOLS == FACADE_TOOLS and not (main.WRITE_TOOLS | main.ALLOWED_TOOLS) & main.FACADE_TOOLS
+        assert main.WRITE_TOOLS | main.ALLOWED_TOOLS | main.FACADE_TOOLS == names and not main.WRITE_TOOLS & main.ALLOWED_TOOLS, \
+            names ^ (main.WRITE_TOOLS | main.ALLOWED_TOOLS | main.FACADE_TOOLS)
+        # 카탈로그 tier ↔ 분류(직접 도구만 — facade 전용 op 은 WRITE·ALLOWED 밖): read ⇒ ALLOWED·¬WRITE / write·decide·purge ⇒ WRITE
+        # (이름 관문 면제 2개 feedback_send·display_name_set 은 ALLOWED). facade 전용 op 은 직접 도구로 등록되지 않는다
+        import facade
+        for op, o in facade.OPS.items():
+            if not o.direct:
+                assert op not in names, op
+                continue
+            if o.tier == "read":
+                assert op in main.ALLOWED_TOOLS and op not in main.WRITE_TOOLS, op
+            elif op in db.NAME_EXEMPT:
+                assert op in main.ALLOWED_TOOLS and op in db.WRITE_LIMITS, op
+            else:
+                assert op in main.WRITE_TOOLS, op
+        assert {o for o, x in facade.OPS.items() if x.direct} == names - FACADE_TOOLS, "직접 도구 = 카탈로그 direct op"
         assert main.WRITE_TOOLS == set(db.WRITE_LIMITS) - db.NAME_EXEMPT and db.NAME_EXEMPT == {"feedback_send", "display_name_set"}
         assert set(PRB_WRITE_ARGS) == main.WRITE_TOOLS and set(PRB_ALLOWED_ARGS) == main.ALLOWED_TOOLS, "시험 인자 표 = 분류"
-        assert names - PRB_TOOLS - BI_TOOLS - TRASH_TOOLS - MIG_TOOLS == {"state_get", "question_add", "question_list", "record_add", "record_get", "candidates_propose",
+        assert names - PRB_TOOLS - BI_TOOLS - TRASH_TOOLS - MIG_TOOLS - FACADE_TOOLS == {"state_get", "question_add", "question_list", "record_add", "record_get", "candidates_propose",
                                      "candidate_decide", "candidate_list", "profile_set", "definitions_get", "definition_propose",
                                      "definition_apply", "item_propose", "item_decide", "record_attach", "help_get", "feedback_send",
                                      "ticket_list_mine", "ticket_get_mine"}, "기존 19개 이름 그대로"
@@ -6359,7 +6360,7 @@ async def test_prb_gate():
         assert st["me"] == {"counts": db.me_home(W)["counts"]} and "display_name" not in st["structure"], "구조 응답엔 PR B 키 없음"
         writes = [("/api/candidate/decide", {"candidate_id": "c_x", "action": "confirm"}),
                   ("/api/item/decide", {"item_id": "i_x", "expected_revision": 0, "action": "confirm"}),
-                  ("/api/std/choose", {"std_key": "axes", "state": "deferred"}), ("/api/nav/accept", {}),
+                  ("/api/std/choose", {"std_key": "axes", "state": "deferred"}),
                   ("/api/people", {"alias": "a"}), ("/api/people/p_x", {"alias": "a", "expected_revision": 0}),
                   ("/api/people/p_x/delete", {"expected_revision": 0}), ("/api/sources", {"kind": "url", "name": "n"}),
                   ("/api/reflections", {"source_id": "s_x", "kind": "summary", "body": "b"}),
@@ -6370,7 +6371,7 @@ async def test_prb_gate():
             r = await req("POST", path, json=body)
             assert r.status_code == 403 and r.json()["code"] == "NAME-REQUIRED", (path, r.status_code, r.text)
         assert db.me_home(W)["nav"] == "new" and _prb_count(W, "people") == 0
-        for path, body in writes[3:]:   # PR B 새 경로 — 401 · Origin 403 · 본문 400
+        for path, body in writes[3:]:   # PR B 새 경로(사람·출처·요약/반응) — 401 · Origin 403 · 본문 400
             assert (await req("POST", path, uid=None, json=body)).status_code == 401, path
             r = await req("POST", path, origin=False, json=body)
             assert r.status_code == 403 and r.json()["code"] == "ORIGIN", path
@@ -6411,16 +6412,14 @@ async def test_prb_core():
         A, B = (db.user_by_email(PRB[k])["id"] for k in ("a", "b"))
         for u in (A, B):
             db.display_name_set(u, "이름")
-        # ── 새 탐색 수락: 기존 계정(NULL) = old · 수락 멱등 · 표준 상태 불변 ──
+        # ── 옛 탐색 계정(nav_accepted_at NULL, R5a) = 새 탐색 · 수락 경로 없음 · 열은 남는다(파괴적 스키마 변경 없음) ──
         V = db.user_by_email(PRB["nav"])["id"]
         db.display_name_set(V, "탐색")
         _sql("UPDATE users SET nav_accepted_at=NULL WHERE id=%s", (V,))
-        assert db.me_home(V)["nav"] == "old"
-        std0 = db.std_status(V)
-        a1 = db.nav_accept(V)
-        a2 = db.nav_accept(V)
-        assert a1 == a2 and a1["nav"] == "new" and db.me_home(V)["nav"] == "new", "멱등 — 처음 시각 그대로"
-        assert db.std_status(V) == std0, "편입 상태를 읽지도 바꾸지도 않는다"
+        assert db.me_home(V)["nav"] == "new", "모든 계정 새 탐색"
+        assert not hasattr(db, "nav_accept"), "새 탐색 수락 함수 0"
+        with db.tx() as c:
+            assert c.execute("SELECT nav_accepted_at FROM users WHERE id=%s", (V,)).fetchone()["nav_accepted_at"] is None, "열은 그대로(값을 채우지 않는다)"
         # ── 사람 ──
         p = db.person_save(A, "  동료 PRBALIAS  ")
         assert set(p) == {"id", "alias", "revision", "created", "updated"} and p["alias"] == "동료 PRBALIAS" and p["revision"] == 0
@@ -6563,7 +6562,7 @@ async def test_prb_core():
         assert "people" not in db.state(A) and "reflections" not in db.state(A), "MCP state_get 엔 없음"
     finally:
         site.dev, site.dev_user = real
-    print("OK — 24c 코어(새 탐색 수락 멱등·편입 불변 · 사람 별칭만·남의 id=없는 id·revision·중복·목록 cursor·query · 출처 찾거나 만들기"
+    print("OK — 24c 코어(옛 탐색 계정 = 새 탐색 · 사람 별칭만·남의 id=없는 id·revision·중복·목록 cursor·query · 출처 찾거나 만들기"
           " · 요약/반응 상태·완료 뒤 수정 대기·stale·연결 출처 삭제 거절 · sr_ 인용 차단 4곳 · 「나」 개수 · 한도 50·50 · 웹 왕복) 통과")
 
 
@@ -7021,8 +7020,8 @@ async def test_prb_r5():
 
 
 async def test_prb_app():
-    """/app 본문은 nav old/new 에서 같다(서버는 nav 로 분기하지 않는다) · 라우트 접두 `_` 근거. 24h 화면 정적은 test_web_home.py A5(③-0.2)."""
-    # /app 본문 = nav old/new 같다(서버는 nav 로 분기하지 않는다 — 화면이 /api/state user.nav 로 고른다)
+    """/app 본문은 nav_accepted_at 유무와 같다(R5a 뒤 모든 계정 새 탐색) · 라우트 접두 `_` 근거. 24h 화면 정적은 test_web_home.py A5(③-0.2)."""
+    # /app 본문·user.nav = nav_accepted_at 유무와 무관(서버는 분기하지 않는다, R5a)
     site = main.site
     real = (site.dev, site.dev_user)
     site.dev, site.dev_user = False, ""
@@ -7034,7 +7033,7 @@ async def test_prb_app():
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url=PUBLIC) as h:
                 h.cookies.set("crm_session", site.session_value(V))
                 r = await h.get("/app")
-            assert r.status_code == 200 and db.me_home(V)["nav"] == ("new" if accepted else "old")
+            assert r.status_code == 200 and db.me_home(V)["nav"] == "new"
             bodies.append(r.text)
         assert bodies[0] == bodies[1], "/app 본문은 nav 와 무관"
     finally:
@@ -7658,8 +7657,10 @@ async def test_bi_imports():
         assert r.status_code == 401 and r.json()["code"] == "TOKEN-EXPIRED"
         tok2 = imports.device_reissue(A, DEV)["token"]
         r = await _bi_post(tok, act())
-        assert r.status_code == 401 and r.json()["code"] == "AUTH-INVALID", "재발급 = 옛 토큰 즉시 무효"
+        assert r.status_code == 401 and r.json()["code"] == "TOKEN-EXPIRED", "재발급 = 대기 토큰(M2) — 새 토큰을 쓰기 전엔 옛 토큰 그대로(여기선 만료)"
         assert (await _bi_post(tok2, act())).status_code == 201
+        r = await _bi_post(tok, act())
+        assert r.status_code == 401 and r.json()["code"] == "AUTH-INVALID", "새 토큰 첫 사용 = 옛 토큰 무효(M2)"
         _sql("UPDATE users SET blocked_at = now() WHERE id=%s", (A,))
         r = await _bi_post(tok2, act())
         assert r.status_code == 403 and r.json()["code"] == "AUTH-BLOCKED"
@@ -8094,9 +8095,10 @@ async def test_pr1b_layout_stats():
             site.dev, site.dev_user = True, "tester@example.com"
             r = await h.get("/api/me/layout")
             assert r.status_code == 200 and r.headers.get("cache-control") == "no-store" and r.json() == {"layout": D0, "version": 0}
-            r.json()["layout"]["tabs"].reverse()
-            lay = {"v": 1, "tabs": ["person", "summary", "principle", "decision", "axis", "custom", "source"],
-                   "blocks": {"summary": ["recent", "heatmap", "kinds", "waiting"]}}
+            r.json()["layout"]["pages"]["me"]["tabs"].reverse()
+            def v2(tabs, summary):
+                return {"v": 2, "pages": {"me": {"tabs": tabs, "regions": {"summary": [{"c": b, "p": {}} for b in summary]}}}}
+            lay = v2(["person", "summary", "principle", "decision", "axis", "custom", "source"], ["recent", "heatmap", "kinds", "waiting"])
             assert (await h.put("/api/me/layout", json={"layout": lay, "version": 0}, headers={"origin": "https://evil.example"})).status_code == 403
             assert (await h.delete("/api/me/layout", headers={"origin": "https://evil.example"})).status_code == 403
             r = await h.put("/api/me/layout", json={"layout": lay, "version": 0}, headers=origin)
@@ -8104,23 +8106,30 @@ async def test_pr1b_layout_stats():
             assert (await h.get("/api/me/layout")).json() == {"layout": lay, "version": 1}
             r = await h.put("/api/me/layout", json={"layout": D0, "version": 0}, headers=origin)
             assert r.status_code == 409 and r.json()["code"] == "LAYOUT-STALE", r.text
-            lay2 = {**lay, "blocks": {"summary": ["heatmap", "kinds"]}}   # 블록 일부만도 허용(알려진 이름·중복 없음)
+            lay2 = v2(lay["pages"]["me"]["tabs"], ["heatmap", "kinds"])   # 블록 일부만도 허용(알려진 이름·중복 없음)
             assert (await h.put("/api/me/layout", json={"layout": lay2, "version": 1}, headers=origin)).json()["version"] == 2
             r = await h.put("/api/me/layout", json={"layout": lay, "version": 1}, headers=origin)
             assert r.status_code == 409 and r.json()["code"] == "LAYOUT-STALE", "옛 버전(두 탭) = STALE"
-            t7 = D0["tabs"]
-            bad = [{**lay, "tabs": t7[:6]}, {**lay, "tabs": t7[:6] + [t7[0]]}, {**lay, "tabs": t7 + ["inbox"]},
-                   {**lay, "tabs": t7[:6] + ["inbox"]}, {**lay, "blocks": {"summary": ["heatmap", "pie"]}},
-                   {**lay, "blocks": {"summary": ["heatmap", "heatmap"]}}, {**lay, "blocks": {"today": ["heatmap"]}},
-                   {**lay, "extra": 1}, {**lay, "v": 2}, {**lay, "blocks": []}, {"v": 1, "tabs": t7}]
+            t7 = D0["pages"]["me"]["tabs"]
+            S4 = ["heatmap", "kinds", "waiting", "recent"]
+            me = lay["pages"]["me"]
+            bad = [v2(t7[:6], S4), v2(t7[:6] + [t7[0]], S4), v2(t7 + ["inbox"], S4), v2(t7[:6] + ["inbox"], S4), v2(t7, ["heatmap", "pie"]),
+                   v2(t7, ["heatmap", "heatmap"]), {"v": 2, "pages": {"me": {**me, "regions": {"today": []}}}},
+                   {"v": 2, "pages": {"me": {**me, "regions": {}}}}, {**lay, "extra": 1}, {**lay, "v": 1}, {**lay, "v": True},
+                   {"v": 2, "pages": {"me": {**me, "regions": {"summary": [{"c": "heatmap"}]}}}},
+                   {"v": 2, "pages": {"me": {**me, "regions": {"summary": [{"c": "heatmap", "p": {"weeks": 4}}]}}}},
+                   {"v": 2, "pages": {"me": {**me, "regions": {"summary": [{"c": "heatmap", "p": {}, "x": 1}]}}}},
+                   {"v": 2, "pages": {"me": {**me, "pad": 1}}}, {"v": 2, "pages": {"today": me}}, {"v": 2, "pages": []},
+                   {"v": 1, "tabs": t7, "blocks": {"summary": S4}}]   # v1 모양 저장은 거절(읽을 때만 올린다)
             for b in bad:
                 r = await h.put("/api/me/layout", json={"layout": b, "version": 2}, headers=origin)
                 assert r.status_code == 400 and r.json()["code"] == "LAYOUT-INVALID", (b, r.text)
             for body in ({"layout": "x", "version": 2}, {"layout": lay, "version": "2"}, {"layout": lay}, {"layout": lay, "version": True}):
                 r = await h.put("/api/me/layout", json=body, headers=origin)
                 assert r.status_code == 400 and r.json()["code"] == "ARG-INVALID", (body, r.text)
-            r = await h.put("/api/me/layout", json={"layout": {**lay, "pad": "가" * 2000}, "version": 2}, headers=origin)
-            assert r.status_code == 400 and r.json()["code"] == "PAYLOAD-LIMIT", r.text
+            r = await h.put("/api/me/layout", json={"layout": {**lay, "pad": "가" * 2800}, "version": 2}, headers=origin)
+            assert r.status_code == 400 and r.json()["code"] == "PAYLOAD-LIMIT", r.text   # 상한 8192 바이트(v2)
+            assert db.LAYOUT_MAX_BYTES == 8192
             r = await h.put("/api/me/layout", json={"layout": lay, "version": -1}, headers=origin)
             assert r.status_code == 400 and r.json()["code"] == "ARG-INVALID"
             assert (await h.get("/api/me/layout")).json() == {"layout": lay2, "version": 2}, "거절은 저장하지 않는다"
@@ -8144,6 +8153,32 @@ async def test_pr1b_layout_stats():
             assert json.dumps(db.DEFAULT_LAYOUT, sort_keys=True) == snap, "기본 상수 불변(응답 사본을 바꿔도)"
             expect("LAYOUT-INVALID", db.layout_check, None)
             assert db.layout_check(D0) == D0
+            # v2 — 정본 = layout_registry.json(DEFAULT_LAYOUT 은 그 파일에서) · v1 행은 읽을 때 v2 로(쓰기 없음), 다음 PUT 부터 v2
+            reg = json.loads((Path(__file__).parent / "layout_registry.json").read_text(encoding="utf-8"))
+            assert D0 == {"v": 2, "pages": {k: p["default"] for k, p in reg["pages"].items()}} and db.layout_components() == list(reg["components"])
+            v1 = {"v": 1, "tabs": ["source"] + t7[:6], "blocks": {"summary": ["kinds", "recent"]}}
+            with db.tx() as c:
+                c.execute("UPDATE page_layouts SET layout=%s WHERE user_id=%s", (db.Jsonb(v1), U))
+            got = (await h.get("/api/me/layout")).json()
+            assert got == {"layout": v2(["source"] + t7[:6], ["kinds", "recent"]), "version": 4}, got
+            with db.tx() as c:
+                assert c.execute("SELECT layout FROM page_layouts WHERE user_id=%s", (U,)).fetchone()["layout"] == v1, "읽기는 쓰지 않는다"
+                c.execute("UPDATE page_layouts SET layout=%s WHERE user_id=%s", (db.Jsonb({"v": 1, "tabs": t7, "blocks": {}}), U))
+            assert (await h.get("/api/me/layout")).json()["layout"] == D0, "v1 blocks 없음 = 기본 블록"
+            assert (await h.put("/api/me/layout", json={"layout": lay2, "version": 4}, headers=origin)).json() == {"layout": lay2, "version": 5}
+            with db.tx() as c:
+                assert c.execute("SELECT layout FROM page_layouts WHERE user_id=%s", (U,)).fetchone()["layout"]["v"] == 2, "다음 PUT = v2 저장"
+            # props 모양 검사(지금 레지스트리엔 props 가 없다 — 검사기만 임시 레지스트리로)
+            saved = json.dumps(db.LAYOUT_REGISTRY)
+            try:
+                db.LAYOUT_REGISTRY["components"]["heatmap"]["props"] = {"weeks": {"type": "integer", "max": 26},
+                                                                         "mode": {"type": "string", "enum": ["a", "b"]}, "dense": {"type": "boolean"}}
+                okp = {"v": 2, "pages": {"me": {**me, "regions": {"summary": [{"c": "heatmap", "p": {"weeks": 13, "mode": "a", "dense": True}}]}}}}
+                assert db.layout_check(okp) == okp
+                for p in ({"weeks": 27}, {"weeks": True}, {"weeks": "13"}, {"mode": "c"}, {"dense": 1}, {"other": 1}):
+                    expect("LAYOUT-INVALID", db.layout_check, {"v": 2, "pages": {"me": {**me, "regions": {"summary": [{"c": "heatmap", "p": p}]}}}})
+            finally:
+                db.LAYOUT_REGISTRY.clear(); db.LAYOUT_REGISTRY.update(json.loads(saved))
 
             # ── 통계·정렬 데이터 ──
             AXO, (X0, X1, X2) = _bi_axes(U, 3)
@@ -9589,6 +9624,70 @@ async def test_pr2b_stack_candidates():
     print("OK — 28 대상 후보(남 0·적용·미보관만·제목 80자·stage·상한 오브젝트별·전체·사람·출처·최근 갱신순·해시 밖·candidates_at·본문 0) 통과")
 
 
+async def test_chat_samples(write=False):
+    """API 견본 대조(R3) — React 대화 서랍(server/ui/src/features/chat)이 읽는 작업·세션·제외 응답 = ui/src/features/chat/chat.sample.json
+    (키 집합·값 타입까지). TS 타입(types.ts)은 chat.sample.test.ts 의 satisfies(tsc) — 서버 응답이 바뀌면 여기서, TS 타입이 바뀌면 tsc 에서 잡힌다.
+    write=True = 견본 파일을 실제 응답으로 다시 쓴다(로컬에서 타입을 바꿀 때만)."""
+    cleanup()
+    with SEED_ON():
+        U = db.user_by_email("tester@example.com")["id"]
+    d1 = imports.device_connect(U, "견본 장치")
+    T1 = {"authorization": "Bearer " + d1["token"]}
+    site = main.site
+    real = site.dev, site.dev_user
+    origin = {"origin": PUBLIC}
+    path = HERE / "ui" / "src" / "features" / "chat" / "chat.sample.json"
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url=PUBLIC) as h:
+            site.dev, site.dev_user = True, "tester@example.com"
+            with _job_fast(), _job_switch("CONVERSE_ENABLED"):
+                r = await h.post("/api/jobs", json={"kind": "converse", "text": "견본 대화 하나"}, headers=origin)
+                assert r.status_code == 201, r.text
+                J = r.json()
+                a = (await h.get("/api/device/jobs", params={"wait": 0}, headers=T1)).json()
+                q = {"lease_generation": a["lease"]["generation"]}
+                await h.get(f"/api/device/jobs/{J['id']}/input", params=q, headers=T1)
+                dv = (await h.get(f"/api/device/jobs/{J['id']}/definitions", params=q, headers=T1)).json()["definitions_version"]
+                units = [{"uid": "u1", "text": "기준 하나를 남겨요.", "change_ids": ["c1"]}, {"uid": "u2", "text": "결정 하나를 적어요.", "change_ids": ["c2"]}]
+                changes = [{"cid": "c1", "op": "create", "object_id": "od_principles", "target": {"ref_kind": "none"},
+                            "fields": {"title": "견본 기준", "body": "설명"}, "links": [], "depends_on": []},
+                           {"cid": "c2", "op": "create", "object_id": "od_events", "fields": {"title": "견본 결정", "happened_on": "2026-11-03"},
+                            "links": [], "depends_on": []}]
+                body = _pr2b_body({"id": J["id"]}, q["lease_generation"], dv, units=units, changes=changes)
+                r = await h.post(f"/api/device/jobs/{J['id']}/result", json=body, headers=T1)
+                assert r.status_code == 200, r.text
+                job = (await h.get(f"/api/jobs/{J['id']}")).json()
+                sess = (await h.get(f"/api/stack/sessions/{J['session_id']}")).json()
+                exc = (await h.post(f"/api/stack/previews/{job['preview']['id']}/exclude", json={"cids": ["c2"]}, headers=origin)).json()
+                await h.post(f"/api/jobs/{J['id']}/cancel", headers=origin)
+    finally:
+        site.dev, site.dev_user = real
+    got = {"job": job, "session": sess, "exclude": exc}
+    assert job["status"] == "result_ready" and job["preview"]["changes"] and sess["preview"] and exc["preview"]["excluded"] == ["c2"], got
+    if write:
+        path.write_text(json.dumps(got, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+
+    def shape(v):
+        return "null" if v is None else type(v).__name__
+
+    def cmp(sample, real, at):   # 견본 = 실제(키 집합·값 타입, null 은 TS 가 본다). 목록은 둘 다 비지 않았을 때 첫 원소끼리
+        bad = []
+        if isinstance(sample, dict) and isinstance(real, dict):
+            if set(sample) != set(real):
+                bad.append(f"{at} 키 {sorted(set(sample) ^ set(real))}")
+            for k in set(sample) & set(real):
+                if "null" not in (shape(sample[k]), shape(real[k])) and shape(sample[k]) != shape(real[k]):
+                    bad.append(f"{at}.{k} {shape(sample[k])}≠{shape(real[k])}")
+                else:
+                    bad += cmp(sample[k], real[k], f"{at}.{k}")
+        elif isinstance(sample, list) and isinstance(real, list) and sample and real:
+            bad += cmp(sample[0], real[0], at + "[0]")
+        return bad
+    bad = cmp(json.loads(path.read_text(encoding="utf-8")), got, "chat")
+    assert not bad, (bad, "chat.sample.json·features/chat/types.ts 를 같이 고친다")
+    print("OK — 대화 API 견본 대조(작업 result_ready·미리보기 · 세션 복원 · 제외 = chat.sample.json 키·값 타입) 통과")
+
+
 async def test_pr2b_stack():
     """28절 — ②-b 단계별 시험(B1 스키마·한도·세션 · B2 정의·수신·미리보기·제외·재정리 · B3 확정 트랜잭션·판 이력·stage·인용 · B6 경계·되돌림)."""
     test_pr2b_stack_b1()
@@ -9597,6 +9696,7 @@ async def test_pr2b_stack():
     await test_pr2b_stack_b6()
     await test_pr2b_stack_r2()
     await test_pr2b_stack_candidates()
+    await test_chat_samples()
 
 
 # ── 29) ③-0.2 장치 상태 — /api/state.devices_status (2026-10-22, 구현계획 §2-2) ─────────────────────

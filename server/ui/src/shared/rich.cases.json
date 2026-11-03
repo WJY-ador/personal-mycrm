@@ -1,0 +1,18 @@
+{
+  "_doc": "rich()·문단 사례 — 옛 app.html(rich·paraHtml, server/test_ui_alignment.py)과 새 TS(src/shared/rich.test.tsx)가 같은 사례를 통과한다. out = [태그, 글자] 조각 순서(태그 \"\" = 글자 그대로). 글자는 escape 전 원문.",
+  "rich": [
+    {"in": "- **사실**: Lost에 **a**", "out": [["", "- "], ["strong", "사실"], ["", ": Lost에 "], ["strong", "a"]]},
+    {"in": "<b>x</b> **<img src=x onerror=1>**", "out": [["", "<b>x</b> "], ["strong", "<img src=x onerror=1>"]]},
+    {"in": "a ** b", "out": [["", "a ** b"]]},
+    {"in": "****", "out": [["", "****"]]},
+    {"in": "**a\nb**", "out": [["", "**a\nb**"]]},
+    {"in": "- 목록", "out": [["", "- 목록"]]},
+    {"in": "it's \"q\" & <x>", "out": [["", "it's \"q\" & <x>"]]},
+    {"in": "", "out": []}
+  ],
+  "para": [
+    {"in": "앞 **굵게** 뒤 인용구 끝", "quote": "인용구", "h": false, "out": [["", "앞 "], ["strong", "굵게"], ["", " 뒤 "], ["mark", "인용구"], ["", " 끝"]]},
+    {"in": "## **제목**", "quote": "", "h": true, "out": [["strong", "제목"]]},
+    {"in": "인용 없음 <a>", "quote": "다른 말", "h": false, "out": [["", "인용 없음 <a>"]]}
+  ]
+}

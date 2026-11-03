@@ -2,7 +2,7 @@
 const $=id=>document.getElementById(id);let latestDownload=null;
 function say(text){$('message').textContent=text;}
 function state(s){
-  $('version').textContent='v'+s.version;$('connection').textContent=s.connection.connected?'연결됨':'연결 안 됨';
+  $('version').textContent='v'+s.version;$('connection').textContent=s.pc?.revoked?'해제됨':s.connection.connected?'연결됨':'연결 안 됨';
   $('expiry').textContent=s.connection.expires?'토큰 만료 '+s.connection.expires:'';
   $('allow-cli').checked=s.allowCli;$('auto-start').checked=s.autoStart;
   $('cli-state').textContent=s.connection.cliConfigured?' 실행 파일 지정됨':' 실행 파일을 지정해 주세요';
@@ -14,11 +14,18 @@ function state(s){
   for(const b of document.querySelectorAll('button'))b.disabled=s.busy;
   for(const id of ['allow-cli','auto-start'])$(id).disabled=s.busy;
   if(!s.ready){$('start').disabled=true;$('sync').disabled=true;say('연결 장치 실행 파일이 없습니다. 공식 설치 패키지로 다시 설치해 주세요.');}
-  if(!s.connection.connected){$('start').disabled=true;$('sync').disabled=true;$('disconnect').disabled=true;}
+  const pc=s.pc||{};
+  $('login').hidden=pc.session!=='none';
+  $('pc-state').textContent=pc.revoked?'이 PC 연결이 해제됐어요 — 대화에서 다시 연결해 주세요.'
+    :pc.session==='none'?'로그인이 필요해요. 로그인해야 대화에서 보낸 연결을 받고, 토큰도 자동으로 교체돼요.'
+    :pc.registered?'대화에서 연결을 요청하면 이 PC가 받아요.':'';
+  // Sync stays available without a device: the first sync connects this PC automatically.
+  if(!s.connection.connected){$('start').disabled=true;$('disconnect').disabled=true;}
 }
 async function act(fn,success){try{const r=await fn();if(!r.ok){say(r.error);return;}if(r.value?.code!==undefined&&r.value.code!==0){say(r.value.detail?'작업이 완료되지 않았어요: '+r.value.detail:'작업이 완료되지 않았어요 (코드 '+r.value.code+'). 토큰·네트워크·Claude 로그인 상태를 확인해 주세요.');return;}if(success)say(success);await refresh();return r.value;}catch{say('앱과 통신하지 못했어요. 다시 시도해 주세요.');}}
 async function refresh(){const r=await window.mycrm.status();if(r.ok)state(r.value);}
 $('dashboard').onclick=()=>act(()=>window.mycrm.dashboard());
+$('login').onclick=()=>act(()=>window.mycrm.login(),'브라우저에서 로그인을 마치면 앱으로 돌아와요.');
 $('connect-form').onsubmit=event=>{event.preventDefault();const token=$('token').value;$('token').value='';act(()=>window.mycrm.connect(token),'이 PC를 연결했어요. 시작을 눌러 실행하세요.');};
 $('allow-cli').onchange=()=>act(()=>window.mycrm.allowCli($('allow-cli').checked),'실행 설정을 저장했어요. 시작을 누르면 적용됩니다.');
 $('auto-start').onchange=()=>act(()=>window.mycrm.autoStart($('auto-start').checked),'로그인 시 앱 실행 설정을 저장했어요.');

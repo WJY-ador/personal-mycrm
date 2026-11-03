@@ -1,0 +1,106 @@
+{
+ "person": {
+  "person": {
+   "id": "p_p1",
+   "alias": "견본 사람",
+   "revision": 0,
+   "linked": false
+  },
+  "activities": [
+   {
+    "id": "a_a1",
+    "action": "like",
+    "action_label": "좋아요",
+    "state": "active",
+    "occurred_on": "2026-11-03",
+    "observed_on": "2026-11-03",
+    "received_at": "2026-11-03T13:51:59.879429+09:00",
+    "source": {
+     "id": "s_s1_1vGQZ4",
+     "name": "합성 sns",
+     "provider": "sns"
+    },
+    "people": [
+     {
+      "id": "p_p1",
+      "alias": "사람-P1",
+      "role": "author"
+     }
+    ],
+    "axes": [
+     {
+      "id": "i_x1",
+      "title": "축 X1"
+     }
+    ],
+    "memo_count": 0,
+    "raw_id": "9700e64b53fafad48dc8ba7183d603fbd3d8852271ae91f4"
+   }
+  ],
+  "activity_count": 3,
+  "old_revision_links": 0,
+  "records": [
+   {
+    "id": "r_sample",
+    "title": "견본 메모",
+    "created": "2026-11-03T13:51:59.895927+09:00"
+   }
+  ],
+  "items": [
+   {
+    "id": "i_sample",
+    "object_id": "od_principles",
+    "title": "견본 기준",
+    "field_key": "people"
+   }
+  ]
+ },
+ "source": {
+  "source": {
+   "id": "s_s1",
+   "kind": "other",
+   "name": "견본 출처",
+   "location": "",
+   "provider": "sns"
+  },
+  "activity_count": 11,
+  "by_action": [
+   {
+    "action": "like",
+    "label": "좋아요",
+    "n": 7
+   }
+  ],
+  "activities": [
+   {
+    "id": "a_a1",
+    "action": "like",
+    "action_label": "좋아요",
+    "state": "active",
+    "occurred_on": "2026-11-03",
+    "observed_on": "2026-11-03",
+    "received_at": "2026-11-03T13:51:59.879429+09:00",
+    "source": {
+     "id": "s_s1_1vGQZ4",
+     "name": "합성 sns",
+     "provider": "sns"
+    },
+    "people": [
+     {
+      "id": "p_p1",
+      "alias": "사람-P1",
+      "role": "author"
+     }
+    ],
+    "axes": [
+     {
+      "id": "i_x1",
+      "title": "축 X1"
+     }
+    ],
+    "memo_count": 0,
+    "raw_id": "9700e64b53fafad48dc8ba7183d603fbd3d8852271ae91f4"
+   }
+  ]
+ }
+}

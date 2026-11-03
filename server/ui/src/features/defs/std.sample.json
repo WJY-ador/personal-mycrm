@@ -1,0 +1,46 @@
+{
+  "version": "std@1",
+  "objects": [
+    {
+      "std_key": "axes",
+      "std_name": "축",
+      "state": "seeded",
+      "structure": "match",
+      "conflicts": [
+        {
+          "code": "field_missing",
+          "field": "keywords"
+        }
+      ],
+      "object": {
+        "id": "od_axes",
+        "key": "axes",
+        "label": "축",
+        "revision": 1,
+        "archived": false
+      },
+      "meaning_check": true,
+      "lock": {
+        "changes": [
+          "archive",
+          "key"
+        ],
+        "fields": [
+          "keywords"
+        ]
+      },
+      "needs": [
+        {
+          "field": "rules",
+          "std_key": "principles",
+          "state": "seeded",
+          "ready": true
+        }
+      ],
+      "can_incorporate": false,
+      "blocked": [
+        "already"
+      ]
+    }
+  ]
+}

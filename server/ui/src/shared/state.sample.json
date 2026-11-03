@@ -1,0 +1,280 @@
+{
+  "user": {
+    "display_name": "견본",
+    "nav": "new",
+    "email": "hong@example.com",
+    "struct_names": false
+  },
+  "switches": {
+    "trash": true,
+    "converse": false
+  },
+  "journal": [
+    {
+      "id": "r_PsbbR1GCNy0",
+      "title": "두 번째 글",
+      "excerpt": "고객이 원하는 건 화면보다 입력 흐름이었다.",
+      "created": "2026-11-03T11:25:02.943802+09:00",
+      "source": "대화에서 입력",
+      "source_id": null,
+      "question_id": null,
+      "source_date": null,
+      "author_kind": "self",
+      "ingest_kind": null
+    }
+  ],
+  "journal_next_before": "2026-11-03T02:25:02.942533+00:00|r_sample",
+  "questions": [
+    {
+      "id": "q__hBIUSG91_w",
+      "text": "도입 순서를 어떻게 정하나?",
+      "created": "2026-11-03T11:25:02.940776+09:00"
+    }
+  ],
+  "candidates": [
+    {
+      "id": "c__QiVTeSYxKQ",
+      "text": "도구보다 담당을 먼저 정한다",
+      "status": "pending",
+      "record_id": "r_4adbW0UlrwU",
+      "question_id": "q__hBIUSG91_w",
+      "quote": "입력 담당**을 먼저 정했다",
+      "review": null,
+      "revision": 1,
+      "created": "2026-11-03T11:25:02.944400+09:00",
+      "origin": "ai",
+      "edited_by_user": false,
+      "wording_by": null,
+      "wording_approved": false
+    }
+  ],
+  "items": [
+    {
+      "id": "i_sample",
+      "object_id": "od_principles",
+      "code": "P-1",
+      "title": "담당이 먼저, 도구는 그다음",
+      "body": "본문 **굵게** 한 줄",
+      "data": {},
+      "decision": "pending",
+      "revision": 1,
+      "semantic_kind": "principle",
+      "proposal": null,
+      "links": [
+        {
+          "field_key": "claims",
+          "target_kind": "candidate",
+          "target_id": "c_sample"
+        }
+      ],
+      "created_at": "2026-11-03T11:25:02.949948+09:00",
+      "updated_at": "2026-11-03T11:25:02.952315+09:00"
+    }
+  ],
+  "item_proposals": [],
+  "definitions": [
+    {
+      "id": "od_axes",
+      "key": "axes",
+      "label": "축",
+      "semantic_kind": "principle",
+      "std_id": "std:axes",
+      "archived_at": null,
+      "fields": [
+        {
+          "key": "keywords",
+          "label": "검색어",
+          "value_type": "text_list",
+          "options": []
+        }
+      ],
+      "policy": {}
+    }
+  ],
+  "record_links": [
+    {
+      "record_id": "r_4adbW0UlrwU",
+      "field_key": "axes",
+      "target_kind": "item",
+      "target_id": "i_MaYByqGhzdk"
+    }
+  ],
+  "people": [
+    {
+      "id": "p_yXoEvh1Ihn4",
+      "alias": "민수",
+      "revision": 0,
+      "created": "2026-11-03T11:25:02.981341+09:00",
+      "updated": "2026-11-03T11:25:02.981341+09:00"
+    }
+  ],
+  "reflections": [
+    {
+      "id": "sr_KzYmz3TsALc",
+      "source_id": "s__k-PC5ohGs0",
+      "kind": "summary",
+      "body": "담당을 먼저 정하자는 글.\n둘째 줄",
+      "review": "pending",
+      "revision": 0,
+      "created": "2026-11-03T11:25:02.981943+09:00",
+      "updated": "2026-11-03T11:25:02.981943+09:00",
+      "reviewed_at": null
+    }
+  ],
+  "sources": [
+    {
+      "id": "s__k-PC5ohGs0",
+      "kind": "url",
+      "name": "회고 블로그",
+      "location": "https://example.com/a"
+    }
+  ],
+  "source_counts": {
+    "by_source": {
+      "s_sample": 1
+    },
+    "unconfirmed": 2
+  },
+  "activity_ui": {
+    "actions": {
+      "like": "좋아요"
+    },
+    "providers": {
+      "sns": "SNS"
+    },
+    "pending_days": 30
+  },
+  "stack_session": null,
+  "devices_status": {
+    "state": "none",
+    "last_seen_at": null,
+    "threshold_seconds": 180
+  },
+  "activity": {
+    "period": "30d",
+    "from": "2026-10-05",
+    "to": "2026-11-03",
+    "total": 1,
+    "notice": "연결된 활동과 내 글을 정해진 계산 규칙으로 보여 줍니다.",
+    "by_action": [
+      {
+        "action": "like",
+        "label": "좋아요",
+        "n": 1
+      }
+    ],
+    "by_axis": [
+      {
+        "item_id": "i_1",
+        "title": "견본 축",
+        "n": 1
+      }
+    ],
+    "axis_unclassified": 0,
+    "axis_sum_differs": false,
+    "top_people": [
+      {
+        "person_id": "p_1",
+        "alias": "견본 사람",
+        "n": 1
+      }
+    ],
+    "by_source": [
+      {
+        "source_id": "s_1",
+        "name": "견본 출처",
+        "provider": "sns",
+        "n": 1
+      }
+    ],
+    "undated": {
+      "n": 1,
+      "observed": [
+        {
+          "observed_on": "2026-11-02",
+          "n": 1
+        }
+      ]
+    },
+    "grounds": {
+      "principles": [
+        {
+          "item_id": "i_2",
+          "title": "견본 기준",
+          "records": 1,
+          "activities": 0
+        }
+      ]
+    }
+  },
+  "tabs": [],
+  "structure": {
+    "objects": [
+      {
+        "id": "od_principles",
+        "key": "principles",
+        "label": "기준",
+        "origin": "standard",
+        "semantic_kind": "principle",
+        "locked": true,
+        "std_name": "기준",
+        "fields": [
+          {
+            "key": "evidence_claims",
+            "label": "근거 판단",
+            "value_type": "reference",
+            "origin": "standard",
+            "locked": true,
+            "std_name": "근거 판단"
+          }
+        ]
+      }
+    ],
+    "relations": [
+      {
+        "object_id": "od_principles",
+        "field_key": "evidence_claims",
+        "target_kind": "candidate",
+        "target_object_id": null,
+        "cardinality": "N:N",
+        "origin": "standard",
+        "locked": true
+      }
+    ],
+    "core": [
+      {
+        "kind": "candidate",
+        "origin": "core"
+      }
+    ]
+  },
+  "me": {
+    "counts": {
+      "people": 1,
+      "sources": 1,
+      "reflections": 1
+    }
+  },
+  "inbox": {
+    "pending": 0
+  },
+  "next": {
+    "kind": "review",
+    "text": "아직 안 정한 문장 1개를 원문과 대조해 보세요."
+  },
+  "structure_svg": "<svg class=\"dmo-svg\" viewBox=\"0 0 100 100\"></svg>",
+  "origin_labels": {
+    "text": {
+      "core": "표준",
+      "standard": "표준",
+      "template": "커스텀",
+      "custom": "커스텀"
+    },
+    "category": {
+      "core": "standard",
+      "standard": "standard",
+      "template": "template",
+      "custom": "template"
+    }
+  }
+}

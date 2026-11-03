@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS records (
   user_id     text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   question_id text,
   title       text NOT NULL,
-  body        text NOT NULL,                      -- 수신한 그대로. 공백 하나도 안 다듬는다
+  body        text NOT NULL,                      -- 수신한 그대로. 공백 하나도 안 다듬는다. 고치는 길은 수기 수정(record_edit·record_title_set)뿐 — 이력은 record_history
   source      text NOT NULL DEFAULT '대화에서 입력',
   created     timestamptz NOT NULL DEFAULT now(),
   deleted_at  timestamptz,                        -- soft delete. 하드 삭제는 계정 삭제(users cascade) 때만
@@ -91,7 +91,10 @@ CREATE TABLE IF NOT EXISTS records (
   trashed_at         timestamptz,
   purge_at           timestamptz,
   last_trashed_at    timestamptz,
+  -- 수기 수정 A0′(2026-11-03). 본문·제목 수정마다 +1(이력 한 줄 = +1). 옛 DB 는 db._migrate_record_edit 가 더한다(옛 행 1)
+  revision           integer NOT NULL DEFAULT 1,
   UNIQUE (user_id, id),
+  CONSTRAINT ck_records_revision CHECK (revision > 0),
   CONSTRAINT ck_records_trash CHECK ((trashed_at IS NULL) = (purge_at IS NULL) AND (trashed_at IS NULL OR last_trashed_at IS NOT NULL)),
   CONSTRAINT fk_records_source FOREIGN KEY (user_id, source_id) REFERENCES sources(user_id, id),   -- 같은 사용자 출처만
   FOREIGN KEY (user_id, question_id) REFERENCES questions(user_id, id) ON DELETE SET NULL (question_id),  -- Lookup
@@ -342,6 +345,11 @@ CREATE TABLE IF NOT EXISTS import_streams (
   final_manifest_sha256 bytea,
   created_at            timestamptz NOT NULL DEFAULT now(),
   revoked_at            timestamptz,                -- 장치 연결 해제(되살리지 않는다)
+  -- M2 대기 토큰(PC 연결 2026-11-02) — 교체·재발급의 새 토큰. 첫 사용 때 token_* 로 올라가고 옛 토큰은 그때 무효. 1개(다음 교체가 덮어씀).
+  -- UNIQUE 인덱스(ux_import_streams_pending)·CHECK(ck_import_streams_pending) 는 db._migrate_pc_connect 가 만든다(옛 DB 와 같은 길)
+  pending_token_id      text,
+  pending_secret_hash   bytea,
+  pending_expires_at    timestamptz,
   PRIMARY KEY (user_id, id),
   UNIQUE (token_id),
   CHECK (secret_hash IS NULL OR octet_length(secret_hash) = 32),
@@ -459,7 +467,7 @@ CREATE TABLE IF NOT EXISTS import_entries (
                                                      'migration_object','migration_item','migration_record')),
   request_sha256       bytea NOT NULL CHECK (octet_length(request_sha256) = 32),
   projection_sha256    bytea NOT NULL CHECK (octet_length(projection_sha256) = 32),
-  state                text NOT NULL CHECK (state IN ('pending','applied','noop','excluded','expired','deleted')),   -- deleted = 대상 영구 삭제(휴지통) 뒤 표식 — target 없음. 옛 DB 는 _migrate_trash 가 넓힌다
+  state                text NOT NULL CHECK (state IN ('pending','applied','noop','excluded','expired','deleted','reverted')),   -- deleted = 대상 영구 삭제(휴지통) 뒤 표식 — target 없음. reverted = MCP migration_revert 가 되돌린 이관 접수(최신·현재 표시 없음, 영구 삭제 뒤에도 reverted). 옛 DB 는 _migrate_trash 가 넓힌다
   is_latest_received   boolean NOT NULL DEFAULT true,
   is_current_applied   boolean NOT NULL DEFAULT false,
   payload              jsonb,
@@ -479,7 +487,6 @@ CREATE TABLE IF NOT EXISTS import_entries (
   transform_version    text NOT NULL,
   execution            text CHECK (execution IS NULL OR execution IN ('attended','unattended')),
   PRIMARY KEY (user_id, id),
-  UNIQUE (user_id, stream_id, original_id, source_revision),
   UNIQUE (user_id, stream_id, original_id, kind, id),
   FOREIGN KEY (user_id, stream_id) REFERENCES import_streams(user_id, id),
   FOREIGN KEY (user_id, stream_id, original_id, kind, previous_entry_id)
@@ -498,6 +505,9 @@ CREATE TABLE IF NOT EXISTS import_entries (
   CHECK (kind <> 'activity' OR state <> 'pending')
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_import_latest ON import_entries (user_id, stream_id, original_id) WHERE is_latest_received;
+-- 같은 원본·같은 판은 한 행 — 되돌린 접수(reverted)는 빼서 같은 판을 다시 stage 하면 새 행으로 들어간다(가안 X §5 b).
+-- 옛 DB 의 표 UNIQUE (user_id, stream_id, original_id, source_revision) 는 db._migrate_migration_path 가 정의로 찾아 이 인덱스로 바꾼다
+CREATE UNIQUE INDEX IF NOT EXISTS ux_import_revision ON import_entries (user_id, stream_id, original_id, source_revision) WHERE state <> 'reverted';
 CREATE UNIQUE INDEX IF NOT EXISTS ux_import_current ON import_entries (user_id, stream_id, original_id) WHERE is_current_applied;
 CREATE INDEX IF NOT EXISTS ix_import_pending ON import_entries (user_id, received_at) WHERE state = 'pending';
 CREATE INDEX IF NOT EXISTS ix_import_target_activity ON import_entries (user_id, target_activity_id) WHERE target_activity_id IS NOT NULL;
@@ -513,6 +523,22 @@ CREATE TABLE IF NOT EXISTS import_counters (
   n             bigint NOT NULL DEFAULT 0 CHECK (n >= 0),
   bytes         bigint NOT NULL DEFAULT 0 CHECK (bytes >= 0),
   PRIMARY KEY (user_id, scope_key, period, period_start, bucket)
+);
+
+-- 수기 수정 A0′(2026-11-03) — 기록 본문·제목을 고친 흔적. 한 줄 = records.revision +1(prev_revision = 고치기 전 revision).
+-- change: edit = {start(고치기 전 본문의 코드포인트 오프셋), old, new, deleted_candidates·moved_candidates(그때 지운·위치를 옮긴 미결 후보 수)} · title = {old, new}.
+-- via = 고친 경로(web 화면 · mcp 대화). 기록이 지워지면(영구 삭제·계정 삭제) 같이 지워진다.
+CREATE TABLE IF NOT EXISTS record_history (
+  id            bigserial PRIMARY KEY,
+  user_id       text NOT NULL,
+  record_id     text NOT NULL,
+  action        text NOT NULL CHECK (action IN ('edit','title')),
+  prev_revision integer NOT NULL CHECK (prev_revision > 0),
+  change        jsonb NOT NULL CHECK (jsonb_typeof(change) = 'object'),
+  via           text NOT NULL CHECK (via IN ('web','mcp')),
+  at            timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (user_id, record_id, prev_revision),
+  FOREIGN KEY (user_id, record_id) REFERENCES records(user_id, id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS item_history (
@@ -587,7 +613,8 @@ CREATE TABLE IF NOT EXISTS admin_audit (
   action     text NOT NULL CHECK (action IN ('bootstrap','recover','role_grant','role_revoke','web_signout','block','unblock',
                                          'delete_notify','delete_run','delete_cancel',
                                          'device_connect','device_reissue','device_revoke','device_policy',
-                                         'migration_apply','migration_extend','migration_close','migration_token')),   -- 삭제 CLI(PR B) 3종 · board 이전 7종 · 이관 토큰 1종(2026-11-02). 옛 DB 는 init_schema 가 넓힌다
+                                         'migration_apply','migration_extend','migration_close','migration_token',
+                                         'token_grant','token_grant_redeem','pc_forget','device_rotate')),   -- 삭제 CLI(PR B) 3종 · board 이전 7종 · 이관 토큰 1종 · PC 연결 4종(2026-11-02). 옛 DB 는 init_schema 가 넓힌다
   target_id  text,
   detail     jsonb NOT NULL DEFAULT '{}'
 );
@@ -819,8 +846,9 @@ CREATE TABLE IF NOT EXISTS migration_tokens (
   CHECK (expires_at > created_at)
 );
 
--- 이관 plan(상태기계 staged → sealed → applied · → cancelled · → expired). 서버가 토큰으로 사용자를 정한다(본문에 사용자 필드 없음).
--- plan_hash = SHA-256(JCS(seq 순 item_sha256 hex 목록)) — seal 때 고정. 반영은 웹 세션에서만, 저장한 바이트만 쓴다.
+-- 이관 plan(상태기계 staged → sealed → applied → reverted · → cancelled · → expired). 서버가 토큰으로 사용자를 정한다(본문에 사용자 필드 없음).
+-- plan_hash = SHA-256(JCS(seq 순 item_sha256 hex 목록)) — seal 때 고정. 반영은 웹 세션 또는 MCP(가안 X, CRM_MIGRATION_MCP_ENABLED), 저장한 바이트만 쓴다.
+-- via = 반영 경로(web·mcp, 반영 때 기록 — 옛 행 NULL). reverted = MCP migration_revert(이 plan 이 새로 만든 대상만 휴지통, applied_at 은 남는다).
 -- 만료(만든 시각 + 3일)·취소·반영 뒤 항목 본문(migration_plan_items.payload)은 바로 영구 삭제(휴지통 아님). 해시·영수증만 남는다.
 CREATE TABLE IF NOT EXISTS migration_plans (
   user_id          text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -828,7 +856,7 @@ CREATE TABLE IF NOT EXISTS migration_plans (
   token_id         text,                          -- 만든 이관 토큰(FK 없음 — 토큰을 지워도 plan 영수증은 남는다)
   contract         text NOT NULL CHECK (contract = 'board-migration/2'),
   source_instance  text NOT NULL,                 -- PC 인스턴스 표식(불투명). 항목의 source_instance 와 같아야 한다
-  state            text NOT NULL CHECK (state IN ('staged','sealed','applied','cancelled','expired')),
+  state            text NOT NULL CHECK (state IN ('staged','sealed','applied','cancelled','expired','reverted')),
   item_count       integer NOT NULL DEFAULT 0 CHECK (item_count BETWEEN 0 AND 200),
   staged_bytes     integer NOT NULL DEFAULT 0 CHECK (staged_bytes >= 0),
   plan_hash        bytea CHECK (plan_hash IS NULL OR octet_length(plan_hash) = 32),
@@ -838,9 +866,13 @@ CREATE TABLE IF NOT EXISTS migration_plans (
   sealed_at        timestamptz,
   applied_at       timestamptz,
   closed_at        timestamptz,                   -- cancelled·expired 시각
+  reverted_at      timestamptz,                   -- reverted 시각(가안 X). 옛 DB 는 db._migrate_migration_path 가 더한다
+  via              text,                          -- 반영 경로 web·mcp(가안 X 감사). 반영 전·옛 행 NULL
   PRIMARY KEY (user_id, id),
   CHECK (state NOT IN ('sealed','applied') OR (plan_hash IS NOT NULL AND sealed_at IS NOT NULL)),
-  CHECK ((state = 'applied') = (applied_at IS NOT NULL)),
+  CONSTRAINT ck_migration_plans_applied CHECK ((state IN ('applied','reverted')) = (applied_at IS NOT NULL)),   -- 옛 이름 없는 CHECK 는 init_schema 가 바꾼다
+  CONSTRAINT ck_migration_plans_reverted CHECK ((state = 'reverted') = (reverted_at IS NOT NULL)),
+  CONSTRAINT ck_migration_plans_via CHECK (via IS NULL OR via IN ('web','mcp')),
   CHECK ((state IN ('cancelled','expired')) = (closed_at IS NOT NULL))
 );
 CREATE INDEX IF NOT EXISTS ix_migration_plans_open ON migration_plans (expires_at) WHERE state IN ('staged','sealed');
@@ -866,6 +898,8 @@ CREATE TABLE IF NOT EXISTS migration_plan_items (
                                                             'skipped_conflict')),
   target_id        text,
   applied_at       timestamptz,
+  created          boolean,                       -- 가안 X: 반영이 대상을 새로 만들었나(true = 되돌리기 때 휴지통, false = 기존 대상 갱신·noop). 옛 행 NULL(모름)
+  decision_deferred boolean NOT NULL DEFAULT false,   -- 가안 X: MCP 반영이 decision=confirmed 기준을 pending 으로 낮춰 넣었다
   PRIMARY KEY (user_id, plan_id, seq),
   UNIQUE (user_id, plan_id, original_id),
   FOREIGN KEY (user_id, plan_id) REFERENCES migration_plans(user_id, id) ON DELETE CASCADE,
@@ -886,7 +920,50 @@ CREATE TABLE IF NOT EXISTS desktop_handoffs (
   created_at  timestamptz NOT NULL DEFAULT now(),
   expires_at  timestamptz NOT NULL,
   used_at     timestamptz,
+  loopback    boolean NOT NULL DEFAULT false,   -- PC 연결(2026-11-02) — CLI --browser(RFC 8252 loopback) 코드. /desktop/cli/claim 만 받는다(앱 코드와 섞지 않는다)
   CHECK (expires_at > created_at)
 );
 CREATE INDEX IF NOT EXISTS ix_desktop_handoffs_exp ON desktop_handoffs (expires_at);
 CREATE INDEX IF NOT EXISTS ix_desktop_handoffs_user ON desktop_handoffs (user_id);
+
+-- PC 연결·토큰 대화 발급(2026-11-02 가안 2 「상주 앱 수령형」, notes/2026-11-02_pc-connect-구현계획.md §4). 옛 DB 도 이 CREATE … IF NOT EXISTS 가 만든다.
+-- 설치본 = 로그인한 데스크톱 앱 하나(앱이 userData 에 id 보관). IP·호스트 이름·경로는 저장하지 않는다 — 이름·OS·시각만.
+-- device_id = 이 PC 의 연결 장치(import_streams.id, FK 없음 — 계정 삭제 순서로 지운다). revoked_at = 대화(pc_forget)로 해제한 기록 —
+-- 자동 연결·교체가 해제된 PC 를 되살리지 않게 지킨다(대화 pc_connect 수령 때만 풀린다). last_seen_at = 마지막 폴링(지목 규칙 「최근 2분」).
+CREATE TABLE IF NOT EXISTS desktop_installations (
+  user_id       text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  id            text NOT NULL CHECK (id ~ '^di_[0-9a-f]{24}$'),
+  client_name   text NOT NULL CHECK (char_length(client_name) BETWEEN 1 AND 80 AND client_name = btrim(client_name)),
+  os            text NOT NULL CHECK (os IN ('darwin','win32','linux')),
+  device_id     text,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  last_login_at timestamptz NOT NULL DEFAULT now(),
+  last_seen_at  timestamptz NOT NULL DEFAULT now(),
+  revoked_at    timestamptz,
+  PRIMARY KEY (user_id, id),
+  UNIQUE (id)
+);
+CREATE INDEX IF NOT EXISTS ix_desktop_installations_seen ON desktop_installations (user_id, last_seen_at DESC);
+
+-- 토큰 grant = 대화가 「이 PC 로 토큰을 보내라」고 남긴 대기 표. 토큰 값·해시는 없다 — 토큰은 앱이 redeem 하는 그 요청 안에서 발급된다.
+-- scope device(장치 토큰) · migration(이관 토큰). waiting → delivered(redeem) | expired(10분) | cancelled(pc_forget). via = 만든 경로.
+-- delivered_to = 받은 장치·설치본 이름(감사·상태 표시용). 만료 정리 = imports.expire_pending 회차(30일 지난 행 삭제).
+CREATE TABLE IF NOT EXISTS token_grants (
+  user_id          text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  id               text NOT NULL CHECK (id ~ '^tg_[0-9a-f]{24}$'),
+  scope            text NOT NULL CHECK (scope IN ('device','migration')),
+  installation_id  text NOT NULL,
+  state            text NOT NULL DEFAULT 'waiting' CHECK (state IN ('waiting','delivered','expired','cancelled')),
+  via              text NOT NULL CHECK (via IN ('mcp')),
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  expires_at       timestamptz NOT NULL,
+  delivered_at     timestamptz,
+  delivered_to     text CHECK (delivered_to IS NULL OR char_length(delivered_to) BETWEEN 1 AND 80),
+  PRIMARY KEY (user_id, id),
+  UNIQUE (id),
+  FOREIGN KEY (user_id, installation_id) REFERENCES desktop_installations(user_id, id) ON DELETE CASCADE,
+  CHECK (expires_at > created_at),
+  CHECK ((state = 'delivered') = (delivered_at IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS ix_token_grants_inst ON token_grants (user_id, installation_id, state);
+CREATE INDEX IF NOT EXISTS ix_token_grants_created ON token_grants (user_id, created_at);

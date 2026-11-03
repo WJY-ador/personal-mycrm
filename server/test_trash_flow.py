@@ -553,6 +553,47 @@ def test_admin_and_grounds(ctx):
           "후보 정리(참조 먼저·본문 제거·기준 유지)")
 
 
+# ── 8. API 견본 대조 — React 휴지통 화면(TS 타입 TrashList)이 기대하는 모양 = 실제 db.trash_list 응답 ─────────────
+SAMPLE = HERE / "ui" / "src" / "features" / "trash" / "trash.sample.json"
+
+
+def _shape(v):
+    return "null" if v is None else type(v).__name__
+
+
+def test_trash_sample(ctx):
+    """견본 trash.sample.json(TS 쪽이 `satisfies TrashList` 로 tsc 에 묶는다)과 실제 응답을 종류별로 대조 — 키 집합·값 타입이 같다.
+    서버 응답이 바뀌면 여기서, TS 타입이 바뀌면 tsc 에서 잡힌다(TS 타입은 손 사본이라)."""
+    uid, dev, tok, _ax, _pr = ctx
+    pr = imports.device_list(uid)["devices"][0]["policy_revision"]
+    db.trash_move(uid, "record", db.record_add(uid, "견본 글", "견본 본문")["id"])
+    ax_id = db.new_id("i")
+    run_sql("INSERT INTO items (user_id,id,object_id,schema_revision,title,revision) VALUES (%s,%s,%s,1,'견본 축',1)",
+            (uid, ax_id, db.classify_target(uid)))
+    db.trash_move(uid, "item", ax_id, 1)
+    h = hmac_hex()
+    st, b = send(tok, act_req(dev, policy_revision=pr, people=[{"hmac": h, "role": "author"}], occurred_on="2026-10-22"))
+    assert st == 201 and b["state"] == "applied", (st, b)
+    db.trash_move(uid, "activity", b["target_id"])
+    pid = rows("SELECT id FROM people WHERE user_id=%s AND identity_hmac=%s", (uid, bytes.fromhex(h)))[0]["id"]
+    db.trash_move(uid, "person", pid, db.person_get(uid, pid)["revision"])
+    f = db.source_reflection_save(uid, db.source_create(uid, "url", "견본 출처")["id"], "summary", "견본 생각 첫 줄")
+    db.trash_move(uid, "reflection", f["id"], f["revision"])
+    real = db.trash_list(uid, "", "", db.PAGE_MAX)
+    sample = json.loads(SAMPLE.read_text(encoding="utf-8"))
+    assert {k: _shape(v) for k, v in sample.items() if k != "items"} == {k: _shape(v) for k, v in real.items() if k != "items"}, "목록 머리(next_cursor·hours)"
+    got = {}
+    for it in real["items"]:
+        got.setdefault(it["kind"], it)
+    want = {it["kind"]: it for it in sample["items"]}
+    assert set(want) == set(got) == {"record", "item", "person", "reflection", "activity"}, (set(want), set(got))
+    for k, it in want.items():   # 키 집합은 같아야 하고, 값 타입은 둘 다 null 아닐 때 같아야 한다(null 허용 여부는 TS 타입이 tsc 로 본다)
+        diff = {n for n in it.keys() | got[k].keys()
+                if n not in it or n not in got[k] or "null" not in (_shape(it[n]), _shape(got[k][n])) and _shape(it[n]) != _shape(got[k][n])}
+        assert not diff, (k, diff, "견본과 실제 응답의 키·값 타입이 달라요 — trash.sample.json·trashApi.ts 의 TrashItem 을 같이 고친다", it, got[k])
+    print("OK — API 견본 대조(휴지통 목록 5종 · 키·값 타입 = trash.sample.json, TS 는 satisfies TrashList)")
+
+
 def main():
     for k in SWITCHES + ("CRM_TRASH_ENABLED",):
         os.environ[k] = "1"
@@ -569,6 +610,7 @@ def main():
         test_record_source(ctx)
         test_stack(ctx)
         test_admin_and_grounds(ctx)
+        test_trash_sample(ctx)
         o = db.user_by_email(OTHER)["id"]   # 남의 id = 없는 id
         expect("NOT-FOUND", db.trash_move, o, "activity", st1["ids"][0])
         print("OK — 휴지통 흐름 시험 전부 통과")

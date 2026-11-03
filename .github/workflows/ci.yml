@@ -56,23 +56,31 @@ jobs:
           cache: pip
           cache-dependency-path: server/requirements.txt
 
+      # Render 빌드와 같은 node(server/render.yaml NODE_VERSION) — 바꿀 때 두 곳을 같이
       - uses: actions/setup-node@v5
         with:
-          node-version: "22"
+          node-version: "24.22.1"
+          cache: npm
+          cache-dependency-path: server/ui/package-lock.json
+
+      # React 화면 묶음(server/ui, 2026-11-03 R1) — 서버 시험보다 먼저 빌드한다(test_ui_build.py 가 dist/.vite/manifest.json 을 읽는다)
+      - name: "UI 의존성 (npm ci)"
+        run: npm ci --prefix server/ui
+
+      - name: "UI 빌드 (vite build)"
+        run: npm run build --prefix server/ui
+
+      - name: "UI 타입 검사 (tsc --noEmit)"
+        run: npm run typecheck --prefix server/ui
+
+      - name: "UI 시험 (vitest — 화면·arch·견본 타입)"
+        run: npm test --prefix server/ui
 
       - name: Install server dependencies
         run: pip install -r server/requirements.txt
 
       - name: "① Python 문법 (py_compile)"
         run: python -m py_compile server/*.py
-
-      - name: "② JS 문법 (app.html <script>)"
-        run: |
-          set -eo pipefail
-          sed -n '/^<script>$/,/^<\/script>$/p' server/app.html | sed '1d;$d' > "$RUNNER_TEMP/app.js"
-          test -s "$RUNNER_TEMP/app.js" || { echo "::error::app.html 에서 <script> 블록을 못 찾음"; exit 1; }
-          wc -l "$RUNNER_TEMP/app.js"
-          node --check "$RUNNER_TEMP/app.js"
 
       - name: "운영 DB 보호 가드"
         # 허용 목록: 호스트가 localhost·127.0.0.1 일 때만 통과. 값은 출력하지 않는다.
@@ -177,7 +185,7 @@ jobs:
           PY
           python server/test_migration_path.py
 
-      # 이관 화면(2026-11-02) — app.html 「이관」 절(토큰·plan 목록·확인·체크·반영·오류·영수증, node 실행) + 화면이 읽는 응답 키.
+      # 이관 화면(2026-11-02) — 화면이 읽는 응답 키·견본 대조(화면 동작 = React features/migration, Vitest).
       # 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
       - name: "④-h 이관 화면 시험 (test_migration_screen.py)"
         env:
@@ -202,6 +210,58 @@ jobs:
               c.execute("CREATE DATABASE crm_test_desktop_login")
           PY
           python server/test_desktop_login.py
+
+      # MCP facade(2026-11-02) — 겉면 5개(find·read·write·decide·purge) · 카탈로그 · 전 op 대칭 · bind · 집계 f:<op>(합성 PG).
+      # 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
+      - name: "④-j MCP facade 시험 (test_facade.py)"
+        env:
+          DATABASE_URL: postgresql://postgres:crm@localhost:5432/crm_test_facade
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:crm@localhost:5432/crm", autocommit=True) as c:
+              c.execute("CREATE DATABASE crm_test_facade")
+          PY
+          python server/test_facade.py
+
+      # PC 연결·토큰 대화 발급(2026-11-02 가안 2) — 설치본·grant 상태기계·앱 세션 수령·자동 연결·교체·M2·해제 기록·이관 scope·facade
+      # ·값 없음·cascade(합성 PG). 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
+      - name: "④-k PC 연결 시험 (test_token_grants.py)"
+        env:
+          DATABASE_URL: postgresql://postgres:crm@localhost:5432/crm_test_token_grants
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:crm@localhost:5432/crm", autocommit=True) as c:
+              c.execute("CREATE DATABASE crm_test_token_grants")
+          PY
+          python server/test_token_grants.py
+
+      # 수기 수정 A0′(2026-11-03) — record_edit(bind·잠금·미결 후보 휴지통)·record_title_set·웹 본문/제목/항목 편집·이력 via·옛 DB 업그레이드.
+      # 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
+      - name: "④-l 수기 수정 시험 (test_record_edit.py)"
+        env:
+          DATABASE_URL: postgresql://postgres:crm@localhost:5432/crm_test_record_edit
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:crm@localhost:5432/crm", autocommit=True) as c:
+              c.execute("CREATE DATABASE crm_test_record_edit")
+          PY
+          python server/test_record_edit.py
+
+      # React 화면 묶음(2026-11-03 R1·R5b-2b) — manifest 허용 목록(지연 불러오기 묶음 포함) 서빙·/app 진입 태그·CSP self·인라인 0·manifest 없음·정적 뼈대.
+      # 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
+      - name: "④-m React 화면 묶음 시험 (test_ui_build.py)"
+        env:
+          DATABASE_URL: postgresql://postgres:crm@localhost:5432/crm_test_ui
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:crm@localhost:5432/crm", autocommit=True) as c:
+              c.execute("CREATE DATABASE crm_test_ui")
+          PY
+          python server/test_ui_build.py
 
       # board 이전(2026-10-20) — 로컬 에이전트(agent/, 표준 라이브러리만). 서버 DB 를 쓰지 않는다
       - name: "④-b 로컬 에이전트 시험 (agent/tests)"

@@ -1,0 +1,16 @@
+/* Setup — 페이지 레이아웃(끌어 놓기 목록 2 · 저장 줄). 옛 app.html .setlay·ol.dnd·.setbar 그대로 */
+.layg { margin-top: 1.1rem; }
+.layg h3 { font-size: .86rem; margin: 0 0 .5rem; }
+.dnd { list-style: none; margin: 0; padding: .5rem; display: flex; gap: .4rem; border: 1px dashed var(--line); border-radius: 8px; background: var(--paper); }
+.h { flex-wrap: wrap; }
+.v { flex-direction: column; max-width: 28rem; }
+.dnd > li { display: flex; align-items: center; gap: .45rem; min-height: 40px; padding: .35rem .75rem .35rem .4rem; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--card); font-size: .86rem; cursor: grab; user-select: none; }
+.dnd > li:hover { border-color: var(--accent); }
+.dnd > li:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dnd > li.dragging { cursor: grabbing; border-color: var(--accent); box-shadow: 0 2px 8px color-mix(in srgb, var(--ink) 18%, transparent); opacity: .9; }
+.grip { color: var(--muted); font-size: 1rem; padding: .2rem .25rem; touch-action: none; cursor: grab; }
+.setbar { display: flex; align-items: center; justify-content: space-between; gap: .8rem; margin-top: 1.2rem; padding-top: .8rem; border-top: 1px solid var(--line); }
+.setbar p { margin: 0; }
+.setbar button { margin-left: auto; }
+@media (max-width: 767px) { .h { flex-direction: column; } .grip { padding: .4rem .5rem; } }

@@ -509,34 +509,48 @@ def _dev_get(c, uid, device_id):
     return _dev_out(_one(c, f"SELECT {_DEV_COLS} FROM import_streams WHERE user_id=%s AND id=%s", (uid, device_id)))
 
 
+def connect_in(c, uid: str, label: str, via: str = "web") -> dict:
+    """장치 연결 본체(트랜잭션 c 안, 사용자 잠금은 호출하는 쪽) — 입력원(device) + 토큰 1개. 활성 5개 넘으면 DEVICE-LIMIT.
+    반환 {"device", "token"}. 감사 device_connect(via). PC 연결(token_grants)의 앱 수령·자동 연결도 이 함수를 쓴다."""
+    label = db._label(label, "장치 이름")
+    n = _one(c, "SELECT count(*) AS n FROM import_streams WHERE user_id=%s AND channel='device' AND revoked_at IS NULL", (uid,))["n"]
+    if n >= MAX_DEVICES:
+        raise CrmError("DEVICE-LIMIT", f"연결 장치는 {MAX_DEVICES}개까지예요.", "쓰지 않는 장치를 먼저 연결 해제하세요.")
+    sid = "is_" + secrets.token_hex(12)
+    tid, h, token = _new_token(sid)
+    c.execute("INSERT INTO import_streams (user_id,id,channel,label,token_id,secret_hash,token_expires_at,hmac_namespace,policy) "
+              "VALUES (%s,%s,'device',%s,%s,%s,now() + make_interval(days => %s),%s,%s)",
+              (uid, sid, label, tid, h, TOKEN_DAYS, "hn_" + secrets.token_hex(12), Jsonb(DEFAULT_POLICY)))
+    db._audit(c, "device_connect", uid, uid, {"device_id": sid, "via": via, "result": "ok"})
+    return {"device": _dev_get(c, uid, sid), "token": token}
+
+
 def device_connect(uid: str, label: str) -> dict:
     """장치 연결 — 입력원(device) + 토큰 1개. 활성 5개 넘으면 DEVICE-LIMIT. policy = DEFAULT_POLICY.
     반환 {"device": 장치, "token": "imp_<stream>.<token_id>.<secret>"} — 토큰은 이 응답에서 한 번만 보인다. 감사 device_connect."""
-    label = db._label(label, "장치 이름")
     with tx() as c:
         db._user_lock(c, uid)
-        n = _one(c, "SELECT count(*) AS n FROM import_streams WHERE user_id=%s AND channel='device' AND revoked_at IS NULL", (uid,))["n"]
-        if n >= MAX_DEVICES:
-            raise CrmError("DEVICE-LIMIT", f"연결 장치는 {MAX_DEVICES}개까지예요.", "쓰지 않는 장치를 먼저 연결 해제하세요.")
-        sid = "is_" + secrets.token_hex(12)
-        tid, h, token = _new_token(sid)
-        c.execute("INSERT INTO import_streams (user_id,id,channel,label,token_id,secret_hash,token_expires_at,hmac_namespace,policy) "
-                  "VALUES (%s,%s,'device',%s,%s,%s,now() + make_interval(days => %s),%s,%s)",
-                  (uid, sid, label, tid, h, TOKEN_DAYS, "hn_" + secrets.token_hex(12), Jsonb(DEFAULT_POLICY)))
-        db._audit(c, "device_connect", uid, uid, {"device_id": sid, "result": "ok"})
-        return {"device": _dev_get(c, uid, sid), "token": token}
+        return connect_in(c, uid, label)
+
+
+def pending_in(c, uid: str, device_id: str) -> tuple:
+    """M2 대기 토큰 발급(트랜잭션 c 안, 장치 행은 호출하는 쪽이 잠갔다) — 새 토큰을 pending_* 에 둔다(있던 대기 토큰은 덮어쓴다).
+    옛 토큰은 새 토큰이 처음 인증될 때(authenticate) 무효가 되고, 그 전까지는 자기 만료까지 유효하다. 반환 (토큰 원문, 새 토큰 만료 시각)."""
+    tid, h, token = _new_token(device_id)
+    r = _one(c, "UPDATE import_streams SET pending_token_id=%s, pending_secret_hash=%s, pending_expires_at = now() + make_interval(days => %s) "
+                "WHERE user_id=%s AND id=%s AND channel='device' RETURNING pending_expires_at", (tid, h, TOKEN_DAYS, uid, device_id))
+    return token, r["pending_expires_at"]
 
 
 def device_reissue(uid: str, device_id: str) -> dict:
-    """토큰 재발급 — 옛 토큰 즉시 무효, 만료 90일 새로. 연결 해제된 장치는 DEVICE-REVOKED. 반환 {"device", "token"}. 감사 device_reissue."""
+    """토큰 재발급 — 새 토큰(만료 90일)은 대기 토큰(M2): 옛 토큰은 새 토큰을 처음 쓸 때 무효, 그 전엔 자기 만료까지 유효.
+    연결 해제된 장치는 DEVICE-REVOKED. 반환 {"device", "token"}. 감사 device_reissue."""
     with tx() as c:
         db._user_lock(c, uid)
         r = _dev_lock(c, uid, device_id)
         if r["revoked_at"] is not None:
             raise CrmError("DEVICE-REVOKED", "연결 해제한 장치예요.", "새 장치로 다시 연결하세요.")
-        tid, h, token = _new_token(r["id"])
-        c.execute("UPDATE import_streams SET token_id=%s, secret_hash=%s, token_expires_at = now() + make_interval(days => %s), "
-                  "token_revoked_at=NULL WHERE user_id=%s AND id=%s", (tid, h, TOKEN_DAYS, uid, r["id"]))
+        token, _ = pending_in(c, uid, r["id"])
         db._audit(c, "device_reissue", uid, uid, {"device_id": r["id"], "result": "ok"})
         return {"device": _dev_get(c, uid, r["id"]), "token": token}
 
@@ -547,11 +561,18 @@ def device_revoke(uid: str, device_id: str) -> dict:
     with tx() as c:
         db._user_lock(c, uid)
         r = _dev_lock(c, uid, device_id)
-        if r["revoked_at"] is None:
-            c.execute("UPDATE import_streams SET revoked_at=now(), token_revoked_at=COALESCE(token_revoked_at, now()) "
-                      "WHERE user_id=%s AND id=%s", (uid, r["id"]))
-            db._audit(c, "device_revoke", uid, uid, {"device_id": r["id"], "result": "ok"})
+        revoke_in(c, uid, r)
         return {"device": _dev_get(c, uid, r["id"])}
+
+
+def revoke_in(c, uid: str, r: dict, via: str = "web") -> bool:
+    """연결 해제 본체(트랜잭션 c 안, 장치 행 잠금 뒤) — 토큰·대기 토큰 폐기 + revoked_at. 이미 해제면 아무것도 안 한다. 반환 이번에 해제했나."""
+    if r["revoked_at"] is not None:
+        return False
+    c.execute("UPDATE import_streams SET revoked_at=now(), token_revoked_at=COALESCE(token_revoked_at, now()), "
+              "pending_token_id=NULL, pending_secret_hash=NULL, pending_expires_at=NULL WHERE user_id=%s AND id=%s", (uid, r["id"]))
+    db._audit(c, "device_revoke", uid, uid, {"device_id": r["id"], "via": via, "result": "ok"})
+    return True
 
 
 def device_policy_set(uid: str, device_id: str, policy: dict, expected_revision: int) -> dict:
@@ -578,26 +599,35 @@ def device_policy_set(uid: str, device_id: str, policy: dict, expected_revision:
 
 def authenticate(authorization: str) -> dict:
     """Bearer 장치 토큰 → 입력원 {user_id, id, label, policy, policy_revision, hmac_namespace}.
-    실패 = AUTH-INVALID·TOKEN-EXPIRED·TOKEN-REVOKED(401)·AUTH-BLOCKED(403). 비밀값은 SHA-256 으로만 비교(상수 시간)."""
+    실패 = AUTH-INVALID·TOKEN-EXPIRED·TOKEN-REVOKED(401)·AUTH-BLOCKED(403). 비밀값은 SHA-256 으로만 비교(상수 시간).
+    M2(PC 연결 2026-11-02): 대기 토큰(pending_*)이 처음 인증되면 그 자리에서 현재 토큰으로 올린다 — 옛 토큰은 이때 무효."""
     m = _TOKEN_RE.match(authorization or "")
     if not m:
         raise CrmError("AUTH-INVALID", "장치 토큰이 없거나 형식이 틀렸어요.", "장치를 다시 연결하세요.")
     sid, tid, secret = m.groups()
     with tx() as c:
         r = _one(c, "SELECT s.user_id,s.id,s.label,s.secret_hash,s.token_revoked_at,s.revoked_at,s.policy,s.policy_revision,"
-                    "s.hmac_namespace,s.channel,u.status,u.blocked_at,(s.token_expires_at <= now()) AS expired "
-                    "FROM import_streams s JOIN users u ON u.id=s.user_id WHERE s.token_id=%s", (tid,))
+                    "s.hmac_namespace,s.channel,u.status,u.blocked_at,(s.token_expires_at <= now()) AS expired,"
+                    "s.pending_token_id,s.pending_secret_hash,(s.pending_expires_at <= now()) AS pending_expired "
+                    "FROM import_streams s JOIN users u ON u.id=s.user_id WHERE s.token_id=%s OR s.pending_token_id=%s", (tid, tid))
     h = hashlib.sha256(secret.encode("ascii")).digest()
-    if not r or r["id"] != sid or r["channel"] != "device" or not _hmac.compare_digest(bytes(r["secret_hash"]), h):
+    pending = bool(r) and r["pending_token_id"] == tid
+    stored = (r["pending_secret_hash"] if pending else r["secret_hash"]) if r else None
+    if not r or r["id"] != sid or r["channel"] != "device" or stored is None or not _hmac.compare_digest(bytes(stored), h):
         raise CrmError("AUTH-INVALID", "장치 토큰이 맞지 않아요.", "장치를 다시 연결하세요.")
-    if r["revoked_at"] is not None or r["token_revoked_at"] is not None:
+    if r["revoked_at"] is not None or (not pending and r["token_revoked_at"] is not None):
         raise CrmError("TOKEN-REVOKED", "이 장치 토큰은 폐기됐어요.", "웹의 「연결 장치」에서 다시 연결하세요.")
-    if r["expired"]:
+    if r["pending_expired"] if pending else r["expired"]:
         raise CrmError("TOKEN-EXPIRED", "장치 토큰이 만료됐어요.", "웹의 「연결 장치」에서 토큰을 재발급하세요.")
     if r["status"] != "active":
         raise CrmError("AUTH-INVALID", "사용자를 찾을 수 없어요.")
     if r["blocked_at"] is not None:
         raise CrmError("AUTH-BLOCKED", "이 계정은 지금 쓸 수 없어요.")
+    if pending:   # 첫 사용 — 대기 토큰을 현재 토큰으로(옛 토큰 무효). 동시에 두 요청이 와도 한 번만 바뀐다(조건부 UPDATE)
+        with tx() as c:
+            c.execute("UPDATE import_streams SET token_id=pending_token_id, secret_hash=pending_secret_hash, token_expires_at=pending_expires_at, "
+                      "token_revoked_at=NULL, pending_token_id=NULL, pending_secret_hash=NULL, pending_expires_at=NULL "
+                      "WHERE user_id=%s AND id=%s AND pending_token_id=%s AND revoked_at IS NULL", (r["user_id"], r["id"], tid))
     return {k: r[k] for k in ("user_id", "id", "label", "policy", "policy_revision", "hmac_namespace")}
 
 
@@ -1087,7 +1117,8 @@ def expire_pending() -> int:
         n = c.execute("UPDATE import_entries SET state='expired', payload=NULL, payload_bytes=0, resolved_at=now(), "
                          "resolved_by='expiry' WHERE state='pending' AND expires_at <= now()").rowcount
     import migration   # 순환 import 회피(migration 이 imports 를 쓴다)
-    return n + migration.expire_plans()
+    import token_grants   # PC 연결(2026-11-02) — 만료 grant·대기 토큰 정리도 같은 회차
+    return n + migration.expire_plans() + token_grants.expire_round()
 
 
 # ── board 이전 기본 연산 (migrate_cli.py) ────────────────────
@@ -1248,15 +1279,16 @@ def mig_apply_in(c, uid, st, row, pr, tk, sca, sdate, batch_id, manifest_sha256,
     """행 하나 반영 코어 — 호출자의 연결(db.tx_scope + db.migration_mode 안, users·입력원 잠금 뒤)에서. 결과 {import_id, state: applied|noop,
     target_kind, target_id, duplicate}. 멱등(같은 개정·같은 요청 해시 = duplicate) · 개정 체인(previous_revision) · noop(반영 해시 같음) ·
     기록 새 판·항목 제안 → 적용. window = 병행 기간 검사·시작·감사(CLI) · gate = 업무 적용마다 이관 한도 1(CLI — 새 경로는 plan 전체를 먼저 센다)
-    · ext = 새 이관 경로(migration.py)의 신고 출처·날짜 종류·출처 연결(None = CLI 의 self/verbatim)."""
+    · ext = 새 이관 경로(migration.py)의 신고 출처·날짜 종류·출처 연결(None = CLI 의 self/verbatim).
+    created = 이 호출이 대상을 새로 만들었나(기록 = 새 판 행 · 항목 = 지금 적용된 대응이 없던 원본). 되돌린 접수(reverted)는 없는 것으로 본다."""
     kind = "migration_item" if tk == "item" else "migration_record"
     same = _one(c, f"SELECT {_ENTRY_COLS} FROM import_entries WHERE user_id=%s AND stream_id=%s AND original_id=%s "
-                   "AND source_revision=%s", (uid, st["id"], row["original_id"], row["revision"]))
+                   "AND source_revision=%s AND state <> 'reverted'", (uid, st["id"], row["original_id"], row["revision"]))
     if same:
         if bytes(same["request_sha256"]) != req_sha:
             raise CrmError("IDEMPOTENCY-CONFLICT", "같은 개정 ID 로 다른 내용을 보냈어요.", "새 개정 ID 로 명세를 다시 만드세요.")
         out = _resp(same, True)
-        return {k: out[k] for k in ("import_id", "state", "target_kind", "target_id", "duplicate")}
+        return {**{k: out[k] for k in ("import_id", "state", "target_kind", "target_id", "duplicate")}, "created": False}
     if window and (st["migration_closed_at"] is not None or st["ended"]):
         raise CrmError("MIGRATION-WINDOW-CLOSED", "병행 기간이 끝났거나 종료된 이전 입력원이에요.",
                        "원작자가 결정했으면 extend 로 연장하세요. 종료된 입력원은 다시 열지 않아요.")
@@ -1297,7 +1329,8 @@ def mig_apply_in(c, uid, st, row, pr, tk, sca, sdate, batch_id, manifest_sha256,
                  proj_sha, state, target if tk == "item" else None, target if tk == "record" else None, item_rev, batch_id,
                  bytes.fromhex(manifest_sha256) if manifest_sha256 else None, transform_version))
     out = _resp(e, False)
-    return {k: out[k] for k in ("import_id", "state", "target_kind", "target_id", "duplicate")}
+    return {**{k: out[k] for k in ("import_id", "state", "target_kind", "target_id", "duplicate")},
+            "created": state == "applied" and (tk == "record" or current is None)}
 
 
 def _mig_record(c, uid, stream_id, row, sca, sdate, batch_id, ext=None):
