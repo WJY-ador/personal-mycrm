@@ -87,6 +87,15 @@ console.log(JSON.stringify(out));
         console = re.search(r'<a[^>]+id="acct-console"[^>]*>', HTML)
         self.assertTrue(console is None or ' hidden' in console.group())
 
+    def test_old_links_keep_review_routes(self):
+        """옛 묶음 주소 replace — 지도·오늘의 대조 링크(#map/review/…·#today/review/…)는 판단 검토로 그대로(R5a)."""
+        replace = JS[JS.index("function navReplace(R)"):JS.index("const setupPages")]
+        result = js_run('const defById = () => null, itemById = () => null, meTabOfItem = () => "";\n' + replace + """
+const R = (tab, a = "", b = "") => ({tab, a, b, c: "", d: ""});
+console.log(JSON.stringify([R("map"), R("map", "review", "q1"), R("today"), R("today", "x"), R("today", "review", "q1"), R("home", "review", "r:r1")].map(navReplace)));
+""")
+        self.assertEqual(result, ["#_setup/map", "", "#_today", "#_today", "", ""])
+
     def test_one_origin_definition_for_app_and_graph(self):
         self.assertTrue(hasattr(structure_svg, 'fill_origin_labels'))
         rendered = structure_svg.fill_origin_labels(HTML)

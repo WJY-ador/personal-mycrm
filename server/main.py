@@ -515,7 +515,7 @@ def display_name_set(display_name: Annotated[str, Field(description="사용자�
 @mcp.tool()
 @guard
 def me_get(ctx: Context) -> dict:
-    """「나」 — 표시 이름 · 새 탐색 수락 여부(nav: new|old) · 개수(확정 판단·기준·결정·사람·출처·요약/반응)."""
+    """「나」 — 표시 이름 · nav(항상 "new" — 탐색은 하나) · 개수(확정 판단·기준·결정·사람·출처·요약/반응)."""
     return db.me_home(uid_of(ctx))
 
 

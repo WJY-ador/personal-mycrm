@@ -1856,7 +1856,7 @@ function navReplace(R) {
   if (R.tab === "_obj" && !R.a) return "#_setup/objects";
   if (R.tab === "_settings") return "#_setup/structure";
   if (R.tab === "_devices") return "#_setup/devices";
-  if (R.tab === "map") return "#_setup/map";
+  if (R.tab === "map" && R.a !== "review") return "#_setup/map";   // 지도의 [대조](#map/review/…)는 판단 검토로
   if (R.tab === "_inbox" && !R.a) return "#_today";
   if (R.tab === "_inbox" && !["pending", "applied", "excluded", "expired", "all"].includes(R.a)) return "#_today/inbox/" + encodeURIComponent(R.a);   // 대기 글 하나 — 같은 상세를 오늘 안에서
   if ((R.tab === "today" || R.tab === "home") && R.a !== "review") return "#_today";   // 옛 오늘 화면은 없다 — 옛 대조 링크(#today/review/…)만 그대로

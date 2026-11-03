@@ -208,7 +208,7 @@ def test_static():
               "ME.version = Number(res.j.version) || 0;", "if (LAY.busy) LAY.queued = op; else laySend(op);", 'res.code === "LAYOUT-STALE"',
               "ME.layout = LAY.saved.layout; ME.version = LAY.saved.version;", "기본으로 되돌리기", "e.altKey", 'window.dispatchEvent(new Event("crm:state"));',
               'if (R.tab === "_obj" && !R.a) return "#_setup/objects";', 'if (R.tab === "_settings") return "#_setup/structure";',
-              'if (R.tab === "_devices") return "#_setup/devices";', 'if (R.tab === "map") return "#_setup/map";',
+              'if (R.tab === "_devices") return "#_setup/devices";', 'if (R.tab === "map" && R.a !== "review") return "#_setup/map";',
               'if (R.tab === "_inbox" && !R.a) return "#_today";', 'if (R.tab === "structure") {'):
         assert w in setup, w
     assert js.count('fetch("/api/me/layout"') == 1, "레이아웃 쓰기 = layFetch 한 곳"
