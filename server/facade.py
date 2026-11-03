@@ -340,7 +340,7 @@ def _pv_record_edit(uid, p):
     pv = db.record_edit_preview(uid, p["record_id"], p["old"], p["new"])
     shown = {"기록": pv["title"], "전": pv["before"], "후": pv["after"]}
     if pv["drop"]:
-        shown["지워질 판단 후보"] = f"검토할 판단 {pv['drop']}개가 지워져요(다시 뽑을 수 있어요)"
+        shown["지워질 판단 후보"] = db.edit_drop_msg(pv["drop"])
     snap = {"revision": pv["revision"], "body": pv["body_hash"], "start": pv["start"], "drop": pv["drop"]}
     return snap, shown, {"record_id": pv["record_id"], "revision": pv["revision"], "deleted_candidates": pv["drop"]}, False
 

@@ -129,6 +129,7 @@ test("남이 쓴 글 = 제목·본문 고치기 없음", async () => {
   expect(el.querySelector("#home-detail h2 button")).toBeNull();
   expect(el.querySelector("[role=button]")).toBeNull();
   expect(el.querySelector(".doc")).toBeTruthy();
+  expect(el.querySelector("#home-detail svg[aria-label='고치기']")).toBeNull();   // 고칠 수 없으면 연필도 없다
 });
 
 test("기존 편집 — 표시 이름 · 읽고 든 생각(저장 = 확인 전) · 고쳐서 남기기", async () => {

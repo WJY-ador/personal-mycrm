@@ -62,8 +62,10 @@ test("항목 상세 — 코드·제목·본문 굵게(요소는 strong 만)·렌
   expect(d.querySelector("h2")!.textContent).toBe("P-1 담당이 먼저");
   expect(text(d, "strong")).toContain("굵게");
   expect(d.textContent).toContain("근거 역추적");
-  expect(d.querySelector("svg")!.getAttribute("aria-label")).toBe("P-1 담당이 먼저의 연결 그래프");
-  expect([...d.querySelectorAll("svg a")].map(a => a.getAttribute("href"))).toEqual(["#_me/cand/c1"]);
+  expect(d.querySelector("svg[aria-label$='연결 그래프']")!.getAttribute("aria-label")).toBe("P-1 담당이 먼저의 연결 그래프");
+  // 고칠 수 있는 값 = 늘 보이는 연필(접근성 이름 「고치기」) — 제목·본문
+  expect([...d.querySelectorAll("button[title='눌러서 고치기'] svg[role=img]")].map(s => s.getAttribute("aria-label"))).toEqual(["고치기", "고치기"]);
+  expect([...d.querySelectorAll("svg[aria-label$='연결 그래프'] a")].map(a => a.getAttribute("href"))).toEqual(["#_me/cand/c1"]);
   expect(el.querySelector("aside")!.textContent).toContain("담당 먼저");
   expect(text(el, "#home-list li a .ht")).toEqual(["P-1 담당이 먼저", "두 번째 기준"]);
   expect(posts()).toEqual([]);

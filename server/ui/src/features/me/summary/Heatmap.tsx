@@ -14,7 +14,7 @@ export function Heatmap({ W, statsFail }: BlockProps) {
   const past = cells.filter(c => !c.future), max = past.reduce((m, c) => Math.max(m, c.n), 0), sum = past.reduce((s, c) => s + c.n, 0);
   const sumR = past.reduce((s, c) => s + (c.records || 0), 0), sumA = past.reduce((s, c) => s + (c.activities || 0), 0);
   const lvl = (n: number) => (n <= 0 ? 0 : Math.min(4, Math.ceil(4 * n / max)));
-  const C = 14, G = 3, P = C + G, L = 22, T = 16, Wd = L + 13 * P, H = T + 7 * P;
+  const C = 14, G = 3, P = C + G, L = 22, T = 16, RM = 12, Wd = L + 13 * P + RM, H = T + 7 * P;   // RM = 마지막 달 라벨(「11월」) 오른쪽 여백
   const months: [number, number][] = [];
   let pm = "";
   for (let w = 0; w < 13; w++) { const c = cells[w * 7]; if (!c) continue; const mo = c.d.slice(5, 7); if (mo !== pm) { months.push([w, +mo]); pm = mo; } }

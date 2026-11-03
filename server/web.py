@@ -2021,7 +2021,7 @@ class Web:
 
         def pv(uid, b):
             out = db.record_body_preview(uid, rid, b["body"], b["expected_revision"])
-            out["msg"] = f"검토할 판단 {out['drop']}개가 지워져요(다시 뽑을 수 있어요)" if out["drop"] else ""   # facade 미리보기 shown 과 같은 글
+            out["msg"] = db.edit_drop_msg(out["drop"])   # facade 미리보기 shown 과 같은 함수
             return out
         return await self._core_write(request, "record_edit", {"expected_revision": ((int,), True), "body": ((str,), True)}, pv)
 

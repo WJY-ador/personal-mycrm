@@ -1263,6 +1263,11 @@ RECORD_VIA = ("web", "mcp")
 EDIT_CONTEXT = 30   # 미리보기 「전·후」에 붙이는 앞뒤 글자 수(코드포인트)
 
 
+def edit_drop_msg(n):
+    """본문 수정 미리보기의 지워질 미결 후보 문구 — 대화(facade decide_preview)·웹(/body/preview)이 같이 쓴다. 0이면 빈 문자열."""
+    return f"검토할 판단 {n}개가 지워져요(다시 뽑을 수 있어요)" if n else ""
+
+
 def _edit_via(via):
     if via not in RECORD_VIA:
         raise CrmError("ARG-INVALID", f"via 는 {', '.join(RECORD_VIA)} 중 하나예요.")

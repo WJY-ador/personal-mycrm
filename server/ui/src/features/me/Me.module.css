@@ -13,7 +13,7 @@
 .hval.name { display: inline-block; width: auto; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .hval.inline { display: inline; width: auto; padding: .05rem .25rem; margin: 0 -.25rem; }
 .hval.body { margin: .6rem -.35rem 0; }
-.hval.docEdit { white-space: normal; cursor: text; margin-top: .6rem; }
+.hval.docEdit { position: relative; white-space: normal; cursor: text; margin-top: .6rem; }
 .editor { margin: .6rem 0 0; }
 .editor label { display: block; font-size: .76rem; color: var(--muted); margin: .4rem 0 .25rem; }
 .editor textarea, .editor input { width: 100%; font: inherit; font-size: .9rem; line-height: 1.65; padding: .5rem .6rem; border: 1px solid var(--accent);

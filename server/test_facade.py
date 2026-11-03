@@ -277,7 +277,10 @@ async def test_symmetry(S):
             if d.is_error:
                 assert code(d) == code(f), (op, code(d), code(f))
             else:
-                assert val(d) == val(f), op
+                dv, fv = val(d), val(f)
+                if op == "state_get":   # generated = 호출 시각(초 단위) — 두 호출이 초 경계를 넘으면 달라진다. 그 키만 뺀다
+                    dv.pop("generated", None), fv.pop("generated", None)
+                assert dv == fv, op
                 assert [x.text for x in d.content] == [x.text for x in f.content], f"{op} 본문 모양"
         # 쓰기 — A 직접 · B facade, 모양 같음
         r3, r4 = db.record_add(S["uid"], "후보용", BODY, S["q"])["id"], db.record_add(S["uid"], "후보용", BODY, S["q"])["id"]
