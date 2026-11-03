@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiErr } from "../../shared/api";
+import { journalKey } from "../../shared/journal";
 import type { AppState, Rec } from "../../shared/state";
 import { meApi, type AxisCtx, type PersonCtx } from "./meApi";
 import type { World } from "./model";
@@ -10,7 +11,7 @@ import { MORE_FAIL } from "./text";
 
 export const QK = {
   stats: ["me", "stats"], layout: ["me", "layout"],
-  axis: (id: string) => ["me", "axis", id], person: (id: string) => ["me", "person", id], journal: (id: string) => ["journal", id],
+  axis: (id: string) => ["me", "axis", id], person: (id: string) => ["me", "person", id], journal: journalKey,
 };
 
 // 축이 아닌 항목 = NOT-FOUND → 활동 이웃 없음(실패 아님)

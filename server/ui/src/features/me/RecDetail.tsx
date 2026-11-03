@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiErr } from "../../shared/api";
 import { mdhm } from "../../shared/date";
 import { Doc } from "../../shared/Doc";
+import { oldSrc } from "../../shared/source";
 import type { Rec } from "../../shared/state";
 import { Acts } from "./Acts";
 import { Conn } from "./Conn";
@@ -18,8 +19,6 @@ import { qById, srcText, type World } from "./model";
 import { GONE, LOADING, serverErrText } from "./text";
 import { QK } from "./useWorld";
 import css from "./Me.module.css";
-
-const oldSrc = (raw: string | null) => (!raw ? "" : raw.startsWith("파일:") ? "파일에서 가져옴" : raw);
 
 function specs(j: Journal): [EditSpec, EditSpec] {
   return [

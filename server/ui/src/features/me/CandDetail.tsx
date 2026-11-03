@@ -7,7 +7,7 @@ import { useEdit } from "./edit";
 import { Editor } from "./Editor";
 import { Head } from "./Head";
 import { records, type Row, type World } from "./model";
-import { ReviewNote } from "./ReviewNote";
+import { ReviewNote } from "../../shared/ReviewNote";
 import css from "./Me.module.css";
 
 export function CandDetail({ W, r, trashOn }: { W: World; r: Extract<Row, { k: "cand" }>; trashOn: boolean }) {

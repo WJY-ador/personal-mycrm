@@ -529,11 +529,11 @@ def test_static_trash():
     assert "setupPages().some(p => p[0] === R.a)" in js and "else if (page === \"trash\") uiMount(\"trash\");" in js
     # 「반영 안 함」 — 칩·필터·저장 메시지·이력·메타(스위치 무관). 기존 상태 표시만 바꾸고 동작은 그대로
     for w in ('<span class="badge b-off">반영 안 함</span>', '["excluded", "반영 안 함"]', 'excluded: ["st-off", "반영 안 함"]',
-              'exclude: "반영 안 함으로 표시했어요."', 'data-act="exclude" disabled>반영 안 함</button>', 'exclude: "반영 안 함", pending: "아직 안 정함"',
+              'exclude: "반영 안 함으로 표시했어요."', 'exclude: "반영 안 함", pending: "아직 안 정함"',
               '["반영 안 함", cs.filter(c => c.status === "excluded").length, "--soft"]'):
         assert w in js, w
     assert "남기지 않" not in html, "「남기지 않음·않기·않았어요」 0 — 표현은 「반영 안 함」 하나(동작 exclude 는 그대로). React 쪽은 Vitest MeActs"
-    assert js.count("반영 안 함으로 표시했어요.") == 3 and "반영 안 함으로 저장했어요." not in js
+    assert js.count("반영 안 함으로 표시했어요.") == 1 and "반영 안 함으로 저장했어요." not in js, "옛 쪽 = 서랍 ITEM_SAVED 하나(판단 검토 = React features/review)"
     assert "근거를 이용할 수 없어요." in js and "찾을 수 없는 대상" not in js, "삭제된 근거 = 「근거를 이용할 수 없어요.」"
     # PR-2 몫은 그대로 — 승인 대기 [제외] · 제안 [제외] · 대화 「뺀 것」
     assert 'act === "inbox-exclude"' in js and '<button class="secondary" type="button" data-iact="discard">제외</button>' in js and "뺀 것 ${" in js
@@ -737,7 +737,7 @@ def test_static_moved():
               "별칭도 그 사람을 알아볼 수 있으면 개인정보예요.", "삭제 완료"):
         assert w in html, w
     assert re.search(r"REFL_HELP\s*=\s*\"출처를 접한 뒤 내가 한 생각만 적어요", html) and re.search(r"PERSON_HELP\s*=\s*\"별칭도", html)
-    assert html.count("${reviewNote(c)}") >= 4, "오늘·후보·기록·나 화면 재검토 표시"
+    assert html.count("${reviewNote(c)}") >= 3, "오늘·질문·기록 화면 재검토 표시(판단 검토 화면 = React shared/ReviewNote, R3)"
     for dlg_id in ("name-dlg", "nav-dlg"):
         outside_marks(html.index(f'<dialog id="{dlg_id}"'), dlg_id)
     i = html.index('<dialog id="nav-dlg"')

@@ -10,6 +10,7 @@ export type Question = { id: string; text: string; created: string };
 export type Cand = {
   id: string; text: string; status: string; record_id: string; question_id: string | null;
   quote: string; review: string | null; revision: number; created: string;
+  origin: string; edited_by_user: boolean; wording_by: string | null; wording_approved: boolean;
 };
 export type Item = {
   id: string; object_id: string; code: string | null; title: string | null; body: string | null;
@@ -22,10 +23,16 @@ export type Person = { id: string; alias: string; revision: number; created: str
 export type Refl = { id: string; source_id: string; kind: string; body: string; review: string; revision: number; created: string; updated: string };
 export type Source = { id: string; kind: string; name: string; location: string | null };
 
+// 대화 서랍 — 이어 받을 세션(확정 전·만료 전 최신 1) · 내 장치 상태(서버 판정 그대로, 화면은 state·last_seen_at 만 읽는다)
+export type StackSession = { id: string; expires_at: string };
+export type DevicesStatus = { state: string; last_seen_at: string | null; threshold_seconds: number };
+
 export type AppState = {
   user: { display_name: string | null; nav: string };
-  switches: { trash: boolean };
-  read?: Record<string, { ok: boolean }>;   // 부분 읽기 실패 때만 온다
+  switches: { trash: boolean; converse?: boolean };
+  read?: Record<string, { ok: boolean; error?: { code: string; msg: string } }>;   // 부분 읽기 실패 때만 온다
+  stack_session?: StackSession | null;
+  devices_status?: DevicesStatus;
   journal: Rec[];
   journal_next_before: string | null;
   questions: Question[];

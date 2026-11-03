@@ -3,6 +3,7 @@
 import { expect, test } from "vitest";
 import { BLOCKS, REGISTRY, SCREENS } from "./registry";
 import { ME_TABS } from "../features/me/text";
+import migrated from "../../migrated.json";
 
 test("BLOCKS 키 = 레지스트리 컴포넌트 id · 블록은 summary 영역 · 기본 배치 그릴 수 있음", () => {
   expect(Object.keys(BLOCKS).sort()).toEqual(Object.keys(REGISTRY.components).sort());
@@ -10,5 +11,5 @@ test("BLOCKS 키 = 레지스트리 컴포넌트 id · 블록은 summary 영역 �
   const def = REGISTRY.pages.me.default;
   expect(def.regions.summary.every(s => s.c in BLOCKS)).toBe(true);
   expect([...def.tabs].sort()).toEqual([...ME_TABS].sort());
-  expect(Object.keys(SCREENS).sort()).toEqual(["me", "trash"]);
+  expect(Object.keys(SCREENS).sort()).toEqual(Object.keys(migrated.screens).sort());   // 옮긴 화면 = 래칫 목록(server/ui/migrated.json)
 });

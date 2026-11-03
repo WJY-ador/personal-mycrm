@@ -2,9 +2,10 @@
 import { attachRows, splitDoc } from "./docParts";
 import { Para } from "./Para";
 
-type Props = { title: string | null; body: string; quote?: string; qText: (id: string) => string | null };
+// attachTitle = 붙는 곳 머리말(옛 탐색은 「이 기록이 붙는 곳」)
+type Props = { title: string | null; body: string; quote?: string; qText: (id: string) => string | null; attachTitle?: string };
 
-export function Doc({ title, body, quote, qText }: Props) {
+export function Doc({ title, body, quote, qText, attachTitle = "이 글이 붙는 곳" }: Props) {
   const d = splitDoc(body, title);
   const rows = attachRows(d.attach, qText);
   return (
@@ -12,7 +13,7 @@ export function Doc({ title, body, quote, qText }: Props) {
       {d.paras.map((p, i) => <Para key={i} p={p} quote={quote} />)}
       {rows.length > 0 && (
         <div className="attach">
-          <h4>이 글이 붙는 곳</h4>
+          <h4>{attachTitle}</h4>
           <dl>{rows.map(([k, v], i) => [<dt key={`t${i}`}>{k}</dt>, <dd key={`d${i}`}>{v}</dd>])}</dl>
         </div>
       )}

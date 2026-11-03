@@ -1,7 +1,10 @@
 // 「나」 서버 접점 — 읽기(통계·레이아웃·기록 본문·이어 받기·문맥) + 쓰기(기존 경로 + 수기 수정). 응답 모양 정본 = server/web.py·db.py.
 // 견본 대조 = me.sample.json(stats·layout·journal) ↔ server/test_web_home.py test_me_samples.
 import { getJSON, postJSON } from "../../shared/api";
+import { candidateDecide, fetchJournal, type CandDecide } from "../../shared/journal";
 import type { Rec } from "../../shared/state";
+
+export type { Journal } from "../../shared/journal";
 
 export type Stats = {
   axes: { id: string; code: string | null; title: string; items: number; records: number; readings: number; n: number }[];
@@ -12,7 +15,6 @@ export type Stats = {
 export type Slot = { c: string; p: Record<string, unknown> };
 export type MePage = { tabs: string[]; regions: Record<string, Slot[]> };
 export type Layout = { layout: { v: number; pages: { me: MePage } }; version: number };
-export type Journal = { id: string; title: string; body: string; revision: number; author_kind: string; meta: { created: string; source: string | null; question_id: string | null } };
 export type BodyPreview = { record_id: string; revision: number; before: string; after: string; drop: number; msg: string };
 export type Act = {
   id: string; action: string; action_label?: string; occurred_on: string | null; observed_on?: string | null; state?: string;
@@ -28,7 +30,7 @@ const enc = encodeURIComponent;
 export const meApi = {
   stats: () => getJSON<Stats>("/api/me/stats"),
   layout: () => getJSON<Layout>("/api/me/layout"),
-  journal: (id: string) => getJSON<Journal>("/api/journal?id=" + enc(id)),
+  journal: fetchJournal,
   records: (before: string) => getJSON<{ records: Rec[]; next_before: string | null }>(`/api/records?before=${enc(before)}&limit=50`),
   person: (id: string) => getJSON<PersonCtx>(`/api/people/${enc(id)}/context`),
   axis: (id: string) => getJSON<AxisCtx>(`/api/axes/${enc(id)}/context`),
@@ -38,7 +40,7 @@ export const meApi = {
   name: (display_name: string) => postJSON("/api/me/name", { display_name }),
   reflection: (id: string, body: object) => postJSON(`/api/reflections/${enc(id)}`, body),
   review: (id: string, reviewed: boolean, expected_revision: number) => postJSON(`/api/reflections/${enc(id)}/review`, { reviewed, expected_revision }),
-  candidate: (body: object) => postJSON("/api/candidate/decide", body),
+  candidate: (body: CandDecide) => candidateDecide(body),
   itemDecide: (body: object) => postJSON("/api/item/decide", body),
   trash: (kind: string, id: string, rev: number | null) =>
     postJSON("/api/trash/move", rev == null ? { kind, id } : { kind, id, expected_revision: rev }),

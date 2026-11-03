@@ -87,7 +87,7 @@ def test_no_manifest():
 
 
 def test_bridge_old_side():
-    """옛 쪽 다리(node 실행) — uiMount 세 갈래(모듈 있음 = CrmUI.mount · 모듈 아직 = 자리 맡김 + 불러오는 중 · 빌드 없음 = 한 줄 안내)
+    """옛 쪽 다리(node 실행) — uiMount 세 갈래(띄우기 공통 uiIsland — 대화 서랍 상시 섬도 같은 길)(모듈 있음 = CrmUI.mount · 모듈 아직 = 자리 맡김 + 불러오는 중 · 빌드 없음 = 한 줄 안내)
     · 같은 화면 다시 = 자리 유지(새로 만들지 않음) · 다른 화면이 #view 를 덮으면 uiSweep 이 unmount · applyState = crm:state 1번."""
     import shutil
     import subprocess
@@ -108,14 +108,15 @@ class Event { constructor(t) { this.type = t; } }"""
     scen = """const out = {};
 uiMount("trash"); out.none = $("ui-trash").innerHTML; out.noneOn = uiOn; out.afterNone = coreFlash;
 view.innerHTML = "<p>다른 화면</p>"; uiSweep(); out.sweptOn = uiOn;
-MODULE = true; uiMount("trash"); out.pending = [window.CrmUIPending && window.CrmUIPending[0], $("ui-trash").innerHTML];
+MODULE = true; uiMount("trash"); out.pending = [window.CrmUIPending && Object.keys(window.CrmUIPending), $("ui-trash").innerHTML];
 window.CrmUI = {mount: (n, el, ctx) => { log.push(["mount", n, el.id, typeof ctx.reload]); out.ctx = ctx; out.flashes.push(ctx.flash); }, unmount: n => log.push(["unmount", n])};
-out.pendFlash = window.CrmUIPending && window.CrmUIPending[2].flash; coreFlash = {text: "결과"}; out.flashes = [];
+out.pendFlash = window.CrmUIPending && window.CrmUIPending.trash[1].flash; coreFlash = {text: "결과"}; out.flashes = [];
 const before = made; uiMount("trash"); uiMount("trash"); out.made = made - before; uiSweep(); out.kept = log.length;
-view.innerHTML = "<p>다른 화면</p>"; uiSweep(); out.log = log; out.pendingAfter = window.CrmUIPending === undefined; out.on = uiOn;
+view.innerHTML = "<p>다른 화면</p>"; uiSweep(); out.log = log; out.pendingAfter = !window.CrmUIPending || !window.CrmUIPending.trash; out.on = uiOn;
 out.flashLeft = coreFlash;
 S = {id: "S1"}; uiMount("me", ["principle", "p1"]); out.me = [out.ctx.state.id, out.ctx.args, out.ctx.flash];
 out.ctx.setDirty("#_me/principle/p1"); out.dirty = uiDirty; out.ctx.setDirty(null); out.clean = uiDirty;
+const n0 = log.length; uiMount("review", ["q", "q1", "c_1"]); out.swap = log.slice(n0); out.swapOn = uiOn;
 view.innerHTML = "<p>다른 화면</p>"; uiSweep(); log.length = 3;
 applyState({generated: ""}); out.events = events; out.renders = renders; out.cache = Object.keys(recCache);
 console.log(JSON.stringify(out));"""
@@ -124,13 +125,14 @@ console.log(JSON.stringify(out));"""
     o = json.loads(r.stdout)
     assert "이 화면 파일이 서버에 없어요." in o["none"] and o["noneOn"] == "trash", "빌드 없음 = 한 줄 안내"
     assert o["sweptOn"] == "", "다른 화면 = 내림"
-    assert o["pending"] == ["trash", "LOADING"], "모듈 아직 = 자리 맡김 + 불러오는 중"
+    assert o["pending"] == [["trash"], "LOADING"], "모듈 아직 = 이름별로 자리 맡김 + 불러오는 중"
+    assert o["swap"] == [["unmount", "me"], ["mount", "review", "ui-review", "function"]] and o["swapOn"] == "review", "다른 화면으로 = 앞 화면을 내리고 띄운다(#view 화면은 하나)"
     assert o["made"] == 0 and o["kept"] == 2, "같은 화면 다시 = 자리 유지(새 div 0) · 머무는 동안 unmount 0"
     assert o["log"] == [["mount", "trash", "ui-trash", "function"], ["mount", "trash", "ui-trash", "function"], ["unmount", "trash"]]
     assert o["pendingAfter"] and o["on"] == ""
     assert o["events"] == ["crm:state"] and o["renders"] == 1, "새 상태 = render 뒤 crm:state 1번"
     assert o["afterNone"] == {"text": "결과"} and o["pendFlash"] == {"text": "결과"}, "빌드 없음 = 결과 문구를 넘기지 않음(남김) · 맡긴 자리 = 넘김"
-    assert o["flashes"] == [{"text": "결과"}, None, None] and o["flashLeft"] is None, "껍데기 결과 한 줄 = 띄운 화면에 한 번(넘긴 뒤 비움)"
+    assert o["flashes"] == [{"text": "결과"}, None, None, None] and o["flashLeft"] is None, "껍데기 결과 한 줄 = 띄운 화면에 한 번(넘긴 뒤 비움)"
     assert o["me"] == ["S1", ["principle", "p1"], None], "ctx = 상태 S · 주소 조각 · (넘긴 결과 문구는 다시 안 감)"
     assert o["dirty"] == "#_me/principle/p1" and o["clean"] is None, "setDirty = 껍데기 미저장 보호 주소"
     assert o["cache"] == [], "새 상태 = 옛 기록 본문 캐시 비움(React 에서 고친 글)"

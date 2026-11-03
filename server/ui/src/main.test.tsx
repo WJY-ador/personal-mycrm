@@ -6,14 +6,15 @@ import { calls, click, flush, installFetch, json, serve } from "./test/fakeServe
 
 const ROW = { kind: "record", id: "r1", title: "글", trashed_at: "2026-10-23T01:00:00Z", purge_at: "2026-10-30T01:00:00Z", revision: null, restore_state: null };
 const ctx = { reload: vi.fn(async () => {}) };
-let pendingEl: HTMLDivElement;
+let pendingEl: HTMLDivElement, gone: HTMLDivElement;
 
 beforeAll(async () => {
   installFetch();
   serve(() => json(200, { items: [ROW], next_cursor: "", hours: 168 }));
   pendingEl = document.createElement("div");
   document.body.append(pendingEl);
-  window.CrmUIPending = ["trash", pendingEl, ctx];   // 옛 라우터가 모듈보다 먼저 자리를 맡겼다
+  gone = document.createElement("div");   // 맡긴 뒤 화면에서 사라진 자리 — 띄우지 않는다
+  window.CrmUIPending = { trash: [pendingEl, ctx], review: [gone, ctx] };   // 옛 라우터가 모듈보다 먼저 자리를 맡겼다(이름별)
   await act(async () => { await import("./main"); });
   await flush();
 });
@@ -23,6 +24,7 @@ test("맡겨 둔 자리 = 모듈이 뜨면 띄운다 · 다리는 mount·unmount
   expect(Object.keys(window.CrmUI!).sort()).toEqual(["mount", "unmount"]);
   expect(window.CrmUIPending).toBeUndefined();
   expect(pendingEl.textContent).toContain("휴지통");
+  expect(gone.textContent).toBe("");
   act(() => window.CrmUI!.unmount("trash"));
   expect(pendingEl.textContent).toBe("");
 });

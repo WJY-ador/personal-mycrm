@@ -7,7 +7,7 @@ import type { UiCtx } from "./shared/ctx";
 
 type Bridge = { mount: typeof mount; unmount: typeof unmount };
 declare global {
-  interface Window { CrmUI?: Bridge; CrmUIPending?: [string, HTMLElement, UiCtx] }
+  interface Window { CrmUI?: Bridge; CrmUIPending?: Record<string, [HTMLElement, UiCtx]> }   // 화면 이름 → 맡겨 둔 자리(화면 하나 + 상시 섬)
 }
 const slots = new Map<string, { el: HTMLElement; root: Root }>();
 
@@ -35,6 +35,6 @@ function unmount(name: string): void {
 window.addEventListener("crm:state", () => void queryClient.invalidateQueries());
 window.CrmUI = { mount, unmount };
 // 이 모듈보다 옛 라우터가 먼저 화면을 고른 경우 — 맡겨 둔 자리가 아직 화면에 있으면 띄운다
-const p = window.CrmUIPending;
+const p = window.CrmUIPending || {};
 window.CrmUIPending = undefined;
-if (p && p[1].isConnected) mount(...p);
+for (const [name, [el, ctx]] of Object.entries(p)) if (el.isConnected) mount(name, el, ctx);

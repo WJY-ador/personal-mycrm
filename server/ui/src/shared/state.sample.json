@@ -4,7 +4,8 @@
   "nav": "new"
  },
  "switches": {
-  "trash": true
+  "trash": true,
+  "converse": false
  },
  "journal": [
   {
@@ -37,7 +38,11 @@
    "quote": "입력 담당**을 먼저 정했다",
    "review": null,
    "revision": 1,
-   "created": "2026-11-03T11:25:02.944400+09:00"
+   "created": "2026-11-03T11:25:02.944400+09:00",
+   "origin": "ai",
+   "edited_by_user": false,
+   "wording_by": null,
+   "wording_approved": false
   }
  ],
  "items": [
@@ -127,5 +132,11 @@
   "actions": {
    "like": "좋아요"
   }
+ },
+ "stack_session": null,
+ "devices_status": {
+  "state": "none",
+  "last_seen_at": null,
+  "threshold_seconds": 180
  }
 }

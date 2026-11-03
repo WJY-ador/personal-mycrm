@@ -1,6 +1,7 @@
 // 「나」 자료 규칙(순수 함수) — 옛 app.html homeRows·meRows·meAxes·meN·mePick·meTabOfItem 그대로. 연결 = 저장된 관계만(추정 0).
 // W = 화면이 지금 가진 것: 상태 S + 이어 받은 기록 + 통계 + 문맥 API 결과(축·사람 — 이 화면에 머무는 동안).
 import { timeOf } from "../../shared/date";
+import { srcText as srcTextOf } from "../../shared/source";
 import { readOk, type AppState, type Cand, type Def, type Item, type Person, type Question, type Rec, type Refl, type Source } from "../../shared/state";
 import type { Act, AxisCtx, PersonCtx, Stats } from "./meApi";
 import { ME_STD, REFL_KIND, SRC_KIND, firstLine, type MeTab } from "./text";
@@ -21,7 +22,7 @@ export const objLabel = (W: World, id: string) => defById(W, id)?.label || "항�
 export const itemById = (W: World, id: string) => (W.S.items || []).concat(W.S.item_proposals || []).find(it => it.id === id);
 export const qById = (W: World, id: string) => (W.S.questions || []).find(q => q.id === id);
 export const srcById = (W: World, id: string | null) => (W.S.sources || []).find(x => x.id === id);
-export const srcText = (W: World, sid: string | null) => { const x = srcById(W, sid); return x ? `${x.name} · ${SRC_KIND[x.kind] || x.kind}` : "출처 미확인"; };
+export const srcText = (W: World, sid: string | null) => srcTextOf(W.S.sources, sid);
 export const srcName = (W: World, sid: string) => { const x = srcById(W, sid); return x ? `${x.name} · ${SRC_KIND[x.kind] || x.kind}` : "찾을 수 없는 출처"; };
 export const records = (W: World) => (readOk(W.S, "journal") ? W.recs : []);
 

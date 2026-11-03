@@ -1,6 +1,6 @@
 {
   "_doc": "React 전환 래칫(server/test_ui_build.py 가 읽는다). screens = 옮긴 화면 이름 → 옛 app.html 에서 지운 이름(하나라도 남으면 실패). app_html_function_max = app.html 최상위 function 수 상한 — 화면을 옮길 때마다 내린다. temp_duplicates = 옛 쪽에 다른 화면이 쓰는 같은 일이 남은 것(R5 에서 한쪽만 남긴다) — 래칫이 아니라 기록.",
-  "app_html_function_max": 219,
+  "app_html_function_max": 218,
   "screens": {
     "trash": [
       "renderTrash",
@@ -74,15 +74,24 @@
       "ME_KINDS",
       "ME_WAIT",
       "HOME_GONE"
+    ],
+    "review": [
+      "renderReview",
+      "lockReview",
+      "lastSave",
+      "afterSave",
+      "SAVED"
     ]
   },
   "temp_duplicates": {
     "rich·paraHtml·splitDoc·attachHtml": "src/shared/rich.tsx·Para.tsx·docParts.ts·Doc.tsx — 사례 rich.cases.json 을 옛 JS(test_ui_alignment)·새 TS 가 같이 통과",
     "md·mdhm·dOnly·toDate": "src/shared/date.ts",
     "REFL_KIND·SRC_KIND·TRASH_ASK·LOADING·ME_EMPTY·ME_TABS·ME_TAB_LABEL·ME_LOCKED·ME_STD": "src/features/me/text.ts",
-    "reviewNote·REVIEW_TEXT_NEW·REVIEW_FIX_NEW": "src/features/me/ReviewNote.tsx",
     "actRow·barRows(출처 문맥)": "src/features/me/ActRows.tsx·SourceActs.tsx",
     "meTabOfItem": "src/features/me/model.ts tabOfItem (옛 쪽 = navReplace)",
-    "meV1·meV2·meSync(레이아웃 GET)": "Setup 「페이지 레이아웃」이 쓴다 — React 「나」는 v2 그대로(useQuery /api/me/layout)"
+    "meV1·meV2·meSync(레이아웃 GET)": "Setup 「페이지 레이아웃」이 쓴다 — React 「나」는 v2 그대로(useQuery /api/me/layout)",
+    "reviewNote·REVIEW_TEXT·REVIEW_FIX·REVIEW_TEXT_NEW·REVIEW_FIX_NEW": "src/shared/ReviewNote.tsx(새·옛 탐색 두 벌)",
+    "origin·decision·aiWordingChip·partFail·techInfo·FIXHINT·CONFLICT_TEXT(판단 검토)": "src/features/review/Card.tsx·Fail.tsx·text.ts — 옛 오늘·질문·기록·구조 화면이 같은 칩·못 읽음 표시를 쓴다",
+    "srcText·srcLabel·SRC_KIND": "src/shared/source.ts(「나」·판단 검토 공용)"
   }
 }
