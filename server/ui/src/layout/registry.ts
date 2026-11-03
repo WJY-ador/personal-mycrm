@@ -12,6 +12,7 @@ import { DevicesScreen } from "../features/devices/DevicesScreen";
 import { ActivityScreen } from "../features/activity/ActivityScreen";
 import { ObjectsScreen } from "../features/objects/ObjectsScreen";
 import { TodayScreen } from "../features/today/TodayScreen";
+import { LayoutScreen } from "../features/me/layout/LayoutScreen";
 import type { Blocks } from "../features/me/summary/block";
 import { Heatmap } from "../features/me/summary/Heatmap";
 import { Kinds } from "../features/me/summary/Kinds";
@@ -19,6 +20,7 @@ import { Waiting } from "../features/me/summary/Waiting";
 import { Recent } from "../features/me/summary/Recent";
 
 export const REGISTRY = reg;
+const BLOCK_LABEL = Object.fromEntries(Object.entries(reg.components).map(([k, v]) => [k, v.label]));
 export const BLOCKS: Blocks = { heatmap: Heatmap, kinds: Kinds, waiting: Waiting, recent: Recent };
 
 export const SCREENS: Record<string, ComponentType<ScreenProps>> = {
@@ -31,4 +33,5 @@ export const SCREENS: Record<string, ComponentType<ScreenProps>> = {
   today: TodayScreen,         // 오늘·저장 승인 대기(ctx.args = [today, a, b] | [inbox, 상태])
   chat: ChatRoot,   // 상시 섬(#ui-chat) — #view 화면이 아니다
   me: (p: ScreenProps) => createElement(MeScreen, { ...p, blocks: BLOCKS, layoutDefault: reg.pages.me.default }),
+  layout: (p: ScreenProps) => createElement(LayoutScreen, { ...p, def: reg.pages.me.default, blockLabel: BLOCK_LABEL }),   // Setup 페이지 레이아웃
 };

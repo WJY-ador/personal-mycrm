@@ -1,6 +1,6 @@
 // 「나」 서버 접점 — 읽기(통계·레이아웃·기록 본문·이어 받기·문맥) + 쓰기(기존 경로 + 수기 수정). 응답 모양 정본 = server/web.py·db.py.
 // 견본 대조 = me.sample.json(stats·layout·journal) ↔ server/test_web_home.py test_me_samples.
-import { getJSON, postJSON } from "../../shared/api";
+import { deleteJSON, getJSON, postJSON, putJSON } from "../../shared/api";
 import { candidateDecide, fetchJournal, type CandDecide } from "../../shared/journal";
 import type { Act } from "../../shared/activity";
 import type { Rec } from "../../shared/state";
@@ -27,6 +27,9 @@ const enc = encodeURIComponent;
 export const meApi = {
   stats: () => getJSON<Stats>("/api/me/stats"),
   layout: () => getJSON<Layout>("/api/me/layout"),
+  // 페이지 레이아웃(Setup) — v2 전체를 보낸다 · version 불일치 = 409 LAYOUT-STALE · DELETE = 기본으로 되돌리기(version +1)
+  layoutPut: (me: MePage, version: number) => putJSON<Layout>("/api/me/layout", { layout: { v: 2, pages: { me } }, version }),
+  layoutReset: () => deleteJSON<Layout>("/api/me/layout"),
   journal: fetchJournal,
   records: (before: string) => getJSON<{ records: Rec[]; next_before: string | null }>(`/api/records?before=${enc(before)}&limit=50`),
   person: (id: string) => getJSON<PersonCtx>(`/api/people/${enc(id)}/context`),

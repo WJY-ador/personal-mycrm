@@ -17,7 +17,7 @@ import { RecDetail } from "./RecDetail";
 import { SubTabs } from "./SubTabs";
 import { Summary } from "./summary/Summary";
 import type { Blocks } from "./summary/block";
-import { GONE, ME_EMPTY, ME_TABS, URL_KINDS, isTab, type MeTab } from "./text";
+import { GONE, ME_EMPTY, URL_KINDS, isTab, validTabs, type MeTab } from "./text";
 import { axisCtx, QK, useWorld } from "./useWorld";
 import { isAxis } from "./Conn";
 import { backNav, useMobile, useViewStore, ViewCtx } from "./view";
@@ -26,9 +26,6 @@ import css from "./Me.module.css";
 const here = () => location.hash || "#_me";
 
 type Props = ScreenProps & { blocks: Blocks; layoutDefault: MePage };
-
-// 저장값이 7 탭의 순서가 아니면(빠짐·중복·모르는 이름) 기본 배치
-const validTabs = (t: unknown): t is MeTab[] => Array.isArray(t) && t.length === ME_TABS.length && new Set(t).size === ME_TABS.length && t.every(x => isTab(x));
 
 export function MeScreen({ ctx, blocks, layoutDefault }: Props) {
   const S = ctx.state!, [a = "", b = ""] = ctx.args || [];

@@ -1,6 +1,6 @@
 {
   "_doc": "React 전환 래칫(server/test_ui_build.py 가 읽는다). screens = 옮긴 화면 이름 → 옛 app.html 에서 지운 이름(하나라도 남으면 실패). app_html_function_max = app.html 최상위 function 수 상한 — 화면을 옮길 때마다 내린다. temp_duplicates = 옛 쪽에 다른 화면이 쓰는 같은 일이 남은 것(R5 에서 한쪽만 남긴다) — 래칫이 아니라 기록. removed = 옮기지 않고 지운 옛 코드(R5a 옛 탐색) — 이름이 app.html 에 다시 나오면 실패.",
-  "app_html_function_max": 107,
+  "app_html_function_max": 96,
   "screens": {
     "trash": [
       "renderTrash",
@@ -333,6 +333,37 @@
       "data-home-back",
       "data-me-open",
       "data-more"
+    ],
+    "layout": [
+      "renderLayout",
+      "layFetch",
+      "layRedraw",
+      "layCommit",
+      "laySend",
+      "layMove",
+      "layDrop",
+      "layDrag",
+      "layCopy",
+      "laySame",
+      "LAY",
+      "meV1",
+      "meV2",
+      "meSync",
+      "meRaw",
+      "meLayout",
+      "meLayoutValid",
+      "ME_LAYOUT_DEFAULT",
+      "ME_BLOCKS",
+      "ME_BLOCK_LABEL",
+      "ME_TAB_LABEL",
+      "ME_LOCKED",
+      "homeRerender",
+      "getJSON",
+      "setlay",
+      "data-lay-reset",
+      "data-lay-key",
+      "lay-help",
+      "lay-msg"
     ]
   },
   "removed": {
@@ -341,15 +372,14 @@
   "temp_duplicates": {
     "rich·paraHtml·splitDoc·attachHtml": "src/shared/rich.tsx·Para.tsx·docParts.ts·Doc.tsx — 사례 rich.cases.json 을 옛 JS(test_ui_alignment)·새 TS 가 같이 통과",
     "meTabOfItem": "src/features/me/model.ts tabOfItem (옛 쪽 = navReplace)",
-    "meV1·meV2·meSync(레이아웃 GET)": "Setup 「페이지 레이아웃」이 쓴다 — React 「나」는 v2 그대로(useQuery /api/me/layout)",
     "reviewNote·REVIEW_TEXT·REVIEW_FIX·REVIEW_TEXT_NEW·REVIEW_FIX_NEW": "src/shared/ReviewNote.tsx(한 벌 — R5a 에서 옛 탐색 문구 삭제)",
     "origin·decision·aiWordingChip·partFail·techInfo·FIXHINT·CONFLICT_TEXT(판단 검토)": "src/features/review/Card.tsx·Fail.tsx·text.ts (FIXHINT·Tech = src/shared/Tech.tsx) — 옛 질문·기록·구조 화면이 같은 칩·못 읽음 표시를 쓴다",
     "srcText·srcLabel·SRC_KIND": "src/shared/source.ts(「나」·판단 검토 공용)",
     "CORE_ERR·coreFail(실패 문구)": "src/shared/postErr.ts(연결 장치·이관·활동·자료 종류·오늘) — 옛 표시 이름 폼·항목 서랍 [삭제]가 쓴다",
     "techInfo·FIXHINT·josa": "src/shared/Tech.tsx·LoadFail.tsx(판단 검토·이관·활동 공용) — 옛 partFail·loadFail 이 쓴다",
     "trashDel·trashBtn·TRASH_ASK(활동 [삭제] 밖)": "src/features/activity/ActDetail.tsx·features/objects(사람·읽고 든 생각) [삭제] — 옛 항목 서랍이 쓴다",
-    "getJSON·corePost·coreFlash": "src/shared/api.ts·Flash.tsx — 옛 Setup 페이지 레이아웃(getJSON)·표시 이름·휴지통 이동(corePost·coreFlash)이 쓴다",
-    "SRC_KIND·TRASH_ASK·LOADING·ME_TABS·ME_TAB_LABEL·ME_LOCKED·ME_STD": "src/features/me/text.ts·objects/text.ts·today/text.ts(REFL_KIND·ME_EMPTY 는 옛 쪽에서 빠짐)",
+    "corePost·coreFlash": "src/shared/api.ts·Flash.tsx — 옛 표시 이름·휴지통 이동(corePost·coreFlash)이 쓴다",
+    "SRC_KIND·TRASH_ASK·LOADING·ME_STD": "src/features/me/text.ts·objects/text.ts·today/text.ts(REFL_KIND·ME_EMPTY 는 옛 쪽에서 빠짐)",
     "md·mdhm·toDate": "src/shared/date.ts(dOnly 는 옛 쪽에서 빠짐)",
     "ORIGIN_CHIP(자료 종류 카드 칩)": "src/features/objects/text.ts — structure_svg.ORIGIN_CATEGORY 손 사본(옛 originChip = 서버 fill_origin_labels). R5 에서 /api/state 값으로"
   }

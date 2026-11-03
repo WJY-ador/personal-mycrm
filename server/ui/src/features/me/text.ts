@@ -5,6 +5,8 @@ import type { ApiError } from "../../shared/api";
 export const ME_TABS = ["summary", "principle", "decision", "axis", "custom", "person", "source"] as const;
 export type MeTab = (typeof ME_TABS)[number];
 export const isTab = (t: string | undefined): t is MeTab => (ME_TABS as readonly string[]).includes(t || "");
+// 저장값이 7 탭의 순서가 아니면(빠짐·중복·모르는 이름) 기본 배치(「나」·Setup 페이지 레이아웃 공용)
+export const validTabs = (t: unknown): t is MeTab[] => Array.isArray(t) && t.length === ME_TABS.length && new Set(t).size === ME_TABS.length && t.every(x => isTab(x));
 export const ME_TAB_LABEL: Record<MeTab, string> = { summary: "요약", principle: "기준", decision: "결정", axis: "축", custom: "커스텀", person: "사람", source: "출처" };
 export const ME_STD: Record<string, string> = { principle: "std:principles", decision: "std:decision_events", axis: "std:axes" };
 export const ME_LOCKED = new Set(["principle", "decision", "axis", "person", "source"]);

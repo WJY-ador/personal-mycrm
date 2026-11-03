@@ -199,22 +199,17 @@ def test_static():
     assert activity.NOTICE in (HERE / "ui" / "src" / "features" / "activity" / "text.ts").read_text(encoding="utf-8"), "ME_NOTICE(React 활동) = 서버 activity.NOTICE 미러"
     for w in ('"기록": "내 글"', '"내가 쓴 메모"'):
         assert w in js, w   # 오늘 줄(글 종류 「내 글」·「내 글 AI 요약」·활동 5줄 + 더 N)은 React — Vitest TodayScreen.test.tsx
-    # S4 Setup — 페이지 6 · 레이아웃 쓰기는 layFetch 한 곳(PUT·DELETE /api/me/layout) · PUT version = 마지막 응답 version(복원 뒤 포함) ·
-    # 한 번에 하나(보내는 중이면 마지막 배치만 줄 세움) · 실패 = 마지막 저장 배치로 복원 · STALE = 서버 배치 다시 받기 · 옛 묶음 주소 replace ·
-    # 저장 뒤 crm:state(React 「나」가 배치를 다시 받는다)
+    # S4 Setup — 페이지 · 옛 묶음 주소 replace. 페이지 레이아웃(끌어 놓기·저장 줄·STALE·기본으로 되돌리기)은 React(features/me/layout, R5b-2a) —
+    # 화면 동작은 Vitest LayoutScreen.test.tsx. 옛 쪽은 라우팅만(레이아웃 API 0)
     setup = js[js.index("// ── Setup (PR ①-b S4)"):js.index("// ── /Setup ──")]
     for w in ('["layout", "페이지 레이아웃"]', '["structure", "내 구조 설정"]', '["objects", "자료 종류"]', '["devices", "연결 장치"]', '["map", "지도"]',
-              '["help", "문의 및 개인정보"]', 'fetch("/api/me/layout"', '{layout: meV2(op.layout), version: ME.version}', 'layFetch("DELETE")',
-              "ME.version = Number(res.j.version) || 0;", "if (LAY.busy) LAY.queued = op; else laySend(op);", 'res.code === "LAYOUT-STALE"',
-              "ME.layout = LAY.saved.layout; ME.version = LAY.saved.version;", "기본으로 되돌리기", "e.altKey", 'window.dispatchEvent(new Event("crm:state"));',
+              '["help", "문의 및 개인정보"]', 'if (page === "layout") uiMount("layout");',
               'if (R.tab === "_obj" && !R.a) return "#_setup/objects";', 'if (R.tab === "_settings") return "#_setup/structure";',
               'if (R.tab === "_devices") return "#_setup/devices";', 'if (R.tab === "map" && R.a !== "review") return "#_setup/map";',
               'if (R.tab === "_inbox" && !R.a) return "#_today";', 'if (R.tab === "structure") {'):
         assert w in setup, w
-    assert js.count('fetch("/api/me/layout"') == 1, "레이아웃 쓰기 = layFetch 한 곳"
-    assert js.count("async function meSync()") == 1 and js.count("= meSync();") == 1, "레이아웃 읽기 접점 = meSync 한 곳(정의 + load 호출)"
-    assert js.count('getJSON("/api/me/layout")') == 2, "읽기 = meSync + STALE 때 다시 받기"
-    assert "corePost(" not in setup and "/api/" not in setup.replace("/api/me/layout", ""), "Setup 의 다른 쓰기·API 0"
+    assert "/api/me/layout" not in js, "레이아웃 읽기·쓰기 = React"
+    assert "corePost(" not in setup and "/api/" not in setup, "Setup 의 쓰기·API 0"
     assert "{ const to = navReplace(R); if (to) { location.replace(to); return; } }" in js
     assert 'if ((R.tab === "today" || R.tab === "home") && R.a !== "review") return "#_today";' in js, "옛 오늘 화면 없음 — 옛 대조 링크만 그대로"
     # S5 오늘·저장 승인 대기 = React(features/today, R4-2) — 옛 쪽은 라우팅만. 줄·날짜 머리글·삭제 0·승인·제외는 Vitest TodayScreen.test.tsx
@@ -225,7 +220,7 @@ def test_static():
     for i, (lt, dk) in enumerate(zip(("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"),
                                      ("#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767")), 1):
         assert f"--ax{i}: {lt};" in html and f"--ax{i}: {dk};" in html, ("축 색", i)
-    print("OK — 옛 쪽 「나」 접점(uiMount·통계 0·미저장 uiDirty·분기점) · Setup 페이지 6·레이아웃 쓰기 한 곳·version·crm:state·옛 주소 replace · "
+    print("OK — 옛 쪽 「나」 접점(uiMount·통계 0·미저장 uiDirty·분기점) · Setup 페이지·레이아웃 = React·옛 주소 replace · "
           "오늘·승인 대기 라우팅(React) · 축 색 토큰 · 표시 낱말 통과")
 
 

@@ -35,3 +35,8 @@ export const getJSON = <T>(url: string) => call<T>(url, { cache: "no-store" });
 // signal = 시간 제한(응답을 못 받으면 연결 실패와 같게 OFFLINE)
 export const postJSON = <T>(url: string, body: unknown, signal?: AbortSignal) =>
   call<T>(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal });
+
+// PUT·DELETE — 페이지 레이아웃(PUT·DELETE /api/me/layout)만 쓴다
+export const putJSON = <T>(url: string, body: unknown) =>
+  call<T>(url, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+export const deleteJSON = <T>(url: string) => call<T>(url, { method: "DELETE" });
