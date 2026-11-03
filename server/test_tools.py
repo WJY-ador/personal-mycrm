@@ -729,23 +729,9 @@ async def test_web():
                         assert r.headers.get(k) == v, (r.url, k, r.headers.get(k))
                     csp = r.headers["content-security-policy"]
                     assert "script-src 'self'" in csp and "unsafe-inline" not in csp and "unsafe-eval" not in csp, (r.url, csp)
-                # /app: 공통 + 'sha256-…' 하나. 기대값은 응답 본문 인라인 스크립트에서 직접 계산(web 함수를 쓰지 않는다)
-                import base64 as _b64m
-                import hashlib as _hl
-                bodies = [b for a, b in re.findall(r"<script\b([^>]*)>(.*?)</script>", app_r.text, flags=re.S | re.I) if "src=" not in a]
-                assert len(bodies) == 1, len(bodies)
-                want = _b64m.b64encode(_hl.sha256(bodies[0].encode("utf-8")).digest()).decode()
-                assert app_r.headers["content-security-policy"] == f"{csp_base} 'sha256-{want}'", app_r.headers["content-security-policy"]
-                # 해시 함수 단위: 한 글자 바꾸면 다름 · 인라인 0개·2개 → 해시 없음('self' 만) · <script src=…> 는 세지 않음
-                one = '<script src="/assets/theme.js?v=1"></script><p>x</p><script>\n  let a = 1;\n</script>'
-                h1 = web.inline_script_hashes(one)
-                assert h1 == [_b64m.b64encode(_hl.sha256(b"\n  let a = 1;\n").digest()).decode()], h1
-                assert web.inline_script_hashes(one.replace("a = 1", "a = 2")) != h1, "한 글자 바꾸면 해시가 달라진다"
-                assert web.app_csp(one) == f"{csp_base} 'sha256-{h1[0]}'"
-                assert web.inline_script_hashes(one.replace("a = 1", "한 = 1")) == [_b64m.b64encode(_hl.sha256("\n  let 한 = 1;\n".encode("utf-8")).digest()).decode()], "UTF-8 바이트"
-                for bad in ('<script src="/a.js"></script><p>인라인 없음</p>', one + "<script>b()</script>", "<p>스크립트 없음</p>"):
-                    assert web.app_csp(bad) == csp_base, bad
-                assert web.inline_script_hashes('<SCRIPT type="module" src="/m.js"></SCRIPT>') == [], "src 있는 태그는 세지 않는다(대소문자 무관)"
+                # /app: 다른 화면과 같은 CSP 그대로(해시 없음) — 본문 인라인 스크립트 0(R5b-2b, 화면 = 외부 묶음)
+                assert not re.search(r"<script\b(?![^>]*\bsrc\s*=)[^>]*>", app_r.text, re.I), "/app 인라인 스크립트 0"
+                assert app_r.headers["content-security-policy"] == csp_base, app_r.headers["content-security-policy"]
                 for r in (await h.get("/api/state"), await h.get("/health")):
                     assert r.headers.get("content-type", "").startswith("application/json"), (r.url, r.headers)
                     assert not any(k in r.headers for k in sec), (r.url, r.headers)
@@ -4028,16 +4014,16 @@ async def test_app_account_menu():
         async with Client(main.mcp) as mc:
             st = val(await mc.call_tool("state_get", {}))
         assert "desk_hidden" not in json.dumps(st) and "struct_names" not in json.dumps(st), "MCP state_get 응답에 두 키 없음"
-        # app.html 정적(메뉴 항목·⚙·#who 말줄임)은 test_web_home.py test_static_moved(A2)로 옮겼다(③-0.2) — 여기는 응답 CSP 해시만
+        # app.html 정적(메뉴 항목·⚙·#who 말줄임)은 test_web_home.py test_static_moved(A2)로 옮겼다(③-0.2) — 여기는 응답 CSP 만
         async with client(U["user"]) as h:
             r = await h.get("/app")
-            assert r.status_code == 200 and f"'sha256-{web.inline_script_hashes(r.text)[0]}'" in r.headers["content-security-policy"], "CSP 해시 = 보낸 본문"
+            assert r.status_code == 200 and r.headers["content-security-policy"] == web.CSP_BASE, "CSP = script-src 'self'(해시 없음)"
     finally:
         site.dev, site.dev_user = real
         wipe()
     with db.tx() as c:
         assert c.execute("SELECT count(*) AS n FROM users WHERE email = ANY(%s)", (emails,)).fetchone()["n"] == 0
-    print("OK — /app 계정 메뉴(desk_hidden·/api/desk-visibility·state 두 키·MCP 없음·CSP 해시) 통과")
+    print("OK — /app 계정 메뉴(desk_hidden·/api/desk-visibility·state 두 키·MCP 없음·CSP self) 통과")
 
 
 # ── 16) 통합(P5-6) — 운영 콘솔 묶음 최종 ─────────────────
@@ -4235,8 +4221,7 @@ async def test_r1_flags_off():
     def q1(r, admin):
         """Q1·Q1b — /app 본문. 관리자 = ⚙ + 운영 콘솔·로그아웃만, 일반 = 문의 메뉴 + 문의 대화창(하단 섹션 없음). 표식은 어느 쪽에도 남지 않는다."""
         assert r.status_code == 200 and r.headers.get("cache-control") == "no-store", r.status_code
-        hs = web.inline_script_hashes(r.text)
-        assert len(hs) == 1 and f"'sha256-{hs[0]}'" in r.headers["content-security-policy"], "CSP 해시 = 보낸 본문"
+        assert r.headers["content-security-policy"] == web.CSP_BASE, "CSP = script-src 'self'(인라인 스크립트 0 — 해시 없음)"
         assert not re.search(r"<!--/?(user|admin)-->", r.text), "표식 0"
         for w in ('id="setup-link"', 'id="acct-menu"', 'id="logout"'):
             assert w in r.text, w
@@ -4255,7 +4240,7 @@ async def test_r1_flags_off():
             menu = r.text[r.text.index('id="acct-menu"'):r.text.index("</details>")]
             assert re.findall(r"<(?:a|button)\b[^>]*>([^<]*)", menu) == ["운영 콘솔", "표시 이름 바꾸기", "내 구조 설정",
                                                                       "저장 승인 대기", "연결 장치", "로그아웃"], menu   # PR① 저장 승인 대기 = 관리자도(연결 장치와 같은 구간 밖)
-            for w in ('id="acct-name"', 'id="acct-settings"', '<div id="ui-namedlg"></div>'):   # 「표시 이름 바꾸기」 = React 상시 섬(features/name)
+            for w in ('id="acct-name"', 'id="acct-settings"'):   # 「표시 이름 바꾸기」 대화창 = React(features/name — 껍데기가 모든 역할에 띄운다)
                 assert r.text.count(w) == 1, w
             assert 'id="acct-nav"' not in r.text and 'id="nav-dlg"' not in r.text, "새 탐색 수락 메뉴·대화창 0(R5a)"
             assert 'id="ui-desk"' not in r.text
@@ -5768,13 +5753,13 @@ async def test_q45_user():
         assert "<script" not in svg.lower() and "&lt;script&gt;" in svg and "&lt;b onclick=y&gt;" in svg, "label 은 escape — 글자로만 남는다"
         assert "Q45B" not in svg and "Q45B" not in json.dumps(st, ensure_ascii=False), "다른 사용자 이름 0"
 
-        # /app — 일반·관리자 모두 그래프 토큰·React 자리가 있다(CSP 해시 = 보낸 본문). 화면 동작은 Vitest features/defs
+        # /app — 일반·관리자 모두 React 자리가 있다(CSP = self). 그래프 토큰 = 화면 묶음 CSS(ui/src/shared/tokens.css). 화면 동작은 Vitest features/defs
+        assert tokens in (HERE / "ui" / "src" / "shared" / "tokens.css").read_text(encoding="utf-8"), "그래프 토큰 = structure_svg.tokens_css 그대로"
         for admin in (False, True):
             _set_role(A, "admin" if admin else "user")
             r = await get("/app", A)
-            hs = web.inline_script_hashes(r.text)
-            assert len(hs) == 1 and f"'sha256-{hs[0]}'" in r.headers["content-security-policy"]
-            assert tokens in r.text and 'id="ui-mast"' in r.text, ("그래프 토큰 · React 화면 자리(내 구조 설정·편입 대화창 = server/ui features/defs, R5b-1)", admin)
+            assert r.headers["content-security-policy"] == web.CSP_BASE
+            assert 'id="ui-mast"' in r.text and 'id="view"' in r.text, ("React 화면 자리(내 구조 설정·편입 대화창 = server/ui features/defs, R5b-1)", admin)
             assert ('id="ui-desk"' in r.text) is not admin, "Q1b·Q1 분기 유지"
         _set_role(A, "user")
     finally:
@@ -5987,7 +5972,7 @@ async def test_prA_setup():
         assert svg.count("<line ") == 2 * len(drawn), "관계마다 선(+투명 넓은 선) 하나"
         assert [(r["name"], r["to_text"] or r["from_text"]) for o in sd["objects"] for r in o["relations"] if not r["graph"]] == [
             ("붙는 곳 · 관심 축", "항목 — 대상 오브젝트 모름(정의 미확인) · 분류 대상은 사용자별 역할로 정함"), ("변경 이력", "문의 변경 이력(오브젝트 아님)")]
-        # 코어 표시명 = 기존 정본(web.CORE_LABEL · app.html LABELS — 화면 몫은 test_web_home.py A4). 출처는 두 정본에 없다(보고)
+        # 코어 표시명 = 기존 정본(web.CORE_LABEL · 화면 라벨 ui/src/shared/route.ts LABELS — 화면 몫은 test_web_home.py A4). 출처는 두 정본에 없다(보고)
         assert [o["name"] for o in sd["objects"][:4]] == [web.CORE_LABEL[t_] for _, t_, _, _ in service_schema.CORE[:4]]
         # API 이름 = 코어 열·테이블 · std@1 key(Salesforce API Name 꼴) — 표시명과 함께
         assert [o["api"] for o in sd["objects"]] == ["questions", "records", "candidates", "tickets", "sources", "users", "people", "source_reflections",

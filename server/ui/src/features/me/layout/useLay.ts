@@ -1,6 +1,6 @@
 // Setup 「페이지 레이아웃」 저장 줄(옛 app.html LAY·layCommit·laySend 그대로) — 놓을 때 PUT 1 · 한 번에 하나(보내는 중이면 마지막 배치만
 // 줄 세워 응답 뒤 보낸다 — 옛 응답이 새 배치를 덮지 않는다) · 실패 = 마지막 저장 배치로 복원 + 한 줄 · LAYOUT-STALE = 서버 배치를 다시 받아 그대로.
-// 마지막 저장 배치 = 「나」와 같은 조회 캐시(QK.layout) — 저장 응답을 캐시에 넣으면 「나」도 그 배치로 그린다(옛 crm:state 대신).
+// 마지막 저장 배치 = 「나」와 같은 조회 캐시(QK.layout) — 저장 응답을 캐시에 넣으면 「나」도 그 배치로 그린다(상태 다시 받기 대신).
 import { useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiErr } from "../../../shared/api";

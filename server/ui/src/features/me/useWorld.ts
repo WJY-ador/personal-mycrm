@@ -1,5 +1,5 @@
 // 「나」 화면이 가진 것(World) — 상태 S(껍데기) + 이어 받은 기록 + 통계·레이아웃 + 문맥 API(축·사람). 서버 조회는 react-query 하나:
-// 다시 받는 때 = 껍데기의 새 상태 알림(crm:state, main.tsx). 실패는 그대로 보이고 자동 재시도하지 않는다.
+// 다시 받는 때 = 껍데기 reload(layout/useAppState — 쓰기 뒤·새로 고침). 실패는 그대로 보이고 자동 재시도하지 않는다.
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiErr } from "../../shared/api";

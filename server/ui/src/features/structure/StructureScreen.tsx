@@ -40,7 +40,7 @@ export function StructureScreen({ ctx }: ScreenProps) {
   } else {
     const d = defById(S, sel)!, mine = (x: { object_id: string }) => x.object_id === d.id;
     const items = [...(S.item_proposals || []).filter(mine), ...(S.items || []).filter(mine)];
-    const open = b && (S.items || []).concat(S.item_proposals || []).some(x => x.id === b) ? b : "";
+    const open = b && (S.item_proposals || []).some(x => x.id === b && !x.revision) ? b : "";   // 서랍 = 새 항목 제안만(적용된 항목 = 「나」 — shared/route replace)
     const here = location.hash;
     body = <div className="struct"><div>{items.length ? <div className="gallery">{items.map(it => <ItemCard key={it.id} S={S} it={it} d={d} on={open === it.id} />)}</div>
       : <div className="empty">아직 {d.label} 항목이 없어요. 연결한 AI 대화에서 제안하면 여기서 적용할 수 있어요.</div>}</div>

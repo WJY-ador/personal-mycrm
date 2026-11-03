@@ -9,7 +9,7 @@ export const TRASH_PURGE_ASK = "지금부터 복원할 수 없어요. 본문은 
 export const TRASH_PURGED = "영구 삭제를 요청했어요. 이제 복원할 수 없어요.";
 export const TRASH_RESTORED = "복원했어요.";
 export const TRASH_EMPTY = "휴지통이 비어 있어요.";
-export const LOADING = "불러오는 중이에요…";
+export { LOADING } from "../../shared/words";
 export const MORE_FAIL = "더 불러오지 못했어요. 다시 눌러 주세요.";
 
 export const loadErrText = (e: ApiError) =>

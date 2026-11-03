@@ -139,12 +139,14 @@ def _fill_assets(html: str) -> str:
 
 
 # ── React 화면 묶음(server/ui, 2026-11-03 R1~) ─────────────────
-# 빌드 산출물 dist/.vite/manifest.json 을 시작 때 1회 읽어 허용 목록을 만든다. 요청 name 은 이 dict 키 조회만 — 경로를 잇지 않는다.
-# 파일 이름에 내용 해시가 있어 1년 immutable. /app 의 <!--{{ui}}--> 자리는 진입 <link>·<script type="module" src> 로 채운다(인라인 0).
-# manifest 가 없으면(빌드 안 한 로컬) 서버는 그대로 뜨고, 자리는 비고, 옮긴 화면은 app.html 이 「화면 파일 없음」 한 줄을 그린다.
+# 빌드 산출물 dist/.vite/manifest.json 을 시작 때 1회 읽어 허용 목록을 만든다(진입 + 화면별 지연 불러오기 묶음·CSS 전부). 요청 name 은 이 dict 키 조회만 —
+# 경로를 잇지 않는다. 파일 이름에 내용 해시가 있어 1년 immutable. /app 의 <!--{{ui}}--> 자리는 진입 <link>·<script type="module" src> 로 채운다(인라인 0).
+# manifest 가 없으면(빌드 안 한 로컬) 서버는 그대로 뜨고, 자리는 비고, 화면 자리의 「불러오는 중」 줄을 「화면 파일 없음」 한 줄로 바꾼다.
 UI_DIST = Path(__file__).parent / "ui" / "dist"
 UI_ENTRY = "src/main.tsx"
 UI_SLOT = "<!--{{ui}}-->"
+UI_BOOT = '<p class="hint" id="boot">불러오는 중이에요…</p>'   # app.html 화면 자리(#view)의 첫 줄 — 화면 묶음이 뜨면 덮는다
+UI_MISSING = '<p class="hint" id="boot">이 화면 파일이 서버에 없어요. 새로 고침해도 그대로면 운영자에게 알려 주세요.</p>'
 UI_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8"}
 _UI_FILE = re.compile(r"assets/([A-Za-z0-9._-]+)")
 
@@ -170,7 +172,11 @@ def load_ui(dist: Path) -> tuple[dict, str]:
     if not js or js.group(1) not in files:
         print(f"[web] 화면 묶음 진입 파일이 없어요 — 옮긴 화면은 「화면 파일 없음」만 떠요: {dist}", flush=True)
         return {}, ""
-    css = [m.group(1) for m in map(_UI_FILE.fullmatch, entry.get("css", [])) if m and m.group(1) in files]
+    css, seen, todo = [], set(), [UI_ENTRY]   # 진입과 그 정적 import 묶음의 CSS(지연 불러오기 묶음의 CSS 는 화면을 열 때 번들이 붙인다)
+    while todo:
+        c = man.get(todo.pop(0)) or {}
+        css += [m.group(1) for m in map(_UI_FILE.fullmatch, c.get("css", [])) if m and m.group(1) in files and m.group(1) not in css]
+        todo += [i for i in c.get("imports", []) if isinstance(i, str) and i not in seen and not seen.add(i)]
     tags = "".join(f'<link rel="stylesheet" href="/app/assets/{n}">' for n in css) + f'<script type="module" src="/app/assets/{js.group(1)}"></script>'
     return files, tags
 
@@ -179,7 +185,7 @@ UI_ASSETS, UI_TAGS = load_ui(UI_DIST)
 
 
 def _fill_ui(html: str) -> str:
-    return html.replace(UI_SLOT, UI_TAGS, 1)
+    return html.replace(UI_SLOT, UI_TAGS, 1) if UI_TAGS else html.replace(UI_SLOT, "", 1).replace(UI_BOOT, UI_MISSING, 1)
 
 
 def _b64(b: bytes) -> str:
@@ -191,8 +197,8 @@ def _unb64(s: str) -> bytes:
 
 
 # 웹 HTML 응답(/, /app, /help, /privacy, /download, _page)에만 붙인다. MCP·/health·JSON API·리다이렉트는 그대로.
-# script-src 'self' — 외부(self) theme.js 만. /app 은 응답 본문의 인라인 스크립트 1개 해시를 더한다(app_csp).
-# 'unsafe-inline'·'unsafe-eval' 은 어떤 경우에도 넣지 않는다. style-src·default-src 는 아직 없다(인라인 style).
+# script-src 'self' — 외부(self) 스크립트만(theme.js · /app 화면 묶음). 어느 화면도 인라인 스크립트를 두지 않는다(/app 포함 — 시험이 0 을 본다).
+# 'unsafe-inline'·'unsafe-eval' 은 어떤 경우에도 넣지 않는다. style-src·default-src 는 아직 없다(시작·도움말·운영 화면의 인라인 <style>, 화면 묶음이 붙이는 CSS link).
 CSP_BASE = "frame-ancestors 'none'; base-uri 'none'; object-src 'none'; script-src 'self'"
 SECURITY_HEADERS = {
     "x-content-type-options": "nosniff",
@@ -200,23 +206,6 @@ SECURITY_HEADERS = {
     "content-security-policy": CSP_BASE,
     "referrer-policy": "same-origin",
 }
-_SCRIPT_RE = re.compile(r"<script\b([^>]*)>(.*?)</script>", re.S | re.I)
-_SRC_ATTR_RE = re.compile(r"\bsrc\s*=", re.I)
-
-
-def inline_script_hashes(html: str) -> list[str]:
-    """src 없는 <script> 의 태그 사이 내용(공백·개행 그대로, UTF-8) sha256 → 표준 base64(패딩 포함). CSP 해시는 urlsafe 가 아니다."""
-    return [base64.b64encode(hashlib.sha256(body.encode("utf-8")).digest()).decode()
-            for attrs, body in _SCRIPT_RE.findall(html) if not _SRC_ATTR_RE.search(attrs)]
-
-
-def app_csp(html: str) -> str:
-    """/app CSP. 보낼 바로 그 문자열에서 계산한다. 인라인이 정확히 1개가 아니면 닫는 쪽 — 해시 없이 'self' 만 + 로그 1줄."""
-    hs = inline_script_hashes(html)
-    if len(hs) != 1:
-        print(f"[web] /app 인라인 스크립트가 {len(hs)}개라 CSP 해시를 넣지 않았어요(script-src 'self' 만 — 화면 스크립트가 막힌다)", flush=True)
-        return CSP_BASE
-    return f"{CSP_BASE} 'sha256-{hs[0]}'"
 
 
 def _html_resp(content: str, status: int = 200, headers: dict | None = None) -> HTMLResponse:
@@ -1282,11 +1271,11 @@ class Web:
         uid = await self.uid_of(request)
         if uid is None:
             return RedirectResponse("/", status_code=302)
-        html = _fill_ui(_fill_assets(APP_HTML.read_text(encoding="utf-8")))   # 요청마다 읽는다 — 헤더 해시와 본문이 같은 내용에서 나온다
+        html = _fill_ui(_fill_assets(APP_HTML.read_text(encoding="utf-8")))   # 요청마다 읽는다(정적 뼈대 — 화면은 묶음이 그린다)
         # Q1: 관리자는 <!--user-->(문의·이름 공유 메뉴·문의 섹션)를, 그 밖은 <!--admin-->(운영 콘솔)를 보내지 않는다. 표식도 남기지 않는다
         drop, keep = ("user", "admin") if getattr(request.state, "role", None) == "admin" else ("admin", "user")
         html = re.sub(rf"<!--{drop}-->.*?<!--/{drop}-->", "", html, flags=re.S).replace(f"<!--{keep}-->", "").replace(f"<!--/{keep}-->", "")
-        return _html_resp(html, headers={"cache-control": "no-store", "content-security-policy": app_csp(html)})
+        return _html_resp(html, headers={"cache-control": "no-store"})
 
     async def root(self, request):
         """시작 화면. 세션 있으면 /app. ?out=1(로그아웃 직후)일 때만 <!--out-->…<!--/out--> 띠를 남기고 [로그인]을 /login?fresh=1 로."""

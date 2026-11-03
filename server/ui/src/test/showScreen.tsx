@@ -1,10 +1,10 @@
-// 시험 도우미 — 옮긴 화면 하나를 레지스트리(SCREENS) 그대로 띄운다(R4 이관·연결 장치·활동). 주소는 history 로만(껍데기 라우터 없음) —
-// 같은 자리에 다시 그리면 껍데기 uiMount 와 같다(같은 화면 = 자리 유지, args 만 바뀜).
+// 시험 도우미 — 화면 하나를 레지스트리(SCREENS) 그대로 띄운다(이관·연결 장치·활동…). 주소는 history 로만(껍데기 라우터 없음) —
+// 같은 자리에 다시 그리면 껍데기와 같다(같은 화면 = 자리 유지, args 만 바뀜).
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { vi } from "vitest";
-import { SCREENS } from "../layout/registry";
+import { SCREENS } from "./screens";
 import { queryClient } from "../shared/queries";
 import type { AppState } from "../shared/state";
 import { flush } from "./fakeServer";

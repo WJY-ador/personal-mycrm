@@ -1,5 +1,5 @@
 // 「오늘」 화면 틀(옛 renderToday2) — 넓은 화면 = 목록 | 상세(대기 하나), 1열 = 목록 또는 상세 하나. 읽기: 대기 목록 · 최근 활동 50 · 상태의 내 글(불러온 범위).
-// 상태를 새로 받으면(crm:state) 조회를 다시 받는다. [삭제] 없음 — 동작은 대기 상세의 승인·제외뿐
+// 상태를 새로 받으면(껍데기 reload) 조회를 다시 받는다. [삭제] 없음 — 동작은 대기 상세의 승인·제외뿐
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import type { UiCtx } from "../../shared/ctx";

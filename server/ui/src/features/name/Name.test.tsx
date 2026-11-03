@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { SCREENS } from "../../layout/registry";
+import { SCREENS } from "../../test/screens";
 import { queryClient } from "../../shared/queries";
 import type { AppState } from "../../shared/state";
 import { calls, click, flush, installFetch, json, serve } from "../../test/fakeServer";

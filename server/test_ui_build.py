@@ -4,12 +4,12 @@
 가드: server/.env 를 읽지 않는다(운영 DB 폴백 사고 방지) — DATABASE_URL 을 명시해야 하고, 호스트는 로컬, DB 이름은 crm_test 로 시작해야 한다.
 DB 는 /app 의 개발 사용자 조회에만 쓴다.
 
-A. manifest 허용 목록 — 진입 JS·CSS 만 /app/assets/<이름> 200 · 1년 immutable · JS/CSS MIME · nosniff · 목록 밖·경로 꼴 = 404.
-B. /app — <!--{{ui}}--> 자리를 manifest 의 <link>·<script type="module" src> 로 채움 · 인라인 스크립트 수 ∈ {0, 1} · 번들 인라인 0 · CSP 해시 = 옛 인라인 1개.
-C. manifest 없음 — 서버가 죽지 않고 ({}, "") · 자리는 빈 문자열 · app.html 이 「화면 파일 없음」 한 줄을 그린다.
-D. 래칫 — migrated.json 의 옛 이름(screens·removed)이 app.html 에 0 · 최상위 function 수 ≤ 상한 · 옮긴 화면은 uiMount("<이름>"…) 로 띄움.
-E. 옛 쪽 다리(node 실행) — uiMount 세 갈래 · 같은 화면 자리 유지 · 떠나면 unmount · applyState 뒤 crm:state 1번 ·
-   ctx = 상태 S·주소 조각(args)·setDirty(고치던 글 주소 → uiDirty)·flash(껍데기 결과 한 줄, 한 번).
+A. manifest 허용 목록 — manifest 의 파일 전부(진입 + 화면별 지연 불러오기 묶음·CSS)만 /app/assets/<이름> 200 · 1년 immutable · JS/CSS MIME ·
+   nosniff · 목록 밖·경로 꼴 = 404.
+B. /app — <!--{{ui}}--> 자리를 진입 <link>·<script type="module" src> 로 채움 · 인라인 스크립트 0·인라인 <style> 0 · CSP = CSP_BASE 그대로(해시 없음).
+C. manifest 없음 — 서버가 죽지 않고 ({}, "") · 자리는 빈 문자열 · 화면 자리의 「불러오는 중」 줄 = 「화면 파일 없음」 한 줄(서버가 바꾼다).
+D. 정적 뼈대 — app.html 인라인 스크립트·<style>·style·on* 속성 0 · 스크립트 = 테마 하나 · 자리 하나씩(옛 래칫 migrated.json 을 대신한다 —
+   스크립트가 없으니 옛 함수 이름이 돌아올 자리가 없다). 라우터·화면 동작은 Vitest — layout/App.test.tsx · shared/route.test.ts.
 """
 import asyncio
 import json
@@ -41,25 +41,17 @@ import main  # noqa: E402
 import web  # noqa: E402
 
 UI = HERE / "ui"
-MIGRATED = json.loads((UI / "migrated.json").read_text(encoding="utf-8"))
 APP = (HERE / "app.html").read_text(encoding="utf-8")
-JS = re.search(r"<script>(.*?)</script>", APP, re.S).group(1)
+INLINE_SCRIPT = re.compile(r"<script\b(?![^>]*\bsrc\s*=)[^>]*>", re.I)   # src 없는 <script>(인라인) — 어느 화면에도 0
 
 
-def test_ratchet():
-    for screen, names in MIGRATED["screens"].items():
-        left = [n for n in names if re.search(rf"\b{re.escape(n)}\b", APP)]
-        assert not left, f"옮긴 화면 {screen} 의 옛 이름이 app.html 에 남았어요: {left}"
-        assert re.search(rf'ui(?:Mount|Island)\("{screen}"[,)]', JS), f"옮긴 화면 {screen} 은 uiMount(#view 화면)·uiIsland(상시 섬)로 띄운다"
-    for what, names in MIGRATED.get("removed", {}).items():   # 옮기지 않고 지운 옛 코드(R5a 옛 탐색) — 다시 들어오면 실패
-        left = [n for n in names if re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", APP)]
-        assert not left, f"지운 옛 코드 {what} 의 이름이 app.html 에 다시 나왔어요: {left}"
-    n = len(re.findall(r"^(?:async\s+)?function\s+\w+", JS, re.M))
-    cap = MIGRATED["app_html_function_max"]
-    assert n <= cap, f"app.html 최상위 function {n}개 > 상한 {cap} — 새 화면 코드는 server/ui 에(옛 쪽을 늘리지 않는다)"
-    assert APP.count(web.UI_SLOT) == 1, "React 묶음 자리 1개"
-    assert len(web.inline_script_hashes(APP)) == 1 and APP.count("<script>") == 1, "옛 인라인 스크립트 1개(CSP 해시 대상)"
-    print(f"OK — 래칫(옛 이름 0 · uiMount · function {n} ≤ {cap} · 자리 1 · 인라인 1) 통과")
+def test_static():
+    assert not INLINE_SCRIPT.search(APP), "app.html 인라인 스크립트 0"
+    assert "<style" not in APP and not re.search(r"\sstyle\s*=", APP), "app.html 인라인 <style>·style 속성 0(CSS = 번들)"
+    assert not re.search(r"\son[a-z]+\s*=", APP, re.I), "app.html 인라인 이벤트 속성 0"
+    assert re.findall(r"<script\b[^>]*>", APP) == ['<script src="{{asset:theme.js}}">'], "스크립트 = 첫 칠 전 테마(외부 파일) 하나"
+    assert APP.count(web.UI_SLOT) == 1 and APP.count(web.UI_BOOT) == 1, "React 묶음 자리 1 · 화면 자리 첫 줄 1"
+    print(f"OK — 정적 뼈대({len(APP.splitlines())}줄 · 인라인 스크립트·style·on* 0 · 테마 스크립트 1 · 자리 1) 통과")
 
 
 def test_no_manifest():
@@ -83,100 +75,47 @@ def test_no_manifest():
         web.UI_TAGS = ""
         head = web._fill_ui(APP).split("</head>", 1)[0]
         assert web.UI_SLOT not in head and "/app/assets/" not in head, "자리 = 빈 문자열(진입 태그 0)"
+        assert web.UI_BOOT not in web._fill_ui(APP) and web._fill_ui(APP).count(web.UI_MISSING) == 1, "빌드 없음 = 화면 자리에 한 줄 안내"
     finally:
         web.UI_TAGS = old
-    assert "이 화면 파일이 서버에 없어요." in JS and "document.querySelector('script[type=\"module\"]')" in JS, "빌드 없음 = 한 줄 안내"
     print("OK — manifest 없음·깨짐·진입 없음 = ({}, \"\") · 목록 밖 파일 0 · 자리 비움 · 화면 안내 한 줄 통과")
-
-
-def test_bridge_old_side():
-    """옛 쪽 다리(node 실행) — uiMount 세 갈래(띄우기 공통 uiIsland — 대화 서랍 상시 섬도 같은 길)(모듈 있음 = CrmUI.mount · 모듈 아직 = 자리 맡김 + 불러오는 중 · 빌드 없음 = 한 줄 안내)
-    · 같은 화면 다시 = 자리 유지(새로 만들지 않음) · 다른 화면이 #view 를 덮으면 uiSweep 이 unmount · applyState = crm:state 1번."""
-    import shutil
-    import subprocess
-    node = shutil.which("node")
-    assert node, "node 가 필요해요(CI 는 setup-node)"
-    a, b = JS.index("let uiOn = "), JS.index("function uiSweep()")
-    bridge = JS[a:JS.index("\n}\n", b) + 3]
-    m = re.search(r"function applyState\(next\) \{.*?\n\}\n", JS, re.S).group(0)
-    stub = """const esc = s => String(s); const LOADING = "LOADING"; const load = async () => true; let S = null, loadedAt = "";
-let coreFlash = {text: "결과"}; const coreDone = async () => {}; const mdhm = () => ""; let renders = 0; const render = () => { renders++; };
-const nodes = {}; let made = 0;
-const view = {set innerHTML(h) { for (const k of Object.keys(nodes)) delete nodes[k]; const m = /id="([^"]+)"/.exec(h); if (m) { made++; nodes[m[1]] = {id: m[1], innerHTML: ""}; } }};
-const $ = id => id === "view" ? view : nodes[id] || null;
-let MODULE = false; const document = {querySelector: q => (q === 'script[type="module"]' && MODULE ? {} : null)};
-const log = []; const events = [];
-const window = {dispatchEvent: e => events.push(e.type)};
-class Event { constructor(t) { this.type = t; } }"""
-    scen = """const out = {};
-uiMount("trash"); out.none = $("ui-trash").innerHTML; out.noneOn = uiOn; out.afterNone = coreFlash;
-view.innerHTML = "<p>다른 화면</p>"; uiSweep(); out.sweptOn = uiOn;
-MODULE = true; uiMount("trash"); out.pending = [window.CrmUIPending && Object.keys(window.CrmUIPending), $("ui-trash").innerHTML];
-window.CrmUI = {mount: (n, el, ctx) => { log.push(["mount", n, el.id, typeof ctx.reload]); out.ctx = ctx; out.flashes.push(ctx.flash); }, unmount: n => log.push(["unmount", n])};
-out.pendFlash = window.CrmUIPending && window.CrmUIPending.trash[1].flash; coreFlash = {text: "결과"}; out.flashes = [];
-const before = made; uiMount("trash"); uiMount("trash"); out.made = made - before; uiSweep(); out.kept = log.length;
-view.innerHTML = "<p>다른 화면</p>"; uiSweep(); out.log = log; out.pendingAfter = !window.CrmUIPending || !window.CrmUIPending.trash; out.on = uiOn;
-out.flashLeft = coreFlash;
-S = {id: "S1"}; uiMount("me", ["principle", "p1"]); out.me = [out.ctx.state.id, out.ctx.args, out.ctx.flash];
-out.ctx.setDirty("#_me/principle/p1"); out.dirty = uiDirty; out.ctx.setDirty(null); out.clean = uiDirty;
-const n0 = log.length; uiMount("review", ["q", "q1", "c_1"]); out.swap = log.slice(n0); out.swapOn = uiOn;
-view.innerHTML = "<p>다른 화면</p>"; uiSweep(); log.length = 3;
-applyState({generated: ""}); out.events = events; out.renders = renders;
-console.log(JSON.stringify(out));"""
-    r = subprocess.run([node, "-"], input=f"{stub}\n{bridge}\n{m}\n{scen}", capture_output=True, text=True, timeout=60)
-    assert r.returncode == 0, r.stderr[-800:]
-    o = json.loads(r.stdout)
-    assert "이 화면 파일이 서버에 없어요." in o["none"] and o["noneOn"] == "trash", "빌드 없음 = 한 줄 안내"
-    assert o["sweptOn"] == "", "다른 화면 = 내림"
-    assert o["pending"] == [["trash"], "LOADING"], "모듈 아직 = 이름별로 자리 맡김 + 불러오는 중"
-    assert o["swap"] == [["unmount", "me"], ["mount", "review", "ui-review", "function"]] and o["swapOn"] == "review", "다른 화면으로 = 앞 화면을 내리고 띄운다(#view 화면은 하나)"
-    assert o["made"] == 0 and o["kept"] == 2, "같은 화면 다시 = 자리 유지(새 div 0) · 머무는 동안 unmount 0"
-    assert o["log"] == [["mount", "trash", "ui-trash", "function"], ["mount", "trash", "ui-trash", "function"], ["unmount", "trash"]]
-    assert o["pendingAfter"] and o["on"] == ""
-    assert o["events"] == ["crm:state"] and o["renders"] == 1, "새 상태 = render 뒤 crm:state 1번"
-    assert o["afterNone"] == {"text": "결과"} and o["pendFlash"] == {"text": "결과"}, "빌드 없음 = 결과 문구를 넘기지 않음(남김) · 맡긴 자리 = 넘김"
-    assert o["flashes"] == [{"text": "결과"}, None, None, None] and o["flashLeft"] is None, "껍데기 결과 한 줄 = 띄운 화면에 한 번(넘긴 뒤 비움)"
-    assert o["me"] == ["S1", ["principle", "p1"], None], "ctx = 상태 S · 주소 조각 · (넘긴 결과 문구는 다시 안 감)"
-    assert o["dirty"] == "#_me/principle/p1" and o["clean"] is None, "setDirty = 껍데기 미저장 보호 주소"
-    print("OK — 옛 쪽 다리(빌드 없음 안내 · 모듈 아직 = 맡김 · 같은 화면 = 자리 유지 · 떠나면 unmount · crm:state 1번 · ctx 상태·주소·미저장·결과 한 줄) 통과")
 
 
 async def test_serving():
     man = json.loads((UI / "dist" / ".vite" / "manifest.json").read_text(encoding="utf-8"))
     entry = man["src/main.tsx"]
     js, css = entry["file"].removeprefix("assets/"), [c.removeprefix("assets/") for c in entry.get("css", [])]
-    assert set(web.UI_ASSETS) == {js, *css}, ("허용 목록 = manifest 의 파일", web.UI_ASSETS)
+    every = {f.removeprefix("assets/") for c in man.values() for f in [c["file"], *c.get("css", [])]}
+    lazy = {c["file"].removeprefix("assets/") for c in man.values() if c.get("isDynamicEntry")}
+    assert set(web.UI_ASSETS) == every, ("허용 목록 = manifest 의 파일 전부(지연 불러오기 묶음·CSS 포함)", set(web.UI_ASSETS) ^ every)
+    assert len(lazy) >= 10 and lazy <= every and js not in lazy, ("화면별 지연 불러오기 묶음", lazy)
+    assert any(c.get("isDynamicEntry") and c.get("css") for c in man.values()), "지연 묶음 CSS 도 목록에"
     tp = httpx.ASGITransport(app=main.app)
     async with httpx.AsyncClient(transport=tp, base_url=PUBLIC) as h:
         r = await h.get("/app")
         assert r.status_code == 200 and r.headers["cache-control"] == "no-store"
         html = r.text
-        assert web.UI_SLOT not in html and f'<script type="module" src="/app/assets/{js}"></script>' in html
+        assert web.UI_SLOT not in html and f'<script type="module" src="/app/assets/{js}"></script>' in html and web.UI_BOOT in html
         for c in css:
             assert f'<link rel="stylesheet" href="/app/assets/{c}">' in html
-        hs = web.inline_script_hashes(html)
-        assert len(hs) in (0, 1), "인라인 스크립트 수 ∈ {0, 1}"
-        assert r.headers["content-security-policy"] == f"{web.CSP_BASE} 'sha256-{hs[0]}'", "CSP = 옛 인라인 1개 해시만(React 는 self)"
-        bundle = (UI / "dist" / "assets" / js).read_text(encoding="utf-8")
-        inl = [b for a, b in web._SCRIPT_RE.findall(html) if not web._SRC_ATTR_RE.search(a)]
-        assert all("createRoot" not in b and bundle[:200] not in b for b in inl), "React 번들 인라인 0"
+        assert not INLINE_SCRIPT.search(html) and "<style" not in html, "응답 인라인 스크립트·<style> 0"
+        assert r.headers["content-security-policy"] == web.CSP_BASE, "CSP = script-src 'self' 그대로(해시 없음)"
         assert "unsafe-inline" not in r.headers["content-security-policy"]
-        for n in [js, *css]:
+        for n in sorted(every):
             a = await h.get(f"/app/assets/{n}")
             assert a.status_code == 200 and a.headers["cache-control"] == web.ASSET_IMMUTABLE and a.headers["x-content-type-options"] == "nosniff"
             assert a.headers["content-type"] == web.UI_TYPES[Path(n).suffix], a.headers["content-type"]
         for bad in ("nope.js", "..%2Fweb.py", "%2E%2E", "manifest.json", ".vite"):
             assert (await h.get(f"/app/assets/{bad}")).status_code == 404, bad
         assert (await h.get("/app/assets/..%2F..%2Fweb.py")).status_code == 404
-    print(f"OK — 서빙(허용 목록 {len(web.UI_ASSETS)} · /app 진입 태그 · 인라인 {len(hs)} · CSP self+해시 1 · immutable·MIME·nosniff · 목록 밖 404) 통과")
+    print(f"OK — 서빙(허용 목록 {len(web.UI_ASSETS)} · 지연 묶음 {len(lazy)} · /app 진입 태그 · 인라인 0 · CSP self · immutable·MIME·nosniff · 목록 밖 404) 통과")
 
 
 def main_():
     db.init_schema()
     try:
-        test_ratchet()
+        test_static()
         test_no_manifest()
-        test_bridge_old_side()
         asyncio.run(test_serving())
         print("OK — React 화면 묶음 시험 전부 통과")
     finally:

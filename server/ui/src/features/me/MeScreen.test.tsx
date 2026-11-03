@@ -5,7 +5,7 @@ import { queryClient } from "../../shared/queries";
 import { calls, installFetch, json, serve, text } from "../../test/fakeServer";
 import { installMedia, JOURNAL, layout, meState, STATS, TABS } from "../../test/meFixture";
 import { hideMe, showMe } from "../../test/showMe";
-import { REGISTRY } from "../../layout/registry";
+import { REGISTRY } from "../../layout/meEntry";
 
 let LAYOUT: unknown = layout(), STATS_R: unknown = STATS;
 beforeEach(() => {

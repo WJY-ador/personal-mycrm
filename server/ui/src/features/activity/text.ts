@@ -1,11 +1,10 @@
-// 활동 화면 문구·고정 값(옛 app.html 「board 이전」 절 글자 그대로). 옛 쪽에 같은 이름이 남은 것(ROLE_LABEL·LOADING·TRASH_ASK)은
-// 다른 옛 화면(사람·출처 상세·오늘)이 쓰는 일시 중복 — R5 에서 한쪽만(server/ui/migrated.json temp_duplicates).
+// 활동 화면 문구·고정 값(옛 app.html 「board 이전」 절 글자 그대로). 여러 화면이 같이 쓰는 낱말은 shared(words·item)에서 다시 내보낸다.
 export const ME_NOTICE = "연결된 활동과 내 글을 정해진 계산 규칙으로 보여 줍니다. 활동량을 성격이나 능력으로 해석하지 않습니다. AI가 작성한 설명은 저장 승인 대기에 표시합니다.";
 export const RAW_LOCAL = "원문을 보관한 PC에서 열 수 있습니다";
 export const RAW_PORT_KEY = "crm-raw-port";
 export const RAW_PORT_DEFAULT = 8790;   // 로컬 에이전트(agent/) 원문 뷰어 기본 포트와 같다(board-dev 8787 을 피함)
 export const PERIODS: [string, string][] = [["7d", "최근 7일"], ["30d", "최근 30일"], ["90d", "최근 90일"], ["all", "전체"]];
-export const LOADING = "불러오는 중이에요…";
+export { LOADING } from "../../shared/words";
 export const MORE_FAIL = "더 불러오지 못했어요. 다시 눌러 주세요.";
 export const LIST_HINT = "PC의 로컬 에이전트가 보낸 행동이에요. 원문은 PC에 남고, 여기엔 행동·날짜·별칭·출처 종류만 있어요.";
 export { TRASH_ASK, TRASH_DONE } from "../../shared/item";

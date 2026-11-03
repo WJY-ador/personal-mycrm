@@ -1,11 +1,10 @@
-// 서랍의 관계(옛 tgtHtml·incoming·이력) — 참조 필드별 대상 · 들어오는 관계(오브젝트 라벨별) · 이력(최신 먼저). 대상이 지워졌으면 빈 자리 문구.
+// 서랍의 연결할 대상(옛 tgtHtml) — 참조 필드별 대상(제안이 가리키는 판단·글·항목). 대상이 지워졌으면 빈 자리 문구.
 import { DecisionBadge } from "../../shared/CandChips";
-import { md, mdhm } from "../../shared/date";
+import { md } from "../../shared/date";
 import { press } from "../../shared/press";
 import { recLabel } from "../../shared/RecDialog";
 import { rich } from "../../shared/rich";
 import type { AppState, Link } from "../../shared/state";
-import { HIST_LABEL } from "./model";
 import type { ItemFull } from "./structApi";
 
 type Open = (id: string, quote?: string) => void;
@@ -24,20 +23,11 @@ function Target({ S, it, l, open }: { S: AppState; it: ItemFull; l: Link; open: 
 }
 
 export function Links({ S, it, cur, open }: { S: AppState; it: ItemFull; cur: Pick<ItemFull, "links">; open: Open }) {
-  const groups: Record<string, ItemFull["incoming"]> = {};
-  for (const x of it.incoming || []) { const k = x.object_label || (x.source_record_id ? "내 글" : "항목"); (groups[k] = groups[k] || []).push(x); }
   return (
-    <>
-      {it.fields.filter(f => f.value_type === "reference").map(f => {
-        const ls = (cur.links || []).filter(l => l.field_key === f.key);
-        return ls.length ? <div key={f.key}><h5>{f.label} <span className="count">{ls.length}</span></h5>
-          <ul className="plist">{ls.map((l, i) => <li key={i}><Target S={S} it={it} l={l} open={open} /></li>)}</ul></div> : null;
-      })}
-      {Object.entries(groups).map(([k, xs]) => <div key={k}><h5>{k} <span className="count">{xs.length}</span></h5><ul className="plist">{xs.map((x, i) => x.source_item_id
-        ? <li key={i}><a {...press(go(`#structure/${x.object_id}/${x.source_item_id}`))}>{x.code ? <><span className="chip code">{x.code}</span> </> : null}{x.title}</a></li>
-        : <li key={i}><a {...press(() => open(s(x.source_record_id)))}>{x.record_title || "글"}</a></li>)}</ul></div>)}
-      {(it.history || []).length ? <><h5>이력</h5><ul className="plist">{it.history.slice().reverse().map(x =>
-        <li key={x.id} className="phist">r{x.prev_revision + 1} · {HIST_LABEL[x.action] || x.action} · {mdhm(x.at)}</li>)}</ul></> : null}
-    </>
+    <>{it.fields.filter(f => f.value_type === "reference").map(f => {
+      const ls = (cur.links || []).filter(l => l.field_key === f.key);
+      return ls.length ? <div key={f.key}><h5>{f.label} <span className="count">{ls.length}</span></h5>
+        <ul className="plist">{ls.map((l, i) => <li key={i}><Target S={S} it={it} l={l} open={open} /></li>)}</ul></div> : null;
+    })}</>
   );
 }

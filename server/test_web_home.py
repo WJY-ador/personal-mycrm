@@ -5,12 +5,12 @@
 
 A. /api/records — 401 · no-store · 기본(before 없음) = /api/state journal 과 같은 50편 · next_before 커서로 겹침·빠짐 없이 이어 받기 ·
    created 동률 블록(한 tx 의 now())이 페이지 경계에 걸쳐도 겹침·누락 0 · limit 끝값 · 틀린 before 400 · 남의 기록 0 · db.records 기본 호출 결과 불변.
-B. app.html 정적 — 옛 쪽에 남은 「나」 접점(uiMount("me") · 미저장 보호 uiDirty · Setup 레이아웃 · 오늘 · 축 색 토큰).
-   「나」 화면 자체(R2 2026-11-03 React)는 Vitest — server/ui/src/features/me/MeScreen·MeEdit·MeActs.test.tsx.
+B. 정적 — 「나」 접점(미저장 보호 문구 · 분기점 · 탭 · Setup 페이지·옛 주소 = shared/route.ts · 축 색 토큰 = tokens.css).
+   「나」 화면·껍데기 라우터(R2·R5b-2b React)는 Vitest — features/me/*.test.tsx · layout/App.test.tsx · shared/route.test.ts.
 G. API 견본 대조(R2) — ui/src/shared/state.sample.json ⊆ /api/state · ui/src/features/me/me.sample.json = /api/me/stats·layout·journal·본문 미리보기.
 C·D. 대화 서랍(PR ②-b B5 · ③-0.2)은 React(R3 2026-11-03) — server/ui/src/features/chat/store.test.ts·ChatRoot.test.tsx(Vitest).
    판단 검토(원문과 대조하기)도 React — server/ui/src/features/review/ReviewScreen.test.tsx.
-F. 휴지통 PR-1 화면(node 실행 포함): 스위치 S.switches.trash 켜짐일 때만 [삭제]·Setup 「휴지통」 · 꺼짐 = 현행 · 기준 [남기기]+[삭제] · 후보 [삭제] 0 ·
+F. 휴지통 PR-1 화면(정적 — 스위치·페이지 동작은 Vitest shared/route.test.ts): 스위치 S.switches.trash 켜짐일 때만 [삭제]·Setup 「휴지통」 · 꺼짐 = 현행 · 기준 [남기기]+[삭제] · 후보 [삭제] 0 ·
    r4 §8 문구 · 휴지통 행(종류·제목·삭제 시각·복원 가능 기한)·더 보기·복원·영구 삭제·기한 이후 · 「반영 안 함」 한 표현 · 근거 이용 불가.
 E. test_tools.py 에서 옮겨 온 app.html 정적 단언(③-0.2 A1~A5·B1~B4 — 문의 esc·계정 메뉴·구조 정의·LABELS·24h 화면·라이트 기본·셰이더·동의·재인증).
 """
@@ -172,130 +172,68 @@ async def test_records_api():
     print("OK — /api/records(401·no-store·기본 = state journal·next_before 커서 이어 받기 겹침 0·동률 경계·limit 끝값·틀린 before 400·지운·남의 기록 0·state journal_next_before) 통과")
 
 
+UI = HERE / "ui" / "src"
+
+
+def ui_text(*parts: str) -> str:
+    return (UI.joinpath(*parts)).read_text(encoding="utf-8")
+
+
+def ui_css() -> str:
+    """화면 묶음 전역 CSS(옛 app.html <style> — 토큰 + 전역 기본, R5b-2b)."""
+    return ui_text("shared", "tokens.css") + ui_text("shared", "global.css")
+
+
 def test_static():
-    """옛 app.html 에 남은 「나」 접점(R2 2026-11-03 — 「나」 화면은 React server/ui/src/features/me, 시험은 Vitest MeScreen·MeEdit·MeActs)
-    · Setup 「페이지 레이아웃」(S4) · 오늘(S5 — 화면은 React features/today, R4-2: 라우팅만) · 탭 3 · 축 색 토큰 · 표시 낱말."""
+    """「나」 접점(R2 2026-11-03 — 「나」 화면은 React server/ui/src/features/me, 시험은 Vitest MeScreen·MeEdit·MeActs). 껍데기·라우터·미저장 보호·
+    Setup·오늘 라우팅도 React(R5b-2b — layout/App.tsx·shared/route.ts, 동작 = Vitest layout/App.test.tsx·shared/route.test.ts). 여기는 정적 성질만:
+    미저장 보호 문구 · 모바일 분기점(CSS·JS 같은 값) · 탭 나·오늘 · 표시 낱말 · 서버 문장 미러 · 축 색 토큰."""
     html = (HERE / "app.html").read_text(encoding="utf-8")
-    js = re.search(r"<script>(.*?)</script>", html, re.S).group(1)
-    assert html.count("<script>") == 1
-    # 「나」 = React 섬 — 라우터는 주소 조각만 넘기고, 화면 코드·통계 접점은 옛 쪽에 없다
-    assert 'else if (tab.view === "me") { subnav(""); uiMount("me", [R.a || "", R.b || ""]); }' in js
-    assert "renderMeV9" not in js and '"/api/me/stats"' not in js and "/api/records?" not in js, "「나」 화면·통계·이어 받기 = React"
-    # 미저장 보호 — 옮긴 화면이 ctx.setDirty 로 알린 주소(uiDirty) · 대화창 문구 · hashchange 가드 · 새로 고침 경고
+    css, route = ui_css(), ui_text("shared", "route.ts")
+    assert "/api/me/stats" not in html and "/api/records?" not in html and "/api/me/layout" not in html and "/api/inbox" not in html, "정적 뼈대 = API 0"
+    leave = ui_text("layout", "LeaveDialog.tsx")
     for w in ("저장하지 않은 변경이 있어요", "계속 편집", "변경 버리기"):
-        assert w in html, w
-    assert "if (uiLeaveGuard()) return;" in js and 'addEventListener("beforeunload", e => { if (uiDirty)' in js and "setDirty: at => { uiDirty = at; }" in js
-    mobile = (HERE / "ui" / "src" / "shared" / "mobile.ts").read_text(encoding="utf-8")
-    assert "@media (max-width: 767px)" in html and 'export const MOBILE = "(max-width: 767px)";' in mobile, "모바일 분기점 = 768 미만(CSS·React shared/mobile.ts 와 같은 값)"
-    assert "<script src" not in html.replace('<script src="{{asset:theme.js}}"></script>', ""), "외부 스크립트 0(테마 자산만)"
-    # 내 구조 설정·구조·지도·질문·기록 = React(R5b-1) — 그래프 기본·영속 없음은 Vitest DefsScreen(저장소 쓰기 = arch.test 원문 포트 하나)
-    for w in ('uiMount("defs")', 'uiMount("structure", [R.a || "", R.b || ""])', 'uiMount("map", [tab.id])', 'uiIsland("mast", $("ui-mast")'):
-        assert w in js, w
-    assert "const tabsList = () => [NAVTAB._me, NAVTAB._today];" in js, "탭 나·오늘 — 설정은 톱니"
+        assert w in leave, w
+    app = ui_text("layout", "App.tsx")
+    assert "history.pushState(null, \"\", d);" in app and "useHeader({ S, reload, openName, openDesk, dirty })" in app, "미저장 보호 = 껍데기(주소 되돌림 · 새로 고침 경고)"
+    mobile = ui_text("shared", "mobile.ts")
+    assert "@media (max-width: 767px)" in css and 'export const MOBILE = "(max-width: 767px)";' in mobile, "모바일 분기점 = 768 미만(CSS·React shared/mobile.ts 와 같은 값)"
+    assert "export const NAV_TABS = [NAVTAB._me, NAVTAB._today];" in route, "탭 나·오늘 — 설정은 톱니"
     # S6: 글 이름 하나 「내 글」(v9 P1) — 사용자 표시 라벨 자리별. 「내 글 AI 요약」·「내가 쓴 메모」(판단 출처 표시)는 그대로
-    today_text = (HERE / "ui" / "src" / "features" / "today" / "text.ts").read_text(encoding="utf-8")
-    assert "내가 쓴 글" not in js and "내가 쓴 글" not in today_text and 'input_scope: { self_only: "내 글만" }' in today_text, "「내가 쓴 글」 0 — 생성 정보 입력 범위도 「내 글만」(React 오늘)"
+    today_text = ui_text("features", "today", "text.ts")
+    assert "내가 쓴 글" not in html and "내가 쓴 글" not in today_text and 'input_scope: { self_only: "내 글만" }' in today_text, "「내가 쓴 글」 0 — 생성 정보 입력 범위도 「내 글만」(React 오늘)"
     import activity
-    assert activity.NOTICE in (HERE / "ui" / "src" / "features" / "activity" / "text.ts").read_text(encoding="utf-8"), "ME_NOTICE(React 활동) = 서버 activity.NOTICE 미러"
-    chips = (HERE / "ui" / "src" / "shared" / "CandChips.tsx").read_text(encoding="utf-8")
-    assert "NEWTERM" not in js and '"내가 쓴 메모"' in chips and ">확정한 판단<" in chips, "표시 낱말 = React 칩(옛 NEWTERM 치환 없음, R5b-1)"
-    # S4 Setup — 페이지 · 옛 묶음 주소 replace. 페이지 레이아웃(끌어 놓기·저장 줄·STALE·기본으로 되돌리기)은 React(features/me/layout, R5b-2a) —
-    # 화면 동작은 Vitest LayoutScreen.test.tsx. 옛 쪽은 라우팅만(레이아웃 API 0)
-    setup = js[js.index("// ── Setup (PR ①-b S4)"):js.index("// ── /Setup ──")]
+    assert activity.NOTICE in ui_text("features", "activity", "text.ts"), "ME_NOTICE(React 활동) = 서버 activity.NOTICE 미러"
+    chips = ui_text("shared", "CandChips.tsx")
+    assert '"내가 쓴 메모"' in chips and ">확정한 판단<" in chips, "표시 낱말 = React 칩(R5b-1)"
     for w in ('["layout", "페이지 레이아웃"]', '["structure", "내 구조 설정"]', '["objects", "자료 종류"]', '["devices", "연결 장치"]', '["map", "지도"]',
-              '["help", "문의 및 개인정보"]', 'if (page === "layout") uiMount("layout");',
-              'if (R.tab === "_obj" && !R.a) return "#_setup/objects";', 'if (R.tab === "_settings") return "#_setup/structure";',
-              'if (R.tab === "_devices") return "#_setup/devices";', 'if (R.tab === "map" && R.a !== "review") return "#_setup/map";',
-              'if (R.tab === "_inbox" && !R.a) return "#_today";', 'if (R.tab === "structure") {'):
-        assert w in setup, w
-    assert "/api/me/layout" not in js, "레이아웃 읽기·쓰기 = React"
-    assert "corePost(" not in setup and "/api/" not in setup, "Setup 의 쓰기·API 0"
-    assert "{ const to = navReplace(R); if (to) { location.replace(to); return; } }" in js
-    assert 'if ((R.tab === "today" || R.tab === "home") && R.a !== "review") return "#_today";' in js, "옛 오늘 화면 없음 — 옛 대조 링크만 그대로"
-    # S5 오늘·저장 승인 대기 = React(features/today, R4-2) — 옛 쪽은 라우팅만. 줄·날짜 머리글·삭제 0·승인·제외는 Vitest TodayScreen.test.tsx
-    assert 'else if (tab.view === "today2") uiMount("today", ["today", R.a || "", R.b || ""]);' in js
-    assert 'else if (tab.view === "inbox") uiMount("today", ["inbox", R.a || ""]);' in js
-    assert 'if (R.tab === "_inbox" && !["pending", "applied", "excluded", "expired", "all"].includes(R.a)) return "#_today/inbox/" + encodeURIComponent(R.a);' in js
-    assert "// ── 오늘 (PR ①-b S5)" not in js and "/api/inbox" not in js, "옛 쪽 오늘·승인 대기 코드·API 0"
+              '["help", "문의 및 개인정보"]', 'if (R.tab === "_obj" && !R.a) return "#_setup/objects";',
+              'if ((R.tab === "today" || R.tab === "home") && R.a !== "review") return "#_today";'):
+        assert w in route, w
     for i, (lt, dk) in enumerate(zip(("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"),
                                      ("#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767")), 1):
-        assert f"--ax{i}: {lt};" in html and f"--ax{i}: {dk};" in html, ("축 색", i)
-    print("OK — 옛 쪽 「나」 접점(uiMount·통계 0·미저장 uiDirty·분기점) · Setup 페이지·레이아웃 = React·옛 주소 replace · "
-          "오늘·승인 대기 라우팅(React) · 축 색 토큰 · 표시 낱말 통과")
+        assert f"--ax{i}: {lt};" in css and f"--ax{i}: {dk};" in css, ("축 색", i)
+    print("OK — 「나」 접점 정적(미저장 보호 문구 · 분기점 · 탭 나·오늘 · Setup 페이지·옛 주소 = shared/route · 표시 낱말 · 축 색 토큰) 통과")
 
 
 TRASH_ASK = "삭제하면 휴지통으로 이동해요. 삭제 시각부터 168시간 동안 복원할 수 있고, 이후 서버 정리 때 영구 삭제돼요."   # r4 §8 글자 그대로
 
 
 def test_static_trash():
-    """휴지통 PR-1 화면 — 옛 쪽엔 스위치(trashOn → Setup 「휴지통」 페이지 줄)만 남는다. 상세의 [삭제]는 React — 「나」(MeActs.test.tsx)·
-    구조 서랍(StructureScreen.test.tsx, R5b-1)·활동(ActivityScreen.test.tsx)·자료 종류(ObjectsScreen.test.tsx). 접점·문구 한 벌 = ui/src/shared/item.ts."""
+    """휴지통 PR-1 화면 — 스위치(Setup 「휴지통」 페이지 줄 = shared/route setupPages, 동작 = Vitest shared/route.test.ts). 상세의 [삭제]는 React —
+    「나」(MeActs.test.tsx)·구조 서랍(StructureScreen.test.tsx, R5b-1)·활동(ActivityScreen.test.tsx)·자료 종류(ObjectsScreen.test.tsx). 접점·문구 한 벌 = ui/src/shared/item.ts."""
     html = (HERE / "app.html").read_text(encoding="utf-8")
-    js = re.search(r"<script>(.*?)</script>", html, re.S).group(1)
-    tr = js[js.index("// ── 휴지통 (trash PR-1)"):js.index("// ── /휴지통 ──")]
-    assert "const trashOn = () => !!(S && S.switches && S.switches.trash);" in tr
-    assert "/api/trash" not in js and "data-trash" not in js, "옛 쪽 휴지통 API·버튼 0(React 로)"
-    item = (HERE / "ui" / "src" / "shared" / "item.ts").read_text(encoding="utf-8")
+    assert "const setupPages = (S: AppState) => (S.switches?.trash ? SETUP_PAGES.concat([[\"trash\", \"휴지통\"]]) : SETUP_PAGES);" in ui_text("shared", "route.ts")
+    assert "/api/trash" not in html and "data-trash" not in html, "정적 뼈대 휴지통 API·버튼 0(React)"
+    item = ui_text("shared", "item.ts")
     assert f'TRASH_ASK = "{TRASH_ASK}"' in item and '"/api/trash/move"' in item and 'TRASH_DONE = "휴지통으로 옮겼어요."' in item, "r4 §8 문구·이동 접점 한 벌"
     for f in ("me", "objects", "activity"):
-        t = (HERE / "ui" / "src" / "features" / f / "text.ts").read_text(encoding="utf-8")
+        t = ui_text("features", f, "text.ts")
         assert "TRASH_ASK = " not in t and 'from "../../shared/item"' in t, (f, "삭제 문구 사본 0")
     code = "\n".join(l for l in item.splitlines() if not l.lstrip().startswith("//"))
     assert "처리 중" not in code and "재시도 중" not in code and "예정" not in code, "「영구 삭제 처리 중·재시도 중·예정」 화면 상태 0(r4 §8)"
-    assert 'const setupPages = () => trashOn() ? SETUP_PAGES.concat([["trash", "휴지통"]]) : SETUP_PAGES;' in js
-    assert "setupPages().some(p => p[0] === R.a)" in js and "else if (page === \"trash\") uiMount(\"trash\");" in js
     assert "남기지 않" not in html, "「남기지 않음·않기·않았어요」 0 — 표현은 「반영 안 함」 하나"
-    print("OK — 휴지통 정적(옛 쪽 = 스위치·Setup 페이지 · 접점·r4 §8 문구 한 벌 shared/item.ts · 사본 0 · 처리 중 상태 0 · 반영 안 함) 통과")
-
-
-def trash_run(scenario):
-    """휴지통 절 실행(node) — 휴지통 절(스위치) + Setup 페이지 목록 + 날짜·esc 도우미. 상세 [삭제]는 React(Vitest MeActs·StructureScreen).
-    서버·DOM 은 가짜: api = 보낸 요청 기록, confirmAsk = 확인창 문구 기록, done/fail = coreDone·coreFail 호출 기록."""
-    import json
-    import shutil
-    import subprocess
-    node = shutil.which("node")
-    assert node, "node 가 필요해요(CI 는 setup-node) — 휴지통 실행 시험"
-    html = (HERE / "app.html").read_text(encoding="utf-8")
-    js = re.search(r"<script>(.*?)</script>", html, re.S).group(1)
-    helpers = "\n".join(re.search(rf"^{p}.*$", js, re.M).group(0) for p in (
-        r"const esc = ", r"const toDate = ", r"const pad2 = ", r"function mdhm\(", r"const SETUP_PAGES = ", r"const setupPages = "))
-    b = js.index("// ── 휴지통 (trash PR-1)")
-    tr = js[b:js.index("// ── /휴지통 ──", b)]   # 클릭 연결은 가짜 document 가 받고 버린다 · hashchange 는 HASH 로
-    stub = """let S = null, coreFlash = null;
-const WHAT = {OFFLINE: "서버에 연결하지 못했어요."};
-const els = {}; const $ = id => els[id] || (els[id] = {id, textContent: "", innerHTML: "", hidden: false});
-const document = {querySelectorAll: () => [], querySelector: () => null, addEventListener() {}};
-let ROUTE = {tab: "_setup", a: "trash"}; const route = () => ROUTE;
-const api = []; let REPLY = {ok: true, j: {}}, LIST = {ok: true, j: {rows: []}};
-const corePost = async (url, body) => { api.push({url, body}); return REPLY; };
-const getJSON = async url => { api.push({url}); return LIST; };
-const confirmAsk = []; let CONFIRM = true; let HASH = () => {};
-const window = {confirm: t => { confirmAsk.push(t); return CONFIRM; }, addEventListener: (ev, f) => { if (ev === "hashchange") HASH = f; }};
-const done = [], fail = [];
-const coreDone = async (text, hash) => { done.push({text, hash}); }; const coreFail = async (res, err) => { fail.push(res.code); };
-const coreFlashShow = () => {}; const load = async () => { S = Object.assign({}, S); };
-const fakeBtn = (d, err) => ({dataset: d, disabled: false, closest: () => ({querySelector: () => err})});"""
-    src = f"{stub}\n{helpers}\n{tr}\nconst out = {{}};\n(async () => {{\n{scenario}\n}})().then(() => console.log(JSON.stringify(out)), e => {{ console.error(e); process.exit(1); }});"
-    r = subprocess.run([node, "-"], input=src, capture_output=True, text=True, timeout=60, env=dict(os.environ, TZ="Asia/Seoul"))
-    assert r.returncode == 0, r.stderr[-800:]
-    return json.loads(r.stdout)
-
-
-def test_trash_switch():
-    """스위치별 차이 — 꺼짐 = 휴지통 페이지 0 · 켜짐 = Setup 「휴지통」. 상세 [삭제] 버튼은 React — Vitest MeActs·StructureScreen.test.tsx."""
-    o = trash_run("""
-const snap = () => ({on: trashOn(), pages: setupPages().map(p => p[0])});
-S = {switches: {converse: true}}; out.none = snap();
-S = {switches: {trash: false}}; out.off = snap();
-S = {switches: {trash: true}}; out.on = snap();
-""")
-    for k in ("none", "off"):
-        s = o[k]
-        assert s["on"] is False and "trash" not in s["pages"], (k, "꺼짐 = 페이지 0")
-    s = o["on"]
-    assert s["on"] is True and s["pages"][-1] == "trash" and s["pages"][:6] == ["layout", "structure", "objects", "devices", "map", "help"]
-    print("OK — 휴지통 스위치(꺼짐·필드 없음 = 페이지 0 · 켜짐 = Setup 휴지통) 통과")
+    print("OK — 휴지통 정적(스위치 = shared/route · 접점·r4 §8 문구 한 벌 shared/item.ts · 사본 0 · 처리 중 상태 0 · 반영 안 함) 통과")
 
 
 def test_static_moved():
@@ -306,12 +244,13 @@ def test_static_moved():
     import structure_svg
     import web
     html = (HERE / "app.html").read_text(encoding="utf-8")
-    # 공통(A1·A2·A3·A5) — 인라인 스크립트 1개(CSP 해시 대상) · 인라인 이벤트 속성 0(CSP)
-    assert len(web.inline_script_hashes(html)) == 1 and html.count("<script>") == 1, "인라인 스크립트 1개"
+    css, route, header = ui_css(), ui_text("shared", "route.ts"), ui_text("layout", "useHeader.ts")
+    # 공통(A1·A2·A3·A5) — 정적 뼈대 = 인라인 스크립트 0(CSP self — test_ui_build.py) · 인라인 이벤트 속성 0(CSP)
+    assert not re.search(r"<script\b(?![^>]*\bsrc\s*=)[^>]*>", html, re.I), "인라인 스크립트 0"
     assert not re.search(r"\son[a-z]+\s*=", html, re.I), "app.html 인라인 이벤트 속성 0"
 
     # A1 문의 데스크 = React(features/desk, R5b-2a) — 사용자 글은 글자로만(innerHTML·dangerouslySetInnerHTML 0 = arch.test.ts) · 화면 동작은 Vitest Desk.test.tsx.
-    # 옛 쪽 = 대화창 섬 자리(사용자 구간 안 — 관리자 응답엔 없음)와 여는 접점(deskDlg)만. 서버 정본 값(고지 문장·바이트 상한)은 TS 문구와 같아야 한다
+    # 정적 뼈대 = 대화창 자리(사용자 구간 안 — 관리자 응답엔 없음)만, 여는 접점 = 껍데기(useHeader). 서버 정본 값(고지 문장·바이트 상한)은 TS 문구와 같아야 한다
     assert '<!--user--><div id="ui-desk"></div><!--/user-->' in html and "desk-dlg" not in html and "desk-form" not in html
     dtext = (HERE / "ui" / "src" / "features" / "desk" / "text.ts").read_text(encoding="utf-8")
     assert f'DESK_NOTICE = "{db.NOTICE}";' in dtext and f"DESK_MAX = {db.LIMIT_TICKET};" in dtext and db.LIMIT_TICKET == 4096
@@ -323,7 +262,7 @@ def test_static_moved():
     # 설정은 모든 역할에서 우측 상단 톱니 하나. 관리자 권한은 서버가 지킨다.
     gear = re.search(r'<a\b[^>]*\bid="setup-link"[^>]*>', html)
     assert gear and not re.search(r"\shidden(\s|>)", gear.group(0)) and 'href="#_setup"' in gear.group(0), gear
-    assert '$("setup-link").hidden' not in html
+    assert 'const gear = $("setup-link")' in header and "gear.hidden" not in header, "톱니는 숨기지 않는다(주소만 바꾼다)"
 
     # A2 계정 메뉴 — 메뉴 항목 · ⚙ 메뉴 밖 · #who 말줄임 · 문의 숨기기 흔적 0 (/app 응답 CSP 해시는 test_tools 에 남는다)
     menu = html[html.index('<details class="acct" id="acct">'):html.index("</details>")]
@@ -334,27 +273,27 @@ def test_static_moved():
     for w in ('data-acct="desk"', 'id="acct-desk"', "문의 섹션"):   # Q1b: 숨기기 메뉴 없음(서버 API·열은 남는다)
         assert w not in menu, w
     assert 'id="setup-link"' not in menu and 'id="setup-link"' in html, "⚙ 는 메뉴 밖에 그대로"
-    assert re.search(r"#who \{[^}]*text-overflow: ellipsis[^}]*\}", html) and re.search(r"#who \{[^}]*min-width: 0", html), "#who 말줄임"
-    for w in ("deskDlg(act);", "else deskDlg(op.dataset.open);"):   # 문의 대화창 = React 섬(features/desk) — 껍데기는 여는 접점만
-        assert w in html, w
+    assert re.search(r"#who \{[^}]*text-overflow: ellipsis[^}]*\}", css) and re.search(r"#who \{[^}]*min-width: 0", css), "#who 말줄임"
+    for w in ("ref.current.openDesk(act);", 'ref.current.openDesk(op.dataset.open || "")'):   # 문의 대화창 = React(features/desk) — 껍데기는 여는 접점만
+        assert w in header, w
     assert 'postJSON("/api/optional-consent", { kind: "struct_names", on })' in (HERE / "ui" / "src" / "features" / "defs" / "stdApi.ts").read_text(encoding="utf-8"), "이름 공유 = 같은 API(내 구조 설정, React)"
     for w in ("/api/desk-visibility", "desk_hidden", "deskPeek", 'id="desk"'):   # Q1b: 화면은 숨김 상태를 안 쓴다
         assert w not in html, w
 
     # A3 구조 정의 보기·편입 대화창(Q4·Q5) — 화면은 React(server/ui/src/features/defs, R5b-1 · 동작 = Vitest DefsScreen.test.tsx).
-    # 여기엔 서버 정본과 같아야 하는 글자·코드(잠금 영향·재검토 사유)와 옛 쪽에 남은 자리(그래프 토큰·CSS·주소 replace)만 본다.
+    # 여기엔 서버 정본과 같아야 하는 글자·코드(잠금 영향·재검토 사유)와 전역 자리(그래프 토큰·CSS·주소 replace)만 본다.
     tokens = structure_svg.tokens_css(dark_attr=True, dark_media=False)
     ui = HERE / "ui" / "src"
     dtext = (ui / "features" / "defs" / "text.ts").read_text(encoding="utf-8")
     dlg = (ui / "features" / "defs" / "StdDialog.tsx").read_text(encoding="utf-8")
     api = (ui / "features" / "defs" / "stdApi.ts").read_text(encoding="utf-8")
     note = (ui / "shared" / "ReviewNote.tsx").read_text(encoding="utf-8")
-    assert 'if (R.a === "defs") return "#_setup/structure";' in html and 'href="#_settings/structure"' in (ui / "features" / "structure" / "StructureScreen.tsx").read_text(encoding="utf-8"), \
+    assert 'if (R.a === "defs") return "#_setup/structure";' in route and 'href="#_settings/structure"' in (ui / "features" / "structure" / "StructureScreen.tsx").read_text(encoding="utf-8"), \
         "구조 정의 보기·라우트 = 내 구조 설정(옛 #structure/defs 는 replace)"
     assert '"/api/std/preview"' in api and '"/api/std/choose"' in api and "confirmed_meaning: true, expected_revision: o.object ? o.object.revision : null" in api
     for w in ('id="std-dlg"', 'type="checkbox"', "disabled={!checked}", "같은 뜻으로 쓴다"):
         assert w in dlg, w
-    assert "<dialog" not in html.replace('<dialog id="desk-dlg"', "").replace('<dialog id="dlg"', "").replace('<dialog id="name-dlg"', "").replace('<dialog id="leave-dlg"', ""), "편입 대화창 = React"
+    assert "<dialog" not in html, "대화창 = 전부 React(편입·문의·표시 이름·미저장)"
     for code in contract.LOCKED_CHANGES:   # 잠금 영향 문구 — 서버 코드 전부
         assert re.search(rf"\b{code}: \"", dtext), code
     for code in contract.REVIEW_REASONS:
@@ -366,30 +305,25 @@ def test_static_moved():
         "dmo-o1", "dmo-r1", "dmo-core-record"), "목록 id 꼴(features/defs/DefsList.tsx) = structure_svg 앵커"
     dlist = (ui / "features" / "defs" / "DefsList.tsx").read_text(encoding="utf-8")
     assert "id={`dmo-o${i + 1}`}" in dlist and "id={`dmo-r${i + 1}`}" in dlist and "id={`dmo-core-${x.kind}`}" in dlist
-    assert tokens in html and "prefers-color-scheme" not in tokens and "prefers-color-scheme" not in html, "토큰 = 테마 토글(data-theme)만"
+    assert tokens in css and "prefers-color-scheme" not in tokens and "prefers-color-scheme" not in css, "토큰 = 테마 토글(data-theme)만"
     assert '[data-theme="dark"]' in tokens
     assert '<th scope="col">출처</th>' not in dlist and '<th scope="col">구분</th><th scope="col">보호</th>' in dlist, "필드 표 열 머리 = 구분(정의 구분 뜻의 '출처' 0)"
-    assert "min-width: 420px" in html and ".dmo { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px; overflow-x: auto; }" in html
-    for w in ("#std-dlg ul", "#std-dlg .stdok"):   # React 대화창이 같은 id 로 옛 CSS 를 쓴다(CSS 번들은 R5b-2)
-        assert w in html, w
+    assert "min-width: 420px" in css and ".dmo { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px; overflow-x: auto; }" in css
+    for w in ("#std-dlg ul", "#std-dlg .stdok"):   # React 대화창이 같은 id 로 전역 CSS 를 쓴다(global.css)
+        assert w in css, w
 
-    def outside_marks(pos, what):   # 관리자 /app 도 쓰는 대화창 — <!--user-->/<!--admin--> 구간 표식 밖
-        for mark in ("<!--user-->", "<!--admin-->"):
-            for a in [m.start() for m in re.finditer(re.escape(mark), html)]:
-                b = html.index(mark.replace("<!--", "<!--/"), a)
-                assert not (a < pos < b), (what, "구간 안", mark)
-
-    # A4 코어 표시명 — app.html LABELS(std@1 표시명 절의 화면 몫. web.CORE_LABEL 비교는 test_tools 에 남는다)
-    assert all(f'{k}: "{v}"' in html for k, v in (("question", "질문"), ("record", "기록"), ("candidate", "후보"))), "app.html LABELS"
+    # A4 코어 표시명 — 화면 라벨 shared/route.ts LABELS(std@1 표시명 절의 화면 몫. web.CORE_LABEL 비교는 test_tools 에 남는다)
+    assert all(f'{k}: "{v}"' in route for k, v in (("question", "질문"), ("record", "기록"))), "route.ts LABELS"
 
     # A5 24h 화면 — 플래그 0 · 이름 관문·새 경로·탭 · 안내 문구 · 재검토 표시 · 이름 대화창(구간 밖) · 메뉴 · 옛 탐색 0(R5a)
     assert "FEATURE-OFF" not in html, "플래그 제거 — 화면에도 FEATURE-OFF 0"
-    # 이름 관문·「표시 이름 바꾸기」 폼·문구·/api/me/name = React(features/name, R5b-2a) — Vitest Name.test.tsx. 옛 쪽은 관문 분기·대화창 섬 자리만
-    for w in ('if (needName()) {', 'return uiMount("name");', 'uiIsland("namedlg", $("ui-namedlg"), dlgCtx("open"))',
-              'id: "_me"', 'id: "_obj"', 'id: "_settings"',
-              "const tabsList = () => [NAVTAB._me, NAVTAB._today];",   # PR ①-b 탭: 나 · 오늘 · Setup(톱니)
+    # 이름 관문·「표시 이름 바꾸기」 폼·문구·/api/me/name = React(features/name, R5b-2a) — Vitest Name.test.tsx. 관문 분기·대화창 = 껍데기(layout/App, Vitest App.test.tsx)
+    app = ui_text("layout", "App.tsx")
+    assert 'const gate = !!S && needName(S);' in app and 'const name = gate ? "name" : shown?.screen || "";' in app and "<NameDialog ctx={nameCtx} />" in app
+    for w in ('_me: { id: "_me"', '_obj: { id: "_obj"', '_settings: { id: "_settings"',
+              "export const NAV_TABS = [NAVTAB._me, NAVTAB._today];",   # PR ①-b 탭: 나 · 오늘 · Setup(톱니)
               'if (R.tab === "_settings") return "#_setup/structure";'):   # 문의 공개 이력 「삭제 완료」 = React(features/desk — Vitest Desk.test.tsx)
-        assert w in html, w
+        assert w in route, w
     # 사람·읽고 든 생각 쓰기·안내 문구 = React 자료 종류(R4-2 — features/objects, 화면 동작은 Vitest ObjectsScreen.test.tsx)
     objs = HERE / "ui" / "src" / "features" / "objects"
     otext, oapi = (objs / "text.ts").read_text(encoding="utf-8"), (objs / "objApi.ts").read_text(encoding="utf-8")
@@ -397,7 +331,7 @@ def test_static_moved():
     assert re.search(r"REFL_HELP\s*=\s*\"출처를 접한 뒤 내가 한 생각만 적어요\. 다른 사람의 말·경험·생각을 옮기는 곳이 아니에요\.\"", otext)
     assert re.search(r"PERSON_HELP\s*=\s*\"별칭도 그 사람을 알아볼 수 있으면 개인정보예요\.\"", otext)
     assert "<ReviewNote review={c.review} />" in (HERE / "ui" / "src" / "features" / "sheet" / "RecordTab.tsx").read_text(encoding="utf-8"), "기록 화면 재검토 표시(shared/ReviewNote)"
-    outside_marks(html.index('<div id="ui-namedlg"></div>'), "ui-namedlg")   # 관리자도 쓰는 대화창 섬 — 구간 표식 밖
+    assert "ui-namedlg" not in html, "표시 이름 대화창 = 껍데기 자식(모든 역할 — 구간 표식과 무관)"
     menu = html[html.index('id="acct-menu"'):html.index("</details>")]
     for a in ("name", "settings"):
         assert f'data-acct="{a}"' in menu, a
@@ -405,11 +339,11 @@ def test_static_moved():
         assert w not in html, w
 
     # B1 기본 밝은 화면 — OS 다크 설정·?theme 를 따르지 않는다. 어두운 화면은 토글(data-theme="dark")로만
-    assert "prefers-color-scheme" not in html and "dataset.theme" not in html and html.count(':root[data-theme="dark"] {') >= 1, "app.html"
+    assert "prefers-color-scheme" not in html + css and "dataset.theme" not in html and css.count(':root[data-theme="dark"] {') >= 1, "app.html·CSS"
     assert '<html lang="ko">' in html and "data-theme" not in html.split("<head>", 1)[0], "app.html: 기본은 라이트"
     # B2 외부 셰이더 문자열 0(바이트) — 이 파일 자신에 걸리지 않게 조립한다
-    raw = (HERE / "app.html").read_bytes()
-    assert not [n for n in (b"shaders" + b".com", b"type" + b"gpu") if n in raw], "app.html 외부 셰이더 문자열 0"
+    raw = (HERE / "app.html").read_bytes() + css.encode("utf-8")
+    assert not [n for n in (b"shaders" + b".com", b"type" + b"gpu") if n in raw], "app.html·CSS 외부 셰이더 문자열 0"
     # B3 필수 동의 게이트 없음 — 화면에 CONSENT-REQUIRED·/api/consent·consent_grant·/consent 링크 0
     assert "CONSENT-REQUIRED" not in html and "/api/consent" not in html and "consent_grant" not in html, "app.html 동의 게이트 흔적 0"
     assert [ln for ln in html.splitlines() if "/consent" in ln] == [], "app.html /consent 줄 0"
@@ -499,7 +433,6 @@ async def run():
     try:
         test_static()
         test_static_trash()
-        test_trash_switch()
         test_static_moved()
         await test_records_api()
         await test_ui_samples()

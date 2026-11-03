@@ -7,7 +7,6 @@ export const NOCARD: Record<string, string> = { confirmed: "아직 확정한 판
   pending: "정할 문장이 남아 있지 않아요.", excluded: "반영 안 함으로 둔 문장이 없어요.", all: "아직 뽑힌 문장이 없어요. 내 글에서 판단을 뽑으면 여기에 떠요." };
 export const ITEM_SAVED: Record<string, string> = { apply: "적용했어요.", confirm: "남겼어요.", exclude: "반영 안 함으로 표시했어요.", pending: "아직 안 정함으로 돌렸어요.",
   discard: "제안을 제외했어요." };
-export const HIST_LABEL: Record<string, string> = { apply: "적용", confirm: "남김", exclude: "반영 안 함", pending: "아직 안 정함", archive: "보관", restore: "되돌림" };
 export { CONFLICT_TEXT } from "../../shared/postErr";
 export const TAB = "structure";   // 옛 BASE.structure — 대조 경로·카드 주소의 탭 id
 

@@ -82,15 +82,6 @@ jobs:
       - name: "① Python 문법 (py_compile)"
         run: python -m py_compile server/*.py
 
-      # 옛 화면(app.html 인라인 <script> 한 덩이)만 본다 — React 쪽은 tsc·vite build 가 본다. R5(app.html 삭제)에서 이 단계를 지운다
-      - name: "② JS 문법 (app.html <script>)"
-        run: |
-          set -eo pipefail
-          sed -n '/^<script>$/,/^<\/script>$/p' server/app.html | sed '1d;$d' > "$RUNNER_TEMP/app.js"
-          test -s "$RUNNER_TEMP/app.js" || { echo "::error::app.html 에서 <script> 블록을 못 찾음"; exit 1; }
-          wc -l "$RUNNER_TEMP/app.js"
-          node --check "$RUNNER_TEMP/app.js"
-
       - name: "운영 DB 보호 가드"
         # 허용 목록: 호스트가 localhost·127.0.0.1 일 때만 통과. 값은 출력하지 않는다.
         run: |
@@ -194,7 +185,7 @@ jobs:
           PY
           python server/test_migration_path.py
 
-      # 이관 화면(2026-11-02) — app.html 「이관」 절(토큰·plan 목록·확인·체크·반영·오류·영수증, node 실행) + 화면이 읽는 응답 키.
+      # 이관 화면(2026-11-02) — 화면이 읽는 응답 키·견본 대조(화면 동작 = React features/migration, Vitest).
       # 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
       - name: "④-h 이관 화면 시험 (test_migration_screen.py)"
         env:
@@ -259,7 +250,7 @@ jobs:
           PY
           python server/test_record_edit.py
 
-      # React 화면 묶음(2026-11-03 R1) — manifest 허용 목록 서빙·/app 진입 태그·CSP 인라인 수·manifest 없음·래칫·옛 쪽 다리(node).
+      # React 화면 묶음(2026-11-03 R1·R5b-2b) — manifest 허용 목록(지연 불러오기 묶음 포함) 서빙·/app 진입 태그·CSP self·인라인 0·manifest 없음·정적 뼈대.
       # 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
       - name: "④-m React 화면 묶음 시험 (test_ui_build.py)"
         env:

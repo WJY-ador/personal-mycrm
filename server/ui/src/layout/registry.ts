@@ -1,55 +1,28 @@
-// 옮긴 화면 목록 + 「나」 요약 블록 레지스트리 — features 를 import 하는 유일한 곳. 화면 이름은 server/ui/migrated.json 의 screens 키와 같다.
-// 블록 id 정본 = server/layout_registry.json(Python layout_check 와 같은 파일 하나 — 사본 금지). 키가 같은지는 registry.test.ts 가 본다.
-import { createElement, type ComponentType } from "react";
+// #view 화면 목록 — features 를 import 하는 곳(layout). 화면마다 지연 불러오기(React.lazy — 진입 묶음에 화면 코드를 넣지 않는다).
+// 상시 섬(대화 서랍·머리글 스펙트럼·표시 이름·문의 대화창)은 진입 묶음 — App.tsx 가 바로 띄운다(누르기 전에 떠 있어야 한다).
+import { lazy, type ComponentType } from "react";
 import type { ScreenProps } from "../shared/ctx";
-import reg from "../../../layout_registry.json";
-import { TrashScreen } from "../features/trash/TrashScreen";
-import { MeScreen } from "../features/me/MeScreen";
-import { ReviewScreen } from "../features/review/ReviewScreen";
-import { ChatRoot } from "../features/chat/ChatRoot";
-import { MigrationScreen } from "../features/migration/MigrationScreen";
-import { DevicesScreen } from "../features/devices/DevicesScreen";
-import { ActivityScreen } from "../features/activity/ActivityScreen";
-import { ObjectsScreen } from "../features/objects/ObjectsScreen";
-import { TodayScreen } from "../features/today/TodayScreen";
-import { LayoutScreen } from "../features/me/layout/LayoutScreen";
-import { NameGate } from "../features/name/NameGate";
-import { NameDialog } from "../features/name/NameDialog";
-import { DeskDialog } from "../features/desk/DeskDialog";
-import { HelpScreen } from "../features/desk/HelpScreen";
-import { SheetScreen } from "../features/sheet/SheetScreen";
-import { StructureScreen } from "../features/structure/StructureScreen";
-import { DefsScreen } from "../features/defs/DefsScreen";
-import { MapScreen } from "../features/map/MapScreen";
-import { Mast } from "../features/mast/Mast";
-import type { Blocks } from "../features/me/summary/block";
-import { Heatmap } from "../features/me/summary/Heatmap";
-import { Kinds } from "../features/me/summary/Kinds";
-import { Waiting } from "../features/me/summary/Waiting";
-import { Recent } from "../features/me/summary/Recent";
 
-export const REGISTRY = reg;
-const BLOCK_LABEL = Object.fromEntries(Object.entries(reg.components).map(([k, v]) => [k, v.label]));
-export const BLOCKS: Blocks = { heatmap: Heatmap, kinds: Kinds, waiting: Waiting, recent: Recent };
+type Mod = Record<string, unknown>;
+type Screen = ComponentType<ScreenProps>;
+const one = (load: () => Promise<Mod>, name: string) => async () => (await load())[name] as Screen;
 
-export const SCREENS: Record<string, ComponentType<ScreenProps>> = {
-  trash: TrashScreen,
-  review: ReviewScreen,
-  migration: MigrationScreen,
-  devices: DevicesScreen,
-  activity: ActivityScreen,   // 활동 목록·하나·축 하나(ctx.args = [activity|axis, …])
-  objects: ObjectsScreen,     // 자료 종류 색인·사람·출처·읽고 든 생각(ctx.args = [a, b, c])
-  today: TodayScreen,         // 오늘·저장 승인 대기(ctx.args = [today, a, b] | [inbox, 상태])
-  sheet: SheetScreen,         // 질문·기록 탭(ctx.args = [탭 id, question|record, 조각, 고른 id])
-  structure: StructureScreen, // 구조 항목·판단 문장 카드 + 항목 서랍(ctx.args = [a, b])
-  defs: DefsScreen,           // 내 구조 설정(목록·그래프·이름 공유·표준 편입)
-  map: MapScreen,             // 지도 칸반(ctx.args = [대조 경로 탭 id])
-  chat: ChatRoot,   // 상시 섬(#ui-chat) — #view 화면이 아니다
-  name: NameGate,         // 이름 관문(표시 이름 없을 때 #view)
-  namedlg: NameDialog,    // 상시 섬(#ui-namedlg) — 「표시 이름 바꾸기」 대화창
-  desk: DeskDialog,       // 상시 섬(#ui-desk, 관리자 응답엔 자리 없음) — 문의 보내기·내 문의
-  help: HelpScreen,       // 설정 「문의 및 개인정보」
-  mast: Mast,       // 상시 섬(#ui-mast — 머리글 스펙트럼·질문 레전드)
-  me: (p: ScreenProps) => createElement(MeScreen, { ...p, blocks: BLOCKS, layoutDefault: reg.pages.me.default }),
-  layout: (p: ScreenProps) => createElement(LayoutScreen, { ...p, def: reg.pages.me.default, blockLabel: BLOCK_LABEL }),   // Setup 페이지 레이아웃
+// 화면 이름 → 불러오기(시험은 이것으로 먼저 받아 둔다) · SCREENS = 같은 불러오기의 React.lazy
+export const LOADERS: Record<string, () => Promise<Screen>> = {
+  trash: one(() => import("../features/trash/TrashScreen"), "TrashScreen"),
+  review: one(() => import("../features/review/ReviewScreen"), "ReviewScreen"),
+  migration: one(() => import("../features/migration/MigrationScreen"), "MigrationScreen"),
+  devices: one(() => import("../features/devices/DevicesScreen"), "DevicesScreen"),
+  activity: one(() => import("../features/activity/ActivityScreen"), "ActivityScreen"),   // 활동 목록·하나·축 하나(args = [activity|axis, …])
+  objects: one(() => import("../features/objects/ObjectsScreen"), "ObjectsScreen"),        // 자료 종류 색인·사람·출처·읽고 든 생각(args = [a, b, c])
+  today: one(() => import("../features/today/TodayScreen"), "TodayScreen"),                // 오늘·저장 승인 대기(args = [today, a, b] | [inbox, 상태])
+  sheet: one(() => import("../features/sheet/SheetScreen"), "SheetScreen"),                // 질문·기록 탭(args = [탭 id, question|record, 조각, 고른 id])
+  structure: one(() => import("../features/structure/StructureScreen"), "StructureScreen"),// 구조 항목·판단 문장 카드 + 항목 서랍(args = [a, b])
+  defs: one(() => import("../features/defs/DefsScreen"), "DefsScreen"),                    // 내 구조 설정(목록·그래프·이름 공유·표준 편입)
+  map: one(() => import("../features/map/MapScreen"), "MapScreen"),                        // 지도 칸반(args = [대조 경로 탭 id])
+  name: one(() => import("../features/name/NameGate"), "NameGate"),                        // 이름 관문(표시 이름 없을 때)
+  help: one(() => import("../features/desk/HelpScreen"), "HelpScreen"),                    // 설정 「문의 및 개인정보」
+  me: one(() => import("./meEntry"), "Me"),
+  layout: one(() => import("./meEntry"), "Layout"),   // Setup 페이지 레이아웃
 };
+export const SCREENS: Record<string, Screen> = Object.fromEntries(Object.entries(LOADERS).map(([k, f]) => [k, lazy(async () => ({ default: await f() }))]));

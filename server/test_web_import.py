@@ -19,6 +19,7 @@ import urllib.parse
 from pathlib import Path
 
 HERE = Path(__file__).parent
+INLINE_SCRIPT = re.compile(r"<script\b(?![^>]*\bsrc\s*=)[^>]*>", re.I)   # src 없는 <script>(인라인)
 URL = os.environ.get("DATABASE_URL", "")
 if not URL:
     raise SystemExit("중단: DATABASE_URL 을 명시하세요(예: postgresql://localhost/crm_test_bi_web). server/.env 는 읽지 않아요.")
@@ -212,9 +213,9 @@ async def test_web_layer():
             fk.put(activity, "state_part", {"activity": {"total": 3}, "inbox": {"pending": 2}, "devices": {"active": 1, "max": 5}})
             s = (await h.get("/api/state")).json()
             assert s["activity"] == {"total": 3} and s["inbox"] == {"pending": 2} and s["devices"]["max"] == 5 and "activity" not in s.get("read", {})
-            # 9) /app — 인라인 스크립트 1개 · 관리자 응답에도 「연결 장치」 메뉴가 남는다
+            # 9) /app — 인라인 스크립트 0 · 관리자 응답에도 「연결 장치」 메뉴가 남는다
             r = await h.get("/app")
-            assert r.status_code == 200 and len(web.inline_script_hashes(r.text)) == 1 and 'id="acct-devices"' in r.text
+            assert r.status_code == 200 and not INLINE_SCRIPT.search(r.text) and 'id="acct-devices"' in r.text
             with db.tx() as c:
                 c.execute("UPDATE users SET role='admin' WHERE id=%s", (uid,))
             try:
@@ -231,15 +232,13 @@ async def test_web_layer():
 
 def test_static():
     html = (HERE / "app.html").read_text(encoding="utf-8")
-    assert html.count("<script>") == 1 and len(web.inline_script_hashes(html)) == 1, "인라인 스크립트 1개"
+    assert not INLINE_SCRIPT.search(html), "인라인 스크립트 0(정적 뼈대)"
     # 「연결 장치」 메뉴는 <!--user--> 구간 밖(관리자도 연결한다)
     for m in re.finditer(r"<!--user-->(.*?)<!--/user-->", html, re.S):
         assert "acct-devices" not in m.group(1)
-    js = re.search(r"<script>(.*?)</script>", html, re.S).group(1)
     # 활동 목록·하나(원문 127.0.0.1 링크·포트)·연결 장치(토큰)는 React(R4) — 원문 링크 한 곳·fetch 0·저장소 = 포트 하나·토큰 미저장은
-    # Vitest(server/ui/src/arch.test.ts·features/activity·devices). 옛 쪽엔 원문 링크·저장소 쓰기·토큰이 없다
-    assert "127.0.0.1" not in js and "localStorage.setItem" not in js and "sessionStorage" not in js
-    assert not re.search(r"coreFlash\s*=\s*\{[^}]*token", js) and not re.search(r"location\.hash[^;\n]*token", js)
+    # Vitest(server/ui/src/arch.test.ts·features/activity·devices). 정적 뼈대엔 원문 링크가 없다
+    assert "127.0.0.1" not in html
     # 승인 대기(서버 문장 approve_notice 그대로 · 생성 정보 열거값 = 사람 말, 모르는 값 = 「기타」 + 원값)는 React — Vitest TodayScreen.test.tsx(R4-2)
     # 감사 라벨 — schema.sql admin_audit CHECK 의 모든 action 에 표시 이름
     sql = (HERE / "schema.sql").read_text(encoding="utf-8")
@@ -256,7 +255,7 @@ def test_static():
         assert [ln["target"] for ln in a["links"]] == ["sources"], a["links"]
     finally:
         web.CORE_OBJECTS = saved
-    print("OK — 정적(인라인 1개·메뉴 위치·옛 쪽 원문 링크·저장소·토큰 0·승인 문구·감사 라벨·활동 코어 정의 숨긴 열) 통과")
+    print("OK — 정적(인라인 0·메뉴 위치·뼈대 원문 링크 0·승인 문구·감사 라벨·활동 코어 정의 숨긴 열) 통과")
 
 
 # ── B. 합성 활동 집계 손계산 대조(실제 activity.me_aggregate) ──────────────

@@ -62,7 +62,7 @@ def common(r):
     """D — 모든 응답 공통: 비로그인 200 · CSP 그대로 · 인라인 스크립트 0 · no-store · 껍데기(theme.js·토글·nav 치환)."""
     assert r.status_code == 200, r.status_code
     assert r.headers["content-security-policy"] == web.CSP_BASE, r.headers.get("content-security-policy")
-    assert web.inline_script_hashes(r.text) == [], "인라인 스크립트 0"
+    assert not re.search(r"<script\b(?![^>]*\bsrc\s*=)[^>]*>", r.text, re.I), "인라인 스크립트 0"
     assert r.headers["cache-control"] == "no-store" and r.headers["x-frame-options"] == "DENY"
     assert re.findall(r'/assets/[^"?]+', r.text) == ["/assets/theme.js"] and r.text.count("data-theme-toggle") == 1, "도움말과 같은 껍데기"
     assert "<!--nav-->" not in r.text and '<nav class="toc"' not in r.text, "nav 치환 · 빈 목차 칸 없음"

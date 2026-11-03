@@ -1,6 +1,7 @@
 // 「나」 자료 규칙(순수 함수) — 옛 app.html homeRows·meRows·meAxes·meN·mePick·meTabOfItem 그대로. 연결 = 저장된 관계만(추정 0).
 // W = 화면이 지금 가진 것: 상태 S + 이어 받은 기록 + 통계 + 문맥 API 결과(축·사람 — 이 화면에 머무는 동안).
 import { timeOf } from "../../shared/date";
+import { meTabOf } from "../../shared/route";
 import { srcText as srcTextOf } from "../../shared/source";
 import { readOk, type AppState, type Cand, type Def, type Item, type Person, type Question, type Rec, type Refl, type Source } from "../../shared/state";
 import type { Act, AxisCtx, PersonCtx, Stats } from "./meApi";
@@ -32,11 +33,7 @@ export const itemsOf = (W: World, defId: string) => (W.S.items || []).filter(it 
 const codeCmp = (a: Item, b: Item) => (a.code ? 0 : 1) - (b.code ? 0 : 1) || String(a.code || "").localeCompare(String(b.code || ""), "ko", { numeric: true });
 export const sorted = (xs: Item[]) => xs.map((x, i) => [x, i] as const).sort((p, q) => codeCmp(p[0], q[0]) || p[1] - q[1]).map(p => p[0]);
 
-export function tabOfItem(W: World, it: Item): MeTab {
-  const d = defById(W, it.object_id);
-  for (const t of ["principle", "decision", "axis"] as const) if (d && d.std_id === ME_STD[t]) return t;
-  return "custom";
-}
+export const tabOfItem = (W: World, it: Item): MeTab => meTabOf(W.S, it);   // 판정 한 벌 = shared/route(옛 주소 replace 와 같은 규칙)
 
 // 상세로 열 수 있는 데이터 — 만든 시각 최신 순(같으면 넣은 순)
 export function homeRows(W: World): Row[] {

@@ -30,7 +30,7 @@ function Group({ S, title, cards, empty }: { S: AppState; title: string; cards: 
 export function Index({ S, msg }: P) {
   const cnt = S.source_counts || { by_source: {}, unconfirmed: 0 };
   const recTotal = Object.values(cnt.by_source || {}).reduce((s, n) => s + n, 0) + (cnt.unconfirmed || 0);
-  const desk = !!document.getElementById("desk-dlg");   // 문의 대화창은 껍데기 몫(계정에 따라 없다)
+  const desk = !!document.getElementById("ui-desk");   // 문의 대화창 자리 = 서버가 사용자 응답에만 둔다(관리자 = 없음)
   const core: Card[] = [
     { label: "나", api: "users", href: "#_me", n: "1" },
     { label: "질문", api: "questions", href: `#${qTabId(S)}`, n: (S.questions || []).length },

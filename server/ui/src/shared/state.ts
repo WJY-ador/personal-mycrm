@@ -47,6 +47,7 @@ export type Next = { kind: string; text: string };
 export type OriginLabels = { text: Record<string, string>; category: Record<string, string> };
 
 export type AppState = {
+  generated?: string;   // 서버가 상태를 만든 시각(ISO) — 바닥 「불러온 시각」
   user: { display_name: string | null; nav: string; email?: string; struct_names?: boolean; admin?: boolean };   // admin = 관리자일 때만 true(서버 Q1 strip 과 같은 조건)
   switches: { trash: boolean; converse?: boolean };
   read?: Record<string, { ok: boolean; error?: { code: string; msg: string } }>;   // 부분 읽기 실패 때만 온다

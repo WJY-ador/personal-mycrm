@@ -1,5 +1,5 @@
 // Setup 「휴지통」 — 목록(서버 커서로 [더 보기]) · [복원] · [영구 삭제](확인창). 기한 지난 행은 서버가 목록에서 뺀다.
-// 복원·영구 삭제 뒤엔 상태 한 벌을 다시 받는다(ctx.reload) — 껍데기가 crm:state 를 알리면 목록도 다시 받는다.
+// 복원·영구 삭제 뒤엔 상태 한 벌을 다시 받는다(ctx.reload — 떠 있는 목록도 같이 다시 받는다).
 import { useState } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { apiErr } from "../../shared/api";

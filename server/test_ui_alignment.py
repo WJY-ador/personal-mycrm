@@ -3,21 +3,15 @@ import ast
 import html
 import json
 import re
-import subprocess
 import unittest
 from pathlib import Path
 
 import structure_svg
 
 HERE = Path(__file__).parent
-HTML = (HERE / "app.html").read_text()
+HTML = (HERE / "app.html").read_text()   # 정적 뼈대(인라인 스크립트·스타일 0) — 화면·라우터는 React(server/ui), CSS 는 번들(tokens.css·global.css)
 UI = HERE / "ui" / "src"
-JS = re.search(r"<script>(.*?)</script>", HTML, re.S).group(1)
-
-
-def js_run(code):
-    result = subprocess.run(["node", "-e", code], text=True, capture_output=True, check=True)
-    return json.loads(result.stdout)
+CSS = (UI / "shared" / "tokens.css").read_text(encoding="utf-8") + (UI / "shared" / "global.css").read_text(encoding="utf-8")
 
 
 class UIAlignmentTest(unittest.TestCase):
@@ -33,67 +27,28 @@ class UIAlignmentTest(unittest.TestCase):
         self.assertEqual(before, json.dumps(fixture, ensure_ascii=False))
 
     def test_single_settings_entry_for_all_roles(self):
-        navigation = JS[JS.index("const BASE ="):JS.index("function tabCount(")]
-        setup = JS[JS.index("const SETUP_PAGES"):JS.index("function renderSetup(")]
-        result = js_run('const LABELS = {}, ok = () => true, esc = x => x, trashOn = () => false;\n'
-                        'let S;\n' + navigation + '\n' + setup + '\n' + '''
-const out = [];
-for (const admin of [false, true]) {
-  S = {user: {admin}, tabs: []};
-  out.push({admin, tabs: tabsList().map(t => t.id), view: pickTab({tab: "_setup"}, tabsList()).view,
-    subnav: setupNav("layout")});
-}
-console.log(JSON.stringify(out));
-''')
-        for row in result:
-            self.assertEqual(row['view'], 'setup', row)
-            self.assertNotIn('_setup', row['tabs'], row)
-            self.assertEqual('/admin/setup' in row['subnav'], row['admin'], row)
-            self.assertEqual('/admin"' in row['subnav'], row['admin'], row)
-            for slug in ('layout', 'structure', 'objects', 'devices', 'map', 'help'):
-                self.assertIn('#_setup/' + slug, row['subnav'])
+        """설정 = 모든 역할에서 톱니 하나(탭 줄에 없음). Setup 페이지 줄·관리자 운영 링크는 Vitest layout/App.test.tsx · shared/route.test.ts."""
         gear = re.search(r'<a[^>]+id="setup-link"[^>]*>.*?</a>', HTML).group()
         self.assertIn('href="#_setup"', gear)
         self.assertIn('aria-label="설정"', gear)
         self.assertNotIn(' hidden', gear)
-        self.assertNotIn('$("setup-link").hidden', JS)
 
     def test_official_font_with_swap_and_system_fallback(self):
         self.assertRegex(HTML, r'https://fonts.googleapis.com/css2\?family=Noto\+Sans\+KR[^" ]*display=swap')
-        self.assertRegex(HTML, r'font: 14px/1.55 "Noto Sans KR", -apple-system, "Apple SD Gothic Neo", sans-serif')
+        self.assertRegex(CSS, r'font: 14px/1.55 "Noto Sans KR", -apple-system, "Apple SD Gothic Neo", sans-serif')
         self.assertIn('referrerpolicy="no-referrer"', HTML)
 
     def test_account_settings_do_not_duplicate_gear(self):
-        account = JS[JS.index("function acctApply()"):JS.index("function acctClose()")]
-        result = js_run("""
-const out = [], document = {querySelectorAll: () => []};
-let S, nodes, gate;
-const $ = id => nodes[id], needName = () => gate;
-""" + account + """
-for (const admin of [false, true]) for (gate of [false, true]) {
-  S = {user: {admin, display_name: gate ? "" : "합성 사용자"}};
-  nodes = new Proxy({}, {get: (obj, key) => obj[key] ||= {hidden: true, href: "#_setup",
-    classList: {toggle() {}}, setAttribute() {}}});
-  acctApply();
-  out.push({admin, gate, settings: nodes["acct-settings"].hidden, devices: nodes["acct-devices"].hidden, gear: nodes["setup-link"].href});
-}
-console.log(JSON.stringify(out));
-""")
-        for row in result:
-            self.assertTrue(row['settings'], row)
-            self.assertTrue(row['devices'], row)
-            self.assertEqual(row['gear'], '/admin/setup' if row['gate'] and row['admin'] else '#_setup', row)
+        """설정 하위 화면은 톱니 하나에서만 — 계정 메뉴의 「내 구조 설정」·「연결 장치」는 늘 숨김(화면 코드가 켜지 않는다).
+        톱니 주소(관리자 이름 관문 = /admin/setup, 그 밖 #_setup)는 Vitest layout/App.test.tsx."""
+        for i in ("acct-settings", "acct-devices"):
+            tag = re.search(rf'<button[^>]+id="{i}"[^>]*>', HTML)
+            self.assertTrue(tag and re.search(r"\shidden(\s|>)", tag.group()), i)
+        src = "".join(p.read_text(encoding="utf-8") for p in UI.rglob("*.ts*") if ".test." not in p.name)
+        self.assertNotIn("acct-settings", src)
+        self.assertNotIn("acct-devices", src)
         console = re.search(r'<a[^>]+id="acct-console"[^>]*>', HTML)
         self.assertTrue(console is None or ' hidden' in console.group())
-
-    def test_old_links_keep_review_routes(self):
-        """옛 묶음 주소 replace — 지도·오늘의 대조 링크(#map/review/…·#today/review/…)는 판단 검토로 그대로(R5a)."""
-        replace = JS[JS.index("function navReplace(R)"):JS.index("const setupPages")]
-        result = js_run('const defById = () => null, itemById = () => null, meTabOfItem = () => "";\n' + replace + """
-const R = (tab, a = "", b = "") => ({tab, a, b, c: "", d: ""});
-console.log(JSON.stringify([R("map"), R("map", "review", "q1"), R("today"), R("today", "x"), R("today", "review", "q1"), R("home", "review", "r:r1")].map(navReplace)));
-""")
-        self.assertEqual(result, ["#_setup/map", "", "#_today", "#_today", "", ""])
 
     def test_one_origin_definition_for_app_and_graph(self):
         """출처 표시 정의는 서버 하나(structure_svg) — /api/state origin_labels 로 내려 주고, 화면(app.html·React)엔 사본·자리표가 없다(R5b-1)."""
@@ -138,10 +93,8 @@ console.log(JSON.stringify([R("map"), R("map", "review", "q1"), R("today"), R("t
 
     def test_body_bold_renders_safely(self):
         """사용자 글 본문의 **굵게** 는 <strong>, 그 밖은 글자 그대로 — 화면은 전부 React(shared/rich.tsx·Para.tsx, 사례 rich.cases.json = Vitest rich.test.tsx).
-        옛 app.html 의 rich·paraHtml 은 R5b-1 에서 지웠다. 남은 옛 쪽엔 사용자 본문을 HTML 로 꽂는 자리가 없다."""
-        self.assertNotIn("const rich =", JS)
-        self.assertNotIn("${esc(x.body)}", JS.replace('esc(x.body) : ""', ""))
-        self.assertNotIn("${esc(cur.body)}", JS)
+        app.html 은 정적 뼈대 — 인라인 스크립트가 없어 사용자 본문을 HTML 로 꽂는 자리가 없다(innerHTML 0 = arch.test.ts)."""
+        self.assertIsNone(re.search(r"<script\b(?![^>]*\bsrc\s*=)[^>]*>", HTML, re.I))
 
 
 if __name__ == '__main__':

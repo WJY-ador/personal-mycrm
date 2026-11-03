@@ -1,5 +1,4 @@
-// 「나」 화면 문구·고정 값(옛 app.html 「나」 상세·v9 절 글자 그대로). 옛 쪽에 같은 이름이 남은 것(REFL_KIND·TRASH_ASK·SRC_KIND·LOADING 등)은
-// 다른 옛 화면이 쓰는 일시 중복 — R5 에서 한쪽만 남는다(server/ui/migrated.json temp_duplicates).
+// 「나」 화면 문구·고정 값(옛 app.html 「나」 상세·v9 절 글자 그대로). 여러 화면이 같이 쓰는 낱말은 shared(words·source·item)에서 다시 내보낸다.
 import type { ApiError } from "../../shared/api";
 
 export const ME_TABS = ["summary", "principle", "decision", "axis", "custom", "person", "source"] as const;
@@ -8,20 +7,20 @@ export const isTab = (t: string | undefined): t is MeTab => (ME_TABS as readonly
 // 저장값이 7 탭의 순서가 아니면(빠짐·중복·모르는 이름) 기본 배치(「나」·Setup 페이지 레이아웃 공용)
 export const validTabs = (t: unknown): t is MeTab[] => Array.isArray(t) && t.length === ME_TABS.length && new Set(t).size === ME_TABS.length && t.every(x => isTab(x));
 export const ME_TAB_LABEL: Record<MeTab, string> = { summary: "요약", principle: "기준", decision: "결정", axis: "축", custom: "커스텀", person: "사람", source: "출처" };
-export const ME_STD: Record<string, string> = { principle: "std:principles", decision: "std:decision_events", axis: "std:axes" };
+export { ME_STD } from "../../shared/route";
 export const ME_LOCKED = new Set(["principle", "decision", "axis", "person", "source"]);
 export const ME_LENS: Partial<Record<MeTab, string>> = { principle: "근거 역추적", decision: "근거 역추적", axis: "축 묶음", person: "사람 관계" };
 export const URL_KINDS = ["journal", "q", "cand", "item", "refl"];
 
-export const ME_EMPTY = "아직 표시할 데이터가 없어요. 데이터가 들어오면 여기서 볼 수 있어요.";
+export { ME_EMPTY } from "../../shared/words";
 export const STATS_FAIL = "통계를 불러오지 못했어요. 새로 고침해 주세요.";
 export const GONE = "이 데이터를 열 수 없어요.";
-export const LOADING = "불러오는 중이에요…";
+export { LOADING } from "../../shared/words";
 export const NO_CONN = "연결된 데이터가 없어요.";
 export const CONN_FAIL = "연결을 불러오지 못했어요.";
 export const MORE_FAIL = "더 불러오지 못했어요. 다시 눌러 주세요.";
 export { SRC_KIND, SRC_NONE } from "../../shared/source";
-export const REFL_KIND: Record<string, string> = { summary: "내 요약", reaction: "내 반응" };
+export { REFL_KIND } from "../../shared/words";
 export { TRASH_ASK, TRASH_DONE } from "../../shared/item";
 export const OFFLINE = "서버에 연결하지 못했어요. 잠시 뒤 다시 해 주세요.";
 

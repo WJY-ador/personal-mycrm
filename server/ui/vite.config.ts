@@ -10,6 +10,8 @@ export default defineConfig({
     manifest: true,
     rollupOptions: { input: "src/main.tsx" },
   },
+  // 시험(vitest)이 ?raw 로 읽는 정적 뼈대 server/app.html(App.test) — 파일 하나만 허용하면 ?raw 꼴이 막혀 server/ 폴더를 허용(.env 는 기본 deny). 빌드와 무관
+  server: { fs: { allow: [".", ".."] } },
   test: {
     environment: "jsdom",
     env: { TZ: "Asia/Seoul" },   // 날짜 표시 시험(사용자 시간대) — 옛 Python 시험과 같은 시간대

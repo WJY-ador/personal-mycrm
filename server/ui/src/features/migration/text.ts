@@ -20,7 +20,7 @@ export const MIG_WHY: Record<string, string> = {
 };
 export const MIG_LEAD = "PC에 모아 둔 옛 자료를 이 계정으로 옮겨요. PC 업로더가 올린 plan을 여기서 항목마다 확인한 뒤 [반영]해요. 반영은 웹에서만 해요.";
 export const MIG_TOK_WARN = "새로 발급하면 이전 토큰은 폐기돼요.";
-export const LOADING = "불러오는 중이에요…";
+export { LOADING } from "../../shared/words";
 export const ASK = {
   tokNew: `새 이관 토큰을 발급할까요? ${MIG_TOK_WARN} PC 업로더에 새 토큰을 넣어야 해요.`,
   tokRevoke: "이 이관 토큰을 폐기할까요? 바로 쓸 수 없게 되고 되살릴 수 없어요.",

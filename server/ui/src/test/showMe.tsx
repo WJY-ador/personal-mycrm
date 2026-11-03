@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { vi } from "vitest";
-import { SCREENS } from "../layout/registry";
+import { SCREENS } from "./screens";
 import { queryClient } from "../shared/queries";
 import type { AppState } from "../shared/state";
 import { flush } from "./fakeServer";
