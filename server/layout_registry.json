@@ -1,0 +1,19 @@
+{
+  "components": {
+    "heatmap": {"label": "13주 글·활동", "regions": ["summary"], "props": {}},
+    "kinds": {"label": "종류별 건수", "regions": ["summary"], "props": {}},
+    "waiting": {"label": "기다리는 결정", "regions": ["summary"], "props": {}},
+    "recent": {"label": "최근 변경", "regions": ["summary"], "props": {}}
+  },
+  "pages": {
+    "me": {
+      "regions": ["summary"],
+      "default": {
+        "tabs": ["summary", "principle", "decision", "axis", "custom", "person", "source"],
+        "regions": {
+          "summary": [{"c": "heatmap", "p": {}}, {"c": "kinds", "p": {}}, {"c": "waiting", "p": {}}, {"c": "recent", "p": {}}]
+        }
+      }
+    }
+  }
+}

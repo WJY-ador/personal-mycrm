@@ -229,6 +229,19 @@ jobs:
           PY
           python server/test_token_grants.py
 
+      # 수기 수정 A0′(2026-11-03) — record_edit(bind·잠금·미결 후보 휴지통)·record_title_set·웹 본문/제목/항목 편집·이력 via·옛 DB 업그레이드.
+      # 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
+      - name: "④-l 수기 수정 시험 (test_record_edit.py)"
+        env:
+          DATABASE_URL: postgresql://postgres:crm@localhost:5432/crm_test_record_edit
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:crm@localhost:5432/crm", autocommit=True) as c:
+              c.execute("CREATE DATABASE crm_test_record_edit")
+          PY
+          python server/test_record_edit.py
+
       # board 이전(2026-10-20) — 로컬 에이전트(agent/, 표준 라이브러리만). 서버 DB 를 쓰지 않는다
       - name: "④-b 로컬 에이전트 시험 (agent/tests)"
         run: python -m unittest discover -s agent/tests -t . -v

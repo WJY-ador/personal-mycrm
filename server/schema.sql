@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS records (
   user_id     text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   question_id text,
   title       text NOT NULL,
-  body        text NOT NULL,                      -- 수신한 그대로. 공백 하나도 안 다듬는다
+  body        text NOT NULL,                      -- 수신한 그대로. 공백 하나도 안 다듬는다. 고치는 길은 수기 수정(record_edit·record_title_set)뿐 — 이력은 record_history
   source      text NOT NULL DEFAULT '대화에서 입력',
   created     timestamptz NOT NULL DEFAULT now(),
   deleted_at  timestamptz,                        -- soft delete. 하드 삭제는 계정 삭제(users cascade) 때만
@@ -91,7 +91,10 @@ CREATE TABLE IF NOT EXISTS records (
   trashed_at         timestamptz,
   purge_at           timestamptz,
   last_trashed_at    timestamptz,
+  -- 수기 수정 A0′(2026-11-03). 본문·제목 수정마다 +1(이력 한 줄 = +1). 옛 DB 는 db._migrate_record_edit 가 더한다(옛 행 1)
+  revision           integer NOT NULL DEFAULT 1,
   UNIQUE (user_id, id),
+  CONSTRAINT ck_records_revision CHECK (revision > 0),
   CONSTRAINT ck_records_trash CHECK ((trashed_at IS NULL) = (purge_at IS NULL) AND (trashed_at IS NULL OR last_trashed_at IS NOT NULL)),
   CONSTRAINT fk_records_source FOREIGN KEY (user_id, source_id) REFERENCES sources(user_id, id),   -- 같은 사용자 출처만
   FOREIGN KEY (user_id, question_id) REFERENCES questions(user_id, id) ON DELETE SET NULL (question_id),  -- Lookup
@@ -520,6 +523,22 @@ CREATE TABLE IF NOT EXISTS import_counters (
   n             bigint NOT NULL DEFAULT 0 CHECK (n >= 0),
   bytes         bigint NOT NULL DEFAULT 0 CHECK (bytes >= 0),
   PRIMARY KEY (user_id, scope_key, period, period_start, bucket)
+);
+
+-- 수기 수정 A0′(2026-11-03) — 기록 본문·제목을 고친 흔적. 한 줄 = records.revision +1(prev_revision = 고치기 전 revision).
+-- change: edit = {start(고치기 전 본문의 코드포인트 오프셋), old, new, deleted_candidates·moved_candidates(그때 지운·위치를 옮긴 미결 후보 수)} · title = {old, new}.
+-- via = 고친 경로(web 화면 · mcp 대화). 기록이 지워지면(영구 삭제·계정 삭제) 같이 지워진다.
+CREATE TABLE IF NOT EXISTS record_history (
+  id            bigserial PRIMARY KEY,
+  user_id       text NOT NULL,
+  record_id     text NOT NULL,
+  action        text NOT NULL CHECK (action IN ('edit','title')),
+  prev_revision integer NOT NULL CHECK (prev_revision > 0),
+  change        jsonb NOT NULL CHECK (jsonb_typeof(change) = 'object'),
+  via           text NOT NULL CHECK (via IN ('web','mcp')),
+  at            timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (user_id, record_id, prev_revision),
+  FOREIGN KEY (user_id, record_id) REFERENCES records(user_id, id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS item_history (

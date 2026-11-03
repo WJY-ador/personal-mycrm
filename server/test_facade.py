@@ -40,6 +40,8 @@ import facade  # noqa: E402
 import main  # noqa: E402
 
 MAIN, NONAME = "fc-main@example.com", "fc-noname@example.com"
+LAYOUT_OPS = {"layout_get", "layout_set", "layout_reset"}
+EDIT_OPS = {"record_edit", "record_title_set"}
 EMAILS = (MAIN, NONAME)
 CODE = re.compile(r"\[([A-Z][A-Z0-9-]+)\]")
 ID_RE = re.compile(r"^[a-z]{1,3}_[A-Za-z0-9_-]{6,}$")
@@ -134,7 +136,8 @@ async def test_catalog():
     for op, s in cat["ops"].items():
         assert s["tier"] in facade.TIERS and s["family"] in fams, op
         assert set(s) <= {"family", "tier", "keywords", "examples", "bind", "direct", "rule"}, (op, set(s))   # 설명은 카탈로그에 적지 않는다
-        assert s["examples"], f"예시 없음: {op}"
+        assert s.get("examples") or op in LAYOUT_OPS, f"예시 없음: {op}"   # 화면 배치 op 예시는 레지스트리에서 만든다(카탈로그에 없음)
+        assert not (op in LAYOUT_OPS and "examples" in s), op
         assert s.get("bind") in (None, "self") and (s.get("bind") != "self" or s["tier"] == "decide"), op
         assert not re.search(r"@|/Users/|\.onrender\.com", json.dumps(s, ensure_ascii=False)), f"공개 레포 — 개인 값 금지: {op}"
     assert set(cat["ops"]) == set(facade.OPS)
@@ -158,7 +161,13 @@ async def test_catalog():
                                                    "pc_forget": "decide", "token_grant_status": "read", "token_list": "read",
                                                    "token_revoke": "decide"}
     assert {o for o in pc if facade.OPS[o].bind == "hmac"} == {"migration_token_send", "pc_forget", "token_revoke"}
-    assert {o for o, x in facade.OPS.items() if not x.direct} == {"decide_preview"} | (mig - {"migration_receipt_get"}) | pc
+    # 화면 배치(2026-11-03 §5-2) = facade 전용 3(상태·도움·나 family, R 1 · W 2)
+    assert {o: (facade.OPS[o].family, facade.OPS[o].tier) for o in LAYOUT_OPS} == {
+        "layout_get": ("state", "read"), "layout_set": ("state", "write"), "layout_reset": ("state", "write")}
+    # 수기 수정 A0′(2026-11-03 §5-1) = facade 전용 2(내 글 family, record_edit = D hmac · record_title_set = W)
+    assert {o: (facade.OPS[o].family, facade.OPS[o].tier, facade.OPS[o].bind) for o in EDIT_OPS} == {
+        "record_edit": ("record", "decide", "hmac"), "record_title_set": ("record", "write", None)}
+    assert {o for o, x in facade.OPS.items() if not x.direct} == {"decide_preview"} | (mig - {"migration_receipt_get"}) | pc | LAYOUT_OPS | EDIT_OPS
     # 겉면 enum = tier 분할(겹침·빠짐 없음)
     enums = {t: tools[t].input_schema["properties"]["op"]["enum"] for t in facade.TIERS}
     allops = [o for t in facade.TIERS for o in enums[t]]
@@ -614,6 +623,55 @@ async def test_find(S):
     ok("find(family 13 · query ≤8·부분 일치·family 걸기 · op 상세 = docstring·스키마·예시·rule·flow · OP-UNKNOWN) · annotations · 설명·INSTRUCTIONS 규칙")
 
 
+async def test_layout(S):
+    """화면 배치 op(§5-2): find 예시 = 레지스트리에서(컴포넌트 이름이 레지스트리 밖이면 안 됨, 예시는 layout_check 통과) · 설명에 컴포넌트 목록
+    · read(layout_get) = 웹 GET 과 같은 함수 · write(layout_set) 페이지 단위 · STALE · INVALID(모르는 컴포넌트) · layout_reset · NAME-REQUIRED · 집계 f:"""
+    reg = db.LAYOUT_REGISTRY
+    async with Client(main.mcp) as c:
+        d = val(await c.call_tool("find", {"op": "layout_set"}))
+        assert d["tier"] == "write" and "화면 배치를 바꿔 달라고 말할 때만" in d["rule"], d["rule"]
+        for ex in d["examples"]:
+            names = [e["c"] for es in ex["layout"]["regions"].values() for e in es]
+            assert names and set(names) <= set(reg["components"]), names
+            assert db.layout_check({"v": 2, "pages": {ex["page"]: ex["layout"]}})
+        for k, comp in reg["components"].items():
+            assert f"{k}({comp['label']}" in d["description"], k
+        assert d["input_schema"]["properties"]["page"]["enum"] == list(reg["pages"])
+        assert "layout_set" in [m["op"] for m in val(await c.call_tool("find", {"query": "화면 배치"}))["matches"]]
+        assert "화면 배치를 바꿔 달라고 말할 때만 layout_set" in main.INSTRUCTIONS
+        g = val(await c.call_tool("read", {"op": "layout_get"}))
+        assert g == db.layout_get(S["uid"]) and g["version"] == 0 and g["layout"] == db.DEFAULT_LAYOUT
+        me = json.loads(json.dumps(g["layout"]["pages"]["me"]))
+        me["tabs"].reverse()
+        me["regions"]["summary"] = me["regions"]["summary"][:2]
+        r = val(await c.call_tool("write", {"op": "layout_set", "params": {"page": "me", "layout": me, "version": 0}}))
+        assert r == {"layout": {"v": 2, "pages": {"me": me}}, "version": 1}, r
+        r = await c.call_tool("write", {"op": "layout_set", "params": {"page": "me", "layout": me, "version": 0}})
+        assert code(r) == "LAYOUT-STALE", r
+        bad = {**me, "regions": {"summary": [{"c": "pie", "p": {}}]}}
+        r = await c.call_tool("write", {"op": "layout_set", "params": {"page": "me", "layout": bad, "version": 1}})
+        assert code(r) == "LAYOUT-INVALID", r
+        r = await c.call_tool("write", {"op": "layout_set", "params": {"page": "today", "layout": me, "version": 1}})
+        assert r.is_error and code(r) in ("ARG-INVALID", None), r
+        assert db.layout_get(S["uid"])["version"] == 1, "거절은 저장하지 않는다"
+        r = val(await c.call_tool("write", {"op": "layout_reset", "params": {"page": "me"}}))
+        assert r == {"layout": db.DEFAULT_LAYOUT, "version": 2}, r
+        with db.tx() as cx:
+            assert cx.execute("SELECT layout FROM page_layouts WHERE user_id=%s", (S["uid"],)).fetchone()["layout"] is None
+        r = await c.call_tool("decide", {"op": "layout_set", "params": {}})
+        assert code(r) == "TIER-MISMATCH", r
+    # 표시 이름 관문 = 웹과 같은 write_gate(이름을 지우고 본다)
+    with db.tx() as cx:
+        cx.execute("UPDATE users SET display_name=NULL WHERE id=%s", (S["uid"],))
+    try:
+        async with Client(main.mcp) as c:
+            r = await c.call_tool("write", {"op": "layout_reset", "params": {"page": "me"}})
+            assert code(r) == "NAME-REQUIRED", r
+    finally:
+        db.display_name_set(S["uid"], "facade 시험")
+    ok("화면 배치 op(find 예시·설명 = 레지스트리 · read = 웹 GET · 페이지 저장·STALE·INVALID·reset · TIER-MISMATCH · NAME-REQUIRED)")
+
+
 async def run():
     db.init_schema()   # CI 는 빈 전용 DB — 스키마부터
     cleanup()
@@ -625,6 +683,7 @@ async def run():
         await test_guards(S)
         await test_usage(S)
         await test_find(S)
+        await test_layout(S)
     finally:
         cleanup()
         db.close()

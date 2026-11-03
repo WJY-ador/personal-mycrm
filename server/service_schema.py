@@ -34,7 +34,7 @@ CORE_FIELDS = {
     "questions": {"id": "ID", "text": "질문 글", "status": "상태", "created": "만든 때", "updated": "고친 때"},
     "records": {"id": "ID", "question_id": "질문", "title": "제목", "body": "본문", "source": "기록 당시 표기", "created": "만든 때",
                 "deleted_at": "지운 때", "notes": "메모", "author_kind": "작성자", "text_process": "가공 방식",
-                "provenance_history": "작성 판정 이력", "source_id": "출처",
+                "provenance_history": "작성 판정 이력", "source_id": "출처", "revision": "변경 번호",
                 # board 이전(2026-10-20) — 들어온 경로·원본 날짜·생성 경위(연결 장치 신고)
                 "received_at": "받은 때", "source_created_at": "원본 시각", "source_date": "원본 날짜", "ingest_kind": "들어온 경로",
                 "generation_kind": "생성 경위", "generation_meta": "생성 정보(장치 신고)", "import_batch_id": "이전 배치",

@@ -2892,10 +2892,22 @@ const ME_LENS = {principle: "근거 역추적", decision: "근거 역추적", ax
 const ME_EMPTY = "아직 표시할 데이터가 없어요. 데이터가 들어오면 여기서 볼 수 있어요.";
 const ME_AX_COLORS = 8;   // 축 색 = 코드 순 1~8, 9번째부터 회색(건수와 무관하게 고정)
 const ME = {layout: null, version: 0, stats: null, layoutApi: false, statsApi: false};
+// 서버 레이아웃 계약은 v2(server/layout_registry.json). 이 화면은 v1 모양(tabs·blocks.summary)으로 그린다 — 변환은 경계 두 곳뿐:
+// 받을 때 meV1(응답 {ok, j} 의 j.layout 을 v1 로) · 보낼 때 meV2(v1 → v2, 컴포넌트 props 는 마지막으로 받은 v2 그대로). R2 에서 이 둘을 지운다
+let meRaw = null;   // 마지막으로 받은 v2 의 「나」 페이지
+function meV1(r) {
+  const p = r && r.ok && r.j && r.j.layout && r.j.layout.pages && r.j.layout.pages.me;
+  if (!p || !p.regions) return r;
+  meRaw = p;
+  r.j.layout = {v: 1, tabs: p.tabs, blocks: {summary: (p.regions.summary || []).map(x => x.c)}};
+  return r;
+}
+const meV2 = L => ({v: 2, pages: {me: {tabs: L.tabs, regions: {summary: ((L.blocks || {}).summary || ME_BLOCKS).map(c =>
+  ({c, p: (((meRaw && meRaw.regions.summary) || []).find(x => x.c === c) || {}).p || {}}))}}}});
 const meLayoutValid = l => !!(l && Array.isArray(l.tabs) && l.tabs.length === ME_TABS.length && new Set(l.tabs).size === ME_TABS.length && l.tabs.every(t => ME_TABS.includes(t)));
 // 서버 접점 — 레이아웃·통계를 받는다. 레이아웃 실패 = 코드 기본, 통계 실패 = 빈 띠·차트 + 1줄 안내(규칙은 서버 한 곳 — 화면에서 다시 세지 않는다). load() 가 상태와 같이 부른다
 async function meSync() {
-  const [l, s] = await Promise.all([getJSON("/api/me/layout"), getJSON("/api/me/stats")]);
+  const [l, s] = await Promise.all([getJSON("/api/me/layout").then(meV1), getJSON("/api/me/stats")]);
   ME.layoutApi = !!(l && l.ok); ME.statsApi = !!(s && s.ok);
   ME.layout = ME.layoutApi && meLayoutValid(l.j.layout) ? l.j.layout : null;
   ME.version = ME.layoutApi ? Number(l.j.version) || 0 : 0;
@@ -3291,7 +3303,7 @@ async function layFetch(method, body) {
     j = await r.json().catch(() => ({}));
   } catch (e) { r = null; }
   if (r && r.status === 401) { location.href = "/"; return null; }
-  if (r && r.ok) return {ok: true, j};
+  if (r && r.ok) return meV1({ok: true, j});
   return {ok: false, status: r ? r.status : 0, code: r ? (j && j.code) || "" : "OFFLINE"};
 }
 // 다시 그리기 — 키보드로 옮기던 항목의 포커스를 지킨다(저장 응답이 와서 다시 그려도)
@@ -3310,7 +3322,7 @@ function layCommit(op) {
 }
 async function laySend(op) {
   LAY.busy = true;
-  const res = op.kind === "reset" ? await layFetch("DELETE") : await layFetch("PUT", {layout: op.layout, version: ME.version});
+  const res = op.kind === "reset" ? await layFetch("DELETE") : await layFetch("PUT", {layout: meV2(op.layout), version: ME.version});
   LAY.busy = false;
   if (!res) return;
   if (res.ok) {
@@ -3321,7 +3333,7 @@ async function laySend(op) {
   } else {
     LAY.queued = null; LAY.err = true;
     if (res.code === "LAYOUT-STALE") {   // 다른 탭·화면이 먼저 바꿈 — 서버 배치를 받아 그대로 보여 준다
-      const g = await getJSON("/api/me/layout");
+      const g = meV1(await getJSON("/api/me/layout"));
       if (g && g.ok && meLayoutValid(g.j.layout)) { ME.layout = g.j.layout; ME.version = Number(g.j.version) || 0; LAY.saved = {layout: layCopy(g.j.layout), version: ME.version}; }
       else if (LAY.saved) { ME.layout = LAY.saved.layout; ME.version = LAY.saved.version; }
       LAY.msg = "다른 화면에서 먼저 바뀌어 최신 배치를 불러왔어요. 다시 옮겨 주세요.";

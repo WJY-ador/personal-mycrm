@@ -1953,6 +1953,27 @@ class Web:
             return self._crm_err(e)
         return JSONResponse(out, headers={"cache-control": "no-store"})
 
+    # ── 수기 수정 A0′ (2026-11-03, React 전환 §5-1) — 화면(R2)이 부를 서버 경로. MCP record_edit·record_title_set 과 같은 db 함수(via=web).
+    # 본문 = 새 본문 전체를 받아 서버가 공통 앞·뒤를 뺀 한 구간으로 바꾼다. 항목 = propose+apply 한 트랜잭션(item_edit).
+    # 세션 401 → Origin 403 → 모양 400 → db.write_gate → db. 오류는 공용 매핑(NAME-REQUIRED 403 · NOT-FOUND 404 · 그 밖 400).
+    async def api_record_body(self, request):
+        """POST /api/records/{rid}/body {expected_revision, body} — 본문 수정. 반환 = 기록 + trashed_candidates·restore_until."""
+        rid = request.path_params["rid"]
+        return await self._core_write(request, "record_edit", {"expected_revision": ((int,), True), "body": ((str,), True)},
+                                      lambda uid, b: db.record_body_set(uid, rid, b["expected_revision"], b["body"], via="web"))
+
+    async def api_record_title(self, request):
+        """POST /api/records/{rid}/title {expected_revision, title} — 제목 바꾸기(판단 잠금과 무관)."""
+        rid = request.path_params["rid"]
+        return await self._core_write(request, "record_title_set", {"expected_revision": ((int,), True), "title": ((str,), True)},
+                                      lambda uid, b: db.record_title_set(uid, rid, b["title"], b["expected_revision"], via="web"))
+
+    async def api_item_edit(self, request):
+        """POST /api/item/edit {item_id, expected_revision, title, body} — 항목 인라인 편집 [저장] 1번(제안+적용 한 트랜잭션)."""
+        return await self._core_write(request, "item_edit", {"item_id": ((str,), True), "expected_revision": ((int,), True),
+                                                              "title": ((str,), True), "body": ((str,), True)},
+                                      lambda uid, b: db.item_edit(uid, b["item_id"], b["expected_revision"], b["title"], b["body"]))
+
     async def api_me_name(self, request):
         """POST {display_name} — 표시 이름 저장. 관문 면제(이름을 정하는 경로)."""
         return await self._core_write(request, "display_name_set", {"display_name": ((str,), True)},
@@ -3193,9 +3214,12 @@ class Web:
             Route("/api/state", u("web:state", self.api_state)),
             Route("/api/journal", u("web:journal", self.api_journal)),
             Route("/api/records", u("web:records", self.api_records)),   # PR① 홈 기록 「더 보기」 — 읽기만
+            Route("/api/records/{rid}/body", u("web:record_body", self.api_record_body), methods=["POST"]),   # 수기 수정 A0′
+            Route("/api/records/{rid}/title", u("web:record_title", self.api_record_title), methods=["POST"]),
             Route("/api/candidate/decide", u("web:candidate_decide", self.api_decide), methods=["POST"]),
             Route("/api/item", u("web:item", self.api_item)),
             Route("/api/item/decide", u("web:item_decide", self.api_item_decide), methods=["POST"]),
+            Route("/api/item/edit", u("web:item_edit", self.api_item_edit), methods=["POST"]),   # 수기 수정 — 항목 인라인 편집
             Route("/api/std/preview", u("web:std_preview", self.api_std_preview)),
             Route("/api/std/choose", u("web:std_choose", self.api_std_choose), methods=["POST"]),
             Route("/api/feedback", u("web:feedback", self.api_feedback), methods=["GET", "POST"]),

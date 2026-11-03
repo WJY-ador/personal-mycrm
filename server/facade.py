@@ -60,7 +60,9 @@ class Op:
         self.tier, self.family = spec["tier"], spec["family"]
         self.bind = spec.get("bind") or ("hmac" if spec["tier"] in ("decide", "purge") else None)
         self.direct = spec.get("direct", True)
-        self.keywords, self.examples = list(spec.get("keywords", [])), list(spec.get("examples", []))
+        self.keywords = list(spec.get("keywords", []))
+        # 예시 = 카탈로그 정본. 카탈로그에 없으면 op 함수의 examples(레지스트리에서 만든 것 — 화면 배치 op)
+        self.examples = list(spec.get("examples") or getattr(tool.fn, "examples", None) or [])
         self.rule = spec.get("rule", "")   # docstring 에 게이트 문장이 없을 때만 카탈로그에 둔다
 
     @property
@@ -333,6 +335,16 @@ def _pv_record_provenance_set(uid, p):
     return snap, shown, {"record_id": r["id"]}, False
 
 
+def _pv_record_edit(uid, p):
+    """수기 수정(A0′) — 전·후(바뀌는 구간 + 앞뒤 글자) 그대로 + 지워질 미결 후보 수(0이면 줄 없음). 막힘(잠금·휴지통·남의 글·구절 0/2번)은 실행과 같은 오류."""
+    pv = db.record_edit_preview(uid, p["record_id"], p["old"], p["new"])
+    shown = {"기록": pv["title"], "전": pv["before"], "후": pv["after"]}
+    if pv["drop"]:
+        shown["지워질 판단 후보"] = f"검토할 판단 {pv['drop']}개가 지워져요(다시 뽑을 수 있어요)"
+    snap = {"revision": pv["revision"], "body": pv["body_hash"], "start": pv["start"], "drop": pv["drop"]}
+    return snap, shown, {"record_id": pv["record_id"], "revision": pv["revision"], "deleted_candidates": pv["drop"]}, False
+
+
 def _refl_row(uid, rid):
     r = _row("SELECT id,source_id,kind,body,review,revision FROM source_reflections WHERE user_id=%s AND id=%s AND trashed_at IS NULL",
              (uid, str(rid or "")))
@@ -426,6 +438,7 @@ PREVIEWS = {
     "definition_archive": _pv_def_archive(True),
     "definition_restore": _pv_def_archive(False),
     "record_provenance_set": _pv_record_provenance_set,
+    "record_edit": _pv_record_edit,
     "source_reflection_review": _pv_source_reflection_review,
     "person_delete": _pv_person_delete,
     "source_reflection_delete": _pv_source_reflection_delete,

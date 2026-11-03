@@ -8115,9 +8115,10 @@ async def test_pr1b_layout_stats():
             site.dev, site.dev_user = True, "tester@example.com"
             r = await h.get("/api/me/layout")
             assert r.status_code == 200 and r.headers.get("cache-control") == "no-store" and r.json() == {"layout": D0, "version": 0}
-            r.json()["layout"]["tabs"].reverse()
-            lay = {"v": 1, "tabs": ["person", "summary", "principle", "decision", "axis", "custom", "source"],
-                   "blocks": {"summary": ["recent", "heatmap", "kinds", "waiting"]}}
+            r.json()["layout"]["pages"]["me"]["tabs"].reverse()
+            def v2(tabs, summary):
+                return {"v": 2, "pages": {"me": {"tabs": tabs, "regions": {"summary": [{"c": b, "p": {}} for b in summary]}}}}
+            lay = v2(["person", "summary", "principle", "decision", "axis", "custom", "source"], ["recent", "heatmap", "kinds", "waiting"])
             assert (await h.put("/api/me/layout", json={"layout": lay, "version": 0}, headers={"origin": "https://evil.example"})).status_code == 403
             assert (await h.delete("/api/me/layout", headers={"origin": "https://evil.example"})).status_code == 403
             r = await h.put("/api/me/layout", json={"layout": lay, "version": 0}, headers=origin)
@@ -8125,23 +8126,30 @@ async def test_pr1b_layout_stats():
             assert (await h.get("/api/me/layout")).json() == {"layout": lay, "version": 1}
             r = await h.put("/api/me/layout", json={"layout": D0, "version": 0}, headers=origin)
             assert r.status_code == 409 and r.json()["code"] == "LAYOUT-STALE", r.text
-            lay2 = {**lay, "blocks": {"summary": ["heatmap", "kinds"]}}   # 블록 일부만도 허용(알려진 이름·중복 없음)
+            lay2 = v2(lay["pages"]["me"]["tabs"], ["heatmap", "kinds"])   # 블록 일부만도 허용(알려진 이름·중복 없음)
             assert (await h.put("/api/me/layout", json={"layout": lay2, "version": 1}, headers=origin)).json()["version"] == 2
             r = await h.put("/api/me/layout", json={"layout": lay, "version": 1}, headers=origin)
             assert r.status_code == 409 and r.json()["code"] == "LAYOUT-STALE", "옛 버전(두 탭) = STALE"
-            t7 = D0["tabs"]
-            bad = [{**lay, "tabs": t7[:6]}, {**lay, "tabs": t7[:6] + [t7[0]]}, {**lay, "tabs": t7 + ["inbox"]},
-                   {**lay, "tabs": t7[:6] + ["inbox"]}, {**lay, "blocks": {"summary": ["heatmap", "pie"]}},
-                   {**lay, "blocks": {"summary": ["heatmap", "heatmap"]}}, {**lay, "blocks": {"today": ["heatmap"]}},
-                   {**lay, "extra": 1}, {**lay, "v": 2}, {**lay, "blocks": []}, {"v": 1, "tabs": t7}]
+            t7 = D0["pages"]["me"]["tabs"]
+            S4 = ["heatmap", "kinds", "waiting", "recent"]
+            me = lay["pages"]["me"]
+            bad = [v2(t7[:6], S4), v2(t7[:6] + [t7[0]], S4), v2(t7 + ["inbox"], S4), v2(t7[:6] + ["inbox"], S4), v2(t7, ["heatmap", "pie"]),
+                   v2(t7, ["heatmap", "heatmap"]), {"v": 2, "pages": {"me": {**me, "regions": {"today": []}}}},
+                   {"v": 2, "pages": {"me": {**me, "regions": {}}}}, {**lay, "extra": 1}, {**lay, "v": 1}, {**lay, "v": True},
+                   {"v": 2, "pages": {"me": {**me, "regions": {"summary": [{"c": "heatmap"}]}}}},
+                   {"v": 2, "pages": {"me": {**me, "regions": {"summary": [{"c": "heatmap", "p": {"weeks": 4}}]}}}},
+                   {"v": 2, "pages": {"me": {**me, "regions": {"summary": [{"c": "heatmap", "p": {}, "x": 1}]}}}},
+                   {"v": 2, "pages": {"me": {**me, "pad": 1}}}, {"v": 2, "pages": {"today": me}}, {"v": 2, "pages": []},
+                   {"v": 1, "tabs": t7, "blocks": {"summary": S4}}]   # v1 모양 저장은 거절(읽을 때만 올린다)
             for b in bad:
                 r = await h.put("/api/me/layout", json={"layout": b, "version": 2}, headers=origin)
                 assert r.status_code == 400 and r.json()["code"] == "LAYOUT-INVALID", (b, r.text)
             for body in ({"layout": "x", "version": 2}, {"layout": lay, "version": "2"}, {"layout": lay}, {"layout": lay, "version": True}):
                 r = await h.put("/api/me/layout", json=body, headers=origin)
                 assert r.status_code == 400 and r.json()["code"] == "ARG-INVALID", (body, r.text)
-            r = await h.put("/api/me/layout", json={"layout": {**lay, "pad": "가" * 2000}, "version": 2}, headers=origin)
-            assert r.status_code == 400 and r.json()["code"] == "PAYLOAD-LIMIT", r.text
+            r = await h.put("/api/me/layout", json={"layout": {**lay, "pad": "가" * 2800}, "version": 2}, headers=origin)
+            assert r.status_code == 400 and r.json()["code"] == "PAYLOAD-LIMIT", r.text   # 상한 8192 바이트(v2)
+            assert db.LAYOUT_MAX_BYTES == 8192
             r = await h.put("/api/me/layout", json={"layout": lay, "version": -1}, headers=origin)
             assert r.status_code == 400 and r.json()["code"] == "ARG-INVALID"
             assert (await h.get("/api/me/layout")).json() == {"layout": lay2, "version": 2}, "거절은 저장하지 않는다"
@@ -8165,6 +8173,32 @@ async def test_pr1b_layout_stats():
             assert json.dumps(db.DEFAULT_LAYOUT, sort_keys=True) == snap, "기본 상수 불변(응답 사본을 바꿔도)"
             expect("LAYOUT-INVALID", db.layout_check, None)
             assert db.layout_check(D0) == D0
+            # v2 — 정본 = layout_registry.json(DEFAULT_LAYOUT 은 그 파일에서) · v1 행은 읽을 때 v2 로(쓰기 없음), 다음 PUT 부터 v2
+            reg = json.loads((Path(__file__).parent / "layout_registry.json").read_text(encoding="utf-8"))
+            assert D0 == {"v": 2, "pages": {k: p["default"] for k, p in reg["pages"].items()}} and db.layout_components() == list(reg["components"])
+            v1 = {"v": 1, "tabs": ["source"] + t7[:6], "blocks": {"summary": ["kinds", "recent"]}}
+            with db.tx() as c:
+                c.execute("UPDATE page_layouts SET layout=%s WHERE user_id=%s", (db.Jsonb(v1), U))
+            got = (await h.get("/api/me/layout")).json()
+            assert got == {"layout": v2(["source"] + t7[:6], ["kinds", "recent"]), "version": 4}, got
+            with db.tx() as c:
+                assert c.execute("SELECT layout FROM page_layouts WHERE user_id=%s", (U,)).fetchone()["layout"] == v1, "읽기는 쓰지 않는다"
+                c.execute("UPDATE page_layouts SET layout=%s WHERE user_id=%s", (db.Jsonb({"v": 1, "tabs": t7, "blocks": {}}), U))
+            assert (await h.get("/api/me/layout")).json()["layout"] == D0, "v1 blocks 없음 = 기본 블록"
+            assert (await h.put("/api/me/layout", json={"layout": lay2, "version": 4}, headers=origin)).json() == {"layout": lay2, "version": 5}
+            with db.tx() as c:
+                assert c.execute("SELECT layout FROM page_layouts WHERE user_id=%s", (U,)).fetchone()["layout"]["v"] == 2, "다음 PUT = v2 저장"
+            # props 모양 검사(지금 레지스트리엔 props 가 없다 — 검사기만 임시 레지스트리로)
+            saved = json.dumps(db.LAYOUT_REGISTRY)
+            try:
+                db.LAYOUT_REGISTRY["components"]["heatmap"]["props"] = {"weeks": {"type": "integer", "max": 26},
+                                                                         "mode": {"type": "string", "enum": ["a", "b"]}, "dense": {"type": "boolean"}}
+                okp = {"v": 2, "pages": {"me": {**me, "regions": {"summary": [{"c": "heatmap", "p": {"weeks": 13, "mode": "a", "dense": True}}]}}}}
+                assert db.layout_check(okp) == okp
+                for p in ({"weeks": 27}, {"weeks": True}, {"weeks": "13"}, {"mode": "c"}, {"dense": 1}, {"other": 1}):
+                    expect("LAYOUT-INVALID", db.layout_check, {"v": 2, "pages": {"me": {**me, "regions": {"summary": [{"c": "heatmap", "p": p}]}}}})
+            finally:
+                db.LAYOUT_REGISTRY.clear(); db.LAYOUT_REGISTRY.update(json.loads(saved))
 
             # ── 통계·정렬 데이터 ──
             AXO, (X0, X1, X2) = _bi_axes(U, 3)

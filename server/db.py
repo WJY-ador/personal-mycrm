@@ -507,6 +507,7 @@ def _init_schema(c):
         _migrate_stack(c)   # PR ②-b — jobs 새 열·definitions_version text·items 판 포인터·generation_kind 넓히기
         _migrate_trash(c)   # 휴지통 PR-1 — 5종 휴지통 열·CHECK·부분 인덱스 · 사람 표식 · 접수 deleted 상태
         _migrate_pc_connect(c)   # PC 연결(2026-11-02) — import_streams M2 대기 토큰 열·CHECK·UNIQUE. 새 표 2개는 schema.sql
+        _migrate_record_edit(c)   # 수기 수정 A0′(2026-11-03) — records.revision · 후보 휴지통 열. record_history 표는 schema.sql
         _migrate_migration_path(c)   # 이관 경로(2026-11-02) — records.date_kind · 가안 X(plan reverted·via · 항목 created · 접수 reverted). 새 표 3개는 schema.sql
         _init_tmp(c)   # PR ②-a 임시 보관 — schema.sql 의 jobs 뒤(FK 대상). 위치는 current_schema() 로 정한다
         _migrate_classify_roles(c)
@@ -685,6 +686,15 @@ _MIG_PLAN_CHECKS = (("ck_migration_plans_applied", "CHECK ((state IN ('applied',
                     ("ck_migration_plans_reverted", "CHECK ((state = 'reverted') = (reverted_at IS NOT NULL))"),
                     ("ck_migration_plans_via", "CHECK (via IS NULL OR via IN ('web','mcp'))"))
 _MIG_ITEM_COLS = (("created", "boolean"), ("decision_deferred", "boolean NOT NULL DEFAULT false"))
+
+
+def _migrate_record_edit(c):
+    """수기 수정 A0′(2026-11-03) — 옛 DB 를 schema.sql 최종형과 같은 모양으로. 매번 돌아도 된다(있으면 건드리지 않는다).
+    · records.revision 열(옛 행 1) + 이름 붙은 CHECK. record_history 표 자체는 schema.sql 이 만든다."""
+    if not _has_col(c, "records", "revision"):
+        c.execute("ALTER TABLE records ADD COLUMN revision integer NOT NULL DEFAULT 1")
+    if not _has_constraint(c, "records", "ck_records_revision"):
+        c.execute("ALTER TABLE records ADD CONSTRAINT ck_records_revision CHECK (revision > 0)")
 
 
 def _migrate_migration_path(c):
@@ -1109,7 +1119,7 @@ _ELIGIBLE_SQL = ("(r.author_kind='self' AND r.deleted_at IS NULL AND r.trashed_a
                  "OR (r.generation_kind='conversation' AND EXISTS (SELECT 1 FROM confirm_events ce WHERE ce.user_id=r.user_id "
                  "AND ce.id::text = r.generation_meta->>'confirm_event_id'))))")
 INELIGIBLE_WHY = "이 기록은 본인 원문이 아니라 근거로 쓸 수 없어요"
-_REC_COLS = "id,title,body,source,source_id,question_id,author_kind,text_process,created"   # source = 옛 문자열(보존), source_id = 출처 연결
+_REC_COLS = "id,title,body,source,source_id,question_id,author_kind,text_process,created,revision"   # source = 옛 문자열(보존), source_id = 출처 연결
 
 
 def _eligible(r):
@@ -1204,10 +1214,10 @@ def _record_in(c, uid, rid):
     return _iso(_one(c, f"SELECT {_REC_COLS},provenance_history FROM records WHERE user_id=%s AND id=%s", (uid, rid)))
 
 
-def record_provenance_set(uid, rid, author_kind, text_process, reason, by="user"):
+def record_provenance_set(uid, rid, author_kind, text_process, reason, by="user", via="mcp"):
     """출처 판정 정정. 본문은 안 바뀐다. 같은 값이면 no-op.
     후보가 있는 기록을 적격(self·verbatim) → 비적격으로 바꾸면 거절(PROVENANCE-LOCKED) — 이미 그 원문을 근거로 한 판단이 있다.
-    정정마다 provenance_history 에 {at, by, from, author_kind, text_process, reason} 한 줄. 후보 생성과 같은 행 잠금(FOR UPDATE)."""
+    정정마다 provenance_history 에 {at, by, from, author_kind, text_process, reason, via(web|mcp)} 한 줄. 후보 생성과 같은 행 잠금(FOR UPDATE)."""
     _check_provenance(author_kind, text_process)
     reason = (reason or "").strip()
     if not reason:
@@ -1235,10 +1245,232 @@ def record_provenance_set(uid, rid, author_kind, text_process, reason, by="user"
                 raise CrmError("PROVENANCE-LOCKED", f"이 기록을 근거로 한 후보가 {n}개 있어 본인 원문이 아니라고 바꿀 수 없어요.",
                                  "과거 오판정 정정은 별도 복구 작업으로 하세요.")
         line = {"at": now().isoformat(), "by": by, "from": {"author_kind": r["author_kind"], "text_process": r["text_process"]},
-                "author_kind": author_kind, "text_process": text_process, "reason": reason}
+                "author_kind": author_kind, "text_process": text_process, "reason": reason, "via": _edit_via(via)}
         c.execute("UPDATE records SET author_kind=%s, text_process=%s, provenance_history = provenance_history || %s "
                   "WHERE user_id=%s AND id=%s", (author_kind, text_process, Jsonb([line]), uid, rid))
         return _record_in(c, uid, rid)
+
+
+# ── 수기 수정 A0′ (2026-11-03, React 전환 구현계획 §5-1) ──
+# 계약: 「내가 결정한 판단(확정·남기지 않음 후보)이 붙지 않은 글은 고칠 수 있다. 고친 흔적은 이력(record_history)에 남는다.」
+# 막힘: 휴지통 안 · author_kind=external · 확정·남기지 않음 후보가 붙은 글(새 기록으로 안내) · revision 이 다름(CONFLICT).
+# 미결 후보(다시 뽑을 수 있는 제안 — 메인 판정 c′): 변경 구간 [s, e)와 겹치거나 닿으면 지운다 · 앞이면 그대로 · 뒤면 인용 위치를 delta 만큼
+# 옮긴다(옮긴 뒤 새 본문[quote_start:quote_end] == quote 가 아니면 지운다). 휴지통·복원 없음. 출처 판정(self·verbatim)은 그대로 — 고친 자기 글이다.
+# notes(「어디에 붙나」)·색인은 다시 계산하지 않는다. 「오타만」 같은 범주는 없다(서버가 판정하지 못한다).
+# 일일 기록 한도는 세지 않는다(새 기록이 아니다). 크기는 record_add 와 같은 상한(본문 LIMIT_BODY · 제목 LIMIT_TEXT).
+RECORD_VIA = ("web", "mcp")
+EDIT_CONTEXT = 30   # 미리보기 「전·후」에 붙이는 앞뒤 글자 수(코드포인트)
+
+
+def _edit_via(via):
+    if via not in RECORD_VIA:
+        raise CrmError("ARG-INVALID", f"via 는 {', '.join(RECORD_VIA)} 중 하나예요.")
+    return via
+
+
+def _record_lock_edit(c, uid, rid):
+    """수정 대상 기록을 잠그고 막힘 조건을 본다(같은 순서: 없음 → 휴지통 → 남이 쓴 글). 반환 = 행(본문·revision 포함)."""
+    r = _one(c, f"SELECT {_REC_COLS},deleted_at,trashed_at FROM records WHERE user_id=%s AND id=%s FOR UPDATE", (uid, rid))
+    if not r or r["deleted_at"] is not None:
+        raise CrmError("RECORD-MISSING", f"기록을 찾을 수 없어요: {rid}")
+    if r["trashed_at"] is not None:
+        raise _in_trash("그 글")
+    if r["author_kind"] == "external":
+        raise CrmError("RECORD-LOCKED", "남이 쓴 글(author_kind=external)은 고칠 수 없어요.", "내 글만 고칠 수 있어요.")
+    return r
+
+
+def _record_decided(c, uid, rid):
+    """확정·남기지 않음 후보 수 — 1 이상이면 본문 잠금."""
+    return _one(c, "SELECT count(*) AS n FROM candidates WHERE user_id=%s AND record_id=%s AND decision IN ('confirmed','excluded')",
+                (uid, rid))["n"]
+
+
+def _cand_plan(c, uid, rid, start, old, new, out_body):
+    """미결 후보 처리 계획 — (지울 id, 옮길 [(id, 새 시작, 새 끝)]). 변경 구간 [s, e) = 고치기 전 본문의 [start, start+len(old)).
+    겹치거나 닿으면(qs <= e 이고 qe >= s) 지운다 · qe < s 면 그대로 · qs > e 면 delta = len(new) − len(old) 만큼 옮기고,
+    옮긴 구간의 새 본문이 quote 와 다르면 지운다(방어 — 이론상 일어나지 않는다)."""
+    s, e, delta = start, start + len(old), len(new) - len(old)
+    drop, move = [], []
+    for r in _all(c, "SELECT id,quote,quote_start AS qs,quote_end AS qe FROM candidates WHERE user_id=%s AND record_id=%s "
+                     "AND decision='pending' ORDER BY quote_start, id", (uid, rid)):
+        if r["qe"] < s:
+            continue
+        if r["qs"] <= e:
+            drop.append(r["id"])
+            continue
+        ns, ne = r["qs"] + delta, r["qe"] + delta
+        if out_body[ns:ne] != r["quote"]:
+            drop.append(r["id"])
+        else:
+            move.append((r["id"], ns, ne))
+    return drop, move
+
+
+def _cand_apply(c, uid, drop, move, delta):
+    """계획대로 — 지울 후보를 가리키는 관계를 먼저 지우고(item_links 는 후보 FK 보호) 후보를 지운다(이력은 CASCADE).
+    옮기기는 한 행씩, 늘면 뒤에서부터·줄면 앞에서부터 — UNIQUE(user_id, record_id, quote_start, quote_end) 순간 충돌이 없다
+    (모든 대상이 같은 delta 로 움직이므로 목표 자리는 이미 옮긴 행의 옛 자리뿐이다). 후보 revision·이력은 그대로(문장·결정 불변)."""
+    if drop:
+        c.execute("DELETE FROM item_links WHERE user_id=%s AND target_candidate_id = ANY(%s)", (uid, drop))
+        c.execute("DELETE FROM candidates WHERE user_id=%s AND id = ANY(%s)", (uid, drop))
+    for cid, ns, ne in sorted(move, key=lambda m: m[1], reverse=delta > 0):
+        c.execute("UPDATE candidates SET quote_start=%s, quote_end=%s WHERE user_id=%s AND id=%s", (ns, ne, uid, cid))
+
+
+def _edit_span(body, old):
+    """MCP 경로 — old 가 원문에 정확히 한 번(겹침 포함)일 때 그 시작 위치. 0번·2번 이상은 거절."""
+    if not isinstance(old, str) or old == "":
+        raise CrmError("ARG-INVALID", "old(바꿀 구절)가 비었어요.", "원문에서 바꿀 구절을 글자 그대로 넣으세요.")
+    i = body.find(old)
+    if i < 0:
+        raise CrmError("EDIT-NOT-FOUND", "바꿀 구절이 원문에 없어요.", "record_get 으로 원문을 다시 읽고 글자 그대로(공백 포함) 넣으세요.")
+    if body.find(old, i + 1) >= 0:
+        raise CrmError("EDIT-AMBIGUOUS", "바꿀 구절이 원문에 두 번 이상 나와요.", "앞뒤를 포함해 한 곳만 가리키게 더 길게 넣으세요.")
+    return i
+
+
+def _edit_diff(body, new_body):
+    """웹 경로 — 공통 앞·뒤를 뺀 한 구간 (start, old, new). 같은 본문이면 None."""
+    if body == new_body:
+        return None
+    n = min(len(body), len(new_body))
+    p = 0
+    while p < n and body[p] == new_body[p]:
+        p += 1
+    s = 0
+    while s < n - p and body[len(body) - 1 - s] == new_body[len(new_body) - 1 - s]:
+        s += 1
+    return p, body[p:len(body) - s], new_body[p:len(new_body) - s]
+
+
+def _edit_window(body, start, old, new):
+    """미리보기 전·후 — 바뀌는 구간과 앞뒤 EDIT_CONTEXT 글자."""
+    a, z = max(0, start - EDIT_CONTEXT), start + len(old)
+    pre, post = body[a:start], body[z:z + EDIT_CONTEXT]
+    lead, tail = ("…" if a > 0 else ""), ("…" if z + EDIT_CONTEXT < len(body) else "")
+    return f"{lead}{pre}{old}{post}{tail}", f"{lead}{pre}{new}{post}{tail}"
+
+
+def _edit_plan(c, uid, rid, old=None, new=None, new_body=None):
+    """본문 수정 계획(쓰기 없음) — 잠금 검사 + 구간 + 결과 본문 + 사라질 미결 후보. 미리보기(decide_preview)와 실행이 같은 이 함수를 쓴다."""
+    r = _record_lock_edit(c, uid, rid)
+    n = _record_decided(c, uid, rid)
+    if n:
+        raise CrmError("RECORD-LOCKED", f"내가 결정한 판단(남기기·남기지 않기) {n}개가 붙은 글이라 본문을 고칠 수 없어요.",
+                       "고친 글은 새 기록으로 남기세요(record_add). 옛 글은 원하면 휴지통으로 옮기세요.")
+    body = r["body"]
+    if new_body is None:
+        if not isinstance(new, str):
+            raise CrmError("ARG-INVALID", "new(바꾼 뒤 구절)는 문자열이에요.")
+        start = _edit_span(body, old)
+    else:
+        d = _edit_diff(body, new_body)
+        if d is None:
+            raise CrmError("ARG-INVALID", "바뀐 곳이 없어요.")
+        start, old, new = d
+    if old == new:
+        raise CrmError("ARG-INVALID", "바꿀 구절과 바꾼 뒤 구절이 같아요.")
+    out = body[:start] + new + body[start + len(old):]
+    if not out.strip():
+        raise CrmError("ARG-INVALID", "고친 뒤 본문이 비어요.", "글을 지우려면 휴지통으로 옮기세요.")
+    check_len("body", out, LIMIT_BODY)
+    before, after = _edit_window(body, start, old, new)
+    drop, move = _cand_plan(c, uid, rid, start, old, new, out)
+    return {"row": r, "start": start, "old": old, "new": new, "body": out, "drop": drop, "move": move, "before": before, "after": after}
+
+
+def record_edit_preview(uid, rid, old, new):
+    """MCP decide_preview 용 — 쓰지 않고 계획만(막힘 조건은 실행과 같은 오류)."""
+    with tx() as c:
+        p = _edit_plan(c, uid, rid, old, new)
+    r = p["row"]
+    return {"record_id": r["id"], "title": r["title"], "revision": r["revision"], "start": p["start"], "before": p["before"],
+            "after": p["after"], "drop": len(p["drop"]), "body_hash": hashlib.sha256(r["body"].encode()).hexdigest()[:16]}
+
+
+def _edit_apply(uid, rid, expected_revision, via, old=None, new=None, new_body=None):
+    _edit_via(via)
+    if not isinstance(expected_revision, int) or isinstance(expected_revision, bool):
+        raise CrmError("ARG-INVALID", "expected_revision 은 정수예요.", "record_get 의 revision 을 그대로 넣으세요.")
+    with tx() as c:
+        _user_lock(c, uid)   # 잠금 순서 = users → records(candidates_propose 와 같다)
+        p = _edit_plan(c, uid, rid, old, new, new_body)
+        r = p["row"]
+        if r["revision"] != expected_revision:
+            raise _conflict(f"지금 revision {r['revision']}")
+        c.execute("UPDATE records SET body=%s, revision=revision+1 WHERE user_id=%s AND id=%s", (p["body"], uid, rid))
+        _cand_apply(c, uid, p["drop"], p["move"], len(p["new"]) - len(p["old"]))
+        c.execute("INSERT INTO record_history (user_id,record_id,action,prev_revision,change,via) VALUES (%s,%s,'edit',%s,%s,%s)",
+                  (uid, rid, r["revision"], Jsonb({"start": p["start"], "old": p["old"], "new": p["new"],
+                                                   "deleted_candidates": len(p["drop"]), "moved_candidates": len(p["move"])}), via))
+        out = _iso(_one(c, f"SELECT {_REC_COLS} FROM records WHERE user_id=%s AND id=%s", (uid, rid)))
+    out["deleted_candidates"], out["moved_candidates"] = len(p["drop"]), len(p["move"])
+    return out
+
+
+def record_edit(uid, rid, expected_revision, old, new, via="mcp"):
+    """MCP record_edit — 원문에 정확히 한 번 나오는 old 를 new 로 바꾼다. 반환 = 기록(revision +1) + deleted_candidates·moved_candidates."""
+    return _edit_apply(uid, rid, expected_revision, via, old=old, new=new)
+
+
+def record_body_set(uid, rid, expected_revision, body, via="web"):
+    """웹 본문 수정 — 새 본문 전체를 받아 공통 앞·뒤를 뺀 한 구간으로 바꾼다(같은 서버 함수 _edit_apply)."""
+    if not isinstance(body, str):
+        raise CrmError("ARG-INVALID", "body 는 문자열이에요.")
+    return _edit_apply(uid, rid, expected_revision, via, new_body=body)
+
+
+def record_title_set(uid, rid, title, expected_revision, via="mcp"):
+    """기록 제목 바꾸기 — 판단 잠금(A0′)과 무관(제목은 인용 근거가 아니다). 휴지통·남이 쓴 글은 거절. 이력 한 줄 + revision +1.
+    같은 제목이면 no-op(revision 그대로)."""
+    _edit_via(via)
+    title = (title or "").strip()
+    if not title:
+        raise CrmError("ARG-INVALID", "제목이 비었어요.")
+    check_len("title", title, LIMIT_TEXT)
+    if not isinstance(expected_revision, int) or isinstance(expected_revision, bool):
+        raise CrmError("ARG-INVALID", "expected_revision 은 정수예요.", "record_get 의 revision 을 그대로 넣으세요.")
+    with tx() as c:
+        _user_lock(c, uid)
+        r = _record_lock_edit(c, uid, rid)
+        if r["revision"] != expected_revision:
+            raise _conflict(f"지금 revision {r['revision']}")
+        if r["title"] != title:
+            c.execute("INSERT INTO record_history (user_id,record_id,action,prev_revision,change,via) VALUES (%s,%s,'title',%s,%s,%s)",
+                      (uid, rid, r["revision"], Jsonb({"old": r["title"], "new": title}), via))
+            c.execute("UPDATE records SET title=%s, revision=revision+1 WHERE user_id=%s AND id=%s", (title, uid, rid))
+        return _iso(_one(c, f"SELECT {_REC_COLS} FROM records WHERE user_id=%s AND id=%s", (uid, rid)))
+
+
+def record_history(uid, rid):
+    """그 기록의 수정 이력(오래된 순) — 휴지통 기록은 없는 것."""
+    with tx() as c:
+        if not _one(c, "SELECT 1 FROM records WHERE user_id=%s AND id=%s AND deleted_at IS NULL AND trashed_at IS NULL", (uid, rid)):
+            raise CrmError("RECORD-MISSING", f"기록을 찾을 수 없어요: {rid}")
+        return [_iso(r) for r in _all(c, "SELECT id,action,prev_revision,change,via,at FROM record_history WHERE user_id=%s AND record_id=%s "
+                                         "ORDER BY id", (uid, rid))]
+
+
+def item_edit(uid, item_id, expected_revision, title, body, data=None, links=None):
+    """웹 항목 인라인 편집 [저장] — item_propose + item_decide(apply) 를 한 트랜잭션으로(검사·관계 검증·code 불변 그대로, item_history 한 줄).
+    data·links 를 안 주면 지금 값 그대로. 확정 기준의 문장을 고쳐도 확정은 유지된다(apply 는 decision 을 바꾸지 않는다).
+    대화(MCP)는 새 op 없이 item_propose → item_decide(apply) 두 번이다. 그 항목에 걸려 있던 제안(draft)은 이 저장으로 바뀐다."""
+    with tx_scope() as c:
+        row = _one(c, f"SELECT {_ITEM_COLS},trashed_at FROM items WHERE user_id=%s AND id=%s", (uid, item_id))
+        if not row:
+            raise CrmError("ARG-INVALID", f"항목을 찾을 수 없어요: {item_id}")
+        if row["trashed_at"] is not None:
+            raise _in_trash("그 항목")
+        if row["revision"] == 0:
+            raise CrmError("ARG-INVALID", "아직 적용하지 않은 제안이에요. 먼저 적용하세요.")
+        if data is None:
+            data = row["data"] or {}
+        if links is None:
+            links = [{k: ln[k] for k in ("field_key", "target_kind", "target_id")}
+                     for ln in _links_by_item(c, uid, [item_id]).get(item_id, [])]
+        p = item_propose(uid, row["object_id"], row["schema_revision"], item_id, expected_revision, None, title, body, data, links)
+        return item_decide(uid, item_id, expected_revision, p["proposal_id"], "apply")
 
 
 # PR ①-b 정렬 키(2026-10-22 S0 판정 D1·D2) — 원본 날짜 우선, 없으면 받은 날. 날짜는 전부 KST.
@@ -3269,7 +3501,7 @@ DELETE_NOTICE = ("7일 뒤 자료를 모두 지우고 계정을 닫습니다. �
 # tickets 는 보존 문의 1건을 빼고 지운다(ticket_history 는 cascade). 시험이 「이 목록 = schema 의 user_id 테이블 − 예외」를 정적으로 본다.
 # board 이전(2026-10-20): 관계(activity_links) → 접수 대응표(import_entries) → 업무 자료(activities) → 한도·입력원(import_counters·import_streams).
 # PR ②-b: 판·stage(items 자식, 확인 이벤트를 가리킨다) → 확인 이벤트 → items.
-DELETE_TABLES = ("token_grants", "desktop_installations", "desktop_handoffs", "page_layouts", "stack_sessions", "jobs", "item_links", "activity_links", "import_entries", "activities", "import_counters",
+DELETE_TABLES = ("record_history", "token_grants", "desktop_installations", "desktop_handoffs", "page_layouts", "stack_sessions", "jobs", "item_links", "activity_links", "import_entries", "activities", "import_counters",
                  "import_streams", "migration_plan_items", "migration_plans", "migration_tokens", "item_stage", "item_versions", "confirm_events", "item_history", "items", "user_roles", "field_defs",
                  "object_defs", "std_choices", "std_marks",
                  "candidate_history", "candidates", "source_reflections", "records", "sources", "questions", "profile", "tabs",
@@ -3572,82 +3804,183 @@ def me_home(uid):
 
 
 
-# ── PR ①-b 페이지 레이아웃 · 「나」 통계 (2026-10-22, 구현계획 §3) ──
-# 레이아웃 = 사용자당 page_layouts 한 행. 기본값은 여기 한 곳. 탭 7 은 순서만 바뀐다(빼기·더하기 없음). 블록은 알려진 이름만·중복 없음.
-DEFAULT_LAYOUT = {"v": 1, "tabs": ["summary", "principle", "decision", "axis", "custom", "person", "source"],
-                  "blocks": {"summary": ["heatmap", "kinds", "waiting", "recent"]}}
-LAYOUT_BLOCKS = {"summary": ("heatmap", "kinds", "waiting", "recent")}   # 블록 자리 → 알려진 블록 이름
-LAYOUT_MAX_BYTES = 4096   # 웹 PUT 본문 layout 의 JSON 상한(web 이 json_limits 로 먼저 본다)
+# ── PR ①-b 페이지 레이아웃 · 「나」 통계 (2026-10-22, 구현계획 §3) · 레이아웃 계약 v2 (2026-11-03 React 전환 §5-2) ──
+# 레이아웃 = 사용자당 page_layouts 한 행. 정본 = server/layout_registry.json 한 곳(컴포넌트·허용 영역·props 모양 · 페이지별 영역·기본값).
+# Python(layout_check)과 화면(R2 의 TS)이 같은 파일을 읽는다 — 여기 사본을 두지 않는다.
+# 계약 v2 = {"v": 2, "pages": {페이지: {"tabs": 기본 탭의 순열, "regions": {영역: [{"c": 컴포넌트, "p": {props}}, …]}}}}.
+# 탭은 순서만 바뀐다(빼기·더하기 없음). 영역 안 컴포넌트는 그 영역에 허용된 것만·중복 없이(빼기는 된다). 모르는 키는 거절.
+# v1 행({"v":1,"tabs","blocks"})은 읽을 때 v2 로 올려 돌려준다(쓰기 없음) — 다음 저장부터 v2.
+LAYOUT_REGISTRY_PATH = Path(__file__).parent / "layout_registry.json"
+LAYOUT_REGISTRY = json.loads(LAYOUT_REGISTRY_PATH.read_text(encoding="utf-8"))
+LAYOUT_VERSION = 2
+DEFAULT_LAYOUT = {"v": LAYOUT_VERSION, "pages": {k: p["default"] for k, p in LAYOUT_REGISTRY["pages"].items()}}
+LAYOUT_MAX_BYTES = 8192   # layout 의 JSON 상한(웹은 json_limits 로 먼저 본다 · MCP 는 layout_set 이 본다)
+_PROP_TYPES = {"string": str, "integer": int, "boolean": bool}
+
+
+def layout_components(region=None, page="me"):
+    """그 페이지(·영역)에 놓을 수 있는 컴포넌트 id — 레지스트리 순서. MCP 예시·안내가 이걸 쓴다(이름을 따로 적지 않는다)."""
+    regions = LAYOUT_REGISTRY["pages"][page]["regions"] if region is None else [region]
+    return [k for k, c in LAYOUT_REGISTRY["components"].items() if set(c["regions"]) & set(regions)]
 
 
 def _layout_invalid(why):
     return CrmError("LAYOUT-INVALID", f"레이아웃 모양이 맞지 않아요: {why}", "화면을 새로 고친 뒤 다시 옮겨 보세요.")
 
 
-def layout_check(layout):
-    """허용 모양만 통과 — {"v": 1, "tabs": 기본 탭 7 의 순열, "blocks": {자리: 알려진 블록 이름 목록(중복 없음)}}. 다른 키 금지.
-    통과하면 정규화한 사본(같은 모양)을 돌려준다. 아니면 LAYOUT-INVALID."""
-    if not isinstance(layout, dict) or set(layout) != {"v", "tabs", "blocks"}:
-        raise _layout_invalid("키는 v·tabs·blocks 셋이에요")
-    if layout["v"] != 1 or isinstance(layout["v"], bool):
-        raise _layout_invalid("v 는 1 이에요")
-    tabs = layout["tabs"]
-    want = DEFAULT_LAYOUT["tabs"]
+def _prop_check(cid, name, spec, v):
+    t = _PROP_TYPES.get(spec.get("type"))
+    if t is None or not isinstance(v, t) or (t is int and isinstance(v, bool)):
+        raise _layout_invalid(f"{cid}.p.{name} 는 {spec.get('type')} 예요")
+    if "enum" in spec and v not in spec["enum"]:
+        raise _layout_invalid(f"{cid}.p.{name} 는 {', '.join(map(str, spec['enum']))} 중 하나예요")
+    if "max" in spec:
+        n = len(v) if t is str else v
+        if t is not bool and n > spec["max"]:
+            raise _layout_invalid(f"{cid}.p.{name} 는 {spec['max']} 이하예요")
+    return v
+
+
+def _page_check(page, lay):
+    """페이지 하나 {"tabs", "regions"} → 정규화한 사본. 아니면 LAYOUT-INVALID."""
+    reg = LAYOUT_REGISTRY["pages"][page]
+    comps = LAYOUT_REGISTRY["components"]
+    if not isinstance(lay, dict) or set(lay) != {"tabs", "regions"}:
+        raise _layout_invalid(f"pages.{page} 의 키는 tabs·regions 둘이에요")
+    tabs, want = lay["tabs"], reg["default"]["tabs"]
     if not isinstance(tabs, list) or not all(isinstance(t, str) for t in tabs) or len(tabs) != len(want) or set(tabs) != set(want):
-        raise _layout_invalid(f"tabs 는 {', '.join(want)} 일곱 개를 한 번씩")
-    blocks = layout["blocks"]
-    if not isinstance(blocks, dict) or not set(blocks) <= set(LAYOUT_BLOCKS):
-        raise _layout_invalid(f"blocks 자리는 {', '.join(LAYOUT_BLOCKS)} 만")
-    for slot, names in blocks.items():
-        known = LAYOUT_BLOCKS[slot]
-        if not isinstance(names, list) or not all(isinstance(n, str) and n in known for n in names) or len(set(names)) != len(names):
-            raise _layout_invalid(f"blocks.{slot} 는 {', '.join(known)} 중에서 중복 없이")
-    return {"v": 1, "tabs": list(tabs), "blocks": {k: list(v) for k, v in blocks.items()}}
+        raise _layout_invalid(f"tabs 는 {', '.join(want)} {len(want)}개를 한 번씩")
+    regions = lay["regions"]
+    if not isinstance(regions, dict) or set(regions) != set(reg["regions"]):
+        raise _layout_invalid(f"pages.{page}.regions 의 자리는 {', '.join(reg['regions'])} 예요")
+    out = {}
+    for slot, entries in regions.items():
+        known = layout_components(slot, page)
+        if not isinstance(entries, list):
+            raise _layout_invalid(f"regions.{slot} 는 목록이에요")
+        seen, norm = set(), []
+        for e in entries:
+            if not isinstance(e, dict) or set(e) != {"c", "p"} or not isinstance(e["c"], str) or not isinstance(e["p"], dict):
+                raise _layout_invalid(f"regions.{slot} 의 항목은 {{c, p}} 예요")
+            cid = e["c"]
+            if cid not in known or cid in seen:
+                raise _layout_invalid(f"regions.{slot} 는 {', '.join(known)} 중에서 중복 없이")
+            seen.add(cid)
+            props = comps[cid]["props"]
+            if not set(e["p"]) <= set(props):
+                raise _layout_invalid(f"{cid}.p 의 키는 {', '.join(props) or '없음'} 이에요")
+            norm.append({"c": cid, "p": {k: _prop_check(cid, k, props[k], v) for k, v in e["p"].items()}})
+        out[slot] = norm
+    return {"tabs": list(tabs), "regions": out}
+
+
+def layout_check(layout):
+    """허용 모양(계약 v2)만 통과 — {"v": 2, "pages": {레지스트리 페이지: 페이지 레이아웃}}. 빠진 페이지 = 기본값. 다른 키 금지.
+    통과하면 정규화한 사본(같은 모양)을 돌려준다. 아니면 LAYOUT-INVALID."""
+    if not isinstance(layout, dict) or set(layout) != {"v", "pages"}:
+        raise _layout_invalid("키는 v·pages 둘이에요")
+    if layout["v"] != LAYOUT_VERSION or isinstance(layout["v"], bool):
+        raise _layout_invalid(f"v 는 {LAYOUT_VERSION} 예요")
+    pages = layout["pages"]
+    if not isinstance(pages, dict) or not set(pages) <= set(LAYOUT_REGISTRY["pages"]):
+        raise _layout_invalid(f"pages 는 {', '.join(LAYOUT_REGISTRY['pages'])} 만")
+    return {"v": LAYOUT_VERSION, "pages": {k: _page_check(k, v) for k, v in pages.items()}}
 
 
 def _default_layout():
     return json.loads(json.dumps(DEFAULT_LAYOUT))   # 깊은 사본 — 상수를 호출자가 못 바꾼다
 
 
+def _layout_up(stored):
+    """저장된 값 → 응답용 v2 전체(모든 페이지). NULL = 기본. v1 = 그 자리에서 v2 로 올린다(쓰기 없음). 빠진 페이지 = 기본.
+    모양이 맞지 않는 옛 값은 기본으로(화면이 못 그리는 값을 내보내지 않는다)."""
+    out = _default_layout()
+    if stored is None:
+        return out
+    if isinstance(stored, dict) and stored.get("v") == 1:
+        blocks = stored.get("blocks") or {}
+        summary = blocks.get("summary") if isinstance(blocks, dict) else None
+        dflt = out["pages"]["me"]["regions"]["summary"]
+        stored = {"v": LAYOUT_VERSION, "pages": {"me": {
+            "tabs": stored.get("tabs"),
+            "regions": {"summary": dflt if summary is None else [{"c": b, "p": {}} for b in summary]}}}}
+    try:
+        lay = layout_check(stored)
+    except CrmError:
+        return out
+    out["pages"].update(lay["pages"])
+    return out
+
+
+def _layout_page(page):
+    if page not in LAYOUT_REGISTRY["pages"]:
+        raise CrmError("ARG-INVALID", f"page 는 {', '.join(LAYOUT_REGISTRY['pages'])} 중 하나예요.")
+    return page
+
+
 def layout_get(uid):
-    """{layout, version} — 행 없음 = 기본 + 0 · layout NULL(복원 뒤) = 기본 + 그 version."""
+    """{layout(v2 전체), version} — 행 없음 = 기본 + 0 · layout NULL(복원 뒤) = 기본 + 그 version · v1 행 = v2 로 올려서."""
     with tx() as c:
         r = _one(c, "SELECT layout, version FROM page_layouts WHERE user_id=%s", (uid,))
     if not r:
         return {"layout": _default_layout(), "version": 0}
-    return {"layout": r["layout"] if r["layout"] is not None else _default_layout(), "version": r["version"]}
+    return {"layout": _layout_up(r["layout"]), "version": r["version"]}
 
 
 def _layout_stale(cur):
     return CrmError("LAYOUT-STALE", f"다른 화면에서 레이아웃이 먼저 바뀌었어요 (지금 버전 {cur}).", "화면을 새로 고친 뒤 다시 옮겨 보세요.")
 
 
-def layout_set(uid, layout, version):
-    """PUT — version = 화면이 마지막으로 받은 값. 맞으면 저장하고 +1, 다르면 LAYOUT-STALE. 반환 {layout, version}."""
-    lay = layout_check(layout)
+def layout_set(uid, layout, version, page=None):
+    """저장 — version = 화면·대화가 마지막으로 받은 값. 맞으면 저장하고 +1, 다르면 LAYOUT-STALE. 반환 {layout(v2 전체), version}.
+    page 없음(웹 PUT) = layout 이 v2 전체 · page 있음(MCP layout_set) = layout 이 그 페이지 하나({tabs, regions}) — 다른 페이지는 그대로.
+    모양 검사(LAYOUT-INVALID)·크기(PAYLOAD-LIMIT)가 버전 검사보다 먼저다."""
+    if page is None:
+        lay = layout_check(layout)
+    else:
+        lay = layout_check({"v": LAYOUT_VERSION, "pages": {_layout_page(page): layout}})
+    check_len("layout", json.dumps(layout, ensure_ascii=False, separators=(",", ":"), default=str), LAYOUT_MAX_BYTES)
     if not isinstance(version, int) or isinstance(version, bool) or version < 0:
         raise CrmError("ARG-INVALID", "version 은 0 이상의 정수예요.")
     with tx() as c:
         _user_lock(c, uid)
-        if version == 0:
-            r = _one(c, "INSERT INTO page_layouts (user_id, layout, version) VALUES (%s, %s, 1) ON CONFLICT (user_id) DO NOTHING "
-                        "RETURNING version", (uid, Jsonb(lay)))
-        else:
+        cur = _one(c, "SELECT layout, version FROM page_layouts WHERE user_id=%s", (uid,))
+        if (cur["version"] if cur else 0) != version:
+            raise _layout_stale(cur["version"] if cur else 0)
+        if page is not None:   # 지금 저장본(v1 은 올려서) 위에 그 페이지만 바꾼다
+            full = _layout_up(cur["layout"] if cur else None)
+            full["pages"].update(lay["pages"])
+            lay = full
+        if cur:
             r = _one(c, "UPDATE page_layouts SET layout=%s, version=version+1, updated_at=now() WHERE user_id=%s AND version=%s "
                         "RETURNING version", (Jsonb(lay), uid, version))
+        else:
+            r = _one(c, "INSERT INTO page_layouts (user_id, layout, version) VALUES (%s, %s, 1) ON CONFLICT (user_id) DO NOTHING "
+                        "RETURNING version", (uid, Jsonb(lay)))
         if not r:
-            cur = _one(c, "SELECT version FROM page_layouts WHERE user_id=%s", (uid,))
-            raise _layout_stale(cur["version"] if cur else 0)
-    return {"layout": lay, "version": r["version"]}
+            raise _layout_stale(version)
+    return {"layout": _layout_up(lay), "version": r["version"]}
 
 
-def layout_reset(uid):
-    """DELETE — 기본으로 되돌리기. 행이 있으면 layout NULL + version +1(행을 지우지 않는다 — 버전이 되감기면 옛 탭의 PUT 이 통과한다).
-    행이 없으면 아무것도 안 한다(기본 + 0). 반환 {layout(기본), version}."""
+def layout_reset(uid, page=None):
+    """기본으로 되돌리기. 행이 있으면 version +1(행을 지우지 않는다 — 버전이 되감기면 옛 탭의 PUT 이 통과한다).
+    page 없음(웹 DELETE) = 전체 NULL · page 있음(MCP layout_reset) = 그 페이지만 저장본에서 뺀다(남은 페이지가 없으면 NULL).
+    행이 없으면 아무것도 안 한다(기본 + 0). 반환 {layout(v2 전체), version}."""
+    if page is not None:
+        _layout_page(page)
     with tx() as c:
         _user_lock(c, uid)
-        r = _one(c, "UPDATE page_layouts SET layout=NULL, version=version+1, updated_at=now() WHERE user_id=%s RETURNING version", (uid,))
-    return {"layout": _default_layout(), "version": r["version"] if r else 0}
+        cur = _one(c, "SELECT layout FROM page_layouts WHERE user_id=%s", (uid,))
+        if not cur:
+            return {"layout": _default_layout(), "version": 0}
+        lay = None
+        if page is not None and cur["layout"] is not None:
+            full = _layout_up(cur["layout"])
+            rest = {k: v for k, v in full["pages"].items() if k != page and v != DEFAULT_LAYOUT["pages"][k]}
+            lay = {"v": LAYOUT_VERSION, "pages": rest} if rest else None
+        r = _one(c, "UPDATE page_layouts SET layout=%s, version=version+1, updated_at=now() WHERE user_id=%s RETURNING version",
+                 (Jsonb(lay) if lay is not None else None, uid))
+    return {"layout": _layout_up(lay), "version": r["version"]}
 
 
 HEATMAP_WEEKS = 13
