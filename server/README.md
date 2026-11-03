@@ -25,12 +25,28 @@ Claude Code 에서 붙이기: `claude mcp add --transport http my-crm http://127
 웹 화면은 `http://127.0.0.1:8800/app`. 개발(`CRM_DEV=1`)은 로그인 없이 `CRM_DEV_USER` 로 보인다. 실제 로그인을 로컬에서 보려면
 `AUTHKIT_WEB_CLIENT_ID` 를 넣고 `/login` 으로 — 로컬 콜백 `http://127.0.0.1:8800/auth/callback` 도 등록돼 있다.
 
+## 화면 묶음 빌드 (server/ui, React)
+
+대시보드(`/app`)는 옛 `app.html` 껍데기 안에 옮긴 화면만 React 로 띄운다(지금은 Setup 「휴지통」). 옮긴 화면 목록·옛 이름 래칫은 `ui/migrated.json`.
+node 는 `ui/package.json` engines 범위(24.x) — Render·CI 는 24.22.1 로 고정한다(`render.yaml` `NODE_VERSION`, `ci.yml` setup-node).
+
+```bash
+cd server/ui
+npm ci              # package-lock.json 그대로
+npm run build       # → ui/dist/(gitignore). 서버가 시작 때 dist/.vite/manifest.json 을 1회 읽는다 — 다시 빌드하면 서버도 다시 띄운다
+npm run typecheck   # tsc --noEmit
+npm test            # vitest(jsdom) — 화면·구조 규약(arch.test.ts)·API 견본 타입
+```
+
+서버는 manifest 에 적힌 파일만 `/app/assets/<해시 이름>` 으로 낸다(1년 immutable, 목록 밖 404). `/app` 의 `<!--{{ui}}-->` 자리는 그 진입 `<link>`·`<script type="module" src>` 로 채운다.
+빌드 안 한 로컬은 서버가 그대로 뜨고(로그 1줄), 옮긴 화면 자리에만 「이 화면 파일이 서버에 없어요」 한 줄이 보인다.
+
 ## 배포 (Render Free, singapore)
 
-배포 경로(2026-10-18): `main` 은 보호 브랜치 — 직접 push 불가. 브랜치 → PR → GitHub Actions `test`(`.github/workflows/ci.yml`: py_compile·node --check·운영 DB 가드·init_schema·test_tools, postgres:17 컨테이너) 초록 → merge → Render Auto-Deploy(After CI Checks Pass). 롤백은 Render Dashboard 직전 배포 복귀 → 문제 커밋 revert PR. 시작 시 ALTER 는 이전 코드와 호환돼야 한다.
+배포 경로(2026-10-18): `main` 은 보호 브랜치 — 직접 push 불가. 브랜치 → PR → GitHub Actions `test`(`.github/workflows/ci.yml`: UI 빌드·tsc·vitest·py_compile·node --check·운영 DB 가드·init_schema·서버 시험, postgres:17 컨테이너) 초록 → merge → Render Auto-Deploy(After CI Checks Pass). 롤백은 Render Dashboard 직전 배포 복귀 → 문제 커밋 revert PR. 시작 시 ALTER 는 이전 코드와 호환돼야 한다.
 예외: PR①(출처·revision·이력 격리) 마이그레이션은 `candidate_history.prev_decision`·`prev_text` 를 지운다 — 옛 인스턴스가 같이 돌면 결정 저장이 깨지고, 직전 배포 복귀만으로는 되돌아가지 않는다(raw §4 「구버전 writer와 혼용하지 않는다」).
 
-Blueprint 는 `server/render.yaml`(대시보드 Blueprint Path 에 지정). rootDir 없음 — 레포 루트에서 빌드 `pip install -r server/requirements.txt`, 시작 `uvicorn --app-dir server main:app --host 0.0.0.0 --port $PORT`(도움말 정본 `guides/` 가 같이 올라가야 한다. rootDir=`server` 면 안 올라간다). 파이썬은 루트 `.python-version`(3.13), 헬스체크 `/health`(DB 핑 포함). MCP 는 stateless(json_response) — 무료 인스턴스가 잠들어도 다음 호출이 산다.
+Blueprint 는 `server/render.yaml`(대시보드 Blueprint Path 에 지정). rootDir 없음 — 레포 루트에서 빌드 `pip install -r server/requirements.txt && npm ci --prefix server/ui && npm run build --prefix server/ui`, 시작 `uvicorn --app-dir server main:app --host 0.0.0.0 --port $PORT`(도움말 정본 `guides/` 가 같이 올라가야 한다. rootDir=`server` 면 안 올라간다). 파이썬은 루트 `.python-version`(3.13), 헬스체크 `/health`(DB 핑 포함). MCP 는 stateless(json_response) — 무료 인스턴스가 잠들어도 다음 호출이 산다.
 
 환경변수:
 - `DATABASE_URL` — Supabase Session pooler 연결 문자열 (비밀, 대시보드에서 입력)
