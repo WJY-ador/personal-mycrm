@@ -50,7 +50,7 @@ def test_ratchet():
     for screen, names in MIGRATED["screens"].items():
         left = [n for n in names if re.search(rf"\b{re.escape(n)}\b", APP)]
         assert not left, f"옮긴 화면 {screen} 의 옛 이름이 app.html 에 남았어요: {left}"
-        assert re.search(rf'uiMount\("{screen}"[,)]', JS), f"옮긴 화면 {screen} 은 uiMount 로 띄운다"
+        assert re.search(rf'ui(?:Mount|Island)\("{screen}"[,)]', JS), f"옮긴 화면 {screen} 은 uiMount(#view 화면)·uiIsland(상시 섬)로 띄운다"
     n = len(re.findall(r"^(?:async\s+)?function\s+\w+", JS, re.M))
     cap = MIGRATED["app_html_function_max"]
     assert n <= cap, f"app.html 최상위 function {n}개 > 상한 {cap} — 새 화면 코드는 server/ui 에(옛 쪽을 늘리지 않는다)"

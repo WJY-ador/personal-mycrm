@@ -6,6 +6,7 @@ import reg from "../../../layout_registry.json";
 import { TrashScreen } from "../features/trash/TrashScreen";
 import { MeScreen } from "../features/me/MeScreen";
 import { ReviewScreen } from "../features/review/ReviewScreen";
+import { ChatRoot } from "../features/chat/ChatRoot";
 import type { Blocks } from "../features/me/summary/block";
 import { Heatmap } from "../features/me/summary/Heatmap";
 import { Kinds } from "../features/me/summary/Kinds";
@@ -18,5 +19,6 @@ export const BLOCKS: Blocks = { heatmap: Heatmap, kinds: Kinds, waiting: Waiting
 export const SCREENS: Record<string, ComponentType<ScreenProps>> = {
   trash: TrashScreen,
   review: ReviewScreen,
+  chat: ChatRoot,   // 상시 섬(#ui-chat) — #view 화면이 아니다
   me: (p: ScreenProps) => createElement(MeScreen, { ...p, blocks: BLOCKS, layoutDefault: reg.pages.me.default }),
 };

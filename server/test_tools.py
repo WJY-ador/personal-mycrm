@@ -9644,6 +9644,70 @@ async def test_pr2b_stack_candidates():
     print("OK — 28 대상 후보(남 0·적용·미보관만·제목 80자·stage·상한 오브젝트별·전체·사람·출처·최근 갱신순·해시 밖·candidates_at·본문 0) 통과")
 
 
+async def test_chat_samples(write=False):
+    """API 견본 대조(R3) — React 대화 서랍(server/ui/src/features/chat)이 읽는 작업·세션·제외 응답 = ui/src/features/chat/chat.sample.json
+    (키 집합·값 타입까지). TS 타입(types.ts)은 chat.sample.test.ts 의 satisfies(tsc) — 서버 응답이 바뀌면 여기서, TS 타입이 바뀌면 tsc 에서 잡힌다.
+    write=True = 견본 파일을 실제 응답으로 다시 쓴다(로컬에서 타입을 바꿀 때만)."""
+    cleanup()
+    with SEED_ON():
+        U = db.user_by_email("tester@example.com")["id"]
+    d1 = imports.device_connect(U, "견본 장치")
+    T1 = {"authorization": "Bearer " + d1["token"]}
+    site = main.site
+    real = site.dev, site.dev_user
+    origin = {"origin": PUBLIC}
+    path = HERE / "ui" / "src" / "features" / "chat" / "chat.sample.json"
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url=PUBLIC) as h:
+            site.dev, site.dev_user = True, "tester@example.com"
+            with _job_fast(), _job_switch("CONVERSE_ENABLED"):
+                r = await h.post("/api/jobs", json={"kind": "converse", "text": "견본 대화 하나"}, headers=origin)
+                assert r.status_code == 201, r.text
+                J = r.json()
+                a = (await h.get("/api/device/jobs", params={"wait": 0}, headers=T1)).json()
+                q = {"lease_generation": a["lease"]["generation"]}
+                await h.get(f"/api/device/jobs/{J['id']}/input", params=q, headers=T1)
+                dv = (await h.get(f"/api/device/jobs/{J['id']}/definitions", params=q, headers=T1)).json()["definitions_version"]
+                units = [{"uid": "u1", "text": "기준 하나를 남겨요.", "change_ids": ["c1"]}, {"uid": "u2", "text": "결정 하나를 적어요.", "change_ids": ["c2"]}]
+                changes = [{"cid": "c1", "op": "create", "object_id": "od_principles", "target": {"ref_kind": "none"},
+                            "fields": {"title": "견본 기준", "body": "설명"}, "links": [], "depends_on": []},
+                           {"cid": "c2", "op": "create", "object_id": "od_events", "fields": {"title": "견본 결정", "happened_on": "2026-11-03"},
+                            "links": [], "depends_on": []}]
+                body = _pr2b_body({"id": J["id"]}, q["lease_generation"], dv, units=units, changes=changes)
+                r = await h.post(f"/api/device/jobs/{J['id']}/result", json=body, headers=T1)
+                assert r.status_code == 200, r.text
+                job = (await h.get(f"/api/jobs/{J['id']}")).json()
+                sess = (await h.get(f"/api/stack/sessions/{J['session_id']}")).json()
+                exc = (await h.post(f"/api/stack/previews/{job['preview']['id']}/exclude", json={"cids": ["c2"]}, headers=origin)).json()
+                await h.post(f"/api/jobs/{J['id']}/cancel", headers=origin)
+    finally:
+        site.dev, site.dev_user = real
+    got = {"job": job, "session": sess, "exclude": exc}
+    assert job["status"] == "result_ready" and job["preview"]["changes"] and sess["preview"] and exc["preview"]["excluded"] == ["c2"], got
+    if write:
+        path.write_text(json.dumps(got, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+
+    def shape(v):
+        return "null" if v is None else type(v).__name__
+
+    def cmp(sample, real, at):   # 견본 = 실제(키 집합·값 타입, null 은 TS 가 본다). 목록은 둘 다 비지 않았을 때 첫 원소끼리
+        bad = []
+        if isinstance(sample, dict) and isinstance(real, dict):
+            if set(sample) != set(real):
+                bad.append(f"{at} 키 {sorted(set(sample) ^ set(real))}")
+            for k in set(sample) & set(real):
+                if "null" not in (shape(sample[k]), shape(real[k])) and shape(sample[k]) != shape(real[k]):
+                    bad.append(f"{at}.{k} {shape(sample[k])}≠{shape(real[k])}")
+                else:
+                    bad += cmp(sample[k], real[k], f"{at}.{k}")
+        elif isinstance(sample, list) and isinstance(real, list) and sample and real:
+            bad += cmp(sample[0], real[0], at + "[0]")
+        return bad
+    bad = cmp(json.loads(path.read_text(encoding="utf-8")), got, "chat")
+    assert not bad, (bad, "chat.sample.json·features/chat/types.ts 를 같이 고친다")
+    print("OK — 대화 API 견본 대조(작업 result_ready·미리보기 · 세션 복원 · 제외 = chat.sample.json 키·값 타입) 통과")
+
+
 async def test_pr2b_stack():
     """28절 — ②-b 단계별 시험(B1 스키마·한도·세션 · B2 정의·수신·미리보기·제외·재정리 · B3 확정 트랜잭션·판 이력·stage·인용 · B6 경계·되돌림)."""
     test_pr2b_stack_b1()
@@ -9652,6 +9716,7 @@ async def test_pr2b_stack():
     await test_pr2b_stack_b6()
     await test_pr2b_stack_r2()
     await test_pr2b_stack_candidates()
+    await test_chat_samples()
 
 
 # ── 29) ③-0.2 장치 상태 — /api/state.devices_status (2026-10-22, 구현계획 §2-2) ─────────────────────
