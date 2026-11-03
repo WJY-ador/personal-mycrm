@@ -1254,7 +1254,8 @@ def record_provenance_set(uid, rid, author_kind, text_process, reason, by="user"
 # ── 수기 수정 A0′ (2026-11-03, React 전환 구현계획 §5-1) ──
 # 계약: 「내가 결정한 판단(확정·남기지 않음 후보)이 붙지 않은 글은 고칠 수 있다. 고친 흔적은 이력(record_history)에 남는다.」
 # 막힘: 휴지통 안 · author_kind=external · 확정·남기지 않음 후보가 붙은 글(새 기록으로 안내) · revision 이 다름(CONFLICT).
-# 미결 후보(다시 뽑을 수 있는 제안 — 메인 판정 c′): 변경 구간 [s, e)와 겹치거나 닿으면 지운다 · 앞이면 그대로 · 뒤면 인용 위치를 delta 만큼
+# 미결 후보(다시 뽑을 수 있는 제안 — 메인 판정 c′): 변경 구간 [s, e)와 겹치거나 닿으면 지운다(그중 하나라도 기준·항목 연결이 걸려 있으면
+# 수정 전체를 RECORD-LOCKED — 관계는 사용자 결정) · 앞이면 그대로 · 뒤면 인용 위치를 delta 만큼
 # 옮긴다(옮긴 뒤 새 본문[quote_start:quote_end] == quote 가 아니면 지운다). 휴지통·복원 없음. 출처 판정(self·verbatim)은 그대로 — 고친 자기 글이다.
 # notes(「어디에 붙나」)·색인은 다시 계산하지 않는다. 「오타만」 같은 범주는 없다(서버가 판정하지 못한다).
 # 일일 기록 한도는 세지 않는다(새 기록이 아니다). 크기는 record_add 와 같은 상한(본문 LIMIT_BODY · 제목 LIMIT_TEXT).
@@ -1308,11 +1309,11 @@ def _cand_plan(c, uid, rid, start, old, new, out_body):
 
 
 def _cand_apply(c, uid, drop, move, delta):
-    """계획대로 — 지울 후보를 가리키는 관계를 먼저 지우고(item_links 는 후보 FK 보호) 후보를 지운다(이력은 CASCADE).
+    """계획대로 — 지울 후보를 지운다(이력은 CASCADE). 연결(item_links)이 걸린 후보는 _edit_plan 이 RECORD-LOCKED 로 먼저 막는다
+    (관계는 사용자 결정 — 메인 판정). 그래도 남아 있으면 item_links FK(보호)가 막아 트랜잭션 전체가 실패한다.
     옮기기는 한 행씩, 늘면 뒤에서부터·줄면 앞에서부터 — UNIQUE(user_id, record_id, quote_start, quote_end) 순간 충돌이 없다
     (모든 대상이 같은 delta 로 움직이므로 목표 자리는 이미 옮긴 행의 옛 자리뿐이다). 후보 revision·이력은 그대로(문장·결정 불변)."""
     if drop:
-        c.execute("DELETE FROM item_links WHERE user_id=%s AND target_candidate_id = ANY(%s)", (uid, drop))
         c.execute("DELETE FROM candidates WHERE user_id=%s AND id = ANY(%s)", (uid, drop))
     for cid, ns, ne in sorted(move, key=lambda m: m[1], reverse=delta > 0):
         c.execute("UPDATE candidates SET quote_start=%s, quote_end=%s WHERE user_id=%s AND id=%s", (ns, ne, uid, cid))
@@ -1377,6 +1378,9 @@ def _edit_plan(c, uid, rid, old=None, new=None, new_body=None):
     check_len("body", out, LIMIT_BODY)
     before, after = _edit_window(body, start, old, new)
     drop, move = _cand_plan(c, uid, rid, start, old, new, out)
+    if drop and _one(c, "SELECT 1 FROM item_links WHERE user_id=%s AND target_candidate_id = ANY(%s) LIMIT 1", (uid, drop)):
+        raise CrmError("RECORD-LOCKED", "기준·항목에 연결된 판단이 걸린 구절이에요. 이 구절은 고칠 수 없어요.",
+                       "그 판단의 연결을 풀거나, 고친 글은 새 기록으로 남기세요(record_add).")
     return {"row": r, "start": start, "old": old, "new": new, "body": out, "drop": drop, "move": move, "before": before, "after": after}
 
 

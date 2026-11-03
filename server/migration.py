@@ -1240,8 +1240,9 @@ _REVERT_ITEM_CHECKS = (   # 반영 뒤(> applied_at) 항목 변화 — 모든 �
     "SELECT DISTINCT item_id AS id FROM item_history WHERE user_id=%s AND item_id = ANY(%s) AND at > %s",
     "SELECT DISTINCT target_item_id AS id FROM item_links WHERE user_id=%s AND target_item_id = ANY(%s) AND created_at > %s",
     "SELECT DISTINCT axis_item_id AS id FROM activity_links WHERE user_id=%s AND axis_item_id = ANY(%s) AND created_at > %s")
-_REVERT_RECORD_CHECKS = (   # 기록은 revision 이 없다 — 근거 후보 · 가리키거나 나간 연결 · 출처 정정 이력
+_REVERT_RECORD_CHECKS = (   # 기록 = 근거 후보 · 가리키거나 나간 연결 · 출처 정정 이력 · 수기 수정 이력(record_history — 본문·제목, revision +1)
     "SELECT DISTINCT record_id AS id FROM candidates WHERE user_id=%s AND record_id = ANY(%s)",
+    "SELECT DISTINCT record_id AS id FROM record_history WHERE user_id=%s AND record_id = ANY(%s) AND at > %s",
     "SELECT DISTINCT target_record_id AS id FROM item_links WHERE user_id=%s AND target_record_id = ANY(%s) AND created_at > %s",
     "SELECT DISTINCT source_record_id AS id FROM item_links WHERE user_id=%s AND source_record_id = ANY(%s) AND created_at > %s",
     "SELECT DISTINCT record_id AS id FROM activity_links WHERE user_id=%s AND record_id = ANY(%s) AND created_at > %s",

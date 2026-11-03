@@ -276,6 +276,15 @@ def test_revert(B):
     db.candidates_propose(B, rid3, "", [{"text": "후보", "quote": "후보가 붙을 기록"}], "ai")
     e = expect("REVERT-MODIFIED", X.migration_revert, B, st3["plan_id"])
     assert e.detail["seqs"] == [0]
+    # c 반영 뒤 수기 수정(record_edit — record_history) = REVERT-MODIFIED(후보·연결이 없어도)
+    r5 = T.rec(351, "고칠 이관 기록 원문이다")
+    st5 = stage(B, [r5])
+    pv5 = X.migration_apply_preview(B, st5["plan_id"])
+    rid5 = by_oid(X.migration_apply(B, st5["plan_id"], pv5["plan_hash"], pv5["expected_counts"]))[r5["original_id"]]["target_id"]
+    db.record_edit(B, rid5, 1, "고칠", "고친")
+    e = expect("REVERT-MODIFIED", X.migration_revert, B, st5["plan_id"])
+    assert e.detail["seqs"] == [0]
+    assert not sql("SELECT 1 FROM records WHERE id=%s AND trashed_at IS NOT NULL", (rid5,))
     # e 기존 대상 갱신분 = kept_updated(휴지통 아님) · 더 새 판이 생긴 앞 plan 은 REVERT-MODIFIED
     ax2 = T.axis(340, "되돌리기 축(고침)")
     st4 = stage(B, [ax2])
@@ -287,7 +296,7 @@ def test_revert(B):
     assert not sql("SELECT 1 FROM items WHERE id=%s AND trashed_at IS NOT NULL", (x2[ax["original_id"]]["target_id"],))
     e = expect("REVERT-MODIFIED", X.migration_revert, B, st2["plan_id"])
     assert seq_of(st2, ax) in e.detail["seqs"]
-    ok("revert: a 출처 유지(kept_source) · b 접수 reverted → 같은 판 재stage = insert · c 기준 확정·후보·더 새 판 = REVERT-MODIFIED(전체) · "
+    ok("revert: a 출처 유지(kept_source) · b 접수 reverted → 같은 판 재stage = insert · c 기준 확정·후보·수기 수정·더 새 판 = REVERT-MODIFIED(전체) · "
        "d reverted·두 번째 noop·한도 안 되돌림·영수증 reverted · e 새로 만든 것만 휴지통, 갱신분 kept_updated · 휴지통 꺼짐 SWITCH-OFF")
 
 

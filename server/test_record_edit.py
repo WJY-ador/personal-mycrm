@@ -254,7 +254,34 @@ async def test_pending_candidates(uid):
         cx.execute("UPDATE candidates SET quote='뒷부눈' WHERE id=%s", (g1,))   # 같은 길이, 다른 글자
     out = db.record_edit(uid, r4, 1, "앞부분", "앞")
     assert (out["deleted_candidates"], out["moved_candidates"]) == (1, 0) and cands_of(uid, r4) == {}, out
-    ok("미결 후보 c′(겹침 삭제·경계 접촉·끼워 넣기 · 앞 그대로 · 뒤 delta 이동(±)·UNIQUE 순간 충돌 없음 · 이동 뒤 quote 단언·어긋나면 삭제 · shown 「지워져요」 · 휴지통 없음)")
+    # 기준·항목 연결이 걸린 후보 — 지워질 자리면 수정 전체 RECORD-LOCKED(아무것도 안 바뀜) · 옮기기만 하는 자리면 통과(연결 그대로)
+    hap = db.definition_propose(uid, None, 0, {"key": "edit_ev", "label": "일", "semantic_kind": "event", "fields": [
+        {"key": "claims", "label": "판단", "value_type": "reference", "target_kind": "candidate", "multiple": True}]})
+    hap = db.definition_apply(uid, hap["object_id"], hap["proposal_id"], 0)
+    r5 = rec(uid)
+    l_hit = cand(uid, r5, QUOTE)
+    l_after = cand(uid, r5, "도구 비교는 그다음이었다", "도구는 나중에 본다")
+    ev = db.item_propose(uid, hap["id"], hap["revision"], None, 0, None, "연결 사건", "", {},
+                         [{"field_key": "claims", "target_kind": "candidate", "target_id": l_hit},
+                          {"field_key": "claims", "target_kind": "candidate", "target_id": l_after}])
+    db.item_decide(uid, ev["item_id"], 0, ev["proposal_id"], "apply")
+    snap = cands_of(uid, r5)
+    e = expect("RECORD-LOCKED", db.record_edit, uid, r5, 1, "먼저", "가장 먼저")
+    assert "연결" in e.message and "새 기록" in e.action, (e.message, e.action)
+    async with Client(main.mcp) as c:
+        r = await c.call_tool("read", {"op": "decide_preview", "params": {"op": "record_edit", "params": {
+            "record_id": r5, "expected_revision": 1, "old": "먼저", "new": "가장 먼저"}}})
+        assert code(r) == "RECORD-LOCKED", r
+    assert cands_of(uid, r5) == snap and db.record_get(uid, r5)["revision"] == 1, "거절은 아무것도 바꾸지 않는다"
+    out = db.record_edit(uid, r5, 1, "도입 회의에서", "첫 도입 회의에서")   # 두 후보 다 뒤쪽 — 옮기기만
+    assert (out["deleted_candidates"], out["moved_candidates"]) == (0, 2), out
+    assert cands_of(uid, r5)[l_hit]["quote_start"] == snap[l_hit]["quote_start"] + 2
+    quotes_hold(uid, r5)
+    with db.tx() as cx:
+        n = cx.execute("SELECT count(*) AS n FROM item_links WHERE user_id=%s AND target_candidate_id = ANY(%s)",
+                       (uid, [l_hit, l_after])).fetchone()["n"]
+    assert n == 2, "옮긴 후보의 연결은 그대로"
+    ok("미결 후보 c′(겹침 삭제·경계 접촉·끼워 넣기 · 앞 그대로 · 뒤 delta 이동(±)·UNIQUE 순간 충돌 없음 · 이동 뒤 quote 단언·어긋나면 삭제 · shown 「지워져요」 · 휴지통 없음 · 연결 걸린 지울 후보 = RECORD-LOCKED, 옮길 후보는 통과)")
 
 
 # ── 3) record_title_set ────────────────────────────────
