@@ -52,7 +52,7 @@
    — 새 GET 404 · 노출·key 0 · DB 조회 0 · 결정성 · 정의 일치 · std@1·사용자 DMO 바이트 · 옛 URL·POST · cascade 회귀
 
 24) PR B: 스키마(옛 DB 2회 멱등 = 새 DB 모양·CHECK 확장) · 표시 이름 관문(MCP 쓰기 16 NAME-REQUIRED·허용 17·분류 누락 0·웹 403·예외 경로)
-   · 새 탐색 수락 · 사람·출처·출처 요약/반응(남의 id = 없는 id·revision·검토 상태·인용 차단 4곳·한도 50·50) · 「나」 개수
+   · 옛 탐색 계정 = 새 탐색(R5a) · 사람·출처·출처 요약/반응(남의 id = 없는 id·revision·검토 상태·인용 차단 4곳·한도 50·50) · 「나」 개수
    · 삭제 CLI(거절·통지·유예·미리보기≠실행·재조회 중단·③~⑦ 실패 주입·경쟁·결과·인증·파기) · 옛 코드 호환(CRM_TEST_OLD_REF, 없으면 SKIP) · 처리방침 v5
    — 기존 절은 시험 배선 두 개로 돈다: 새 시험 사용자 표시 이름 자동(_autoname, prb-* 제외) · 신규 표준 시드는 SEED_ON() 안에서만
 실행: server/.venv/bin/python server/test_tools.py   (어느 폴더에서든)
@@ -4254,12 +4254,13 @@ async def test_r1_flags_off():
             menu = r.text[r.text.index('id="acct-menu"'):r.text.index("</details>")]
             for act in ("send", "mine"):
                 assert f'data-acct="{act}" aria-haspopup="dialog"' in menu, act
-        if admin:   # PR B 결정 3: 표시 이름 관문은 관리자도 — 이름·새 탐색·내 구조 설정 메뉴(hidden 이어도 마크업엔 있다)
+        if admin:   # PR B 결정 3: 표시 이름 관문은 관리자도 — 이름·내 구조 설정 메뉴(hidden 이어도 마크업엔 있다). 새 탐색 수락 메뉴는 R5a 에서 삭제
             menu = r.text[r.text.index('id="acct-menu"'):r.text.index("</details>")]
-            assert re.findall(r"<(?:a|button)\b[^>]*>([^<]*)", menu) == ["운영 콘솔", "표시 이름 바꾸기", "새 탐색으로 바꾸기", "내 구조 설정",
+            assert re.findall(r"<(?:a|button)\b[^>]*>([^<]*)", menu) == ["운영 콘솔", "표시 이름 바꾸기", "내 구조 설정",
                                                                       "저장 승인 대기", "연결 장치", "로그아웃"], menu   # PR① 저장 승인 대기 = 관리자도(연결 장치와 같은 구간 밖)
-            for w in ('id="acct-name"', 'id="acct-nav"', 'id="acct-settings"', '<dialog id="name-dlg"', '<dialog id="nav-dlg"'):
+            for w in ('id="acct-name"', 'id="acct-settings"', '<dialog id="name-dlg"'):
                 assert r.text.count(w) == 1, w
+            assert 'id="acct-nav"' not in r.text and 'id="nav-dlg"' not in r.text, "새 탐색 수락 메뉴·대화창 0(R5a)"
             assert '<dialog id="desk-dlg"' not in r.text
     try:
         assert not any(k in os.environ for k in R1_FLAGS), "두 플래그 미설정"
@@ -6167,7 +6168,7 @@ class pytest_raises:
 # ── 24) PR B — 코어(나·사람·출처·출처 요약/반응) · 표시 이름 관문 · 새 탐색 수락 · 삭제 CLI · 플래그 제거 · 옛 코드 호환 ─────────
 PRB = {k: f"prb-{k}@example.com" for k in ("a", "b", "noname", "web", "mcp", "del", "dela", "delb", "adm", "race", "old", "nav")}
 # a·b = 사람·요약/반응 소유자 둘 · noname = 관문(MCP) · web = 관문(웹)·새 경로 · mcp = 이름 정한 뒤 MCP 쓰기 · del·dela·delb = 삭제 대상
-# adm = 삭제 실행 관리자 · race = 삭제 경쟁 · old = 옛 코드 호환(임시 스키마 안) · nav = 새 탐색 수락
+# adm = 삭제 실행 관리자 · race = 삭제 경쟁 · old = 옛 코드 호환(임시 스키마 안) · nav = 옛 탐색 계정(nav_accepted_at NULL)
 PRB_TABLES = ("people", "source_reflections", "deletion_contacts")
 # MCP 도구별 「모양은 맞고 대상은 없는」 인자 — 관문은 도구 본문 전에 걸린다. 키 집합 = main 의 분류 상수(누락이면 시험 실패)
 PRB_WRITE_ARGS = {
@@ -6378,7 +6379,7 @@ async def test_prb_gate():
         assert st["me"] == {"counts": db.me_home(W)["counts"]} and "display_name" not in st["structure"], "구조 응답엔 PR B 키 없음"
         writes = [("/api/candidate/decide", {"candidate_id": "c_x", "action": "confirm"}),
                   ("/api/item/decide", {"item_id": "i_x", "expected_revision": 0, "action": "confirm"}),
-                  ("/api/std/choose", {"std_key": "axes", "state": "deferred"}), ("/api/nav/accept", {}),
+                  ("/api/std/choose", {"std_key": "axes", "state": "deferred"}),
                   ("/api/people", {"alias": "a"}), ("/api/people/p_x", {"alias": "a", "expected_revision": 0}),
                   ("/api/people/p_x/delete", {"expected_revision": 0}), ("/api/sources", {"kind": "url", "name": "n"}),
                   ("/api/reflections", {"source_id": "s_x", "kind": "summary", "body": "b"}),
@@ -6389,7 +6390,7 @@ async def test_prb_gate():
             r = await req("POST", path, json=body)
             assert r.status_code == 403 and r.json()["code"] == "NAME-REQUIRED", (path, r.status_code, r.text)
         assert db.me_home(W)["nav"] == "new" and _prb_count(W, "people") == 0
-        for path, body in writes[3:]:   # PR B 새 경로 — 401 · Origin 403 · 본문 400
+        for path, body in writes[3:]:   # PR B 새 경로(사람·출처·요약/반응) — 401 · Origin 403 · 본문 400
             assert (await req("POST", path, uid=None, json=body)).status_code == 401, path
             r = await req("POST", path, origin=False, json=body)
             assert r.status_code == 403 and r.json()["code"] == "ORIGIN", path
@@ -6430,16 +6431,14 @@ async def test_prb_core():
         A, B = (db.user_by_email(PRB[k])["id"] for k in ("a", "b"))
         for u in (A, B):
             db.display_name_set(u, "이름")
-        # ── 새 탐색 수락: 기존 계정(NULL) = old · 수락 멱등 · 표준 상태 불변 ──
+        # ── 옛 탐색 계정(nav_accepted_at NULL, R5a) = 새 탐색 · 수락 경로 없음 · 열은 남는다(파괴적 스키마 변경 없음) ──
         V = db.user_by_email(PRB["nav"])["id"]
         db.display_name_set(V, "탐색")
         _sql("UPDATE users SET nav_accepted_at=NULL WHERE id=%s", (V,))
-        assert db.me_home(V)["nav"] == "old"
-        std0 = db.std_status(V)
-        a1 = db.nav_accept(V)
-        a2 = db.nav_accept(V)
-        assert a1 == a2 and a1["nav"] == "new" and db.me_home(V)["nav"] == "new", "멱등 — 처음 시각 그대로"
-        assert db.std_status(V) == std0, "편입 상태를 읽지도 바꾸지도 않는다"
+        assert db.me_home(V)["nav"] == "new", "모든 계정 새 탐색"
+        assert not hasattr(db, "nav_accept"), "새 탐색 수락 함수 0"
+        with db.tx() as c:
+            assert c.execute("SELECT nav_accepted_at FROM users WHERE id=%s", (V,)).fetchone()["nav_accepted_at"] is None, "열은 그대로(값을 채우지 않는다)"
         # ── 사람 ──
         p = db.person_save(A, "  동료 PRBALIAS  ")
         assert set(p) == {"id", "alias", "revision", "created", "updated"} and p["alias"] == "동료 PRBALIAS" and p["revision"] == 0
@@ -6582,7 +6581,7 @@ async def test_prb_core():
         assert "people" not in db.state(A) and "reflections" not in db.state(A), "MCP state_get 엔 없음"
     finally:
         site.dev, site.dev_user = real
-    print("OK — 24c 코어(새 탐색 수락 멱등·편입 불변 · 사람 별칭만·남의 id=없는 id·revision·중복·목록 cursor·query · 출처 찾거나 만들기"
+    print("OK — 24c 코어(옛 탐색 계정 = 새 탐색 · 사람 별칭만·남의 id=없는 id·revision·중복·목록 cursor·query · 출처 찾거나 만들기"
           " · 요약/반응 상태·완료 뒤 수정 대기·stale·연결 출처 삭제 거절 · sr_ 인용 차단 4곳 · 「나」 개수 · 한도 50·50 · 웹 왕복) 통과")
 
 
@@ -7040,8 +7039,8 @@ async def test_prb_r5():
 
 
 async def test_prb_app():
-    """/app 본문은 nav old/new 에서 같다(서버는 nav 로 분기하지 않는다) · 라우트 접두 `_` 근거. 24h 화면 정적은 test_web_home.py A5(③-0.2)."""
-    # /app 본문 = nav old/new 같다(서버는 nav 로 분기하지 않는다 — 화면이 /api/state user.nav 로 고른다)
+    """/app 본문은 nav_accepted_at 유무와 같다(R5a 뒤 모든 계정 새 탐색) · 라우트 접두 `_` 근거. 24h 화면 정적은 test_web_home.py A5(③-0.2)."""
+    # /app 본문·user.nav = nav_accepted_at 유무와 무관(서버는 분기하지 않는다, R5a)
     site = main.site
     real = (site.dev, site.dev_user)
     site.dev, site.dev_user = False, ""
@@ -7053,7 +7052,7 @@ async def test_prb_app():
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url=PUBLIC) as h:
                 h.cookies.set("crm_session", site.session_value(V))
                 r = await h.get("/app")
-            assert r.status_code == 200 and db.me_home(V)["nav"] == ("new" if accepted else "old")
+            assert r.status_code == 200 and db.me_home(V)["nav"] == "new"
             bodies.append(r.text)
         assert bodies[0] == bodies[1], "/app 본문은 nav 와 무관"
     finally:

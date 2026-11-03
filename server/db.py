@@ -101,7 +101,7 @@ WRITE_LIMITS = {
 QUOTA_EXEMPT = frozenset({"feedback_send", "trash_move", "trash_restore", "trash_purge"})
 # 휴지통 3종 — 400MB 를 넘어도 삭제(용량을 줄이는 길)·복원(새 행 없음)·영구 삭제 요청은 된다(r4 §13.2). 물리 사용량은 정리 회차가 줄인다
 # 표시 이름 관문(NAME-REQUIRED, PR B 결정 3) 면제 쓰기 — 문의와 표시 이름 설정 자체. 그 밖의 쓰기 진입(write_gate)은 전부 이름이 있어야 한다.
-# 웹 전용 진입(std_choose·nav_accept·사람·요약/반응 경로)도 write_gate 를 지나므로 같은 관문을 받는다. 읽기는 write_gate 를 안 지난다.
+# 웹 전용 진입(std_choose·사람·요약/반응 경로)도 write_gate 를 지나므로 같은 관문을 받는다. 읽기는 write_gate 를 안 지난다.
 NAME_EXEMPT = frozenset({"feedback_send", "display_name_set"})
 
 # 관리자 = users.role='admin'(β2). ③ 전역 DB 크기 거절의 예외 판정도 is_admin(DB 조회)이다. env 는 첫 지정(admin_bootstrap)에만 쓴다.
@@ -3795,19 +3795,11 @@ def display_name_set(uid, display_name):
     return {"display_name": name}
 
 
-def nav_accept(uid):
-    """새 탐색 수락(계정별 1회) — nav_accepted_at = now(), 이미 있으면 그대로(멱등). 표준 편입 상태는 읽지도 바꾸지도 않는다."""
-    with tx() as c:
-        _user_lock(c, uid)
-        r = _one(c, "UPDATE users SET nav_accepted_at = COALESCE(nav_accepted_at, now()) WHERE id=%s RETURNING nav_accepted_at", (uid,))
-    return {"nav": "new", "accepted_at": r["nav_accepted_at"].isoformat()}
-
-
 def me_home(uid):
-    """「나」 홈 데이터 — 표시 이름 · 새 탐색 수락 여부 · 개수. 기존 조회로 센다(따로 저장하지 않는다).
+    """「나」 홈 데이터 — 표시 이름 · nav(항상 "new" — 옛 탐색은 2026-11-03 삭제, 응답 모양만 유지) · 개수. 기존 조회로 센다(따로 저장하지 않는다).
     판단 = 확정 후보(지워지지 않은 기록) · 기준 = principle 오브젝트의 적용·미보관·확정 항목 · 결정 = event 오브젝트의 적용·미보관 항목."""
     with tx() as c:
-        u = _one(c, "SELECT display_name,nav_accepted_at FROM users WHERE id=%s", (uid,))
+        u = _one(c, "SELECT display_name FROM users WHERE id=%s", (uid,))
         if not u:
             raise CrmError("AUTH-INVALID", "사용자를 찾을 수 없어요. 다시 로그인하세요.")
         n = lambda sql: _one(c, sql, (uid,))["n"]
@@ -3824,7 +3816,7 @@ def me_home(uid):
             "sources": n("SELECT count(*) AS n FROM sources WHERE user_id=%s"),
             "reflections": n("SELECT count(*) AS n FROM source_reflections WHERE user_id=%s AND trashed_at IS NULL"),
         }
-    return {"display_name": u["display_name"], "nav": "new" if u["nav_accepted_at"] else "old", "counts": counts}
+    return {"display_name": u["display_name"], "nav": "new", "counts": counts}
 
 
 

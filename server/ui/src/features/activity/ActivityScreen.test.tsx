@@ -88,11 +88,8 @@ test("휴대폰 = 원문 버튼 대신 안내(링크 0) · 원문 ID 없음 = �
   expect((byText(el, "button", "원문을 보관한 PC에서 열 수 있습니다")[0] as HTMLButtonElement).disabled).toBe(true);
 });
 
-test("[삭제] — 휴지통 켜짐 + 새 탐색일 때만 · 확인 → 휴지통으로 → 목록 머리에 결과 한 줄", async () => {
+test("[삭제] — 휴지통 켜짐일 때만 · 확인 → 휴지통으로 → 목록 머리에 결과 한 줄", async () => {
   let el = await show("#_obj/activity/a_a2", ["activity", "a_a2", ""], { ...S, switches: { trash: false } });
-  expect(byText(el, "button", "삭제")).toEqual([]);
-  hideScreen();
-  el = await show("#_obj/activity/a_a2", ["activity", "a_a2", ""], { ...S, user: { nav: "old" } });   // 옛 탐색 = [삭제] 0
   expect(byText(el, "button", "삭제")).toEqual([]);
   hideScreen();
   el = await show("#_obj/activity/a_a2", ["activity", "a_a2", ""]);

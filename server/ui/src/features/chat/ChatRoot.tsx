@@ -16,7 +16,7 @@ export function ChatRoot({ ctx, store = chat }: ScreenProps & { store?: ChatStor
   useEffect(() => { document.body.classList.toggle("chat-open", s.open); }, [s.open]);
   useEffect(() => () => document.body.classList.remove("chat-open"), []);
   useEffect(() => { if (focus.current && s.open) inRef.current?.focus(); focus.current = false; });
-  const shown = s.on() && s.navNew(), note = shown && s.noDev() && !s.curSid();   // 장치 없음 = 새 대화 버튼 대신 안내(죽은 버튼 0). 세션이 남았으면 버튼
+  const shown = s.on(), note = shown && s.noDev() && !s.curSid();   // 장치 없음 = 새 대화 버튼 대신 안내(죽은 버튼 0). 세션이 남았으면 버튼
   const nav = document.getElementById("ui-chatnav"), noteM = document.getElementById("ui-chatnote");
   const toggle = <a href="#" className={`tab ${css.btn}${s.open ? ` ${css.on} on` : ""}`} role="button" aria-pressed={s.open} aria-controls="chat"
     onClick={e => { e.preventDefault(); s.toggle(); focus.current = s.open; }}>대화</a>;

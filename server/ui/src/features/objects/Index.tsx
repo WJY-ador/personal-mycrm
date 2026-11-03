@@ -1,6 +1,6 @@
-// 자료 종류 색인(옛 renderObjects 목록) — 표준 🔒(코어 + 표준 정의) · 내 탭(새 탐색) · 커스텀. 카드 = 그 화면으로 이동, 「문의」 카드 = 껍데기 문의 대화창(data-open)
+// 자료 종류 색인(옛 renderObjects 목록) — 표준 🔒(코어 + 표준 정의) · 내 탭 · 커스텀. 카드 = 그 화면으로 이동, 「문의」 카드 = 껍데기 문의 대화창(data-open)
 import type { KeyboardEvent } from "react";
-import { meCount, navNew, qTabId, recTabId, userTabs } from "./model";
+import { meCount, qTabId, recTabId, userTabs } from "./model";
 import type { P } from "./props";
 import { ORIGIN_CHIP } from "./text";
 import css from "./Objects.module.css";
@@ -44,7 +44,7 @@ export function Index({ S, msg }: P) {
   const st = Array.isArray(S.structure?.objects) ? S.structure.objects : [];
   const nItems = (id: string) => (S.items || []).filter(it => it.object_id === id).length;
   const def = (o: (typeof st)[number], oc = ""): Card => ({ label: o.label, api: o.key, href: `#structure/${o.id}`, n: `항목 ${nItems(o.id)}`, oc });
-  const tabs = navNew(S) ? userTabs(S) : [];
+  const tabs = userTabs(S);
   return (
     <div className="paper">{msg}<h2 className="title">자료 종류</h2>
       <Group title="표준 🔒" cards={[...core, ...st.filter(o => o.origin === "standard").map(o => def(o))]} empty="" />

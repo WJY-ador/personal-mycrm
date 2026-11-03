@@ -56,7 +56,7 @@ export function MeScreen({ ctx, blocks, layoutDefault }: Props) {
   const edit = useEditStore(ctx, !settled, "#_me"), view = useViewStore(center);
   useEffect(() => { if (mobile && !b && !solo && backNav.y) { window.scrollTo(0, backNav.y); backNav.y = 0; } }, [mobile, b, solo]);
   if (redirect) return null;
-  const trashOn = !!S.switches?.trash && S.user?.nav === "new";
+  const trashOn = !!S.switches?.trash;
   let body;
   if (solo) {
     const r = homeRows(W).find(x => x.k === a && x.id === b);

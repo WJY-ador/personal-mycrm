@@ -41,7 +41,6 @@ export class ChatStore {
   emit() { this.v++; this.subs.forEach(f => f()); }
 
   on() { return !!this.S?.switches?.converse; }
-  navNew() { return this.S?.user?.nav === "new"; }
   dev() { const d = this.S?.devices_status; return d && ["none", "recent", "offline"].includes(d.state) ? d : null; }
   noDev() { const d = this.dev(); return !!d && d.state === "none"; }
   seen(d: { last_seen_at: string | null }) { return d.last_seen_at ? `마지막 연결 ${mdhm(d.last_seen_at)}` : ""; }
@@ -81,7 +80,7 @@ export class ChatStore {
   // 껍데기가 새 상태를 줄 때마다(옛 chatSync) — 스위치·첫 복원·열림 상태
   sync(S: AppState, reload: () => Promise<unknown>) {
     this.S = S; this.reload = reload;
-    const on = this.on() && this.navNew();   // 장치 없음이어도 확정만 남은 세션은 이어 받는다(새 작업 접수만 막는다)
+    const on = this.on();   // 장치 없음이어도 확정만 남은 세션은 이어 받는다(새 작업 접수만 막는다)
     if (!on) this.open = false;
     if (on && !this.booted) {
       this.booted = true;

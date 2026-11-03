@@ -51,8 +51,6 @@ test("장치 상태 — 없음 = 버튼 대신 안내(탭 줄·좁은 화면 한
     const o = await look(st({ ...sess, ...d, switches: { trash: false, converse: false } }));
     expect([o.nav, o.note, o.open, o.hidden]).toEqual([0, "", false, true]);
   }
-  const oldNav = await look(st({ ...sess, ...dev("recent"), user: { display_name: "홍길동", nav: "old" } }));
-  expect([oldNav.nav, oldNav.hidden]).toEqual([0, true]);
   expect(document.body.textContent).not.toMatch(/남의장치라벨|dv-other|other@example\.com|u-other|실행 가능/);
 });
 

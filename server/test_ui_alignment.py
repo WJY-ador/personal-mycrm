@@ -22,7 +22,7 @@ def js_run(code):
 class UIAlignmentTest(unittest.TestCase):
     def test_type_labels_keep_origins_and_protection(self):
         chips = JS[JS.index("const ORIGIN_TEXT"):JS.index("const VTYPE")]
-        result = js_run('const esc = x => x, NT = x => x, navNew = () => true;\n' + chips +
+        result = js_run('const esc = x => x, NT = x => x;\n' + chips +
                         '\nconsole.log(JSON.stringify(["core","standard","template","custom"].map(originChip)));')
         self.assertEqual([re.sub('<[^>]+>', '', x) for x in result], ["표준", "표준", "커스텀", "커스텀"])
         fixture = {"objects": [{"id": "o1", "label": "샘플", "origin": "standard", "locked": True, "fields": []}],
@@ -33,15 +33,15 @@ class UIAlignmentTest(unittest.TestCase):
         self.assertIn("표준 정의 보호", svg)
         self.assertEqual(before, json.dumps(fixture, ensure_ascii=False))
 
-    def test_single_settings_entry_for_all_roles_and_nav_versions(self):
+    def test_single_settings_entry_for_all_roles(self):
         navigation = JS[JS.index("const BASE ="):JS.index("function tabCount(")]
         setup = JS[JS.index("const SETUP_PAGES"):JS.index("function renderSetup(")]
         result = js_run('const LABELS = {}, ok = () => true, esc = x => x, trashOn = () => false;\n'
                         'let S;\n' + navigation + '\n' + setup + '\n' + '''
 const out = [];
-for (const admin of [false, true]) for (const nav of ["old", "new"]) {
-  S = {user: {admin, nav}, tabs: []};
-  out.push({admin, nav, tabs: tabsList().map(t => t.id), view: pickTab({tab: "_setup"}, tabsList()).view,
+for (const admin of [false, true]) {
+  S = {user: {admin}, tabs: []};
+  out.push({admin, tabs: tabsList().map(t => t.id), view: pickTab({tab: "_setup"}, tabsList()).view,
     subnav: setupNav("layout")});
 }
 console.log(JSON.stringify(out));
@@ -59,19 +59,6 @@ console.log(JSON.stringify(out));
         self.assertNotIn(' hidden', gear)
         self.assertNotIn('$("setup-link").hidden', JS)
 
-    def test_settings_core_routes_keep_old_navigation(self):
-        navigation = JS[JS.index("const BASE ="):JS.index("function tabCount(")]
-        result = js_run('const LABELS = {}, ok = () => true; let S;\n' + navigation + """
-S = {user: {nav: "old"}, tabs: []};
-const before = tabsList().map(t => t.id);
-const views = ["_setup", "_obj", "_me", "_today"].map(id => pickTab({tab: id}, tabsList()).view);
-console.log(JSON.stringify({views, before, after: tabsList().map(t => t.id), nav: S.user.nav}));
-""")
-        self.assertEqual(result['views'][:3], ['setup', 'objects', 'me'])
-        self.assertNotEqual(result['views'][3], 'today2')
-        self.assertEqual(result['before'], result['after'])
-        self.assertEqual(result['nav'], 'old')
-
     def test_official_font_with_swap_and_system_fallback(self):
         self.assertRegex(HTML, r'https://fonts.googleapis.com/css2\?family=Noto\+Sans\+KR[^" ]*display=swap')
         self.assertRegex(HTML, r'font: 14px/1.55 "Noto Sans KR", -apple-system, "Apple SD Gothic Neo", sans-serif')
@@ -82,14 +69,14 @@ console.log(JSON.stringify({views, before, after: tabsList().map(t => t.id), nav
         result = js_run("""
 const out = [], document = {querySelectorAll: () => []};
 let S, nodes, gate;
-const $ = id => nodes[id], needName = () => gate, navNew = () => S.user.nav === "new";
+const $ = id => nodes[id], needName = () => gate;
 """ + account + """
-for (const admin of [false, true]) for (const nav of ["old", "new"]) for (gate of [false, true]) {
-  S = {user: {admin, nav, display_name: gate ? "" : "합성 사용자"}};
+for (const admin of [false, true]) for (gate of [false, true]) {
+  S = {user: {admin, display_name: gate ? "" : "합성 사용자"}};
   nodes = new Proxy({}, {get: (obj, key) => obj[key] ||= {hidden: true, href: "#_setup",
     classList: {toggle() {}}, setAttribute() {}}});
   acctApply();
-  out.push({admin, nav, gate, settings: nodes["acct-settings"].hidden, devices: nodes["acct-devices"].hidden, gear: nodes["setup-link"].href});
+  out.push({admin, gate, settings: nodes["acct-settings"].hidden, devices: nodes["acct-devices"].hidden, gear: nodes["setup-link"].href});
 }
 console.log(JSON.stringify(out));
 """)

@@ -34,7 +34,7 @@ export function InboxList({ S, cur, flash }: { S: AppState; cur: string; flash: 
   }
   const rows = list.data?.pages.flatMap(x => x.entries);
   return (
-    <div className="paper sheet"><Crumbs xs={[S.user?.nav === "new" ? ["#_today", "오늘"] : ["#_me", "나"], ["", "저장 승인 대기"]]} />{flash}
+    <div className="paper sheet"><Crumbs xs={[["#_today", "오늘"], ["", "저장 승인 대기"]]} />{flash}
       <h2 className="title">저장 승인 대기</h2>
       <p className="hint">{`PC에서 보낸 내 글과 내 글 AI 요약이에요. 승인해야 저장돼요. 대기 본문은 ${S.activity_ui?.pending_days || 30}일 보관하고, 승인·제외·만료 때 지워요.`}</p>
       <nav className="pills" aria-label="상태">{Object.entries(INBOX_STATE).map(([k, l]) => (

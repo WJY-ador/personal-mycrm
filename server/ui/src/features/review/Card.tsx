@@ -11,7 +11,7 @@ import { NO_QUESTION, type Words } from "./text";
 import css from "./Review.module.css";
 
 type Props = {
-  S: AppState; c: Cand; head: ReactNode; qText: string; byRec: boolean; oldNav: boolean; w: Words;
+  S: AppState; c: Cand; head: ReactNode; qText: string; byRec: boolean; w: Words;
   prev: string; next: string; locked: boolean; status: string; err: string;
   onDecide: (action: string, text?: string) => void;
 };
@@ -25,7 +25,7 @@ function Labels({ c }: { c: Cand }) {
   );
 }
 
-export function Card({ S, c, head, qText, byRec, oldNav, w, prev, next, locked, status, err, onDecide }: Props) {
+export function Card({ S, c, head, qText, byRec, w, prev, next, locked, status, err, onDecide }: Props) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState(c.text);
   const ta = useRef<HTMLTextAreaElement>(null), eb = useRef<HTMLButtonElement>(null);
@@ -38,7 +38,7 @@ export function Card({ S, c, head, qText, byRec, oldNav, w, prev, next, locked, 
     <div className={css.review}>{head}
       <section className={css.card} data-candidate-id={c.id} aria-labelledby="candidate-title">
         <p className={css.q}>{byRec ? "" : "질문 · "}{qText}</p><h3 id="candidate-title" className="sr">{w.cardTitle}</h3><p className={css.sent}>{c.text}</p>
-        <Labels c={c} /><ReviewNote review={c.review} oldNav={oldNav} />
+        <Labels c={c} /><ReviewNote review={c.review} />
       </section>
       <Source S={S} c={c} j={q.data} fail={q.isError ? apiErr(q.error) : null} w={w} />
       <section className={css.act} aria-labelledby="decision-title" aria-busy={locked}>

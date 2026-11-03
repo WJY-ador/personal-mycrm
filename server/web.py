@@ -1793,7 +1793,7 @@ class Web:
             "std_marks": {"version": std["version"], "state": std["state"]} if std["version"] else None}, "self")
         st["structure_svg"] = structure_svg.render(st["structure"])   # 같은 응답의 DMO 그래프(서버 결정적 배치) — 목록과 같은 순번 앵커. /app 전용
         st["user"] = {"email": me["email"], "struct_names": flags["struct_names"], "desk_hidden": flags["desk_hidden"],   # /app 계정 메뉴용 — MCP state_get 에는 넣지 않는다
-                      "display_name": home["display_name"], "nav": home["nav"]}   # PR B: 표시 이름(null = 이름 입력 화면) · 새 탐색 new|old
+                      "display_name": home["display_name"], "nav": home["nav"]}   # PR B: 표시 이름(null = 이름 입력 화면) · nav = 항상 "new"(옛 탐색 삭제, 화면은 읽지 않는다)
         st["switches"] = {"converse": db.job_switch_on("converse"),   # PR ②-b — 「대화」 버튼 표시(켜짐일 때만). /app 전용, MCP state_get 에는 넣지 않는다
                           "trash": db.trash_on()}                     # 휴지통 PR-1 — 새 [삭제]·Setup 휴지통 표시(켜짐일 때만). 꺼짐 = 기존 버튼 그대로
         st["stack_session"] = await run_in_threadpool(db.stack_session_current, uid)   # ②-b 새로 고침 복원·두 탭 공유 — {id, expires_at} | null
@@ -2041,10 +2041,6 @@ class Web:
         """POST {display_name} — 표시 이름 저장. 관문 면제(이름을 정하는 경로)."""
         return await self._core_write(request, "display_name_set", {"display_name": ((str,), True)},
                                       lambda uid, b: db.display_name_set(uid, b["display_name"]))
-
-    async def api_nav_accept(self, request):
-        """POST {} — 새 탐색 수락(멱등). 표준 편입과 별개."""
-        return await self._core_write(request, "nav_accept", {}, lambda uid, b: db.nav_accept(uid))
 
     async def api_people(self, request):
         """POST {alias} — 사람 만들기."""
@@ -3292,7 +3288,6 @@ class Web:
             Route("/api/optional-consent", u("web:optional_consent", self.api_optional_consent), methods=["POST"]),
             Route("/api/desk-visibility", u("web:desk_visibility", self.api_desk_visibility), methods=["POST"]),
             Route("/api/me/name", u("web:me_name", self.api_me_name), methods=["POST"]),   # PR B 코어 쓰기
-            Route("/api/nav/accept", u("web:nav_accept", self.api_nav_accept), methods=["POST"]),
             Route("/api/people", u("web:people", self.api_people), methods=["POST"]),
             Route("/api/people/{pid}", u("web:person", self.api_person), methods=["POST"]),
             Route("/api/people/{pid}/delete", u("web:person_delete", self.api_person_delete), methods=["POST"]),

@@ -7,7 +7,7 @@ DB 는 /app 의 개발 사용자 조회에만 쓴다.
 A. manifest 허용 목록 — 진입 JS·CSS 만 /app/assets/<이름> 200 · 1년 immutable · JS/CSS MIME · nosniff · 목록 밖·경로 꼴 = 404.
 B. /app — <!--{{ui}}--> 자리를 manifest 의 <link>·<script type="module" src> 로 채움 · 인라인 스크립트 수 ∈ {0, 1} · 번들 인라인 0 · CSP 해시 = 옛 인라인 1개.
 C. manifest 없음 — 서버가 죽지 않고 ({}, "") · 자리는 빈 문자열 · app.html 이 「화면 파일 없음」 한 줄을 그린다.
-D. 래칫 — migrated.json 의 옛 이름이 app.html 에 0 · 최상위 function 수 ≤ 상한 · 옮긴 화면은 uiMount("<이름>"…) 로 띄움.
+D. 래칫 — migrated.json 의 옛 이름(screens·removed)이 app.html 에 0 · 최상위 function 수 ≤ 상한 · 옮긴 화면은 uiMount("<이름>"…) 로 띄움.
 E. 옛 쪽 다리(node 실행) — uiMount 세 갈래 · 같은 화면 자리 유지 · 떠나면 unmount · applyState 뒤 crm:state 1번 ·
    ctx = 상태 S·주소 조각(args)·setDirty(고치던 글 주소 → uiDirty)·flash(껍데기 결과 한 줄, 한 번) · applyState = 옛 본문 캐시 비움.
 """
@@ -51,6 +51,9 @@ def test_ratchet():
         left = [n for n in names if re.search(rf"\b{re.escape(n)}\b", APP)]
         assert not left, f"옮긴 화면 {screen} 의 옛 이름이 app.html 에 남았어요: {left}"
         assert re.search(rf'ui(?:Mount|Island)\("{screen}"[,)]', JS), f"옮긴 화면 {screen} 은 uiMount(#view 화면)·uiIsland(상시 섬)로 띄운다"
+    for what, names in MIGRATED.get("removed", {}).items():   # 옮기지 않고 지운 옛 코드(R5a 옛 탐색) — 다시 들어오면 실패
+        left = [n for n in names if re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", APP)]
+        assert not left, f"지운 옛 코드 {what} 의 이름이 app.html 에 다시 나왔어요: {left}"
     n = len(re.findall(r"^(?:async\s+)?function\s+\w+", JS, re.M))
     cap = MIGRATED["app_html_function_max"]
     assert n <= cap, f"app.html 최상위 function {n}개 > 상한 {cap} — 새 화면 코드는 server/ui 에(옛 쪽을 늘리지 않는다)"

@@ -9,14 +9,13 @@ import { candidateDecide } from "../../shared/journal";
 import { readOk, type AppState, type Cand } from "../../shared/state";
 import { Card } from "./Card";
 import { PartFail } from "./Fail";
-import { CHECKING, CONFLICT_TEXT, NO_QUESTION, SAVE_FAIL, SAVING, UNKNOWN, unsavedEdit, words } from "./text";
+import { CHECKING, CONFLICT_TEXT, NO_QUESTION, SAVE_FAIL, SAVING, UNKNOWN, unsavedEdit, WORDS as w } from "./text";
 import css from "./Review.module.css";
 
 type Say = { text: string; err?: string; pin: string | null; focus?: boolean };   // pin = 이 문구를 보일 화면(null = 다음에 그리는 화면에 한 번)
 
 export function ReviewScreen({ ctx }: ScreenProps) {
   const S = ctx.state!, [tabId = "", qid = "", key = "", back = "#", backText = ""] = ctx.args || [];
-  const oldNav = S.user?.nav !== "new", w = words(oldNav);
   const [say, setSay] = useState<Say>({ text: "", pin: null });
   const [lockS, setLockS] = useState<AppState | null>(null);   // 저장 중 = 잠근 때의 상태 — 새 상태가 오면 저절로 풀린다
   const after = useRef<{ qid: string; nextId: string } | null>(null), flash = useRef<string | null>(null), title = useRef<HTMLHeadingElement>(null);
@@ -95,7 +94,7 @@ export function ReviewScreen({ ctx }: ScreenProps) {
     await done(w.saved(action));
   }
   return (
-    <Card key={c.id} S={S} c={c} head={head(wait.length, true)} qText={qText} byRec={byRec} oldNav={oldNav} w={w}
+    <Card key={c.id} S={S} c={c} head={head(wait.length, true)} qText={qText} byRec={byRec} w={w}
       prev={idx > 0 ? base + wait[idx - 1].id : ""} next={base + (nextId || "end")} locked={lockS === S} status={status} err={err}
       onDecide={(a, t) => void decide(c, a, t)} />
   );

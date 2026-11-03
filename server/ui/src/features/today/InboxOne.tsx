@@ -1,5 +1,5 @@
 // 저장 승인 대기 글 하나(옛 inboxOne) — 종류·상태 · 제목 · 보낸 장치·받은 때·만료·원래 쓴 때·실행·붙을 활동 · AI 생성 정보 · 본문 · [승인]·[제외](대기일 때만).
-// 승인 안내 = 서버 문장(approve_notice) 그대로, 없으면 내 글 안내. 승인할 수 없으면(만료·처리됨·더 새 개정) 승인 버튼을 끈다. 성공 = 「오늘」(옛 탐색은 승인 대기 목록)
+// 승인 안내 = 서버 문장(approve_notice) 그대로, 없으면 내 글 안내. 승인할 수 없으면(만료·처리됨·더 새 개정) 승인 버튼을 끈다. 성공 = 「오늘」
 import { useQuery } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
 import { apiErr } from "../../shared/api";
@@ -28,7 +28,7 @@ export function InboxOne({ ctx, id, say }: Props) {
   if (q.isError) return <LoadFail err={apiErr(q.error)} what="저장 승인 대기 글" />;
   if (!q.data) return <p className="hint">{LOADING}</p>;
   const e = q.data, g = e.generation;
-  const to = S.user?.nav === "new" ? "#_today" : "#_inbox";
+  const to = "#_today";
   async function act(call: () => Promise<unknown>, done: string) {
     setErr(""); setBusy(true);
     try {

@@ -41,7 +41,7 @@ export function ActDetail({ ctx, id, say }: Props) {
     <>
       <div className="eyebrow">활동{a.state === "retracted" ? " · 철회됨" : ""}</div><h2 className="title">{actLabel(acts, a.action)}</h2>
       {a.current ? null : <p className="fnote">이 판은 옛 판이에요. {a.current_id ? <a href={`#_obj/activity/${a.current_id}`}>현재 판 보기</a> : "지금 쓰는 판이 없어요."}</p>}
-      {S.switches?.trash && S.user?.nav === "new" ? <><div className="hacts" role="group" aria-label="동작"><button className="secondary" type="button" disabled={busy} onClick={del}>삭제</button></div>
+      {S.switches?.trash ? <><div className="hacts" role="group" aria-label="동작"><button className="secondary" type="button" disabled={busy} onClick={del}>삭제</button></div>
         <p className="ferr" role="alert" aria-atomic="true">{err}</p></> : null}
       <dl className="kv"><dt>행동 날짜</dt><dd>{a.occurred_on ? dOnly(a.occurred_on) : "날짜 미확인"}</dd>
         <dt>처음 수집한 날</dt><dd>{a.observed_on ? dOnly(a.observed_on) : "—"}</dd>

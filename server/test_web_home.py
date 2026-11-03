@@ -10,7 +10,7 @@ B. app.html 정적 — 옛 쪽에 남은 「나」 접점(uiMount("me") · 미�
 G. API 견본 대조(R2) — ui/src/shared/state.sample.json ⊆ /api/state · ui/src/features/me/me.sample.json = /api/me/stats·layout·journal·본문 미리보기.
 C·D. 대화 서랍(PR ②-b B5 · ③-0.2)은 React(R3 2026-11-03) — server/ui/src/features/chat/store.test.ts·ChatRoot.test.tsx(Vitest).
    판단 검토(원문과 대조하기)도 React — server/ui/src/features/review/ReviewScreen.test.tsx.
-F. 휴지통 PR-1 화면(node 실행 포함): 스위치 S.switches.trash + 새 탐색일 때만 [삭제]·Setup 「휴지통」 · 꺼짐 = 현행 · 기준 [남기기]+[삭제] · 후보 [삭제] 0 ·
+F. 휴지통 PR-1 화면(node 실행 포함): 스위치 S.switches.trash 켜짐일 때만 [삭제]·Setup 「휴지통」 · 꺼짐 = 현행 · 기준 [남기기]+[삭제] · 후보 [삭제] 0 ·
    r4 §8 문구 · 휴지통 행(종류·제목·삭제 시각·복원 가능 기한)·더 보기·복원·영구 삭제·기한 이후 · 「반영 안 함」 한 표현 · 근거 이용 불가.
 E. test_tools.py 에서 옮겨 온 app.html 정적 단언(③-0.2 A1~A5·B1~B4 — 문의 esc·계정 메뉴·구조 정의·LABELS·24h 화면·라이트 기본·셰이더·동의·재인증).
 """
@@ -188,10 +188,10 @@ def test_static():
     mobile = (HERE / "ui" / "src" / "shared" / "mobile.ts").read_text(encoding="utf-8")
     assert "@media (max-width: 767px)" in html and 'export const MOBILE = "(max-width: 767px)";' in mobile, "모바일 분기점 = 768 미만(CSS·React shared/mobile.ts 와 같은 값)"
     assert "<script src" not in html.replace('<script src="{{asset:theme.js}}"></script>', ""), "외부 스크립트 0(테마 자산만)"
-    # 타입 그래프 기본 = 그래프(새 탐색) · 영속 없음(저장소에 쓰지 않는다)
-    assert 'let defsMode = "graph", defsAt = "";' in js and 'defsMode = navNew() ? "graph" : "list"' in js
+    # 타입 그래프 기본 = 그래프 · 영속 없음(저장소에 쓰지 않는다)
+    assert 'let defsMode = "graph", defsAt = "";' in js and 'defsMode = "graph"; defsAt = location.hash;' in js
     assert not re.search(r"localStorage\.setItem\([^)]*defs", js)
-    assert "if (navNew()) return [NAVTAB._me, NAVTAB._today];" in js, "탭 나·오늘 — 설정은 톱니"
+    assert "const tabsList = () => [NAVTAB._me, NAVTAB._today];" in js, "탭 나·오늘 — 설정은 톱니"
     # S6: 글 이름 하나 「내 글」(v9 P1) — 사용자 표시 라벨 자리별. 「내 글 AI 요약」·「내가 쓴 메모」(판단 출처 표시)는 그대로
     today_text = (HERE / "ui" / "src" / "features" / "today" / "text.ts").read_text(encoding="utf-8")
     assert "내가 쓴 글" not in js and "내가 쓴 글" not in today_text and 'input_scope: { self_only: "내 글만" }' in today_text, "「내가 쓴 글」 0 — 생성 정보 입력 범위도 「내 글만」(React 오늘)"
@@ -215,7 +215,8 @@ def test_static():
     assert js.count("async function meSync()") == 1 and js.count("= meSync();") == 1, "레이아웃 읽기 접점 = meSync 한 곳(정의 + load 호출)"
     assert js.count('getJSON("/api/me/layout")') == 2, "읽기 = meSync + STALE 때 다시 받기"
     assert "corePost(" not in setup and "/api/" not in setup.replace("/api/me/layout", ""), "Setup 의 다른 쓰기·API 0"
-    assert "if (navNew()) { const to = navReplace(R); if (to) { location.replace(to); return; } }" in js
+    assert "{ const to = navReplace(R); if (to) { location.replace(to); return; } }" in js
+    assert 'if ((R.tab === "today" || R.tab === "home") && R.a !== "review") return "#_today";' in js, "옛 오늘 화면 없음 — 옛 대조 링크만 그대로"
     # S5 오늘·저장 승인 대기 = React(features/today, R4-2) — 옛 쪽은 라우팅만. 줄·날짜 머리글·삭제 0·승인·제외는 Vitest TodayScreen.test.tsx
     assert 'else if (tab.view === "today2") uiMount("today", ["today", R.a || "", R.b || ""]);' in js
     assert 'else if (tab.view === "inbox") uiMount("today", ["inbox", R.a || ""]);' in js
@@ -232,13 +233,13 @@ TRASH_ASK = "삭제하면 휴지통으로 이동해요. 삭제 시각부터 168�
 
 
 def test_static_trash():
-    """휴지통 PR-1 화면 — 스위치(S.switches.trash) 켜짐 + 새 탐색일 때만 [삭제]·Setup 「휴지통」 · 꺼짐 = 기존 동작 그대로 ·
+    """휴지통 PR-1 화면 — 스위치(S.switches.trash) 켜짐일 때만 [삭제]·Setup 「휴지통」 · 꺼짐 = 기존 동작 그대로 ·
     「남기지 않음」 → 「반영 안 함」(스위치 무관, 글자만) · 삭제된 근거 빈 자리 = 「근거를 이용할 수 없어요.」 · 이동 접점 = trashApi.del 한 곳.
     Setup 「휴지통」 페이지(목록·복원·영구 삭제)는 React(server/ui/src/features/trash) — 그 화면 시험은 TrashScreen.test.tsx(R1 2026-11-03)."""
     html = (HERE / "app.html").read_text(encoding="utf-8")
     js = re.search(r"<script>(.*?)</script>", html, re.S).group(1)
     tr = js[js.index("// ── 휴지통 (trash PR-1)"):js.index("// ── /휴지통 ──")]
-    assert "const trashOn = () => !!(S && S.switches && S.switches.trash) && navNew();" in tr
+    assert "const trashOn = () => !!(S && S.switches && S.switches.trash);" in tr
     for w in (TRASH_ASK, "복원 기간이 끝났어요."):
         assert w in tr, w
     code = "\n".join(l for l in tr.splitlines() if not l.lstrip().startswith("//"))
@@ -284,7 +285,7 @@ def trash_run(scenario):
         r"const esc = ", r"const toDate = ", r"const pad2 = ", r"function mdhm\(", r"const SETUP_PAGES = ", r"const setupPages = "))
     b = js.index("// ── 휴지통 (trash PR-1)")
     tr = js[b:js.index("// ── /휴지통 ──", b)]   # 클릭 연결은 가짜 document 가 받고 버린다 · hashchange 는 HASH 로
-    stub = """let S = null, NAVNEW = true, coreFlash = null; const navNew = () => NAVNEW;
+    stub = """let S = null, coreFlash = null;
 const WHAT = {OFFLINE: "서버에 연결하지 못했어요."};
 const els = {}; const $ = id => els[id] || (els[id] = {id, textContent: "", innerHTML: "", hidden: false});
 const document = {querySelectorAll: () => [], querySelector: () => null, addEventListener() {}};
@@ -305,22 +306,21 @@ const fakeBtn = (d, err) => ({dataset: d, disabled: false, closest: () => ({quer
 
 
 def test_trash_switch():
-    """스위치별 차이 — 꺼짐(또는 옛 탐색) = [삭제]·휴지통 페이지 0 · 켜짐 = [삭제] 버튼·Setup 「휴지통」.
+    """스위치별 차이 — 꺼짐 = [삭제]·휴지통 페이지 0 · 켜짐 = [삭제] 버튼·Setup 「휴지통」.
     「나」 상세의 버튼(기준 [남기기]+[삭제] · 후보 [삭제] 0 · 꺼짐 = 옛 버튼)은 React — Vitest MeActs.test.tsx."""
     o = trash_run("""
 const snap = () => ({on: trashOn(), pages: setupPages().map(p => p[0]), btn: trashBtn("record", "r1", null, "#_me")});
 S = {switches: {converse: true}}; out.none = snap();
 S = {switches: {trash: false}}; out.off = snap();
-S = {switches: {trash: true}}; NAVNEW = false; out.old = snap();
-NAVNEW = true; out.on = snap();
+S = {switches: {trash: true}}; out.on = snap();
 """)
-    for k in ("none", "off", "old"):
+    for k in ("none", "off"):
         s = o[k]
-        assert s["on"] is False and "trash" not in s["pages"] and s["btn"] == "", (k, "꺼짐·옛 탐색 = 버튼·페이지 0")
+        assert s["on"] is False and "trash" not in s["pages"] and s["btn"] == "", (k, "꺼짐 = 버튼·페이지 0")
     s = o["on"]
     assert s["on"] is True and s["pages"][-1] == "trash" and s["pages"][:6] == ["layout", "structure", "objects", "devices", "map", "help"]
     assert s["btn"] == '<button class="secondary" type="button" data-trash="record" data-id="r1" data-back="#_me">삭제</button>'
-    print("OK — 휴지통 스위치(꺼짐·필드 없음·옛 탐색 = [삭제]·페이지 0 · 켜짐 = [삭제]·Setup 휴지통) 통과")
+    print("OK — 휴지통 스위치(꺼짐·필드 없음 = [삭제]·페이지 0 · 켜짐 = [삭제]·Setup 휴지통) 통과")
 
 
 def test_trash_flow():
@@ -409,7 +409,8 @@ def test_static_moved():
 
     # A3 구조 정의 보기·편입 대화창(Q4·Q5)
     tokens = structure_svg.tokens_css(dark_attr=True, dark_media=False)
-    assert '"구조 정의"' in html and "/defs" in html and 'if (a === "defs") return renderDefs(tab);' in html, "구조 정의 보기·라우트"
+    assert 'a("#_settings/structure", "내 구조 설정", "defs")' in html and 'if (R.a === "defs") return "#_setup/structure";' in html \
+        and 'if (a === "defs")' not in html, "구조 정의 보기·라우트 = 내 구조 설정(옛 #structure/defs 는 replace, R5a)"
     assert "S.structure" in html and "/api/std/preview" in html and "/api/std/choose" in html
     i = html.index('<dialog id="std-dlg"')
     dlg = html[i:html.index("</dialog>", i)]
@@ -455,13 +456,13 @@ def test_static_moved():
     # A4 코어 표시명 — app.html LABELS(std@1 표시명 절의 화면 몫. web.CORE_LABEL 비교는 test_tools 에 남는다)
     assert all(f'{k}: "{v}"' in html for k, v in (("question", "질문"), ("record", "기록"), ("candidate", "후보"))), "app.html LABELS"
 
-    # A5 24h 화면 — 플래그 0 · 이름 관문·nav·새 경로·탭 3 · 안내 문구 · 재검토 표시 · 대화창 둘(구간 밖) · 메뉴
+    # A5 24h 화면 — 플래그 0 · 이름 관문·새 경로·탭 · 안내 문구 · 재검토 표시 · 이름 대화창(구간 밖) · 메뉴 · 옛 탐색 0(R5a)
     assert "FEATURE-OFF" not in html, "플래그 제거 — 화면에도 FEATURE-OFF 0"
     for w in ('if (needName()) return renderNameGate();', 'data-form="name"',
               "실명이 아니어도 돼요. 다른 사람에게 보이지 않고 운영자 화면에도 나오지 않아요.",
-              '"/api/nav/accept"', '"/api/me/name"',
+              '"/api/me/name"',
               'id: "_me"', 'id: "_obj"', 'id: "_settings"',
-              "if (navNew()) return [NAVTAB._me, NAVTAB._today];",   # PR ①-b 탭 3: 나 · 오늘 · Setup(B1)
+              "const tabsList = () => [NAVTAB._me, NAVTAB._today];",   # PR ①-b 탭: 나 · 오늘 · Setup(톱니)
               'if (R.tab === "_settings") return "#_setup/structure";', "function axisChips", "삭제 완료"):
         assert w in html, w
     # 사람·읽고 든 생각 쓰기·안내 문구 = React 자료 종류(R4-2 — features/objects, 화면 동작은 Vitest ObjectsScreen.test.tsx)
@@ -470,16 +471,13 @@ def test_static_moved():
     assert '"/api/people"' in oapi and '"/api/reflections"' in oapi
     assert re.search(r"REFL_HELP\s*=\s*\"출처를 접한 뒤 내가 한 생각만 적어요\. 다른 사람의 말·경험·생각을 옮기는 곳이 아니에요\.\"", otext)
     assert re.search(r"PERSON_HELP\s*=\s*\"별칭도 그 사람을 알아볼 수 있으면 개인정보예요\.\"", otext)
-    assert html.count("${reviewNote(c)}") >= 3, "오늘·질문·기록 화면 재검토 표시(판단 검토 화면 = React shared/ReviewNote, R3)"
-    for dlg_id in ("name-dlg", "nav-dlg"):
-        outside_marks(html.index(f'<dialog id="{dlg_id}"'), dlg_id)
-    i = html.index('<dialog id="nav-dlg"')
-    nav = html[i:html.index("</dialog>", i)]
-    for w in ("「나」 홈", "「자료 종류」", "「내 구조 설정」", "데이터는 바뀌지 않아요", "되돌릴 수 없어요"):   # PR① 새 탐색 안내 = 탭 3(나·자료 종류·지도)
-        assert w in nav, ("nav 대화창", w)
+    assert html.count("${reviewNote(c)}") >= 1, "기록 화면 재검토 표시(판단 검토 화면 = React shared/ReviewNote, R3)"
+    outside_marks(html.index('<dialog id="name-dlg"'), "name-dlg")
     menu = html[html.index('id="acct-menu"'):html.index("</details>")]
-    for a in ("name", "nav", "settings"):
+    for a in ("name", "settings"):
         assert f'data-acct="{a}"' in menu, a
+    for w in ("nav-dlg", "acct-nav", "/api/nav/accept", "navNew", "새 탐색으로 바꾸기"):   # R5a 옛 탐색 삭제 — 모든 계정 새 탐색
+        assert w not in html, w
 
     # B1 기본 밝은 화면 — OS 다크 설정·?theme 를 따르지 않는다. 어두운 화면은 토글(data-theme="dark")로만
     assert "prefers-color-scheme" not in html and "dataset.theme" not in html and html.count(':root[data-theme="dark"] {') >= 1, "app.html"
@@ -505,7 +503,6 @@ async def test_ui_samples():
     real = site.dev, site.dev_user
     uid = db.user_by_email(SAMPLE)["id"]
     db.display_name_set(uid, "견본")
-    db.nav_accept(uid)
     q = db.question_add(uid, "견본 질문")
     src = db.source_create(uid, "url", "견본 출처")
     rec = db.record_add(uid, "견본 글", "견본 본문 입력 담당을 먼저 정했다.", q["id"])

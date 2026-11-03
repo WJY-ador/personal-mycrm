@@ -16,11 +16,11 @@ beforeEach(() => {
 });
 afterEach(() => { hideMe(); vi.unstubAllGlobals(); });
 const posts = () => calls.filter(c => c.method === "POST");
-const S = (trash: boolean, nav = "new", items: unknown[] = meState().items) => meState({ switches: { trash }, user: { display_name: "홍길동", nav }, items });
+const S = (trash: boolean, items: unknown[] = meState().items) => meState({ switches: { trash }, user: { display_name: "홍길동", nav: "new" }, items });
 const withDecision = (d: string): unknown[] => meState().items.map(it => (it.id === "p1" ? { ...it, decision: d } : it));
 
-test("휴지통 꺼짐(또는 옛 탐색) — 기준 = 옛 버튼(글자만 「반영 안 함」) · [삭제] 0", async () => {
-  for (const s of [S(false), S(true, "old")]) {
+test("휴지통 꺼짐 — 기준 = 옛 버튼(글자만 「반영 안 함」) · [삭제] 0", async () => {
+  for (const s of [S(false)]) {
     let el = await showMe("#_me/principle/p1", { ...s, items: withDecision("pending") });
     expect(btns(el)).toEqual(["남기기", "반영 안 함"]);
     el = await showMe("#_me/principle/p1", { ...s, items: withDecision("confirmed") });
@@ -35,9 +35,9 @@ test("휴지통 꺼짐(또는 옛 탐색) — 기준 = 옛 버튼(글자만 「�
 });
 
 test("휴지통 켜짐 — 기준 [남기기]+[삭제](확정이면 [삭제]만) · 내 글·생각·다른 항목 [삭제] · 판단 [삭제] 0(기존 결정 그대로)", async () => {
-  let el = await showMe("#_me/principle/p1", S(true, "new", withDecision("pending")));
+  let el = await showMe("#_me/principle/p1", S(true, withDecision("pending")));
   expect(btns(el)).toEqual(["남기기", "삭제"]);
-  el = await showMe("#_me/principle/p1", S(true, "new", withDecision("confirmed")));
+  el = await showMe("#_me/principle/p1", S(true, withDecision("confirmed")));
   expect(btns(el)).toEqual(["삭제"]);
   el = await showMe("#_me/journal/r1", S(true));
   expect(btns(el)).toEqual(["삭제"]);

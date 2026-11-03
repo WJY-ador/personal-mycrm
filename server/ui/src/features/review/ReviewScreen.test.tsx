@@ -12,8 +12,8 @@ const BODY = "# 도입 회고\n\n첫 문단이다.\n\n고객은 입력 담당을
 const J = { id: "r1", title: "도입 회고", body: BODY, revision: 1, author_kind: "self", meta: { created: "2026-11-02T01:00:00Z", source: "파일:a.md", question_id: "q1" } };
 const cand = (id: string, x: object = {}) => ({ id, text: "담당을 먼저 정한다 " + id, status: "pending", record_id: "r1", question_id: "q1", quote: "입력 담당을 먼저",
   review: null, revision: 2, created: "2026-11-02T01:00:00Z", origin: "ai", edited_by_user: false, wording_by: "ai", wording_approved: false, ...x });
-const state = (cands: object[], nav = "new", x: object = {}) => ({
-  user: { display_name: "홍길동", nav }, switches: { trash: true }, questions: [{ id: "q1", text: "도입 순서는?", created: "" }],
+const state = (cands: object[], x: object = {}) => ({
+  user: { display_name: "홍길동", nav: "new" }, switches: { trash: true }, questions: [{ id: "q1", text: "도입 순서는?", created: "" }],
   journal: [{ id: "r1", title: "도입 회고", excerpt: "", created: "", source: null, source_id: "s1", question_id: "q1", source_date: null, author_kind: "self" }],
   sources: [{ id: "s1", kind: "file", name: "회고 메모", location: null }], candidates: cands, ...x }) as unknown as AppState;
 
@@ -101,7 +101,7 @@ test("주소 바꿔 끼우기 — 빈 자리·옛 숫자 = 그 자리 판단 · 
   await show(state([cand("c_9", { question_id: null })]), "c_9", "r:r1");
   expect(el.querySelector("[data-candidate-id]")!.textContent).toContain("질문 없음 · 내 글 「도입 회고」");
   expect(el.querySelector("#decision-help")!.textContent).toBe("남기면 확정한 판단에 들어가요(질문 없음). 반영 안 함으로 둬도 판단 문장과 원문은 삭제되지 않아요. 원문은 바뀌지 않아요.");
-  await show(state([], "new", { read: { candidates: { ok: false, error: { code: "OFFLINE", msg: "x" } } } }), "c_1");
+  await show(state([], { read: { candidates: { ok: false, error: { code: "OFFLINE", msg: "x" } } } }), "c_1");
   expect(el.querySelector(".partfail")!.textContent).toContain("문장 목록을 읽지 못했어요 · 나머지는 정상서버에 연결하지 못했어요.");
 });
 
@@ -156,11 +156,3 @@ test("고쳐서 남기기 · 충돌 = 서버 문구 + 고치던 문장 · 실패
   expect(el.querySelector("#save-error")!.textContent).toBe("저장 여부를 확인하지 못했어요. 새로 고침해 확인해 주세요.");
 });
 
-test("옛 탐색 — 옛 말(내 판단·후보·기록)", async () => {
-  await show(state([cand("c_1", { review: "processed" })], "old"), "c_1");
-  expect(btn("내 판단으로 남기기")).toBeTruthy();
-  expect(el.querySelector("#rvacts")!.getAttribute("aria-label")).toBe("후보 결정");
-  expect(el.querySelector("#decision-help")!.textContent).toContain("남기면 「도입 순서는?」의 내 판단에 들어가요. 반영 안 함으로 둬도 후보와 원문은 삭제되지 않아요.");
-  expect(el.querySelector(".recheck")!.textContent).toContain("가공 방식 정보가 실제로 틀렸을 때만 연결한 AI 대화에서 기록 정보를 정정하세요.");
-  expect(el.querySelector("details.tech")!.textContent).toContain("기록 당시 표기");
-});

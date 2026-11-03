@@ -110,8 +110,8 @@ a.setup-gear:hover { border-color: var(--accent); color: var(--accent); }
 .acct-menu hr { border: 0; border-top: 1px solid var(--line); margin: .2rem 0; }
 .acct-note { margin: -.1rem .8rem .25rem; font-size: .7rem; color: var(--muted); }
 .acct-msg { margin: .2rem .8rem; font-size: .72rem; color: var(--fail); }
-/* PR① 새 탐색 계정 메뉴 6 — 표시 이름 바꾸기 · 내 구조 설정 · 저장 승인 대기 (N) · 연결 장치 · 문의 및 개인정보(세 이름 바로) · 로그아웃.
-   nav=old 메뉴는 마크업 순서 그대로. 새 탐색만 order 로 줄을 세우고 구분선(hr)은 숨긴다 */
+/* 계정 메뉴 — 표시 이름 바꾸기 · 저장 승인 대기 (N) · 문의 및 개인정보(세 이름 바로) · 로그아웃. order 로 줄을 세우고 구분선(hr)은 숨긴다.
+   이름 입력 화면(navnew 클래스 없음)은 마크업 순서 그대로 */
 .acct-menu.navnew > hr { display: none; }
 .acct-menu.navnew > #acct-name { order: 1; } .acct-menu.navnew > #acct-settings { order: 2; }
 .acct-menu.navnew > #acct-inbox { order: 3; } .acct-menu.navnew > #acct-devices { order: 4; }
@@ -154,13 +154,12 @@ main#view { padding-top: 1rem; padding-bottom: 1.5rem; }
 .eyebrow { display: flex; align-items: center; gap: .5rem; font-size: .74rem; color: var(--muted); letter-spacing: .02em; }
 h2.title { font-size: 1.35rem; line-height: 1.35; margin: .3rem 0 .9rem; letter-spacing: -.01em; font-weight: 700; }
 h2.sh { display: flex; align-items: center; gap: .5rem; font-size: .82rem; font-weight: 600; letter-spacing: .02em; margin: 0 0 .6rem; color: var(--ink); }
-h2.sh ~ h2.sh, .cards + h2.sh, .qgroup + h2.sh, .empty + h2.sh, .nextline + h2.sh { margin-top: 1.4rem; }
+h2.sh ~ h2.sh, .cards + h2.sh, .empty + h2.sh, .nextline + h2.sh { margin-top: 1.4rem; }
 .nextline { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; padding: .6rem .85rem; border-radius: 8px;
   background: var(--accent-soft); font-size: .84rem; margin-bottom: 1.2rem; }
 .nextline .lbl { font-size: .74rem; color: var(--accent); font-weight: 700; flex: none; }
 .nextline .txt { flex: 1 1 240px; min-width: 0; }
 .nextline details { flex-basis: 100%; font-size: .8rem; color: var(--muted); }
-.tleft .nextline .lbl { display: none; }   /* 오늘 탭은 h2 「다음 할 일」이 따로 있다 */
 .say { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin-top: .3rem; color: var(--ink); }
 
 section.sec { margin-top: 1.4rem; }
@@ -204,20 +203,10 @@ section.sec:first-child { margin-top: 0; }
 .cta { display: flex; align-items: center; justify-content: space-between; gap: .6rem; flex-wrap: wrap; margin: .8rem 0 .2rem; }
 .cta .hint { margin: 0; }
 
-/* 오늘 — 2열 보드 */
+/* 2열 보드(기록형 탭) */
 .board { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 420px); gap: 1rem; align-items: start; }
 .board > * { min-width: 0; }
 .rside { position: sticky; top: .8rem; align-self: start; max-height: calc(100vh - 1.6rem); overflow: auto; }
-.qgroup { margin-bottom: 1.1rem; }
-.qghead { display: flex; align-items: baseline; gap: .45rem; font-size: .8rem; color: var(--muted); margin: 0 0 .4rem; }
-.qghead .chip { flex: none; }
-.qgroup .cta { justify-content: flex-end; margin-top: .5rem; }
-.readerbox { margin-top: 1.2rem; }
-.reader { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: .9rem 1rem; }
-.reader .rh { display: flex; justify-content: space-between; gap: .5rem; align-items: baseline; margin-bottom: .5rem; }
-.reader .rh b { font-size: .92rem; }
-.reader .doc { background: transparent; border: 0; padding: 0; }
-.reader .empty { border: 0; background: transparent; padding: 0; }
 
 /* 기록 목록 — 날짜 큰 숫자 */
 .recs { list-style: none; margin: 0; padding: 0; }
@@ -444,7 +433,6 @@ dialog .db { padding: .9rem 1.2rem; max-height: 72vh; overflow: auto; }
 @media (max-width: 900px) {
   .board { grid-template-columns: minmax(0, 1fr); }
   .rside { position: static; max-height: none; overflow: visible; }
-  .rside .readerbox { display: none; }
 }
 @media (max-width: 700px) {
   .wrap { padding: 0 1rem; }
@@ -466,7 +454,7 @@ dialog .db { padding: .9rem 1.2rem; max-height: 72vh; overflow: auto; }
   textarea { font-size: 16px; }
   .acts { position: sticky; bottom: 0; background: var(--card); padding: .6rem 0 .7rem; }
 }
-/* PR B — 표시 이름 · 「나」 홈 · 오브젝트 · 사람 · 출처 요약/반응. 새 탐색(user.nav=new)에서만 그린다 — 미수락 계정은 위 화면 그대로 */
+/* PR B — 표시 이름 · 「나」 홈 · 오브젝트 · 사람 · 출처 요약/반응 */
 .fform { display: flex; flex-direction: column; gap: .35rem; max-width: 600px; }
 .fform label, .fform legend, .flabel { font-size: .82rem; font-weight: 600; padding: 0; }
 .fform fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: .1rem 1rem; }
@@ -486,9 +474,7 @@ dialog .db { padding: .9rem 1.2rem; max-height: 72vh; overflow: auto; }
 .namegate { max-width: 640px; }
 .namegate .after { margin-top: 1.2rem; padding-top: .8rem; border-top: 1px solid var(--line); font-size: .8rem; color: var(--muted);
   display: flex; gap: .4rem .9rem; flex-wrap: wrap; align-items: center; }
-#name-dlg .acts, #nav-dlg .acts, #leave-dlg .acts { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: .8rem; }
-#nav-dlg ul { margin: .3rem 0 .8rem; padding-left: 1.1rem; font-size: .88rem; line-height: 1.7; }
-#nav-dlg .stay { font-size: .86rem; margin: 0 0 .4rem; }
+#name-dlg .acts, #leave-dlg .acts { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: .8rem; }
 .melinks { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 .4rem; }
 .melinks .n { font-family: var(--mono); font-size: .7rem; color: var(--muted); }
 .mini { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .35rem; font-size: .84rem; }
@@ -505,10 +491,10 @@ dialog .db { padding: .9rem 1.2rem; max-height: 72vh; overflow: auto; }
 @media (max-width: 700px) {
   .finput, .fform select, .fform textarea { font-size: 16px; }
 }
-/* board 이전(2026-10-20) — 「나」 활동 집계 · 활동/축 상세 · 연결 장치 · 승인 대기. 새 탐색에서만 그린다 */
+/* board 이전(2026-10-20) — 「나」 활동 집계 · 활동/축 상세 · 연결 장치 · 승인 대기 */
 /* PR① 「나」 홈 — 표시 이름 + 왼쪽 「내 데이터」 목록 + 오른쪽 상세. 768px 미만은 목록 → 상세 1열(JS 분기점과 같은 값).
    목록은 넓은 화면에서 sticky(목록만 따로 스크롤), 상세 본문은 페이지 스크롤 — 본문에 세로 스크롤 상자를 두지 않는다 */
-/* PR① 마스트(날짜·오늘 띠·질문 레전드) = 옛 폴백 화면(#today·#structure·#q·#journal·사용자 탭·대조)에서만. 새 탐색 화면에선 숨긴다 */
+/* PR① 마스트(날짜·오늘 띠·질문 레전드) = 옛 화면(#structure·#q·#journal·사용자 탭·대조)에서만. 그 밖의 화면에선 숨긴다 */
 body.navnew-screen .mast h1, body.navnew-screen .mast .sub, body.navnew-screen .axiswrap { display: none; }
 body.navnew-screen .mast .who { margin-left: auto; }   /* 날짜를 숨겨도 계정 메뉴는 오른쪽 — 펼친 메뉴(right:0)가 화면 왼쪽 밖으로 나가지 않게 */
 .hhead { display: flex; align-items: baseline; gap: .8rem; min-width: 0; margin: 0 0 .9rem; }
@@ -609,11 +595,10 @@ ol.dnd .grip { color: var(--muted); font-size: 1rem; padding: .2rem .25rem; touc
       <button type="button" class="acct-sub" data-acct="mine" aria-haspopup="dialog">내 문의</button>
       <button type="button" class="acct-sub" data-acct="privacy" aria-haspopup="dialog">개인정보 요청</button>
       <hr>
-      <button type="button" data-acct="names" id="acct-names" aria-pressed="false">구조 이름 공유 <span class="st" id="acct-names-st">꺼짐</span></button>
-      <p class="acct-note">안 해도 모든 기능을 써요. <a href="/privacy#privacy-1">무엇을 보나요</a></p>
+      <button type="button" data-acct="names" id="acct-names" aria-pressed="false" hidden>구조 이름 공유 <span class="st" id="acct-names-st">꺼짐</span></button>
+      <p class="acct-note" hidden>안 해도 모든 기능을 써요. <a href="/privacy#privacy-1">무엇을 보나요</a></p>
       <hr><!--/user-->
       <button type="button" data-acct="name" id="acct-name" aria-haspopup="dialog">표시 이름 바꾸기</button>
-      <button type="button" data-acct="nav" id="acct-nav" aria-haspopup="dialog" hidden>새 탐색으로 바꾸기</button>
       <button type="button" data-acct="settings" id="acct-settings" hidden>내 구조 설정</button>
       <button type="button" data-acct="inbox" id="acct-inbox" hidden>저장 승인 대기<span class="st" id="acct-inbox-n"></span></button>
       <button type="button" data-acct="devices" id="acct-devices" hidden>연결 장치</button>
@@ -679,19 +664,6 @@ ol.dnd .grip { color: var(--muted); font-size: 1rem; padding: .2rem .25rem; touc
   <p id="leave-dlg-lead">이 화면을 떠나면 고친 내용이 사라져요.</p>
   <div class="acts"><button class="primary" type="button" id="leave-stay">계속 편집</button><button class="secondary" type="button" id="leave-go">변경 버리기</button></div>
 </div></dialog>
-<dialog id="nav-dlg" aria-labelledby="nav-dlg-title" aria-describedby="nav-dlg-lead"><div class="dh"><b id="nav-dlg-title">새 탐색으로 바꾸기</b>
-  <button class="small" type="button" id="nav-dlg-close">닫기</button></div><div class="db">
-  <p id="nav-dlg-lead">화면을 이렇게 바꿔요.</p>
-  <ul>
-    <li>첫 화면이 「나」 홈이 돼요 — 요약과 기준·결정·축·커스텀·사람·출처를 하위 탭으로 보고, 고른 데이터의 연결을 같이 봐요.</li>
-    <li>탭 줄이 「나 · 오늘」이 돼요 — 들어온 것은 「오늘」에서, 「자료 종류」·연결 장치·문의는 오른쪽 위 「설정」에서 찾아요.</li>
-    <li>「구조 정의」는 설정의 「내 구조 설정」이 돼요.</li>
-  </ul>
-  <p class="stay">데이터는 바뀌지 않아요. 기록·후보·판단·구조 정의·표준 편입 상태가 그대로예요.</p>
-  <p class="fnote">한 번 바꾸면 되돌릴 수 없어요.</p>
-  <div class="acts"><button class="primary" type="button" id="nav-dlg-go">새 탐색으로 바꾸기</button><button class="tertiary" type="button" id="nav-dlg-cancel">취소</button></div>
-  <p class="ferr" id="nav-dlg-err" role="alert" aria-atomic="true"></p>
-</div></dialog>
 <script>
 "use strict";
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
@@ -711,13 +683,12 @@ const LABELS = {
   ticketStatus: {open: "접수", ack: "확인", doing: "처리중", done: "완료", wontfix: "보류"},
 };
 const recCache = {};
-// PR① 새 탐색 표시 용어(호스팅 웹 · 가이드 09·10 과 같은 말). 옛 탐색(nav=old) 화면 문자열은 그대로 — 같은 함수를 쓰는 자리만 TX 로 가른다.
-// NT = 라벨 한 덩이를 통째로 바꾼다(부분 치환 없음 — 사용자 본문·식별자·「활동 기록」 같은 일반 문장은 건드리지 않는다)
-const TX = (n, o) => navNew() ? n : o;
+// PR① 표시 용어(호스팅 웹 · 가이드 09·10 과 같은 말). NT = 라벨 한 덩이를 통째로 바꾼다
+// (부분 치환 없음 — 사용자 본문·식별자·「활동 기록」 같은 일반 문장은 건드리지 않는다)
 const NEWTERM = {"기록": "내 글", "후보": "검토할 판단", "내 판단": "확정한 판단", "검토 대기": "확인 전", "검토 완료": "확인했어요",
   "출처 요약/반응": "읽고 든 생각", "요약/반응": "읽고 든 생각", "승인 대기": "저장 승인 대기", "오브젝트": "자료 종류",
   "사용자 정의": "커스텀", "선택 템플릿": "커스텀", "직접 추가": "커스텀"};
-const NT = w => w === "오브젝트" ? "자료 종류" : (navNew() && NEWTERM[w]) || w;
+const NT = w => NEWTERM[w] || w;
 const LBL = k => NT(LABELS[k]);
 
 // ── 날짜·이름 ─────────────────────────────────────────
@@ -733,8 +704,8 @@ const qById = id => (S.questions || []).find(q => q.id === id);
 const recById = id => (S.journal || []).find(j => j.id === id);
 function recLabel(id) {
   const r = recById(id);
-  if (!r) return TX("찾을 수 없는 글", "찾을 수 없는 기록");
-  if (r.broken) return TX("읽지 못한 글", "읽지 못한 기록");
+  if (!r) return "찾을 수 없는 글";
+  if (r.broken) return "읽지 못한 글";
   return `${r.title} · ${md(r.created)}`;
 }
 function origin(c) {
@@ -751,7 +722,7 @@ function decision(c) {
 
 // ── 못 읽음 표시 — 서버의 조치 문장(명령어 포함)은 그리지 않고 코드로 사람 말을 고른다 ──
 const WHAT = {
-  get "RECORD-MISSING"() { return TX("글이 지워졌거나 찾을 수 없어요.", "기록이 지워졌거나 찾을 수 없어요."); },
+  get "RECORD-MISSING"() { return "글이 지워졌거나 찾을 수 없어요."; },
   "UNAUTHORIZED": "로그인이 풀렸어요.",
   "OFFLINE": "서버에 연결하지 못했어요.",
 };
@@ -802,62 +773,50 @@ async function load() {
 }
 
 // ── 탭 ──────────────────────────────────────────────
-// 기본 5탭(오늘·질문·기록·구조·지도). 사용자 정의 tabs 가 있으면 그 탭들 + 끝에 구조·지도 고정.
-// blocks 는 옛 기본 탭(시작·기록)과 같은 해석 — 질문형은 sheet·candidates·next, 기록형은 journal·next·candidates.
+// 탭 줄에 없는 옛 화면(질문·기록·구조·지도) — 「자료 종류」·Setup·「나」의 링크(#q·#journal·#structure…)로 열린다.
+// blocks 는 옛 기본 탭과 같은 해석 — 질문형은 sheet·candidates·next, 기록형은 journal·next·candidates.
 const BASE = {
-  today: {id: "today", label: LABELS.today, view: "today", blocks: ["sheet", "candidates", "next"]},
   q: {id: "q", label: LABELS.question, view: "question", blocks: ["sheet", "candidates", "next"]},
   journal: {id: "journal", label: LABELS.record, view: "record", blocks: ["journal", "next", "candidates"]},
   structure: {id: "structure", label: LABELS.structure, view: "structure", blocks: []},
   map: {id: "map", label: LABELS.map, view: "map", blocks: []},
 };
-// 새 탐색(user.nav=new) — PR① 탭 3: 「나」 · 「자료 종류」 · 지도. 질문·기록·사용자 정의 탭은 탭 줄에서 빠지고 「자료 종류」 화면에서 들어간다
-// (사용자 탭 id·순서·범위는 그대로 — #<탭 id> 링크로 열리고 탭 줄은 「자료 종류」를 켠다). 옛 nav=old 는 아래 그대로.
+// 탭 줄 = 「나」 · 「오늘」(+ 톱니 Setup). 질문·기록·사용자 정의 탭은 탭 줄에 없고 「자료 종류」 화면에서 들어간다
+// (사용자 탭 id·순서·범위는 그대로 — #<탭 id> 링크로 열리고 탭 줄은 Setup 을 켠다).
 // 새 화면 id 는 「_」 로 시작한다 — 사용자 탭 id(t-001 꼴)·기본 탭 id(today·q·journal·structure·map·home)와 겹치지 않는다.
 // 오늘(#today·#home)·항목 보기(#structure…)는 탭 줄에 없지만 옛 링크로 그대로 열린다(BASE 폴백). #structure/defs 는 내 구조 설정으로.
 const NAVTAB = {
   _me: {id: "_me", label: "나", view: "me", blocks: []},
   _obj: {id: "_obj", label: "자료 종류", view: "objects", blocks: []},
   _settings: {id: "_settings", label: "내 구조 설정", view: "settings", blocks: [], settings: true},
-  // board 이전 — 탭 줄에 없는 화면(계정 메뉴 「연결 장치」 · 「나」 홈 [승인 대기 N]). 새 탐색 전용
+  // board 이전 — 탭 줄에 없는 화면(계정 메뉴 「연결 장치」 · 「나」 홈 [승인 대기 N])
   _devices: {id: "_devices", label: "연결 장치", view: "devices", blocks: []},
   _inbox: {id: "_inbox", label: "저장 승인 대기", view: "inbox", blocks: []},
   // PR ①-b 탭 3: 「나」 · 「오늘」 · Setup(B1). 자료 종류·지도·내 구조 설정·연결 장치는 Setup 안으로(옛 링크는 그대로 열린다)
   _today: {id: "_today", label: "오늘", view: "today2", blocks: []},
   _setup: {id: "_setup", label: "설정", view: "setup", blocks: []},
 };
-const navNew = () => !!(S && S.user && S.user.nav === "new");
 const needName = () => !!(S && S.user && "display_name" in S.user && !S.user.display_name);
 // 사용자 정의 탭(질문형·기록형) — 탭 줄에 있든 없든 같은 모양
 function userTabs() {
   const user = ok("tabs") ? (S.tabs || []) : [];
   return user.map(t => Object.assign({}, t, {blocks: t.blocks || [], view: (t.blocks || [])[0] === "journal" ? "record" : "question"}));
 }
-function tabsList() {
-  const user = ok("tabs") ? (S.tabs || []) : [];
-  const mine = userTabs();
-  if (navNew()) return [NAVTAB._me, NAVTAB._today];
-  if (!user.length) return [BASE.today, BASE.q, BASE.journal, BASE.structure, BASE.map];
-  return mine.concat([Object.assign({}, BASE.structure, {maplink: true}), BASE.map]);
-}
+const tabsList = () => [NAVTAB._me, NAVTAB._today];
 function route() {
   const p = decodeURIComponent(location.hash.slice(1)).split("/");
   return {tab: p[0] || "", a: p[1] || "", b: p[2] || "", c: p[3] || "", d: p[4] || ""};
 }
-// 첫 조각이 기본 탭 이름이면 기본 탭(탭 줄에 같은 ID 가 있으면 그 탭), 아니면 사용자 정의 탭 ID. 옛 home 은 today. 모르면 첫 탭.
+// 탭 줄 탭 → 사용자 정의 탭 ID → 옛 화면(BASE) → 탭 줄에 없는 새 화면(NAVTAB). 모르면 첫 탭.
 function pickTab(R, tabs) {
-  const id = R.tab === "home" && !tabs.some(t => t.id === "home") ? "today" : R.tab;
-  return tabs.find(t => t.id === id) || (navNew() && userTabs().find(t => t.id === id)) || BASE[id] || ((navNew() || ["_setup", "_obj", "_me"].includes(id)) && NAVTAB[id]) || tabs[0];
+  const id = R.tab;
+  return tabs.find(t => t.id === id) || userTabs().find(t => t.id === id) || BASE[id] || NAVTAB[id] || tabs[0];
 }
-// 새 탐색에서 탭 줄에 없는 화면이 켤 탭 — 오늘은 「나」, 항목 보기는 「오브젝트」
-// PR①: 질문·기록·사용자 탭 화면은 「자료 종류」를 켠다
-// PR ①-b: 오늘·승인 대기 = 「오늘」, 자료 종류·지도·내 구조 설정·연결 장치·항목 보기·질문·기록·사용자 탭 = Setup
-const navOn = tab => navNew() ? ({today: "_today", _inbox: "_today", structure: "_setup", _obj: "_setup", _settings: "_setup", _devices: "_setup", map: "_setup"}[tab.id] ||
-  (tab.view === "question" || tab.view === "record" ? "_setup" : tab.id)) : tab.id;
+// 탭 줄에 없는 화면이 켤 탭 — 승인 대기 = 「오늘」, 자료 종류·지도·내 구조 설정·연결 장치·항목 보기·질문·기록·사용자 탭 = Setup
+const navOn = tab => ({_inbox: "_today", structure: "_setup", _obj: "_setup", _settings: "_setup", _devices: "_setup", map: "_setup"}[tab.id] ||
+  (tab.view === "question" || tab.view === "record" ? "_setup" : tab.id));
 function tabCount(t) {
   if (t === NAVTAB._today) return S.inbox && typeof S.inbox.pending === "number" ? S.inbox.pending : 0;   // 오늘 = 저장 승인 대기 수
-  if (t === BASE.q) return ok("candidates") ? (S.candidates || []).filter(c => c.status === "pending" && c.question_id).length : 0;
-  if (t === BASE.journal) return ok("journal") ? (S.journal || []).length : 0;
   return 0;
 }
 const lastView = {};   // 탭마다 마지막으로 본 화면(대조에서 돌아갈 곳)
@@ -867,12 +826,12 @@ function render() {
   document.body.classList.remove("navnew-screen");
   if (needName()) return renderNameGate();
   const R = route();
-  if (navNew()) { const to = navReplace(R); if (to) { location.replace(to); return; } }   // 옛 묶음 링크(자료 종류·내 구조 설정·연결 장치·지도·승인 대기·오늘·항목 보기) → 새 자리
+  { const to = navReplace(R); if (to) { location.replace(to); return; } }   // 옛 묶음 링크(자료 종류·내 구조 설정·연결 장치·지도·승인 대기·오늘·항목 보기) → 새 자리
   const tabs = tabsList();
   const tab = pickTab(R, tabs);
   const curId = navOn(tab);
-  // 새 탐색 라우트(나·자료 종류·내 구조 설정·연결 장치·저장 승인 대기·지도)는 마스트를 숨긴다 — 머리글 = 화면 제목만
-  document.body.classList.toggle("navnew-screen", navNew() && R.a !== "review" && ["me", "objects", "settings", "devices", "inbox", "map", "today2", "setup"].includes(tab.view));
+  // 새 화면(나·자료 종류·내 구조 설정·연결 장치·저장 승인 대기·지도)은 마스트를 숨긴다 — 머리글 = 화면 제목만
+  document.body.classList.toggle("navnew-screen", R.a !== "review" && ["me", "objects", "settings", "devices", "inbox", "map", "today2", "setup"].includes(tab.view));
   if (!(tab.view === "settings" || (tab.view === "structure" && R.a === "defs"))) defsAt = "";   // 구조 화면을 떠나면 보기 방식을 잊는다
   $("nav-tabs").innerHTML = tabs.map(t => {
     const on = t.id === curId, n = tabCount(t);
@@ -884,8 +843,7 @@ function render() {
   acctApply();
   mast(tabs);
   subnav("");
-  $("foot").textContent = navNew() ? (loadedAt ? `불러온 시각 ${loadedAt}.` : "")
-    : `기록·질문·후보 추가는 연결한 AI 대화에서 해요. 여기서는 후보를 고쳐 남기거나, 남길지 정해요. 원문은 바뀌지 않아요.${loadedAt ? ` 불러온 시각 ${loadedAt}.` : ""}`;
+  $("foot").textContent = loadedAt ? `불러온 시각 ${loadedAt}.` : "";
   let b = "";
   if (!ok("meta")) {
     $("bands").innerHTML = b;
@@ -901,8 +859,7 @@ function render() {
     return uiMount("review", [tab.id, R.b, R.c, qk ? `#${tab.id}/${R.b}` : (lastView[tab.id] || `#${tab.id}`), qk ? "질문으로 돌아가기" : `${tab.label}${roJosa(tab.label)} 돌아가기`]);
   }
   lastView[tab.id] = location.hash || "#" + tab.id;
-  if (tab.view === "today") renderToday(tab);
-  else if (tab.view === "structure") renderStructure(tab, R.a, R.b);
+  if (tab.view === "structure") renderStructure(tab, R.a, R.b);
   else if (tab.view === "map") renderMap(tab);
   else if (tab.view === "record") renderRecordTab(tab, R.a);
   else if (tab.view === "me") { subnav(""); uiMount("me", [R.a || "", R.b || ""]); }
@@ -914,7 +871,7 @@ function render() {
   else if (tab.view === "inbox") uiMount("today", ["inbox", R.a || ""]);   // 지난 승인 대기(React — 오늘과 같은 화면 묶음)
   else renderQuestionTab(tab, R.a);
   // Setup 안 화면(자료 종류의 상세·옛 항목 보기 포함)엔 Setup 페이지 줄 — 각 화면이 subnav("") 로 비운 뒤 얹는다
-  if ((tab.view === "setup" || (!navNew() && ["_obj", "_me"].includes(tab.id)) || (navNew() && navOn(tab) === "_setup")) && tab.view !== "question") subnav(setupNav(tab.id === "_setup" ? setupAt : "objects"), "설정");
+  if ((tab.view === "setup" || navOn(tab) === "_setup") && tab.view !== "question") subnav(setupNav(tab.id === "_setup" ? setupAt : "objects"), "설정");
   coreFlashShow();
 }
 let setupAt = "layout";
@@ -930,7 +887,7 @@ function uiMount(name, args) {
   if (!el) { $("view").innerHTML = `<div id="ui-${esc(name)}"></div>`; el = $("ui-" + name); }
   if (uiOn && uiOn !== name) uiDrop(uiOn);   // #view 의 화면은 하나 — 앞 화면(이미 덮였다)을 내린다
   uiOn = name;
-  const ctx = {reload: load, state: S, args: args || [], setDirty: at => { uiDirty = at; }, flash: coreFlash};   // flash = 결과 한 줄(새 탐색 수락 등) — 그 화면 머리에 한 번
+  const ctx = {reload: load, state: S, args: args || [], setDirty: at => { uiDirty = at; }, flash: coreFlash};   // flash = 결과 한 줄 — 그 화면 머리에 한 번
   const how = uiIsland(name, el, ctx);
   if (how) coreFlash = null;
   if (how === "pending") el.innerHTML = LOADING;
@@ -976,7 +933,7 @@ function mast(tabs) {
   const parts = [[NT("내 판단"), cs.filter(c => c.status === "confirmed").length, "--mine"],
                  ["아직 안 정함", cs.filter(c => c.status === "pending").length, "--warn"],
                  ["반영 안 함", cs.filter(c => c.status === "excluded").length, "--soft"],
-                 [TX("판단이 없는 글", "후보 없는 기록"), js.filter(j => !used.has(j.id)).length, "--line"]];
+                 ["판단이 없는 글", js.filter(j => !used.has(j.id)).length, "--line"]];
   const total = parts.reduce((s, p) => s + p[1], 0);
   const sum = parts.map(p => `${p[0]} ${p[1]}`).join(" · ");
   $("axistop").hidden = !total;
@@ -996,12 +953,6 @@ function mast(tabs) {
 }
 
 // ── 다음 할 일 한 줄 ──────────────────────────────────
-function nextReviewsHere(qid) {
-  const n = S.next;
-  if (!qid || !n || n.kind !== "review") return false;
-  const c = (S.candidates || []).find(x => x.id === n.target);
-  return !!c && c.question_id === qid && pendingOf(qid).length > 0;
-}
 const SAY = {record: "기록 남기자", digest: "후보 뽑아 줘", question: "질문 하나 남길게", free: "기록 남기자"};
 function nextLine(tab, qid) {
   const n = S.next;
@@ -1011,56 +962,7 @@ function nextLine(tab, qid) {
   return `<div class="nextline"><span class="lbl">다음 할 일</span><span class="txt">${esc(n.text)}</span>${how}</div>`;
 }
 
-// ── 오늘 — 왼: 아직 안 정한 문장 + 다음 할 일 / 오른: 최근 기록 + 원문 읽기 판 ──
 const byNewest = (a, b) => String(b.updated || b.created || "").localeCompare(String(a.updated || a.created || ""));
-function renderToday(tab) {
-  const qs = ok("questions") ? (S.questions || []) : [];
-  const js = ok("journal") ? (S.journal || []) : [];
-  const cs = ok("candidates") ? (S.candidates || []) : [];
-  const wait = cs.filter(c => c.status === "pending");
-  let left;
-  if (!ok("candidates")) left = partFail(S.read.candidates.error, "문장 목록");
-  else if (!qs.length && !js.length) left = `<div class="paper">${firstRun(tab, new Set())}</div>`;
-  else {
-    left = `<h2 class="sh">아직 안 정한 문장 <span class="speclabel">${wait.length}</span></h2>`;
-    if (wait.length) {
-      const order = qs.map(q => q.id).concat([...new Set(wait.map(c => c.question_id))].filter(id => id && !qById(id)));
-      left += order.map(qid => {
-        const w = wait.filter(c => c.question_id === qid);
-        if (!w.length) return "";
-        const q = qById(qid);
-        return `<div class="qgroup"><div class="qghead"><span class="chip">${esc(qNo(qid))}</span><span>${esc(q ? q.text : "찾을 수 없는 질문")}</span></div>
-          <div class="cards">${w.map(c => `<div class="card cand"><p class="sent">${esc(c.text)}</p>
-            <div class="labels">${origin(c)}${decision(c)}</div>${evLine(c)}${reviewNote(c)}</div>`).join("")}</div>
-          <div class="cta"><a class="btn primary" href="#${esc(tab.id)}/review/${esc(qid)}/${esc(w[0].id)}">원문과 대조하기 · ${w.length}개</a></div></div>`;
-      }).join("");
-      // 질문 없는 미결정 후보 — 기록별 묶음(기록 제목·날짜 헤더), 최근 기록 먼저
-      const nq = wait.filter(c => !c.question_id);
-      const recIds = [...new Set(nq.map(c => c.record_id))].sort((a, b) => String((recById(b) || {}).created || "").localeCompare(String((recById(a) || {}).created || "")));
-      left += recIds.map(rid => {
-        const w = nq.filter(c => c.record_id === rid), r = recById(rid);
-        return `<div class="qgroup"><div class="qghead"><span class="chip">${esc(LBL("record"))}</span><span>${esc(r ? r.title : TX("찾을 수 없는 글", "찾을 수 없는 기록"))}${r ? ` · ${esc(md(r.created))}` : ""}</span></div>
-          <div class="cards">${w.map(c => `<div class="card cand"><p class="sent">${esc(c.text)}</p>
-            <div class="labels">${origin(c)}${decision(c)}</div>${evLine(c)}${reviewNote(c)}</div>`).join("")}</div>
-          <div class="cta"><a class="btn primary" href="#${esc(tab.id)}/review/r:${esc(rid)}/${esc(w[0].id)}">원문과 대조하기 · ${w.length}개</a></div></div>`;
-      }).join("");
-    } else {
-      left += `<div class="empty">정할 문장이 남아 있지 않아요.</div>`;
-      const mine = cs.filter(c => c.status === "confirmed").sort(byNewest).slice(0, 3);
-      if (mine.length) left += `<h2 class="sh">${TX("최근 확정한 판단", "최근 내 판단")}</h2><div class="cards">${mine.map(c => `<div class="card mine"><p class="sent">${esc(c.text)}</p>
-        <div class="labels">${decision(c)}${origin(c)}<span class="chip">${esc(qNo(c.question_id))}</span></div>${evLine(c)}</div>`).join("")}</div>`;
-    }
-    const nl = nextLine(tab, "");
-    if (nl) left += `<h2 class="sh">다음 할 일</h2>${nl}`;
-  }
-  const recs = !ok("journal") ? partFail(S.read.journal.error, TX("내 글 목록", "기록 목록"))
-    : js.length ? `<div class="recbox"><ul class="recs">${js.slice(0, 8).map(j => recRow(j.id, readerAt && readerAt.id === j.id)).join("")}</ul></div>`
-    : `<div class="empty">${TX("아직 내 글이 없어요.", "아직 기록이 없어요.")}</div>`;
-  $("view").innerHTML = `<div class="board"><div class="tleft">${left}</div><aside class="rside" aria-label="${TX("최근 글과 원문", "최근 기록과 원문")}">
-    <h2 class="sh">${TX("최근 글", "최근 기록")} <span class="speclabel">${js.length}</span></h2>${recs}
-    <div class="readerbox"><h2 class="sh">원문</h2><div class="reader" id="reader" aria-live="polite"><p class="empty">${TX("근거나 글을 누르면 원문이 여기 떠요.", "근거나 기록을 누르면 원문이 여기 떠요.")}</p></div></div></aside></div>`;
-  if (readerAt && $("reader").offsetParent !== null) showReader(readerAt.id, readerAt.quote);
-}
 
 // ── 질문형 탭 ─────────────────────────────────────────
 const pendingOf = qid => (S.candidates || []).filter(c => c.question_id === qid && c.status === "pending");
@@ -1096,11 +998,8 @@ function renderQuestionTab(tab, sel) {
 // 라우트: #structure/<오브젝트ID>[/<항목ID>] · #structure/cand/<결정 필터>. 옛 #structure/confirmed 등은 후보 필터로.
 const FILTERS = [["confirmed", "내 판단"], ["pending", "아직 안 정함"], ["excluded", "반영 안 함"], ["all", "전부"]];
 const STCHIP = {confirmed: ["st-mine", "내 판단"], pending: ["st-wait", "아직 안 정함"], excluded: ["st-off", "반영 안 함"]};
-const NOCARD_NEW = {confirmed: "아직 확정한 판단이 없어요. 검토할 판단을 원문과 대조해 남기면 여기에 쌓여요.",
+const NOCARD = {confirmed: "아직 확정한 판단이 없어요. 검토할 판단을 원문과 대조해 남기면 여기에 쌓여요.",
   pending: "정할 문장이 남아 있지 않아요.", excluded: "반영 안 함으로 둔 문장이 없어요.", all: "아직 뽑힌 문장이 없어요. 내 글에서 판단을 뽑으면 여기에 떠요."};
-const NOCARD = {confirmed: "아직 내 판단이 없어요. 아직 안 정한 문장을 원문과 대조해 남기면 여기에 쌓여요.",
-  pending: "정할 문장이 남아 있지 않아요.", excluded: "반영 안 함으로 둔 문장이 없어요.",
-  all: "아직 뽑힌 문장이 없어요. 기록에서 후보를 뽑으면 여기에 떠요."};
 const defsList = () => S.definitions || [];
 const defById = id => defsList().find(d => d.id === id);
 const objLabel = id => { const d = defById(id); return d ? d.label : LABELS.item; };
@@ -1130,15 +1029,14 @@ function decisionChip(it) {
 }
 // 「구조」 탭 두 보기 — 항목(카드 그리드) · 구조 정의(#structure/defs). 정의 id 는 od_ 로 시작해 defs 와 겹치지 않는다
 // 보기 전환이 맨 위 · 오브젝트 필(sub, 「구조 고르기」)은 그 아래 — 항목 보기에서만 넘긴다
-// 새 탐색: 내 구조 설정(tab.settings)엔 보기 전환이 없고, 항목 보기의 전환은 「내 구조 설정」 으로 간다
+// 내 구조 설정(tab.settings)엔 보기 전환이 없고, 항목 보기의 전환은 「내 구조 설정」 으로 간다
 function structViews(tab, on, sub = "") {
   if (tab.settings) return sub;
   const a = (href, label, v) => `<a href="${esc(href)}" class="${on === v ? "on" : ""}"${on === v ? ' aria-current="true"' : ""}>${label}</a>`;
-  const defs = navNew() ? a("#_settings/structure", "내 구조 설정", "defs") : a(`#${tab.id}/defs`, "구조 정의", "defs");
+  const defs = a("#_settings/structure", "내 구조 설정", "defs");
   return `<nav class="pills sview" aria-label="구조 보기">${a(`#${tab.id}`, "항목", "items")}${defs}</nav>` + sub;
 }
 function renderStructure(tab, a, b) {
-  if (a === "defs") return renderDefs(tab);
   const ds = defsList();
   const rules = ds.filter(d => d.semantic_kind === "principle"), others = ds.filter(d => d.semantic_kind !== "principle");
   const cs = ok("candidates") ? (S.candidates || []) : [];
@@ -1151,7 +1049,7 @@ function renderStructure(tab, a, b) {
   const pill = (href, label, n, on) => `<a href="${esc(href)}" class="${on ? "on" : ""}"${on ? ' aria-current="true"' : ""}>${esc(label)}<span class="n m">${n}</span></a>`;
   subnav("");
   const sub = `<nav class="pills sobjs" aria-label="구조 고르기">${rules.map(d => pill(`#${tab.id}/${d.id}`, d.label, cnt(d), sel === d.id)).join("")
-    + pill(`#${tab.id}/cand/${filter}`, TX("판단 문장", LABELS.candidate), cs.length, sel === "cand")
+    + pill(`#${tab.id}/cand/${filter}`, "판단 문장", cs.length, sel === "cand")
     + others.map(d => pill(`#${tab.id}/${d.id}`, d.label, cnt(d), sel === d.id)).join("")}</nav>`;
   if (sel === "cand") return renderCandGallery(tab, cs, filter, sub);
   const d = defById(sel);
@@ -1192,12 +1090,12 @@ function renderCandGallery(tab, cs, f, sub) {
     return `<a href="#${esc(tab.id)}/cand/${k}" class="${on ? "on" : ""}"${on ? ' aria-current="true"' : ""}>${NT(l)}<span class="n">${n}</span></a>`;
   }).join("")}</nav>`;
   const list = cs.filter(c => f === "all" || c.status === f).sort(byNewest);
-  $("view").innerHTML = structViews(tab, "items", sub) + pills + (list.length ? `<div class="gallery">${list.map(c => assetCard(tab, c)).join("")}</div>` : `<div class="empty">${esc((navNew() ? NOCARD_NEW : NOCARD)[f])}</div>`);
+  $("view").innerHTML = structViews(tab, "items", sub) + pills + (list.length ? `<div class="gallery">${list.map(c => assetCard(tab, c)).join("")}</div>` : `<div class="empty">${esc(NOCARD[f])}</div>`);
 }
 function assetCard(tab, c) {
   const st = STCHIP[c.status] || STCHIP.pending;
   const r = recById(c.record_id);
-  const title = !r ? TX("찾을 수 없는 글", "찾을 수 없는 기록") : r.broken ? TX("읽지 못한 글", "읽지 못한 기록") : r.title;
+  const title = !r ? "찾을 수 없는 글" : r.broken ? "읽지 못한 글" : r.title;
   // 아직 안 정한 문장은 대조 화면으로, 정한 문장은 근거 원문으로
   const act = c.status === "pending" ? `data-go="${esc(reviewHref(tab, c))}"`
                                      : `data-rec="${esc(c.record_id)}" data-quote="${esc(c.quote)}"`;
@@ -1217,20 +1115,20 @@ const ORIGIN_TEXT = /*{{origin-text}}*/ {};
 const ORIGIN_CATEGORY = /*{{origin-category}}*/ {};
 const ORIGIN_CHIP = Object.fromEntries(Object.keys(ORIGIN_TEXT).map(k => [k,
   [ORIGIN_CATEGORY[k] === "standard" ? "o-std" : "o-tpl", ORIGIN_TEXT[k]]]));
-const originChip = o => { const x = ORIGIN_CHIP[o] || ["", o]; return `<span class="chip ${navNew() && o === "custom" ? "o-tpl" : x[0]}">${esc(NT(x[1]))}</span>`; };
+const originChip = o => { const x = ORIGIN_CHIP[o] || ["", o]; return `<span class="chip ${o === "custom" ? "o-tpl" : x[0]}">${esc(NT(x[1]))}</span>`; };
 const LOCK_TIP = "편입된 표준 정의예요. key·종류·표준 필드 모양은 바꿀 수 없고, label 은 바꿀 수 있어요.";
 const lockChip = on => on ? `<span class="chip lock" title="${esc(LOCK_TIP)}">표준 정의 보호</span>` : "";
 const VTYPE = {text: "글", number: "숫자", boolean: "예/아니오", date: "날짜", select: "고르기", text_list: "글 목록", reference: "참조"};
 const KIND_LABEL = {principle: LABELS.principle, event: LABELS.event, collection: LABELS.collection};
 const CORE_LABEL = {record: LABELS.record, candidate: LABELS.candidate};
-// 목록/그래프 전환 — PR①: 새 탐색은 기본 그래프(옛 탐색은 기본 목록 그대로). 라우트(해시)를 쓰지 않는다: 해시를 바꾸면 render → scrollTo(0,0) 과
+// 목록/그래프 전환 — 기본 그래프. 라우트(해시)를 쓰지 않는다: 해시를 바꾸면 render → scrollTo(0,0) 과
 // 편입 미리보기 재요청이 돈다. 고른 보기는 그 화면에 머무는 동안만(영속 없음) — 다른 화면에 갔다 오면 기본으로
 let defsMode = "graph", defsAt = "";
 const DMO_ORIGIN = [...new Set(Object.values(ORIGIN_CATEGORY))];
 const josa = (w, a, b) => { const c = String(w).slice(-1).charCodeAt(0) - 0xAC00; return c < 0 || c > 11171 || c % 28 === 0 ? b : a; };   // 받침 있으면 a
 function renderDefs(tab) {
   subnav("");
-  if (defsAt !== location.hash) { defsMode = navNew() ? "graph" : "list"; defsAt = location.hash; }
+  if (defsAt !== location.hash) { defsMode = "graph"; defsAt = location.hash; }
   const st = S.structure;
   if (!st || !Array.isArray(st.objects)) {
     $("view").innerHTML = structViews(tab, "defs") + `<div class="empty">구조 정의를 읽지 못했어요. ${esc(FIXHINT)}</div>`;
@@ -1263,11 +1161,11 @@ function renderDefs(tab) {
   const svg = typeof S.structure_svg === "string" ? S.structure_svg : "";
   const mode = m => `<button type="button" data-dmode="${m}" aria-pressed="${defsMode === m}">${m === "list" ? "목록" : "그래프"}</button>`;
   $("view").innerHTML = structViews(tab, "defs") + `<div class="paper"><div class="eyebrow">${tab.settings ? "내 구조 설정" : "구조 정의"}</div>
-    <p class="hint" style="margin:.3rem 0 .9rem">${TX("정의를 바꾸는 일은 연결한 AI 대화에서 해요.", "내 자료 종류·필드와 관계예요. 정의를 바꾸는 일은 연결한 AI 대화에서 해요. 여기서는 표준 편입만 고를 수 있어요.")}</p>
+    <p class="hint" style="margin:.3rem 0 .9rem">정의를 바꾸는 일은 연결한 AI 대화에서 해요.</p>
     <div class="dmode" role="group" aria-label="구조 정의 보기 방식">${mode("list")}${mode("graph")}</div>
     <div id="dlist"${defsMode === "list" ? "" : " hidden"}>
     <section class="sec"><h3>${NT("오브젝트")}<span class="count">${objs.length}</span></h3>
-      ${objs.length ? `<div class="sdef">${objs.map(objCard).join("")}</div>` : `<div class="empty">${TX("아직 자료 종류가 없어요.", "아직 자료 종류가 없어요.")}</div>`}</section>
+      ${objs.length ? `<div class="sdef">${objs.map(objCard).join("")}</div>` : `<div class="empty">아직 자료 종류가 없어요.</div>`}</section>
     <section class="sec"><h3>관계<span class="count">${rels.length}</span></h3>
       ${rels.length ? `<ul class="srel">${rels.map(relRow).join("")}</ul>` : `<div class="empty">참조 필드가 없어요.</div>`}
       ${core.length ? `<p class="hint" style="margin:.6rem 0 0">${originChip("core")} 공통으로 쓰는 ${core.map(x => `<b id="dmo-core-${esc(x.kind)}">${esc(NT(CORE_LABEL[x.kind] || x.kind))}</b>`).join("·")}${josa(NT(CORE_LABEL[core[core.length - 1].kind] || ""), "을", "를")} 가리키는 관계가 있어요.</p>` : ""}</section></div>
@@ -1275,10 +1173,10 @@ function renderDefs(tab) {
       <div class="dlegend">${DMO_ORIGIN.map(k => `<span><i class="o-${k}"></i>${esc(NT((ORIGIN_CHIP[k] || ["", k])[1]))}</span>`).join("")}
         <span>점선 고리 = 표준 정의 보호</span><span>선 = 관계(화살표 없음) · 세 갈래 = 여러(N) · 두 줄 = 하나(1) · 참조를 가진 쪽이 N</span></div>
       ${svg ? `<div class="dmo">${svg}</div>` : `<div class="empty">그래프를 읽지 못했어요. 목록으로 보세요. ${esc(FIXHINT)}</div>`}
-      <p class="hint" style="margin:.6rem 0 0">${TX("원을 누르면 목록의 그 자료 종류로, 선을 누르면 그 관계로 가요.", "원을 누르면 목록의 그 자료 종류로, 선을 누르면 그 관계로 가요. 대상 자료 종류를 정하지 않은 관계는 선이 없어요.")}</p></section>
+      <p class="hint" style="margin:.6rem 0 0">원을 누르면 목록의 그 자료 종류로, 선을 누르면 그 관계로 가요.</p></section>
     ${tab.settings && $("acct-names") ? namesBox() : ""}
     ${tab.settings ? `<details class="fold" id="std-adv"${stdAdvOpen ? " open" : ""}><summary>고급</summary>` : ""}
-    <section class="sec" aria-labelledby="std-pv-title"><h3 id="std-pv-title">${TX("공통 구조 적용 검토", "표준 편입 미리보기")}</h3>
+    <section class="sec" aria-labelledby="std-pv-title"><h3 id="std-pv-title">공통 구조 적용 검토</h3>
       <p class="hint">표준 정의마다 편입·보류·거절을 골라요. 편입한 정의는 「표준 정의 보호」를 받아요. 고르지 않아도 다른 기능은 그대로예요.</p>
       <p id="std-msg" role="status" aria-atomic="true"></p><div id="std-pv" aria-busy="true"><p class="empty">미리보기를 불러오는 중이에요…</p></div></section>${tab.settings ? "</details>" : ""}</div>`;
   loadPreview();
@@ -1371,7 +1269,7 @@ function pvCard(o) {
       ${o.can_incorporate ? `<button class="primary" type="button" data-std="incorporated" data-key="${esc(o.std_key)}" aria-haspopup="dialog">편입…</button>` : ""}</div>
     ${o.can_incorporate ? "" : `<p class="blocked">편입할 수 없어요 — ${(o.blocked || []).map(b => esc(BLOCK_TEXT[b] || "지금은 편입할 수 없어요.")).join(" ")}</p>`}`;
   return `<article class="spvc" aria-labelledby="spv-${esc(o.std_key)}"><h4 id="spv-${esc(o.std_key)}">표준 「${esc(o.std_name)}」<span class="chip ${stc[0]}">${esc(stc[1])}</span></h4>
-    <dl><dt>${"내 자료 종류"}</dt><dd>${obj ? `${esc(obj.label)} <span class="tech">${esc(obj.key)} · r${esc(obj.revision)}${obj.archived ? " · 보관됨" : ""}</span>` : "없음 — 편입하면 표준 정의를 새로 넣어요"}</dd>
+    <dl><dt>내 자료 종류</dt><dd>${obj ? `${esc(obj.label)} <span class="tech">${esc(obj.key)} · r${esc(obj.revision)}${obj.archived ? " · 보관됨" : ""}</span>` : "없음 — 편입하면 표준 정의를 새로 넣어요"}</dd>
       <dt>구조</dt><dd>${esc(STRUCT_TEXT[o.structure] || o.structure)}${(o.conflicts || []).length ? `<ul>${o.conflicts.map(x =>
         `<li>${esc((STD_CONFLICT[x.code] || (() => "표준과 다른 곳이 있어요"))(x.field || ""))}</li>`).join("")}</ul>` : ""}</dd>
       ${o.meaning_check ? `<dt>뜻 확인</dt><dd>key 가 같아도 뜻이 같다는 보장은 없어요. 편입할 때 같은 뜻으로 쓰는지 확인해요.</dd>` : ""}
@@ -1502,11 +1400,11 @@ function drawerHtml(tab, it) {
   }
   if (pr) h += proposalHtml(it, pr, fields);
   if (!isNew && trashOn()) {   // 휴지통 켜짐 — 기준 결정 버튼은 [남기기] 하나 + [삭제](r4 §8)
-    const keep = it.semantic_kind === "principle" && it.decision !== "confirmed" ? `<button class="primary" type="button" data-iact="confirm">${TX("남기기", "내 판단으로 남기기")}</button>` : "";
+    const keep = it.semantic_kind === "principle" && it.decision !== "confirmed" ? `<button class="primary" type="button" data-iact="confirm">남기기</button>` : "";
     h += `<div class="pacts" role="group" aria-label="${esc(d.label || LABELS.item)} 동작">${keep}${trashBtn("item", it.id, it.revision, `#${tab.id}/${d.id}`)}</div>`;
   } else if (it.semantic_kind === "principle" && !isNew) {
     h += `<div class="pacts" role="group" aria-label="${esc(d.label || LABELS.principle)} 결정">
-      <button class="primary" type="button" data-iact="confirm"${it.decision === "confirmed" ? " disabled" : ""}>${TX("남기기", "내 판단으로 남기기")}</button>
+      <button class="primary" type="button" data-iact="confirm"${it.decision === "confirmed" ? " disabled" : ""}>남기기</button>
       <button class="secondary" type="button" data-iact="exclude"${it.decision === "excluded" ? " disabled" : ""}>반영 안 함</button>
       <button class="tertiary" type="button" data-iact="pending"${it.decision === "pending" ? " disabled" : ""}>되돌리기</button></div>`;
   }
@@ -1522,10 +1420,10 @@ function drawerHtml(tab, it) {
   for (const [k, xs] of Object.entries(groups)) {
     h += `<h5>${esc(k)} <span class="count">${xs.length}</span></h5><ul class="plist">${xs.map(x => x.source_item_id
       ? `<li><a data-go="#structure/${esc(x.object_id)}/${esc(x.source_item_id)}" tabindex="0" role="button">${x.code ? `<span class="chip code">${esc(x.code)}</span> ` : ""}${esc(x.title)}</a></li>`
-      : `<li><a data-rec="${esc(x.source_record_id)}" tabindex="0" role="button">${esc(x.record_title || TX("글", "기록"))}</a></li>`).join("")}</ul>`;
+      : `<li><a data-rec="${esc(x.source_record_id)}" tabindex="0" role="button">${esc(x.record_title || "글")}</a></li>`).join("")}</ul>`;
   }
   if ((it.history || []).length) h += `<h5>이력</h5><ul class="plist">${it.history.slice().reverse().map(x =>
-    `<li class="phist">r${x.prev_revision + 1} · ${esc(x.action === "confirm" ? TX("남김", HIST_LABEL.confirm) : HIST_LABEL[x.action] || x.action)} · ${esc(mdhm(x.at))}</li>`).join("")}</ul>`;
+    `<li class="phist">r${x.prev_revision + 1} · ${esc(x.action === "confirm" ? "남김" : HIST_LABEL[x.action] || x.action)} · ${esc(mdhm(x.at))}</li>`).join("")}</ul>`;
   return h;
 }
 function proposalHtml(it, pr, fields) {
@@ -1565,7 +1463,7 @@ async function itemAct(tab, it, act) {
     panel.querySelectorAll("button[data-iact]").forEach(b => b.disabled = false);
     return;
   }
-  drawerSaved = act === "confirm" ? TX("남겼어요.", ITEM_SAVED.confirm) : ITEM_SAVED[act] || "저장했어요.";
+  drawerSaved = act === "confirm" ? "남겼어요." : ITEM_SAVED[act] || "저장했어요.";
   if (j.deleted) {   // 새 항목 제안을 제외 — 카드가 사라진다
     const msg = drawerSaved; drawerSaved = "";
     history.replaceState(null, "", `#${tab.id}/${it.object.id}`);
@@ -1579,7 +1477,7 @@ async function itemAct(tab, it, act) {
 // ── 지도 — 칸반(들어오는 것 · 내 손 대기 · 쌓이는 재료) ─────
 function renderMap(tab) {
   if (!ok("candidates") || !ok("journal")) {
-    $("view").innerHTML = partFail((ok("candidates") ? S.read.journal : S.read.candidates).error, ok("candidates") ? TX("내 글 목록", "기록 목록") : "문장 목록");
+    $("view").innerHTML = partFail((ok("candidates") ? S.read.journal : S.read.candidates).error, ok("candidates") ? "내 글 목록" : "문장 목록");
     return;
   }
   const cs = S.candidates || [], js = S.journal || [];
@@ -1592,7 +1490,7 @@ function renderMap(tab) {
   const src = c => `<button type="button" data-rec="${esc(c.record_id)}" data-quote="${esc(c.quote)}">원문</button>`;
   const flags = c => `<div class="kflags"><span class="kflag${c.origin === "ai" ? "" : " memo"}">${c.origin === "ai" ? "AI가 쓴 문장" : "내가 쓴 메모"}</span>${c.edited_by_user ? `<span class="kflag memo">내가 고침</span>` : ""}</div>`;
   $("view").innerHTML = `<div class="kanban">
-    ${col("들어오는 것", inbox.length, TX("AI 대화에서 검토할 판단을 뽑으면 다음 열로", "AI 대화에서 후보를 뽑으면 다음 열로"), inbox.map(j => `<div class="kcard"><div class="kname">${esc(j.broken ? TX("읽지 못한 글", "읽지 못한 기록") : j.title)}</div>
+    ${col("들어오는 것", inbox.length, "AI 대화에서 검토할 판단을 뽑으면 다음 열로", inbox.map(j => `<div class="kcard"><div class="kname">${esc(j.broken ? "읽지 못한 글" : j.title)}</div>
       <div class="kmeta"><span>${esc(md(j.created))}</span><span>${esc(srcText(j))}</span></div>
       <div class="kacts"><button type="button" data-rec="${esc(j.id)}">원문</button></div></div>`).join(""))}
     ${col("내 손 대기", wait.length, "원문과 대조해 정해요", wait.map(c => `<div class="kcard hot"><div class="kname">${esc(c.text)}</div>${flags(c)}
@@ -1610,9 +1508,9 @@ function renderMap(tab) {
 
 function firstRun(tab, bl) {
   const n = (S.journal || []).length;
-  return `<div class="first"><h2>최근에 겪은 일을 한 편 적어볼까요?</h2><p>질문은 나중에 정해도 돼요.${n ? TX(` 지금 내 글이 ${n}편 있어요.`, ` 지금 기록이 ${n}편 있어요.`) : ""}</p>
+  return `<div class="first"><h2>최근에 겪은 일을 한 편 적어볼까요?</h2><p>질문은 나중에 정해도 돼요.${n ? ` 지금 내 글이 ${n}편 있어요.` : ""}</p>
     <ol class="steps"><li><b>${LBL("record")}</b>겪은 일을 내 말로 적어요.</li>
-    <li class="cand"><b>${LBL("candidate")}</b>${TX("내 글에서 판단이 될 만한 문장을 뽑아요. 아직 확정한 판단은 아니에요.", "기록에서 판단이 될 만한 문장을 뽑아요. 아직 내 판단은 아니에요.")}</li>
+    <li class="cand"><b>${LBL("candidate")}</b>내 글에서 판단이 될 만한 문장을 뽑아요. 아직 확정한 판단은 아니에요.</li>
     <li class="mine"><b>${LBL("mine")}</b>원문과 대조해 내가 남긴 문장만 쌓여요.</li></ol>
     ${sayLine("기록 남기자")}</div>
     ${bl.has("status") ? runStatus() : ""}`;
@@ -1624,7 +1522,7 @@ function evLine(c) {
 function recRow(id, on) {
   const r = recById(id);
   const dp = dayParts(r ? r.created : "");
-  const title = !r ? TX("찾을 수 없는 글", "찾을 수 없는 기록") : r.broken ? TX("읽지 못한 글", "읽지 못한 기록") : r.title;
+  const title = !r ? "찾을 수 없는 글" : r.broken ? "읽지 못한 글" : r.title;
   return `<li><a data-rec="${esc(id)}" tabindex="0" role="button" class="${on ? "on" : ""}"><div class="d">${esc(dp.d)}<small>${dp.mo ? dp.mo + "월" : ""}</small></div>
     <div><div class="t">${esc(title)}</div><div class="s">${esc(r && r.excerpt ? r.excerpt : "")}</div></div></a></li>`;
 }
@@ -1637,25 +1535,25 @@ function sheetSections(tab, q) {
   let h = `<section class="sec"><h3>${NT("내 판단")}<span class="count">${mine.length}</span></h3>
     ${mine.length ? `<div class="cards">${mine.map(c => `<div class="card mine"><p class="sent">${esc(c.text)}</p>
       <div class="labels">${decision(c)}${origin(c)}</div>${evLine(c)}</div>`).join("")}</div>`
-      : `<div class="empty">${TX("아직 확정한 판단이 없어요. 아래 문장을 원문과 대조해 남기면 여기에 쌓여요.", "아직 내 판단이 없어요. 아래 문장을 원문과 대조해 남기면 여기에 쌓여요.")}</div>`}</section>`;
+      : `<div class="empty">아직 확정한 판단이 없어요. 아래 문장을 원문과 대조해 남기면 여기에 쌓여요.</div>`}</section>`;
   h += `<section class="sec"><h3>아직 안 정한 문장<span class="count">${wait.length}</span></h3>
     ${wait.length ? `<div class="cards">${wait.map(c => `<div class="card cand"><p class="sent">${esc(c.text)}</p>
       <div class="labels">${origin(c)}${decision(c)}</div></div>`).join("")}</div>
-      <div class="cta"><p class="hint">${TX("남기기 전까진 확정한 판단이 아니에요.", "남기기 전까진 내 판단이 아니에요.")}</p><a class="btn primary" href="#${esc(tab.id)}/review/${esc(q.id)}/${esc(wait[0].id)}">원문과 대조하기 · ${wait.length}개</a></div>`
-      : `<div class="empty">${cs.length ? "정할 문장이 남아 있지 않아요." : TX("아직 이 질문에 뽑힌 문장이 없어요. 내 글에서 판단을 뽑으면 여기에 떠요.", "아직 이 질문에 뽑힌 문장이 없어요. 기록에서 후보를 뽑으면 여기에 떠요.")}</div>`}</section>`;
+      <div class="cta"><p class="hint">남기기 전까진 확정한 판단이 아니에요.</p><a class="btn primary" href="#${esc(tab.id)}/review/${esc(q.id)}/${esc(wait[0].id)}">원문과 대조하기 · ${wait.length}개</a></div>`
+      : `<div class="empty">${cs.length ? "정할 문장이 남아 있지 않아요." : "아직 이 질문에 뽑힌 문장이 없어요. 내 글에서 판단을 뽑으면 여기에 떠요."}</div>`}</section>`;
   if (off.length) h += `<details class="fold"><summary>반영 안 함 문장 보기 · ${off.length}개</summary><div class="cards">${off.map(c =>
       `<div class="card cand"><p class="sent">${esc(c.text)}</p><div class="labels">${origin(c)}${decision(c)}</div>${evLine(c)}</div>`).join("")}</div></details>`;
   const recs = [...new Set(cs.map(c => c.record_id))];
-  if (recs.length) h += `<section class="sec"><h3>${TX("연결된 글", "연결된 기록")}<span class="count">${recs.length}</span></h3>
+  if (recs.length) h += `<section class="sec"><h3>연결된 글<span class="count">${recs.length}</span></h3>
     <ul class="recs">${recs.map(r => recRow(r, false)).join("")}</ul></section>`;
   return h;
 }
 
 function recentRecords() {
-  if (!ok("journal")) return `<section class="sec">${partFail(S.read.journal.error, TX("내 글 목록", "기록 목록"))}</section>`;
+  if (!ok("journal")) return `<section class="sec">${partFail(S.read.journal.error, "내 글 목록")}</section>`;
   const js = (S.journal || []).slice(0, 8);
-  return `<section class="sec"><h3>${TX("최근 글", "최근 기록")}<span class="count">${(S.journal || []).length}</span></h3>
-    ${js.length ? `<ul class="recs">${js.map(j => recRow(j.id, false)).join("")}</ul>` : `<div class="empty">${TX("아직 내 글이 없어요.", "아직 기록이 없어요.")}</div>`}</section>`;
+  return `<section class="sec"><h3>최근 글<span class="count">${(S.journal || []).length}</span></h3>
+    ${js.length ? `<ul class="recs">${js.map(j => recRow(j.id, false)).join("")}</ul>` : `<div class="empty">아직 내 글이 없어요.</div>`}</section>`;
 }
 
 function runStatus() { return ""; }
@@ -1668,32 +1566,32 @@ function renderRecordTab(tab, sel) {
   const js = all.filter(srcMatch);
   const j = js.find(x => x.id === sel) || js[0];
   let body, side = "";
-  if (!ok("journal")) body = partFail(S.read.journal.error, TX("내 글 목록", "기록 목록"));
+  if (!ok("journal")) body = partFail(S.read.journal.error, "내 글 목록");
   else if (!all.length) body = firstRun(tab, bl);
-  else if (!j) body = `${filt}<div class="empty">${TX("불러온 글 중에 이 출처에서 온 글이 없어요.", "최근 기록 중에 이 출처에서 온 기록이 없어요.")}</div>`;
+  else if (!j) body = `${filt}<div class="empty">불러온 글 중에 이 출처에서 온 글이 없어요.</div>`;
   else {
     const cs = (S.candidates || []).filter(c => c.record_id === j.id);
     const q = qById(j.question_id);
-    body = `${filt}<div class="eyebrow">${LBL("record")}${q ? ` · ${esc(q.text)}` : ""}</div><h2 class="title">${esc(j.broken ? TX("읽지 못한 글", "읽지 못한 기록") : j.title)}</h2>
+    body = `${filt}<div class="eyebrow">${LBL("record")}${q ? ` · ${esc(q.text)}` : ""}</div><h2 class="title">${esc(j.broken ? "읽지 못한 글" : j.title)}</h2>
       <div class="labels">${srcChip(j)}${axisChips(j.id)}</div>
       ${bl.has("next") ? nextLine(tab, "") : ""}
       <div id="recbody"><div class="doc"><p class="dim">원문을 불러오는 중이에요…</p></div></div>
-      ${(bl.has("candidates") || bl.has("sheet")) && cs.length ? `<section class="sec"><h3>${TX("이 글에서 나온 문장", "이 기록에서 나온 문장")}<span class="count">${cs.length}</span></h3>
+      ${(bl.has("candidates") || bl.has("sheet")) && cs.length ? `<section class="sec"><h3>이 글에서 나온 문장<span class="count">${cs.length}</span></h3>
         <div class="cards">${cs.map(c => `<div class="card ${c.status === "confirmed" ? "mine" : "cand"}"><p class="sent">${esc(c.text)}</p>
         <div class="labels">${decision(c)}${origin(c)}</div>${reviewNote(c)}</div>`).join("")}</div></section>` : ""}
       ${bl.has("status") ? runStatus() : ""}`;
-    if (js.length > 1) side = `<h2 class="sh">${TX("다른 글", "다른 기록")} <span class="speclabel">${js.length - 1}</span></h2>
+    if (js.length > 1) side = `<h2 class="sh">다른 글 <span class="speclabel">${js.length - 1}</span></h2>
       <div class="recbox"><ul class="recs">${js.filter(x => x.id !== j.id).slice(0, 12).map(x => `<li><a href="#${esc(tab.id)}/${esc(x.id)}">
         <div class="d">${esc(dayParts(x.created).d)}<small>${dayParts(x.created).mo ? dayParts(x.created).mo + "월" : ""}</small></div>
-        <div><div class="t">${esc(x.broken ? TX("읽지 못한 글", "읽지 못한 기록") : x.title)}</div><div class="s">${esc(x.excerpt || "")}</div><div class="srcl">${srcChip(x)}${axisChips(x.id)}</div></div></a></li>`).join("")}</ul></div>`;
+        <div><div class="t">${esc(x.broken ? "읽지 못한 글" : x.title)}</div><div class="s">${esc(x.excerpt || "")}</div><div class="srcl">${srcChip(x)}${axisChips(x.id)}</div></div></a></li>`).join("")}</ul></div>`;
   }
-  $("view").innerHTML = side ? `<div class="board"><div class="paper">${body}</div><aside class="rside" aria-label="${TX("다른 글", "다른 기록")}">${side}</aside></div>`
+  $("view").innerHTML = side ? `<div class="board"><div class="paper">${body}</div><aside class="rside" aria-label="다른 글">${side}</aside></div>`
                              : `<div class="paper sheet">${body}</div>`;
   if (j) fetchRec(j.id).then(r => {
     const box = $("recbody");
     if (!box) return;
     box.innerHTML = r.ok ? `<div class="recmeta">${esc(mdhm(r.meta.created))} · ${esc(srcLine(j.id, r.meta.source))}</div><div class="doc">${docHtml(r, "").html}</div>`
-                         : partFail({code: r.code, msg: r.msg}, TX("이 글", "이 기록"));
+                         : partFail({code: r.code, msg: r.msg}, "이 글");
   });
 }
 
@@ -1722,7 +1620,7 @@ function srcChip(r) {
 // 원문 머리말 한 줄 — 출처 + 옛 문자열(있으면)
 function srcLine(id, raw) {
   const old = srcLabel(raw);
-  return srcText(recById(id)) + (old ? ` · ${TX("쓸 당시 표기", "기록 당시 표기")} 「${old}」` : "");
+  return srcText(recById(id)) + (old ? ` · 쓸 당시 표기 「${old}」` : "");
 }
 // 기록 탭 출처 필터 — all · none(출처 미확인) · 출처 id. 개수는 source_counts(전체 기록 기준, 목록은 최근 기록만 온다)
 let recSrc = "all";
@@ -1736,7 +1634,7 @@ function srcFilter(shown) {
   return `<nav class="pills srcf" aria-label="출처별 보기">${opts.map(([k, l, n]) => {
     const on = k === recSrc;
     return `<a data-srcf="${esc(k)}" tabindex="0" role="button" aria-pressed="${on}" class="${on ? "on" : ""}">${esc(l)}<span class="n">${n}</span></a>`;
-  }).join("")}</nav>${total > shown ? `<p class="hint">${TX(`목록엔 글 ${shown}편까지 보여요. 개수는 전체 글 기준이에요.`, `목록엔 최근 기록 ${shown}편까지 보여요. 개수는 전체 기록 기준이에요.`)}</p>` : ""}`;
+  }).join("")}</nav>${total > shown ? `<p class="hint">목록엔 글 ${shown}편까지 보여요. 개수는 전체 글 기준이에요.</p>` : ""}`;
 }
 // 기록에 붙은 축 항목(record_links field_key=axes → 항목 제목). 대상이 지금 목록에 없으면(보관 등) 「찾을 수 없는 항목」
 function axisChips(rid) {
@@ -1749,29 +1647,19 @@ function axisChips(rid) {
 }
 // ── 확정 전 재검토 (§6) — 후보의 review = 근거 기록의 사유 코드. 문구는 서버 CANDIDATE-REVIEW 와 같은 뜻. 정정 안내는 author_unknown·processed 에만 ──
 const REVIEW_TEXT = {
-  author_unknown: "근거 기록의 작성자를 확인할 수 없어 이 후보를 확정할 수 없어요.",
-  external: "근거 기록이 남이 쓴 글이라 이 후보를 확정할 수 없어요.",
-  processed: "근거 기록이 원문 그대로가 아니라 이 후보를 확정할 수 없어요.",
-  deleted: "근거 기록이 삭제돼 이 후보를 확정할 수 없어요.",
-};
-const REVIEW_FIX = {
-  author_unknown: "작성자 정보가 실제로 틀렸을 때만 연결한 AI 대화에서 기록 정보를 정정하세요.",
-  processed: "가공 방식 정보가 실제로 틀렸을 때만 연결한 AI 대화에서 기록 정보를 정정하세요.",
-};
-const REVIEW_TEXT_NEW = {
   author_unknown: "근거 글의 작성자를 확인할 수 없어 이 판단을 확정할 수 없어요.",
   external: "근거 글이 남이 쓴 글이라 이 판단을 확정할 수 없어요.",
   processed: "근거 글이 원문 그대로가 아니라 이 판단을 확정할 수 없어요.",
   deleted: "근거 글이 삭제돼 이 판단을 확정할 수 없어요.",
 };
-const REVIEW_FIX_NEW = {
+const REVIEW_FIX = {
   author_unknown: "작성자 정보가 실제로 틀렸을 때만 연결한 AI 대화에서 글 정보를 정정하세요.",
   processed: "가공 방식 정보가 실제로 틀렸을 때만 연결한 AI 대화에서 글 정보를 정정하세요.",
 };
 function reviewNote(c) {
   if (!c.review) return "";
-  return `<p class="recheck"><span class="chip flag">확정 전 재검토</span>${esc((navNew() ? REVIEW_TEXT_NEW : REVIEW_TEXT)[c.review] || TX("근거 글이 인용 조건에 맞지 않아 이 판단을 확정할 수 없어요.", "근거 기록이 인용 조건에 맞지 않아 이 후보를 확정할 수 없어요."))}
-    ${(navNew() ? REVIEW_FIX_NEW : REVIEW_FIX)[c.review] ? esc((navNew() ? REVIEW_FIX_NEW : REVIEW_FIX)[c.review]) + " " : ""}반영 안 함이나 아직 안 정함으로 둘 수는 있어요.</p>`;
+  return `<p class="recheck"><span class="chip flag">확정 전 재검토</span>${esc(REVIEW_TEXT[c.review] || "근거 글이 인용 조건에 맞지 않아 이 판단을 확정할 수 없어요.")}
+    ${REVIEW_FIX[c.review] ? esc(REVIEW_FIX[c.review]) + " " : ""}반영 안 함이나 아직 안 정함으로 둘 수는 있어요.</p>`;
 }
 // 본문을 빈 줄 기준 문단으로 나눈다. 제목(# …)은 화면 제목과 겹쳐 뺀다.
 // 「이게 어디에 붙나」 절은 키트가 붙이는 양식이라 따로 그리고, 질문 ID 는 질문 문장으로 바꿔 보인다.
@@ -1806,35 +1694,21 @@ function attachHtml(raw) {
     rows.push(`<dt>${esc(KEYS[m[1].trim()] || m[1].trim())}</dt><dd>${esc(v)}</dd>`);
   }
   if (!rows.length) return "";
-  return `<div class="attach"><h4>${TX("이 글이 붙는 곳", "이 기록이 붙는 곳")}</h4><dl>${rows.join("")}</dl></div>`;
+  return `<div class="attach"><h4>이 글이 붙는 곳</h4><dl>${rows.join("")}</dl></div>`;
 }
 function docHtml(r, quote) {
   const d = splitDoc(r.body, r.title);
   return {html: d.paras.map(p => paraHtml(p, quote)).join("") + attachHtml(d.attach), split: d};
 }
 
-// 오늘 탭의 읽기 판(#reader)이 보이면(≥900px) 거기에, 아니면 대화상자에 원문을 연다.
-let readerAt = null;   // {id, quote} — 오늘 탭을 다시 그려도 읽던 원문을 유지한다
-async function showReader(id, quote) {
-  const rd = $("reader");
-  const at = readerAt = {id, quote: quote || ""};
-  document.querySelectorAll(".recs a[data-rec]").forEach(a => a.classList.toggle("on", a.dataset.rec === id));
-  rd.innerHTML = `<p class="empty">원문을 불러오는 중이에요…</p>`;
-  const r = await fetchRec(id);
-  if ($("reader") !== rd || readerAt !== at) return;   // 그사이 다른 원문을 골랐거나 화면이 바뀌었다
-  if (!r.ok) { rd.innerHTML = partFail({code: r.code, msg: r.msg}, TX("이 글", "이 기록")); return; }
-  rd.innerHTML = `<div class="rh"><b>${esc(r.title)}</b><span class="recmeta" style="margin:0">${esc(mdhm(r.meta.created))} · ${esc(srcLine(id, r.meta.source))}</span></div>
-    <div class="doc">${docHtml(r, at.quote).html}</div>`;
-}
+// 원문 대화상자
 async function openRec(id, quote) {
-  const rd = $("reader");
-  if (rd && rd.offsetParent !== null) return showReader(id, quote);
   $("dlg-title").textContent = recLabel(id).split(" · ")[0];
   $("dlg-meta").textContent = "";
   $("dlg-body").innerHTML = `<p style="color:var(--muted)">원문을 불러오는 중이에요…</p>`;
   $("dlg").showModal();
   const r = await fetchRec(id);
-  if (!r.ok) { $("dlg-body").innerHTML = partFail({code: r.code, msg: r.msg}, TX("이 글", "이 기록")); return; }
+  if (!r.ok) { $("dlg-body").innerHTML = partFail({code: r.code, msg: r.msg}, "이 글"); return; }
   $("dlg-title").textContent = r.title;
   $("dlg-meta").textContent = `${mdhm(r.meta.created)} · ${srcLine(id, r.meta.source)}`;
   $("dlg-body").innerHTML = `<div class="doc">${docHtml(r, quote || "").html}</div>`;
@@ -1977,7 +1851,7 @@ function meTabOfItem(it) {
 // 쓰기 = 페이지 레이아웃의 PUT·DELETE /api/me/layout 만(계약 §3 쓰기 예외). 놓을 때 PUT 1 · 한 번에 하나(앞 요청 응답 뒤 다음) · 실패 = 마지막 저장 배치로 복원 + 1줄.
 const SETUP_PAGES = [["layout", "페이지 레이아웃"], ["structure", "내 구조 설정"], ["objects", "자료 종류"], ["devices", "연결 장치"], ["map", "지도"], ["help", "문의 및 개인정보"], ["migration", "이관"]];
 const ME_BLOCK_LABEL = {heatmap: "13주 글·활동", kinds: "종류별 건수", waiting: "기다리는 결정", recent: "최근 변경"};
-// 옛 묶음 주소 → 새 주소(replace). 없으면 "". nav=new 에서만 부른다
+// 옛 묶음 주소 → 새 주소(replace). 없으면 ""
 function navReplace(R) {
   if (R.tab === "_obj" && !R.a) return "#_setup/objects";
   if (R.tab === "_settings") return "#_setup/structure";
@@ -1985,7 +1859,7 @@ function navReplace(R) {
   if (R.tab === "map") return "#_setup/map";
   if (R.tab === "_inbox" && !R.a) return "#_today";
   if (R.tab === "_inbox" && !["pending", "applied", "excluded", "expired", "all"].includes(R.a)) return "#_today/inbox/" + encodeURIComponent(R.a);   // 대기 글 하나 — 같은 상세를 오늘 안에서
-  if ((R.tab === "today" || R.tab === "home") && !R.a) return "#_today";
+  if ((R.tab === "today" || R.tab === "home") && R.a !== "review") return "#_today";   // 옛 오늘 화면은 없다 — 옛 대조 링크(#today/review/…)만 그대로
   // 항목 보기 — 적용된 항목 하나만 「나」 의 그 탭으로. 정의별 카드 그리드(#structure·#structure/<정의>)는 아직 적용 안 된 새 항목 제안(서랍)이
   // 「나」 에 없어 옛 화면 그대로(대상·동작을 다 보존할 때만 대체)
   if (R.tab === "structure") {
@@ -2158,10 +2032,10 @@ document.addEventListener("click", e => {
   }
 });
 // ── /Setup ──
-// ── 휴지통 (trash PR-1) — 스위치 S.switches.trash 켜짐 + 새 탐색일 때만: 상세의 [삭제] → 휴지통 · Setup 「휴지통」 페이지([복원]·[영구 삭제]).
+// ── 휴지통 (trash PR-1) — 스위치 S.switches.trash 켜짐일 때만: 상세의 [삭제] → 휴지통 · Setup 「휴지통」 페이지([복원]·[영구 삭제]).
 // 꺼짐 = 버튼·페이지 0, 기존 동작(사람·생각 즉시 삭제 · 기준 [반영 안 함]·[되돌리기]) 그대로. 휴지통 대상을 일반 화면에서 숨기는 일은 서버 몫(화면은 거르지 않는다).
 // 여기 남은 것 = 스위치·상세 [삭제](이동, 서버 접점 trashApi.del). Setup 「휴지통」 페이지는 React(server/ui/src/features/trash, R1 2026-11-03).
-const trashOn = () => !!(S && S.switches && S.switches.trash) && navNew();
+const trashOn = () => !!(S && S.switches && S.switches.trash);
 const TRASH_ASK = "삭제하면 휴지통으로 이동해요. 삭제 시각부터 168시간 동안 복원할 수 있고, 이후 서버 정리 때 영구 삭제돼요.";
 const TRASH_EXPIRED = "복원 기간이 끝났어요.";
 const trashApi = {   // 목록·복원·영구 삭제는 Setup 「휴지통」(React, server/ui/src/features/trash)이 부른다
@@ -2205,11 +2079,6 @@ async function getJSON(url) {
   if (r && r.status === 401) { location.href = "/"; return null; }
   if (r && r.ok) return {ok: true, j};
   return {ok: false, code: r ? (j && j.code) || "" : "OFFLINE", msg: (j && j.msg) || ""};
-}
-function navOpen() {
-  $("nav-dlg-err").textContent = "";
-  $("nav-dlg").showModal();
-  $("nav-dlg-go").focus();
 }
 
 // ── 이벤트 ───────────────────────────────────────────
@@ -2260,21 +2129,6 @@ $("std-dlg-go").addEventListener("click", () => {
 });
 $("name-dlg-close").addEventListener("click", () => $("name-dlg").close());
 $("name-dlg-cancel").addEventListener("click", () => $("name-dlg").close());
-$("nav-dlg-close").addEventListener("click", () => $("nav-dlg").close());
-$("nav-dlg-cancel").addEventListener("click", () => $("nav-dlg").close());
-$("nav-dlg-go").addEventListener("click", async () => {   // 새 탐색 수락 — 되돌리기 없음. 성공하면 「나」 홈으로
-  const go = $("nav-dlg-go");
-  $("nav-dlg-err").textContent = "";
-  go.disabled = true;
-  const res = await corePost("/api/nav/accept", {});
-  go.disabled = false;
-  if (!res) return;
-  if (!res.ok) { $("nav-dlg-err").textContent = res.msg; return; }
-  $("nav-dlg").close();
-  coreFlash = {text: "새 탐색으로 바꿨어요."};
-  history.replaceState(null, "", location.pathname + location.search);
-  await load();
-});
 // 미저장 보호 — 링크·탭·뒤로 가기 모두 hashchange 로 온다. 옮긴 화면(React)에 고친 글이 있으면 주소를 편집 자리로 되돌리고 묻는다
 function uiLeaveGuard() {
   if (!uiDirty || location.hash === uiDirty) return false;
@@ -2296,27 +2150,20 @@ $("logout").onclick = async () => {
 // ── 계정 메뉴 (P5) — 문의 대화창 열기(Q1b) · 이름 공유 · 로그아웃(위 핸들러) ──
 // 관리자(Q1)는 서버가 사용자 전용 구간(문의·이름 공유 메뉴, 문의 대화창)을 빼고 「운영 콘솔」을 넣어 보낸다 — 요소가 없으면 건너뛴다.
 function acctApply() {
-  // PR B: 표시 이름 바꾸기(이름 입력 화면에선 숨김) · 새 탐색으로 바꾸기(미수락만) · 내 구조 설정(수락만). 관리자 응답에도 있다(구간 밖)
+  // PR B: 표시 이름 바꾸기(이름 입력 화면에선 숨김). 관리자 응답에도 있다(구간 밖)
   const gate = needName();
   // 이름 입력 전에도 기존 관리자 운영 경로는 톱니 하나에서 열린다. 이름 gate는 그대로다.
   $("setup-link").href = gate && S && S.user && S.user.admin ? "/admin/setup" : "#_setup";
   $("acct-name").hidden = gate || !(S && S.user && "display_name" in S.user);
-  $("acct-nav").hidden = gate || !(S && S.user && S.user.nav === "old");
   // 설정 하위 화면은 오른쪽 위 톱니에서만 연다. 옛 라우트는 유지한다.
   $("acct-settings").hidden = true;
   $("acct-devices").hidden = true;
-  // PR① 새 탐색 메뉴 6 — 저장 승인 대기 (N): N = S.inbox.pending, 0·못 읽음(null)이면 숫자 없음. 이름 공유 동의는 내 구조 설정 화면으로
-  $("acct-menu").classList.toggle("navnew", !gate && navNew());
-  $("acct-inbox").hidden = gate || !navNew();
+  // PR① 메뉴 — 저장 승인 대기 (N): N = S.inbox.pending, 0·못 읽음(null)이면 숫자 없음. 이름 공유 동의는 내 구조 설정 화면(namesBox — 숨긴 메뉴 글자를 읽는다)
+  $("acct-menu").classList.toggle("navnew", !gate);
+  $("acct-inbox").hidden = gate;
   const inN = S && S.inbox && typeof S.inbox.pending === "number" && S.inbox.pending > 0 ? S.inbox.pending : null;
   $("acct-inbox-n").textContent = inN === null ? "" : ` (${inN})`;
-  if ($("acct-help-h")) $("acct-help-h").hidden = gate || !navNew();
-  if (!$("acct-names")) return;
-  $("acct-names").hidden = navNew();
-  for (const n of document.querySelectorAll("#acct-menu .acct-note")) n.hidden = navNew();
-  const names = (S && S.user || {}).struct_names === true;
-  $("acct-names").setAttribute("aria-pressed", names ? "true" : "false");
-  $("acct-names-st").textContent = names ? "켜짐" : "꺼짐";
+  if ($("acct-help-h")) $("acct-help-h").hidden = gate;
 }
 function acctClose() { $("acct").open = false; }
 // 「문의 보내기」·「개인정보 요청」은 보내기 폼, 「내 문의」는 목록 — 한 대화창에서 한쪽만 보인다. 상세는 그 위에 dlg 로 겹쳐 연다
@@ -2328,26 +2175,14 @@ function deskOpen(where) {
   if (!$("desk-dlg").open) $("desk-dlg").showModal();
   if (mine) deskLoad(); else $("desk-text").focus();
 }
-async function acctPost(url, body) {
-  $("acct-msg").textContent = "";
-  let r, j;
-  try {
-    r = await fetch(url, {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(body)});
-    j = await r.json();
-  } catch (e) { r = null; }
-  if (r && r.status === 401) { location.href = "/"; return false; }
-  if (!r || !r.ok) { $("acct-msg").textContent = (j && j.msg) || "저장하지 못했어요. 새로 고침한 뒤 다시 해 보세요."; return false; }
-  return true;
-}
 $("acct-menu").addEventListener("click", async e => {
   const b = e.target.closest("button[data-acct]");
   if (!b || !S) return;
   const act = b.dataset.acct;
   if (act === "logout") return;   // 로그아웃은 $("logout").onclick
-  if (act === "name" || act === "nav" || act === "settings" || act === "devices" || act === "inbox") {
+  if (act === "name" || act === "settings" || act === "devices" || act === "inbox") {
     acctClose();
     if (act === "name") nameOpen();
-    else if (act === "nav") navOpen();
     else if (act === "devices") location.hash = "#_devices";
     else if (act === "inbox") location.hash = "#_inbox";
     else location.hash = "#_settings/structure";
@@ -2357,14 +2192,7 @@ $("acct-menu").addEventListener("click", async e => {
     if (act === "privacy") document.querySelector('#desk-form input[name="kind"][value="privacy"]').checked = true;
     acctClose();
     deskOpen(act);
-    return;
   }
-  b.disabled = true;
-  try {
-    if (act === "names") {
-      if (await acctPost("/api/optional-consent", {kind: "struct_names", on: S.user.struct_names !== true})) await load();
-    }
-  } finally { b.disabled = false; }
 });
 document.addEventListener("click", e => { if ($("acct").open && !$("acct").contains(e.target)) acctClose(); });
 $("acct").addEventListener("keydown", e => {
