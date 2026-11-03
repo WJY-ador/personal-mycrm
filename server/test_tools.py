@@ -37,7 +37,7 @@
    · 관리자 세션으로도 /app·/api 에 관리자 데이터 0 · 이름 공유(사용자 상세에만·리포트 0·철회 뒤 0) · 「내 문의」 공개 갱신순(웹=MCP)
 17) R1(PR #20 2단계): 기능 플래그 CRM_FEATURE_STANDARD·SOURCES 둘 다 미설정(off)에서 로그인(웹·DEV) · /admin 권한(일반 404·관리자 바로·재인증 없음)
    · /admin 문의 처리(상태·답변) · Q1 관리자 /app = ⚙ + 「운영 콘솔」·로그아웃만(문의·이름 공유 메뉴·문의 대화창은 보내지 않음)
-   · Q1b 일반 사용자 /app = 하단 문의 섹션 없음 · 「문의 보내기」·「내 문의」는 대화창(desk-dlg) · 「문의 섹션 숨기기」 없음
+   · Q1b 일반 사용자 /app = 하단 문의 섹션 없음 · 「문의 보내기」·「내 문의」는 대화창(React #ui-desk) · 「문의 섹션 숨기기」 없음
 18) R2(PR #20 3단계, DB 없이): 기능 플래그 제거(PR B — 코드·render.yaml 참조 0) · 수신자별 응답(본인·운영자 비동의·동의) 허용 목록
    · 이름 누출 0(비동의: label·key·선택지·출처 name·location·id / 동의: key·선택지 값·출처·id) · origin·관계 파생 · std 모양 · 오류 코드 문구 · 예제 동결 일치
 19) R3(PR #20 4단계): 표준 편입 미리보기 판정(누락·일치·확장·충돌 사유·참조 의존·초안·보관) · 쓰기 0(READ ONLY·전 테이블 해시)·플래그 무관
@@ -4191,7 +4191,7 @@ async def test_integration_p5():
 R1 = {"a": "r1-admin@example.com", "u": "r1-user@example.com"}
 R1_FLAGS = ("CRM_FEATURE_STANDARD", "CRM_FEATURE_SOURCES")
 R1_USER_ONLY = ('data-acct="send"', 'data-acct="mine"', 'data-acct="privacy"', 'data-acct="names"',
-                'id="acct-names"', 'id="desk-dlg"', 'id="desk-form"', 'id="desk-list"', "구조 이름 공유")
+                'id="acct-names"', 'id="ui-desk"', "구조 이름 공유")   # 문의 대화창 = React features/desk 상시 섬 자리(#ui-desk, R5b-2a)
 R1_GONE = ('id="desk"', '<section class="wrap desk"', 'data-acct="desk"', 'id="acct-desk"', "문의 섹션", "deskPeek", "/api/desk-visibility")   # Q1b — 둘 다
 R1_ADMIN_ONLY = ('id="acct-console"', '<a class="btn" href="/admin" id="acct-console" hidden>운영 콘솔</a>')
 
@@ -4200,7 +4200,7 @@ async def test_r1_flags_off():
     """두 플래그 미설정에서: 웹 로그인(/login → 콜백 → /app)·DEV 경로 · /admin 무세션·일반·DEV 404, 관리자 GET 화면 전부 바로(재인증 없음,
     /admin/reauth → /admin) · 문의 처리 POST(상태·답변, 일반 사용자 404) → 소유자 「내 문의」에 반영 · Q1: 관리자 /app 계정 메뉴 = 운영 콘솔·로그아웃,
     문의·이름 공유 메뉴·문의 대화창은 본문에 없음(서버가 안 보냄) · Q1b: 일반 사용자는 하단 문의 섹션 없이 「문의 보내기」·「내 문의」 메뉴가
-    대화창(desk-dlg)을 연다, 숨기기 메뉴 없음 · 표식 0 · CSP 해시 = 보낸 본문 · API 모양은 그대로."""
+    대화창(React #ui-desk)을 연다, 숨기기 메뉴 없음 · 표식 0 · CSP 해시 = 보낸 본문 · API 모양은 그대로."""
     from urllib.parse import parse_qs, urlparse
     site = main.site
     fake_jwks(main._auth_kwargs["token_verifier"])
@@ -4246,11 +4246,8 @@ async def test_r1_flags_off():
             assert (w in r.text) is admin, (admin, w)
         for w in R1_GONE:
             assert w not in r.text, (admin, w)
-        if not admin:   # Q1b: 문의 폼·목록은 대화창 안에만 있다
-            i = r.text.index('<dialog id="desk-dlg"')
-            dlg = r.text[i:r.text.index("</dialog>", i)]
-            for w in ('id="desk-form"', 'id="desk-list"', 'id="desk-text"', 'id="desk-send"'):
-                assert r.text.count(w) == 1 and w in dlg, w
+        if not admin:   # Q1b: 문의 폼·목록은 대화창 안에만 있다 — 대화창 = React(features/desk)가 #ui-desk 자리에 띄운다(폼·목록 = Vitest Desk.test.tsx)
+            assert r.text.count('<!--user--><div id="ui-desk"></div>') == 0 and r.text.count('<div id="ui-desk"></div>') == 1, "표식 없이 자리 하나"
             menu = r.text[r.text.index('id="acct-menu"'):r.text.index("</details>")]
             for act in ("send", "mine"):
                 assert f'data-acct="{act}" aria-haspopup="dialog"' in menu, act
@@ -4258,10 +4255,10 @@ async def test_r1_flags_off():
             menu = r.text[r.text.index('id="acct-menu"'):r.text.index("</details>")]
             assert re.findall(r"<(?:a|button)\b[^>]*>([^<]*)", menu) == ["운영 콘솔", "표시 이름 바꾸기", "내 구조 설정",
                                                                       "저장 승인 대기", "연결 장치", "로그아웃"], menu   # PR① 저장 승인 대기 = 관리자도(연결 장치와 같은 구간 밖)
-            for w in ('id="acct-name"', 'id="acct-settings"', '<dialog id="name-dlg"'):
+            for w in ('id="acct-name"', 'id="acct-settings"', '<div id="ui-namedlg"></div>'):   # 「표시 이름 바꾸기」 = React 상시 섬(features/name)
                 assert r.text.count(w) == 1, w
             assert 'id="acct-nav"' not in r.text and 'id="nav-dlg"' not in r.text, "새 탐색 수락 메뉴·대화창 0(R5a)"
-            assert '<dialog id="desk-dlg"' not in r.text
+            assert 'id="ui-desk"' not in r.text
     try:
         assert not any(k in os.environ for k in R1_FLAGS), "두 플래그 미설정"
         # ── 로그인 — 웹(세션 쿠키) · DEV ──
@@ -5779,7 +5776,7 @@ async def test_q45_user():
             assert len(hs) == 1 and f"'sha256-{hs[0]}'" in r.headers["content-security-policy"]
             assert r.text.count('<dialog id="std-dlg"') == 1 and "renderDefs" in r.text, admin
             assert tokens in r.text and "defsJump" in r.text, ("그래프 전환·토큰", admin)
-            assert ('id="desk-dlg"' in r.text) is not admin, "Q1b·Q1 분기 유지"
+            assert ('id="ui-desk"' in r.text) is not admin, "Q1b·Q1 분기 유지"
         _set_role(A, "user")
     finally:
         site.dev, site.dev_user = real
