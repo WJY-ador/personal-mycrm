@@ -1,5 +1,5 @@
 {
- "_doc": "API 응답 견본 — 「나」가 읽는 /api/me/stats · /api/me/layout · /api/journal. server/test_web_home.py test_me_samples 가 실제 응답과 키·값 타입을 대조하고, me.sample.test.ts 가 TS 타입에 satisfies 로 묶는다.",
+ "_doc": "API 응답 견본 — 「나」가 읽는 /api/me/stats · /api/me/layout · /api/journal · POST /api/records/{id}/body/preview. server/test_web_home.py test_me_samples 가 실제 응답과 키·값 타입을 대조하고, me.sample.test.ts 가 TS 타입에 satisfies 로 묶는다.",
  "stats": {
   "axes": [
    {
@@ -94,5 +94,13 @@
    "source": "대화에서 입력",
    "question_id": "q_sample"
   }
+ },
+ "preview": {
+  "record_id": "r_sample",
+  "revision": 1,
+  "before": "가나다라마",
+  "after": "가나!다라마",
+  "drop": 2,
+  "msg": "검토할 판단 2개가 지워져요(다시 뽑을 수 있어요)"
  }
 }

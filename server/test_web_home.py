@@ -7,7 +7,7 @@ A. /api/records — 401 · no-store · 기본(before 없음) = /api/state journa
    created 동률 블록(한 tx 의 now())이 페이지 경계에 걸쳐도 겹침·누락 0 · limit 끝값 · 틀린 before 400 · 남의 기록 0 · db.records 기본 호출 결과 불변.
 B. app.html 정적 — 옛 쪽에 남은 「나」 접점(uiMount("me") · 미저장 보호 uiDirty · Setup 레이아웃 · 오늘 · 축 색 토큰).
    「나」 화면 자체(R2 2026-11-03 React)는 Vitest — server/ui/src/features/me/MeScreen·MeEdit·MeActs.test.tsx.
-G. API 견본 대조(R2) — ui/src/shared/state.sample.json ⊆ /api/state · ui/src/features/me/me.sample.json = /api/me/stats·layout·journal.
+G. API 견본 대조(R2) — ui/src/shared/state.sample.json ⊆ /api/state · ui/src/features/me/me.sample.json = /api/me/stats·layout·journal·본문 미리보기.
 C. app.html 정적 — 대화 서랍(PR ②-b B5: 스위치 · 버튼 3 · 기본 포함 · 자동 확정 0 · 쓰기 3곳 · 편집 잠금 → 이탈 재정리 · 최신 결과만).
 D. 대화 서랍 실행(③-0.2, node — 대화 절 함수를 가짜 DOM 으로 돌린다): 장치 상태 없음/최근 연결/오프라인 · 스위치 꺼짐 = 현행 · 남 장치 0 ·
    뺀 변경 표시 = 확정 미리보기의 excluded.
@@ -788,7 +788,7 @@ def _cmp(sample, real, path, exact):
 
 async def test_ui_samples():
     """API 견본 대조(R2) — React 「나」가 읽는 응답 조각의 손 사본 타입(TS)과 실제 응답을 대조한다.
-    ui/src/shared/state.sample.json ⊆ /api/state(AppState 는 쓰는 조각만) · ui/src/features/me/me.sample.json = /api/me/stats·/api/me/layout·/api/journal
+    ui/src/shared/state.sample.json ⊆ /api/state(AppState 는 쓰는 조각만) · ui/src/features/me/me.sample.json = /api/me/stats·/api/me/layout·/api/journal·본문 미리보기
     (키 집합까지). TS 쪽은 satisfies(tsc) — 서버 응답이 바뀌면 여기서, TS 타입이 바뀌면 tsc 에서 잡힌다."""
     import json
     site = main.site
@@ -821,7 +821,9 @@ async def test_ui_samples():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url=PUBLIC) as h:
             st = (await h.get("/api/state")).json()
             got = {"stats": (await h.get("/api/me/stats")).json(), "layout": (await h.get("/api/me/layout")).json(),
-                   "journal": (await h.get("/api/journal", params={"id": rec["id"]})).json()}
+                   "journal": (await h.get("/api/journal", params={"id": rec["id"]})).json(),
+                   "preview": (await h.post(f"/api/records/{rec['id']}/body/preview", headers={"origin": PUBLIC},
+                                            json={"expected_revision": 1, "body": "견본 본문 입력 담당을 먼저 정했다. 덧붙임"})).json()}   # 판단과 겹치지 않는 자리(연결 걸린 겹침 = 잠금)
     finally:
         site.dev, site.dev_user = real
     for k in ("journal", "questions", "candidates", "items", "definitions", "record_links", "people", "reflections", "sources"):
@@ -829,7 +831,8 @@ async def test_ui_samples():
     assert not ref or st["items"][0]["links"] or any(i["links"] for i in st["items"]), "항목 연결 행"
     bad = _cmp(st_sample, st, "state", exact=False)
     assert not bad, (bad, "state.sample.json·shared/state.ts 의 AppState 를 같이 고친다")
-    for k in ("stats", "layout", "journal"):
+    assert (got["preview"].get("drop"), got["preview"].get("msg")) == (0, ""), got["preview"]
+    for k in ("stats", "layout", "journal", "preview"):
         bad = _cmp(me_sample[k], got[k], k, exact=True)
         assert not bad, (bad, "me.sample.json·features/me/meApi.ts 의 타입을 같이 고친다")
     assert got["journal"]["revision"] == 1 and got["journal"]["author_kind"] == "self", "수기 수정 — 저장 expected_revision · 남이 쓴 글 판정"

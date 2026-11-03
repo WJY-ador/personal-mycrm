@@ -7,10 +7,12 @@ import { calls, click, flush, installFetch, json, serve } from "../../test/fakeS
 import { installMedia, JOURNAL, layout, meState, STATS } from "../../test/meFixture";
 import { btn, hideMe, reload, setDirty, showMe, type } from "../../test/showMe";
 
+const PV0 = { record_id: "r1", revision: 4, before: "", after: "", drop: 0, msg: "" };
 let POST: (url: string) => Response = () => json(200, {});
+const ok200 = (url: string) => json(200, url.endsWith("/preview") ? PV0 : {});
 beforeEach(() => {
   installFetch(); installMedia(false); queryClient.clear(); reload.mockClear(); setDirty.mockClear();
-  POST = () => json(200, {});
+  POST = ok200;
   serve((url, m) => {
     if (m === "POST") return POST(url);
     if (url === "/api/me/layout") return json(200, layout());
@@ -79,15 +81,43 @@ test("내 글 제목 = /api/records/{id}/title(revision = 본문 응답) · 본�
   expect(input(el).value).toBe(JOURNAL.body);
   await type(input(el), JOURNAL.body.replace("둘째", "두 번째"));
   await save(el);
-  expect(posts().at(-1)).toEqual({ url: "/api/records/r1/body", method: "POST", body: { expected_revision: 4, body: JOURNAL.body.replace("둘째", "두 번째") } });
+  const body = JOURNAL.body.replace("둘째", "두 번째");
+  expect(posts().slice(-2)).toEqual([   // 지워질 판단 0 = 미리보기 뒤 확인 없이 바로 저장
+    { url: "/api/records/r1/body/preview", method: "POST", body: { expected_revision: 4, body } },
+    { url: "/api/records/r1/body", method: "POST", body: { expected_revision: 4, body } }]);
   expect(el.textContent).toContain("본문을 고쳤어요.");
+});
+
+test("본문 — 지워질 검토할 판단이 있으면 서버 문구 그대로 + [이대로 저장] 1번 · 다시 고치면 확인부터 다시 · 미리보기 막힘 = 서버 msg·action", async () => {
+  const MSG = "검토할 판단 1개가 지워져요(다시 뽑을 수 있어요)";
+  POST = url => (url.endsWith("/preview") ? json(200, { ...PV0, drop: 1, msg: MSG }) : json(200, {}));
+  const el = await showMe("#_me/journal/r1", meState());
+  await click(el.querySelector(".doc")!.closest("[role=button]"));
+  await type(input(el), "새 본문");
+  await save(el);
+  expect(posts().map(c => c.url)).toEqual(["/api/records/r1/body/preview"]);
+  expect(el.querySelector("form [role=status]")!.textContent).toBe(MSG);
+  expect(btn(el, "이대로 저장")).toBeTruthy();
+  await type(input(el), "새 본문2");   // 고치면 확인이 풀린다
+  expect(el.querySelector("form [role=status]")).toBeNull();
+  await save(el);
+  await click(btn(el, "이대로 저장"));
+  expect(posts().map(c => c.url)).toEqual(["/api/records/r1/body/preview", "/api/records/r1/body/preview", "/api/records/r1/body"]);
+  expect(posts().at(-1)!.body).toEqual({ expected_revision: 4, body: "새 본문2" });
+  expect(el.textContent).toContain("본문을 고쳤어요.");
+  POST = () => json(400, { code: "RECORD-LOCKED", msg: "기준·항목에 연결된 판단이 걸린 구절이에요. 이 구절은 고칠 수 없어요.", action: "그 판단의 연결을 풀거나, 고친 글은 새 기록으로 남기세요(record_add)." });
+  await click(el.querySelector(".doc")!.closest("[role=button]"));
+  await type(input(el), "또 고침");
+  await save(el);
+  expect(el.querySelector("#hedit-err")!.textContent).toBe("기준·항목에 연결된 판단이 걸린 구절이에요. 이 구절은 고칠 수 없어요. 그 판단의 연결을 풀거나, 고친 글은 새 기록으로 남기세요(record_add).");
+  expect(posts().at(-1)!.url).toBe("/api/records/r1/body/preview");
 });
 
 test("내 글 본문 막힘(RECORD-LOCKED) = 서버 msg·action 그대로 · 다시 받지 않음", async () => {
   const el = await showMe("#_me/journal/r1", meState());
   await click(el.querySelector(".doc")!.closest("[role=button]"));
   await type(input(el), "다른 본문");
-  POST = () => json(400, { code: "RECORD-LOCKED", msg: "내가 결정한 판단(남기기·남기지 않기) 1개가 붙은 글이라 본문을 고칠 수 없어요.", action: "고친 글은 새 기록으로 남기세요(record_add)." });
+  POST = url => (url.endsWith("/preview") ? json(200, PV0) : json(400, { code: "RECORD-LOCKED", msg: "내가 결정한 판단(남기기·남기지 않기) 1개가 붙은 글이라 본문을 고칠 수 없어요.", action: "고친 글은 새 기록으로 남기세요(record_add)." }));
   await save(el);
   expect(el.querySelector("#hedit-err")!.textContent).toBe("내가 결정한 판단(남기기·남기지 않기) 1개가 붙은 글이라 본문을 고칠 수 없어요. 고친 글은 새 기록으로 남기세요(record_add).");
   expect(reload).not.toHaveBeenCalled();

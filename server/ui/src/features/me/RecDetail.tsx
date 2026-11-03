@@ -1,5 +1,6 @@
 // 내 글 상세 — 제목·시각·출처·질문 + 동작 + 본문(문단·굵게) + 연결. 본문은 /api/journal(이어 받지 않은 글도 직접 링크로 열린다).
 // 수기 수정(A0′): 제목·본문을 누르면 인라인 편집. 본문은 새 본문 전체를 보내고 서버가 공통 앞·뒤를 뺀 한 구간으로 바꾼다.
+// 본문 [저장] = 먼저 서버 미리보기 — 지워질 검토할 판단이 있으면 그 문구를 그대로 보이고 [이대로 저장] 1번, 없으면 바로 저장.
 // 막힘(내가 결정한 판단이 붙은 글·휴지통·revision 충돌)은 서버 msg·action 그대로. 남이 쓴 글(external)은 고치기를 보이지 않는다.
 import { useQuery } from "@tanstack/react-query";
 import { apiErr } from "../../shared/api";
@@ -25,7 +26,8 @@ function specs(j: Journal): [EditSpec, EditSpec] {
     { key: "rtitle:" + j.id, done: "제목을 바꿨어요.", errText: serverErrText,
       fields: [{ name: "title", label: "제목", multi: false, orig: j.title }], save: d => meApi.recordTitle(j.id, j.revision, d.title.trim()) },
     { key: "rbody:" + j.id, done: "본문을 고쳤어요.", errText: serverErrText,
-      fields: [{ name: "body", label: "본문", multi: true, orig: j.body }], save: d => meApi.recordBody(j.id, j.revision, d.body) },
+      fields: [{ name: "body", label: "본문", multi: true, orig: j.body }], save: d => meApi.recordBody(j.id, j.revision, d.body),
+      confirm: d => meApi.recordBodyPreview(j.id, j.revision, d.body).then(p => p.msg) },   // 지워질 판단이 있으면 서버 문구 + [이대로 저장] 1번
   ];
 }
 

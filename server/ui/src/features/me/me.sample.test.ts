@@ -2,9 +2,10 @@
 // Stats·Layout·Journal 을 바꾸면 tsc(--noEmit)가 이 줄에서 잡는다.
 import { expect, test } from "vitest";
 import sample from "./me.sample.json";
-import type { Journal, Layout, Stats } from "./meApi";
+import type { BodyPreview, Journal, Layout, Stats } from "./meApi";
 
-const typed = { stats: sample.stats satisfies Stats, layout: sample.layout satisfies Layout, journal: sample.journal satisfies Journal };
+const typed = { stats: sample.stats satisfies Stats, layout: sample.layout satisfies Layout, journal: sample.journal satisfies Journal,
+  preview: sample.preview satisfies BodyPreview };
 
 test("견본 = 통계(축·히트맵·종류·기다림) · 레이아웃 v2 · 기록 본문(revision 포함)", () => {
   expect(Object.keys(typed.stats).sort()).toEqual(["axes", "heatmap", "kinds", "waiting"]);

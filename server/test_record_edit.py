@@ -8,6 +8,7 @@
 2) 미결 후보(메인 판정 c′): 변경 구간과 겹치거나 닿으면 삭제 · 앞 그대로 · 뒤 delta 이동(UNIQUE 순간 충돌 없음) · 이동 뒤 quote 단언
 3) record_title_set(facade W): 판단 붙은 글도 됨 · 같은 제목 no-op · 이력(title) · 휴지통·external 거절
 4) 웹: POST /api/records/{id}/body(공통 앞·뒤를 뺀 한 구간) · /title · /api/item/edit(propose+apply 한 트랜잭션, 확정 유지, 이력 한 줄)
+   · /body/preview(R2 — 쓰기 없음, 저장과 같은 판정: 끼워 넣기·같은 구절 여러 번·연결 걸린 겹침 잠금·CONFLICT, 문구 = 서버)
    · 401 · Origin 403 · 모양 400 · via web
 5) provenance_history via · 옛 DB 업그레이드(records.revision 없음 → 1)
 """
@@ -372,6 +373,68 @@ async def test_web(uid):
     ok("웹(본문 = 공통 앞·뒤 뺀 한 구간·위치 기준 · 제목 · 401·Origin 403·모양 400·CONFLICT·바뀐 곳 없음·잠금 · 항목 편집 = 한 트랜잭션·확정 유지·code 불변·이력 한 줄·거절 무흔적)")
 
 
+async def test_web_preview(uid):
+    """웹 본문 미리보기 = 저장과 같은 판정(db.record_body_preview — 같은 _edit_plan(new_body=)) · 쓰기 없음 · 문구는 서버가 낸다."""
+    site = main.site
+    real = site.dev, site.dev_user
+    origin = {"origin": PUBLIC}
+
+    async def pv(h, rid, body, rev=1, hdr=origin):
+        return await h.post(f"/api/records/{rid}/body/preview", json={"expected_revision": rev, "body": body}, headers=hdr)
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url=PUBLIC) as h:
+            rid = rec(uid)
+            site.dev, site.dev_user = False, ""
+            assert (await pv(h, rid, BODY + "!")).status_code == 401
+            site.dev, site.dev_user = True, MAIN
+            assert (await pv(h, rid, BODY + "!", hdr={"origin": "https://evil.example"})).status_code == 403
+            r = await h.post(f"/api/records/{rid}/body/preview", json={"body": BODY}, headers=origin)
+            assert r.status_code == 400 and r.json()["code"] == "ARG-INVALID"
+            # 끼워 넣기(old 빈 구간) — 닿는 후보 2개 지움 · 미리보기 수 = 저장 수 · 미리보기는 쓰지 않는다
+            r1 = rec(uid, "가나다라마")
+            cand(uid, r1, "가나", "가"), cand(uid, r1, "다라", "다")
+            snap = cands_of(uid, r1)
+            r = await pv(h, r1, "가나!다라마")
+            j = r.json()
+            assert r.status_code == 200 and j["drop"] == 2 and j["msg"] == "검토할 판단 2개가 지워져요(다시 뽑을 수 있어요)", j
+            assert (j["before"], j["after"], j["revision"]) == ("가나다라마", "가나!다라마", 1), j
+            assert cands_of(uid, r1) == snap and db.record_get(uid, r1)["revision"] == 1 and hist(uid, r1) == [], "미리보기 = 쓰기 0"
+            out = db.record_body_set(uid, r1, 1, "가나!다라마")
+            assert out["deleted_candidates"] == j["drop"], "미리보기 = 저장 판정"
+            # 같은 구절 여러 번 — 웹은 위치로 정한다(MCP 구절 방식이면 EDIT-AMBIGUOUS). 뒤 후보는 옮기기만 → drop 0, 문구 없음
+            r2 = rec(uid, "아아아 아아아 끝맺음")
+            cand(uid, r2, "끝맺음", "끝")
+            expect("EDIT-AMBIGUOUS", db.record_edit_preview, uid, r2, "아", "오")
+            j = (await pv(h, r2, "아아아 아오아 끝맺음")).json()
+            assert (j["drop"], j["msg"]) == (0, ""), j
+            out = db.record_body_set(uid, r2, 1, "아아아 아오아 끝맺음")
+            assert (out["deleted_candidates"], out["moved_candidates"]) == (0, 1), out
+            # 연결 걸린 겹침 = 저장과 같은 RECORD-LOCKED(문구·행동까지) · 결정이 붙은 글도 같다 · revision 다름 = CONFLICT · 바뀐 곳 없음 = ARG-INVALID
+            hap = db.definition_propose(uid, None, 0, {"key": "pv_ev", "label": "일", "semantic_kind": "event", "fields": [
+                {"key": "claims", "label": "판단", "value_type": "reference", "target_kind": "candidate", "multiple": True}]})
+            hap = db.definition_apply(uid, hap["object_id"], hap["proposal_id"], 0)
+            r3 = rec(uid)
+            hit = cand(uid, r3, QUOTE)
+            ev = db.item_propose(uid, hap["id"], hap["revision"], None, 0, None, "연결 사건", "", {},
+                                 [{"field_key": "claims", "target_kind": "candidate", "target_id": hit}])
+            db.item_decide(uid, ev["item_id"], 0, ev["proposal_id"], "apply")
+            new = BODY.replace("먼저", "가장 먼저")
+            r = await pv(h, r3, new)
+            e = expect("RECORD-LOCKED", db.record_body_set, uid, r3, 1, new)
+            assert r.status_code == 400 and r.json() == {"code": "RECORD-LOCKED", "msg": e.message, "action": e.action}, r.text
+            r4 = rec(uid)
+            db.candidate_decide(uid, cand(uid, r4), "confirm")
+            r = await pv(h, r4, BODY + " 덧붙임")
+            assert r.status_code == 400 and r.json()["code"] == "RECORD-LOCKED", r.text
+            r = await pv(h, rid, BODY + "!", rev=5)
+            assert r.status_code == 400 and r.json()["code"] == "CONFLICT", r.text
+            r = await pv(h, rid, BODY)
+            assert r.status_code == 400 and r.json()["code"] == "ARG-INVALID", "바뀐 곳 없음 = 저장과 같다"
+    finally:
+        site.dev, site.dev_user = real
+    ok("웹 본문 미리보기(저장과 같은 판정 — 끼워 넣기·같은 구절 여러 번·연결 걸린 겹침 잠금·결정 잠금·CONFLICT·바뀐 곳 없음 · 쓰기 0 · 401·Origin 403·모양 400 · 문구 = 서버)")
+
+
 # ── 5) 출처 via · 옛 DB 업그레이드 ─────────────────────
 
 async def test_provenance_and_upgrade(uid):
@@ -405,6 +468,7 @@ async def run():
         await test_pending_candidates(uid)
         await test_title(uid)
         await test_web(uid)
+        await test_web_preview(uid)
         await test_provenance_and_upgrade(uid)
     finally:
         cleanup()

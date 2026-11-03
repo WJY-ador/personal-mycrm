@@ -1425,6 +1425,21 @@ def record_body_set(uid, rid, expected_revision, body, via="web"):
     return _edit_apply(uid, rid, expected_revision, via, new_body=body)
 
 
+def record_body_preview(uid, rid, body, expected_revision=None):
+    """웹 본문 수정 미리보기(쓰기 없음) — 저장(record_body_set)과 같은 _edit_plan(new_body=)·같은 순서의 검사(잠금 → 구간 → revision)라
+    막힘(RECORD-LOCKED·ARG-INVALID·CONFLICT 등)이 저장과 같은 코드로 나온다. 반환 = 전·후(앞뒤 글자) + 지워질 미결 후보 수."""
+    if not isinstance(body, str):
+        raise CrmError("ARG-INVALID", "body 는 문자열이에요.")
+    if expected_revision is not None and (not isinstance(expected_revision, int) or isinstance(expected_revision, bool)):
+        raise CrmError("ARG-INVALID", "expected_revision 은 정수예요.", "record_get 의 revision 을 그대로 넣으세요.")
+    with tx() as c:
+        p = _edit_plan(c, uid, rid, new_body=body)
+        r = p["row"]
+        if expected_revision is not None and r["revision"] != expected_revision:
+            raise _conflict(f"지금 revision {r['revision']}")
+    return {"record_id": r["id"], "revision": r["revision"], "before": p["before"], "after": p["after"], "drop": len(p["drop"])}
+
+
 def record_title_set(uid, rid, title, expected_revision, via="mcp"):
     """기록 제목 바꾸기 — 판단 잠금(A0′)과 무관(제목은 인용 근거가 아니다). 휴지통·남이 쓴 글은 거절. 이력 한 줄 + revision +1.
     같은 제목이면 no-op(revision 그대로)."""

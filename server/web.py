@@ -2014,6 +2014,17 @@ class Web:
         return await self._core_write(request, "record_edit", {"expected_revision": ((int,), True), "body": ((str,), True)},
                                       lambda uid, b: db.record_body_set(uid, rid, b["expected_revision"], b["body"], via="web"))
 
+    async def api_record_body_preview(self, request):
+        """POST /api/records/{rid}/body/preview {expected_revision, body} — 본문 저장 전 미리보기(쓰기 없음, 저장과 같은 판정 db.record_body_preview).
+        반환 = 전·후 + drop(지워질 미결 후보 수) + msg(지워질 때만 서버 문구 — 화면은 그대로 보이고 확인 1번, 0이면 빈 문자열 = 바로 저장)."""
+        rid = request.path_params["rid"]
+
+        def pv(uid, b):
+            out = db.record_body_preview(uid, rid, b["body"], b["expected_revision"])
+            out["msg"] = f"검토할 판단 {out['drop']}개가 지워져요(다시 뽑을 수 있어요)" if out["drop"] else ""   # facade 미리보기 shown 과 같은 글
+            return out
+        return await self._core_write(request, "record_edit", {"expected_revision": ((int,), True), "body": ((str,), True)}, pv)
+
     async def api_record_title(self, request):
         """POST /api/records/{rid}/title {expected_revision, title} — 제목 바꾸기(판단 잠금과 무관)."""
         rid = request.path_params["rid"]
@@ -3268,6 +3279,7 @@ class Web:
             Route("/api/journal", u("web:journal", self.api_journal)),
             Route("/api/records", u("web:records", self.api_records)),   # PR① 홈 기록 「더 보기」 — 읽기만
             Route("/api/records/{rid}/body", u("web:record_body", self.api_record_body), methods=["POST"]),   # 수기 수정 A0′
+            Route("/api/records/{rid}/body/preview", u("web:record_body_preview", self.api_record_body_preview), methods=["POST"]),   # 쓰기 없음 — 저장 전 확인
             Route("/api/records/{rid}/title", u("web:record_title", self.api_record_title), methods=["POST"]),
             Route("/api/candidate/decide", u("web:candidate_decide", self.api_decide), methods=["POST"]),
             Route("/api/item", u("web:item", self.api_item)),

@@ -13,6 +13,7 @@ export type Slot = { c: string; p: Record<string, unknown> };
 export type MePage = { tabs: string[]; regions: Record<string, Slot[]> };
 export type Layout = { layout: { v: number; pages: { me: MePage } }; version: number };
 export type Journal = { id: string; title: string; body: string; revision: number; author_kind: string; meta: { created: string; source: string | null; question_id: string | null } };
+export type BodyPreview = { record_id: string; revision: number; before: string; after: string; drop: number; msg: string };
 export type Act = {
   id: string; action: string; action_label?: string; occurred_on: string | null; observed_on?: string | null; state?: string;
   source?: { id: string; name: string } | null; people?: { id: string; alias: string; role?: string }[];
@@ -44,6 +45,9 @@ export const meApi = {
   // 쓰기 — 수기 수정(A0′, R2)
   recordTitle: (id: string, expected_revision: number, title: string) => postJSON(`/api/records/${enc(id)}/title`, { expected_revision, title }),
   recordBody: (id: string, expected_revision: number, body: string) => postJSON(`/api/records/${enc(id)}/body`, { expected_revision, body }),
+  // 본문 저장 전 미리보기(쓰기 없음, 저장과 같은 판정) — msg = 지워질 검토할 판단이 있을 때만 서버 문구(없으면 "")
+  recordBodyPreview: (id: string, expected_revision: number, body: string) =>
+    postJSON<BodyPreview>(`/api/records/${enc(id)}/body/preview`, { expected_revision, body }),
   itemEdit: (item_id: string, expected_revision: number, title: string, body: string) =>
     postJSON("/api/item/edit", { item_id, expected_revision, title, body }),
 };
