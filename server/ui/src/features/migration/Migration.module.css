@@ -10,6 +10,13 @@ table.tbl th:first-child, table.tbl td:first-child { text-align: left; }
 table.tbl thead th { color: var(--muted); font-weight: 500; font-size: .76rem; }
 table.tbl tfoot th, table.tbl tfoot td { font-weight: 600; border-bottom: 0; }
 table.rcpt td { text-align: left; }
+/* 좁은 폭 — 영수증 항목 표의 여섯 칸이 다 보이게(가로 스크롤 막대가 안 보이는 화면에서 마지막 열이 잘려 보였다).
+   머리글은 낱말 단위로, 긴 id 칸(대상 id·original_id)만 아무 데서나 줄을 바꾼다. 짧은 칸(자료군·결과·해시 칩)은 한 줄 */
+@media (max-width: 700px) {
+  table.rcpt th, table.rcpt td { padding: .3rem .35rem; }
+  table.rcpt th { white-space: normal; word-break: keep-all; }
+  table.rcpt td:nth-child(4), table.rcpt td:nth-child(6) { white-space: normal; overflow-wrap: anywhere; }
+}
 :global(ul.rows) li.item.need { border-color: color-mix(in srgb, var(--warn) 55%, transparent); }
 :global(ul.rows) li.item :global(.frow) { margin-top: .15rem; }
 .chk { display: inline-flex; align-items: center; gap: .35rem; font-size: .84rem; font-weight: 600; }
