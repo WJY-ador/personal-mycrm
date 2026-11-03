@@ -2,10 +2,12 @@
 // RELOAD = 상태를 다시 받아야 하는 실패(그 화면 머리에 문구 + ctx.reload). 연결 장치·이관이 쓴다.
 import type { ApiError } from "./api";
 
-const CORE_ERR: Record<string, string> = {
+export const CORE_ERR: Record<string, string> = {
   CONFLICT: "다른 곳에서 먼저 바뀌었어요. 다시 불러왔어요 — 확인하고 다시 해 주세요.",
   "NOT-FOUND": "찾을 수 없어요. 지워졌을 수 있어요. 다시 불러왔어요.",
 };
+// 판단 검토·구조 서랍 결정 충돌(서버 문구가 없을 때) — 새로 고침 안내
+export const CONFLICT_TEXT = "다른 곳에서 먼저 바뀌었어요. 새로 고침해 다시 봐 주세요.";
 export const RELOAD = new Set(["CONFLICT", "NOT-FOUND", "NAME-REQUIRED"]);
 
 export const postMsg = (e: ApiError) =>

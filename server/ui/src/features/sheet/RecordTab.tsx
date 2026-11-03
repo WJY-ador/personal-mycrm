@@ -4,14 +4,15 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiErr } from "../../shared/api";
 import { DecisionBadge, OriginBadge } from "../../shared/CandChips";
-import { mdhm } from "../../shared/date";
+import { dayParts, mdhm } from "../../shared/date";
 import { Doc } from "../../shared/Doc";
 import { fetchJournal, journalKey } from "../../shared/journal";
 import { PartFail } from "../../shared/PartFail";
 import { ReviewNote } from "../../shared/ReviewNote";
 import { SRC_KIND, SRC_NONE, srcLine, srcText } from "../../shared/source";
 import { readOk, type AppState, type Rec } from "../../shared/state";
-import { dayParts, FirstRun, key, NextLine } from "./parts";
+import { press } from "../../shared/press";
+import { FirstRun, NextLine } from "./parts";
 
 let remembered = "all";   // 옛 recSrc — 같은 페이지 안에서 탭을 오가도 고른 출처 유지
 
@@ -53,7 +54,7 @@ export function RecordTab({ S, tabId, bl, sel }: { S: AppState; tabId: string; b
   const js = all.filter(r => cur === "all" || (cur === "none" ? !has(r) : r.source_id === cur));
   const j = js.find(x => x.id === sel) || js[0];
   const filt = all.length ? <><nav className="pills srcf" aria-label="출처별 보기">{opts.map(([k, l, n]) => (
-      <a key={k} tabIndex={0} role="button" aria-pressed={k === cur} className={k === cur ? "on" : ""} onClick={() => setSrc(k)} onKeyDown={key(() => setSrc(k))}>{l}<span className="n">{n}</span></a>))}</nav>
+      <a key={k} {...press(() => setSrc(k))} aria-pressed={k === cur} className={k === cur ? "on" : ""}>{l}<span className="n">{n}</span></a>))}</nav>
     {total > all.length ? <p className="hint">목록엔 글 {all.length}편까지 보여요. 개수는 전체 글 기준이에요.</p> : null}</> : null;
   let body;
   if (!readOk(S, "journal")) body = <PartFail err={{ code: "", msg: "", ...S.read?.journal?.error }} what="내 글 목록" />;

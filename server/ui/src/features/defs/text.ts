@@ -35,8 +35,5 @@ export const STD_ERR: Record<string, string> = {
   "CONFLICT": "다른 곳에서 먼저 바뀌었어요. 미리보기를 다시 불러왔어요 — 다시 확인해 주세요.",
   "STANDARD-LOCKED": "이미 편입된 표준은 보류·거절로 바꿀 수 없어요.",
 };
-export const FIXHINT = "새로 고침해도 그대로면 다시 로그인해 보세요.";
-// 받침 있으면 a(을·과), 없으면 b · 「…으로/로」(받침 없거나 ㄹ 받침이면 로)
-const code = (w: string) => String(w).slice(-1).charCodeAt(0) - 0xAC00;
-export const josa = (w: string, a: string, b: string) => { const c = code(w); return c < 0 || c > 11171 || c % 28 === 0 ? b : a; };
-export const roJosa = (w: string) => { const c = code(w); return c < 0 || c > 11171 || c % 28 === 0 || c % 28 === 8 ? "로" : "으로"; };
+export { FIXHINT } from "../../shared/Tech";
+export { josa, roJosa } from "../../shared/LoadFail";

@@ -1,14 +1,12 @@
 // 구조 카드(옛 itemCard·assetCard·selectChips·decisionChip) — 항목 카드(누르면 서랍) · 판단 문장 카드(아직 안 정함 = 대조, 정한 문장 = 근거 원문).
-import type { KeyboardEvent } from "react";
 import { AiWording } from "../../shared/CandChips";
 import { qNo, reviewHref } from "../../shared/clip";
 import { md } from "../../shared/date";
+import { press } from "../../shared/press";
 import { rich } from "../../shared/rich";
 import type { AppState, Cand, Def, Item } from "../../shared/state";
 import { dataSummary, eventLabel, incomingCounts, linkCount, promoOf, STCHIP, TAB, viewOf } from "./model";
 
-const press = (go: () => void) => ({ tabIndex: 0, role: "button", onClick: go,
-  onKeyDown: (e: KeyboardEvent) => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); go(); } } });
 
 export function SelectChips({ it, d }: { it: Item; d: Def | undefined }) {
   return <>{((d && d.fields) || []).filter(f => f.value_type === "select" && it.data && it.data[f.key] != null && it.data[f.key] !== "").map(f => {

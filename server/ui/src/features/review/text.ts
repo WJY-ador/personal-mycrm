@@ -1,6 +1,6 @@
 // 판단 검토 문구(옛 app.html renderReview·decide 글자 그대로).
-// 옛 쪽에 같은 문구가 남은 것(CONFLICT_TEXT·FIXHINT·WHAT·칩 origin·decision)은 다른 옛 화면이 쓰는 일시 중복 — R5 에서 한쪽만(migrated.json temp_duplicates).
-export const CONFLICT_TEXT = "다른 곳에서 먼저 바뀌었어요. 새로 고침해 다시 봐 주세요.";
+// 충돌 문구·칩·못 읽음 표시는 shared(postErr·CandChips·PartFail) 한 벌.
+export { CONFLICT_TEXT } from "../../shared/postErr";
 export { FIXHINT } from "../../shared/Tech";
 export { NO_QUESTION } from "../../shared/clip";
 

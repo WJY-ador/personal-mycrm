@@ -8,6 +8,12 @@ export function josa(w: string, a: string, b: string): string {
   return c < 0 || c > 11171 || c % 28 === 0 ? b : a;
 }
 
+// 「…으로/로」 — 받침 없거나 ㄹ 받침이면 로(편입 대화창 제목)
+export function roJosa(w: string): string {
+  const c = String(w).slice(-1).charCodeAt(0) - 0xAC00;
+  return c < 0 || c > 11171 || c % 28 === 0 || c % 28 === 8 ? "로" : "으로";
+}
+
 export function LoadFail({ err, what }: { err: ApiError; what: string }) {
   const say = err.code === "NOT-FOUND" ? "찾을 수 없어요. 지워졌을 수 있어요." : err.code === "OFFLINE" ? "서버에 연결하지 못했어요." : "읽는 중에 문제가 생겼어요.";
   return (
