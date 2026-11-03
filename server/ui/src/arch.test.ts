@@ -52,3 +52,13 @@ test("src 에 innerHTML·dangerouslySetInnerHTML 0", () => {
   const hits = Object.entries(all).filter(([p, s]) => p !== "./arch.test.ts" && /innerHTML|dangerouslySetInnerHTML/.test(s)).map(([p]) => p);
   expect(hits).toEqual([]);
 });
+
+// 토큰·이관 본문은 저장하지 않는다(옛 test_web_import·test_migration_screen 정적 절) — 브라우저 저장소 쓰기 = 원문 보기 포트 하나 ·
+// sessionStorage·console 0 · 이관 토큰 경로(/api/migration/ — PC 업로더 몫)는 화면이 부르지 않는다 · 원문 = 127.0.0.1 링크 한 곳(fetch 0)
+test("저장소 쓰기 = 원문 포트 하나 · console·sessionStorage 0 · 이관 토큰 경로 0 · 127.0.0.1 = 링크 한 곳", () => {
+  const src = Object.entries(files);
+  expect(src.flatMap(([p, s]) => [...s.matchAll(/localStorage\.setItem\(([^,]+),/g)].map(m => `${p}:${m[1]}`))).toEqual(["./features/activity/RawBox.tsx:RAW_PORT_KEY"]);
+  expect(src.filter(([, s]) => /sessionStorage|console\.|\/api\/migration\//.test(s)).map(([p]) => p)).toEqual([]);
+  expect(src.filter(([, s]) => s.includes("127.0.0.1")).map(([p]) => p)).toEqual(["./features/activity/RawBox.tsx"]);
+  expect(src.filter(([, s]) => /fetch\([^)]*127\.0\.0\.1/.test(s))).toEqual([]);
+});

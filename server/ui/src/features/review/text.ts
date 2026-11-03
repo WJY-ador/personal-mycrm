@@ -1,7 +1,7 @@
 // 판단 검토 문구(옛 app.html renderReview·decide 글자 그대로). 판단 검토는 옛 탐색(nav=old)에서도 열린다 — 새 탐색 말 / 옛 말 두 벌(옛 TX).
 // 옛 쪽에 같은 문구가 남은 것(CONFLICT_TEXT·FIXHINT·WHAT·칩 origin·decision)은 다른 옛 화면이 쓰는 일시 중복 — R5 에서 한쪽만(migrated.json temp_duplicates).
 export const CONFLICT_TEXT = "다른 곳에서 먼저 바뀌었어요. 새로 고침해 다시 봐 주세요.";
-export const FIXHINT = "새로 고침해도 그대로면 다시 로그인해 보세요.";
+export { FIXHINT } from "../../shared/Tech";
 export const NO_QUESTION = "질문 없음";
 
 export function words(oldNav: boolean) {

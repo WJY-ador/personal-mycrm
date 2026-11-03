@@ -39,9 +39,10 @@ import db  # noqa: E402
 import imports  # noqa: E402
 import main  # noqa: E402
 import web  # noqa: E402
+from test_sample_shape import cmp  # noqa: E402
 
-MAIN, NONAME, INBOX = "wi-main@example.com", "wi-noname@example.com", "wi-inbox@example.com"
-EMAILS = (MAIN, NONAME, "wi-agg@example.com", INBOX)
+MAIN, NONAME, INBOX, SAMPLE = "wi-main@example.com", "wi-noname@example.com", "wi-inbox@example.com", "wi-sample@example.com"
+EMAILS = (MAIN, NONAME, "wi-agg@example.com", INBOX, SAMPLE)
 H = {"origin": PUBLIC}
 
 
@@ -235,18 +236,12 @@ def test_static():
     for m in re.finditer(r"<!--user-->(.*?)<!--/user-->", html, re.S):
         assert "acct-devices" not in m.group(1)
     js = re.search(r"<script>(.*?)</script>", html, re.S).group(1)
-    # 원문: 127.0.0.1 은 링크 한 곳뿐이고 fetch 로 가져오지 않는다(구현계획 §3 — 브라우저→localhost fetch 제외)
-    assert js.count("127.0.0.1") == 1 and re.search(r'href="http://127\.0\.0\.1:\$\{port\}/raw/\$\{id\}"', js), "원문 링크"
-    assert 'rel="noopener noreferrer"' in js and "원문을 보관한 PC에서 열 수 있습니다" in js
-    for call in re.findall(r"fetch\(([^,)]*)", js):
-        assert "127.0.0.1" not in call and "RAW" not in call, call
-    # 토큰: 저장소·주소·흘림 문구에 넣지 않는다. localStorage 에는 원문 포트만 쓴다
-    assert re.findall(r"localStorage\.setItem\(([^,]+),", js) == ["RAW_PORT_KEY"], re.findall(r"localStorage\.setItem\(([^,]+),", js)
-    assert "sessionStorage" not in js and not re.search(r"coreFlash\s*=\s*\{[^}]*token", js) and not re.search(r"location\.hash[^;\n]*token", js)
-    assert "devToken = null; if (S)" in js, "화면을 떠나면 토큰을 지운다(hashchange)"
-    # 「나」 홈 설명 문장(r3 T3) · AI 요약 승인 문구는 서버 문장(inbox_get.approve_notice) 그대로
-    assert "연결된 활동과 내 글을 정해진 계산 규칙으로 보여 줍니다. 활동량을 성격이나 능력으로 해석하지 않습니다. AI가 작성한 설명은 저장 승인 대기에 표시합니다." in js
-    assert "e.approve_notice" in js and "처음 수집한 날" in js and "날짜 미확인" in js
+    # 활동 목록·하나(원문 127.0.0.1 링크·포트)·연결 장치(토큰)는 React(R4) — 원문 링크 한 곳·fetch 0·저장소 = 포트 하나·토큰 미저장은
+    # Vitest(server/ui/src/arch.test.ts·features/activity·devices). 옛 쪽엔 원문 링크·저장소 쓰기·토큰이 없다
+    assert "127.0.0.1" not in js and "localStorage.setItem" not in js and "sessionStorage" not in js
+    assert not re.search(r"coreFlash\s*=\s*\{[^}]*token", js) and not re.search(r"location\.hash[^;\n]*token", js)
+    # AI 요약 승인 문구는 서버 문장(inbox_get.approve_notice) 그대로
+    assert "e.approve_notice" in js and "날짜 미확인" in js
     # AI 생성 정보 — 계약 열거값은 사람 말로(원값 노출 금지), 모르는 값은 「기타」 + 원값
     assert 'method: {ai_summary: "AI 요약"' in js and 'input_scope: {self_only: "내 글만"}' in js and "기타 <span" in js
     # 감사 라벨 — schema.sql admin_audit CHECK 의 모든 action 에 표시 이름
@@ -264,7 +259,7 @@ def test_static():
         assert [ln["target"] for ln in a["links"]] == ["sources"], a["links"]
     finally:
         web.CORE_OBJECTS = saved
-    print("OK — 정적(인라인 1개·메뉴 위치·원문 링크만·토큰 미저장·설명 문장·감사 라벨·활동 코어 정의 숨긴 열) 통과")
+    print("OK — 정적(인라인 1개·메뉴 위치·옛 쪽 원문 링크·저장소·토큰 0·승인 문구·감사 라벨·활동 코어 정의 숨긴 열) 통과")
 
 
 # ── B. 합성 활동 집계 손계산 대조(실제 activity.me_aggregate) ──────────────
@@ -377,6 +372,38 @@ def test_aggregate():
     return True
 
 
+async def test_ui_samples():
+    """API 견본 대조(R4) — React 활동·연결 장치 화면이 읽는 응답의 손 사본 견본과 실제 응답(키 집합·값 타입).
+    ui/src/features/activity/activity.sample.json = /api/activities·/api/activities/{id}·/api/me/aggregate·/api/axes/{id}/context ·
+    ui/src/features/devices/devices.sample.json = /api/devices. TS 쪽은 *.sample.test.ts 의 satisfies(tsc)."""
+    import json
+    uid = db.user_by_email(SAMPLE)["id"]
+    db.display_name_set(uid, "견본")
+    ids, _T = seed_aggregate(uid)
+    imports.device_connect(uid, "견본 장치")
+    ui = HERE / "ui" / "src" / "features"
+    act = json.loads((ui / "activity" / "activity.sample.json").read_text(encoding="utf-8"))
+    dev = json.loads((ui / "devices" / "devices.sample.json").read_text(encoding="utf-8"))
+    site = main.site
+    real = site.dev, site.dev_user
+    try:
+        site.dev, site.dev_user = True, SAMPLE
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url=PUBLIC) as h:
+            got = {"list": (await h.get("/api/activities")).json(), "one": (await h.get(f"/api/activities/{ids['A2']}")).json(),
+                   "agg": (await h.get("/api/me/aggregate", params={"period": "7d"})).json(),
+                   "axis": (await h.get(f"/api/axes/{ids['X1']}/context")).json()}
+            devs = (await h.get("/api/devices")).json()
+    finally:
+        site.dev, site.dev_user = real
+    assert got["list"]["activities"] and got["one"]["versions"] and got["agg"]["by_axis"] and got["axis"]["activities"] and devs["devices"], "견본 대조에 쓸 행"
+    for k in ("list", "one", "agg", "axis"):
+        bad = cmp(act[k], got[k], k, exact=True)
+        assert not bad, (bad, "activity.sample.json·features/activity/actApi.ts·shared/activity.ts 의 타입을 같이 고친다")
+    bad = cmp(dev, devs, "devices", exact=True)
+    assert not bad, (bad, "devices.sample.json·features/devices/devApi.ts 의 타입을 같이 고친다")
+    print("OK — API 견본 대조(활동 목록·하나·현황·축 · 연결 장치 = 견본 키·값 타입) 통과")
+
+
 def add_pending(uid, eid, kind, payload):
     """승인 대기 행 하나(합성 — 장치 접수와 같은 모양의 payload). 입력원은 seed_aggregate 의 is_agg."""
     from psycopg.types.json import Jsonb
@@ -457,6 +484,7 @@ async def run():
         test_static()
         await test_web_layer()
         test_aggregate()
+        await test_ui_samples()
         await test_approve()
     finally:
         cleanup()

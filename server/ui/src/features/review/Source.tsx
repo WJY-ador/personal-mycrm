@@ -9,7 +9,7 @@ import type { Journal } from "../../shared/journal";
 import { Para } from "../../shared/Para";
 import { oldSrc, srcText } from "../../shared/source";
 import type { AppState, Cand } from "../../shared/state";
-import { Tech } from "./Fail";
+import { Tech } from "../../shared/Tech";
 import { FIXHINT, type Words } from "./text";
 import css from "./Review.module.css";
 

@@ -1,0 +1,28 @@
+/* 이관 — 토큰 · plan 목록 · 확인(자료군 표·항목·본문·기준 체크) · 반영 확인 · 영수증. 색은 app.html 전역 CSS 변수 */
+.head { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; min-width: 0; }
+.head b { font-size: .88rem; overflow-wrap: anywhere; }
+.tok .head button { margin-left: auto; }
+.wrap { overflow-x: auto; margin: .4rem 0 1rem; }
+table.tbl { border-collapse: collapse; font-size: .82rem; min-width: 100%; }
+table.tbl caption { text-align: left; margin-bottom: .3rem; }
+table.tbl th, table.tbl td { border-bottom: 1px solid var(--line); padding: .3rem .55rem; text-align: right; white-space: nowrap; }
+table.tbl th:first-child, table.tbl td:first-child { text-align: left; }
+table.tbl thead th { color: var(--muted); font-weight: 500; font-size: .76rem; }
+table.tbl tfoot th, table.tbl tfoot td { font-weight: 600; border-bottom: 0; }
+table.rcpt td { text-align: left; }
+:global(ul.rows) li.item.need { border-color: color-mix(in srgb, var(--warn) 55%, transparent); }
+:global(ul.rows) li.item :global(.frow) { margin-top: .15rem; }
+.chk { display: inline-flex; align-items: center; gap: .35rem; font-size: .84rem; font-weight: 600; }
+.chk input { accent-color: var(--accent); width: 1.05rem; height: 1.05rem; margin: 0; }
+.body { margin-top: .4rem; }
+.body :global(.doc) { padding: .7rem .9rem; }
+.ttl { font-weight: 700; margin: 0 0 .35rem; }
+pre.json { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .72rem; max-height: 22rem; overflow: auto; margin: .3rem 0 0; }
+.mig-insert { color: var(--mine); border-color: color-mix(in srgb, var(--mine) 45%, transparent); background: var(--mine-bg); }
+.mig-warn, .mig-conflict { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); background: var(--warn-bg); }
+.mig-reject { color: var(--fail); border-color: color-mix(in srgb, var(--fail) 45%, transparent); background: var(--fail-bg); }
+.err:not(:empty) { margin: .8rem 0; }
+.chg { margin: .3rem 0; padding-left: 1.1rem; }
+.acts { margin-top: 1rem; }
+ul.sum { margin: 0 0 .8rem; padding-left: 1.1rem; line-height: 1.8; font-size: .88rem; }
+.dlg { width: min(520px, calc(100vw - 32px)); }

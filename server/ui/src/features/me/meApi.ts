@@ -2,6 +2,7 @@
 // 견본 대조 = me.sample.json(stats·layout·journal) ↔ server/test_web_home.py test_me_samples.
 import { getJSON, postJSON } from "../../shared/api";
 import { candidateDecide, fetchJournal, type CandDecide } from "../../shared/journal";
+import type { Act } from "../../shared/activity";
 import type { Rec } from "../../shared/state";
 
 export type { Journal } from "../../shared/journal";
@@ -16,11 +17,7 @@ export type Slot = { c: string; p: Record<string, unknown> };
 export type MePage = { tabs: string[]; regions: Record<string, Slot[]> };
 export type Layout = { layout: { v: number; pages: { me: MePage } }; version: number };
 export type BodyPreview = { record_id: string; revision: number; before: string; after: string; drop: number; msg: string };
-export type Act = {
-  id: string; action: string; action_label?: string; occurred_on: string | null; observed_on?: string | null; state?: string;
-  source?: { id: string; name: string } | null; people?: { id: string; alias: string; role?: string }[];
-  axes?: { id: string; title: string | null }[]; memo_count?: number;
-};
+export type { Act } from "../../shared/activity";
 export type PersonCtx = { activities: Act[]; activity_count: number; records: { id: string; title: string | null }[];
   items: { id: string; object_id: string; title: string | null; field_key: string }[] };
 export type AxisCtx = { activities: Act[]; activity_count: number };

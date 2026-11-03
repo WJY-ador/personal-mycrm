@@ -8,7 +8,7 @@ A. 플래그 CRM_DOWNLOAD_PUBLIC 꺼짐(없음·"0"·"true") → 「준비 중�
 B. 켜짐("1") → 직링크 3개(고정 이름)·releases/latest 링크 1개·경고 절차 본문 없음·설치 뒤 3단계.
 C. UA 판정 — Mac UA = Mac 칸 먼저·강조, Windows UA = Windows 칸 먼저·강조, iPhone·Android·빈 UA = 같은 비중(Windows 먼저).
 D. 비로그인 200 · 로그인이면 「대시보드로」 · CSP 헤더 = CSP_BASE · 인라인 스크립트 0 · no-store.
-E. 정적 — start.html 하단에 /download 링크 · app.html renderDevices 안에 /download 링크.
+E. 정적 — start.html 하단에 /download 링크(「연결 장치」 화면의 링크 하나는 React — Vitest features/devices/DevicesScreen.test.tsx).
 """
 import asyncio
 import os
@@ -159,12 +159,8 @@ def test_static():
     foot = start[start.index('<footer class="foot">'):start.index("</footer>")]
     assert foot.count('<a href="/download">PC 앱 설치</a>') == 1, "start.html 하단 링크(플래그와 무관)"
     assert start.count('href="/download"') == 1
-    app = (HERE / "app.html").read_text(encoding="utf-8")
-    i = app.index("function renderDevices() {")
-    body = app[i:app.index("\nfunction ", i + 1)]
-    assert body.count('<a href="/download">PC 앱 설치</a>') == 1, "「연결 장치」 화면 링크"
-    assert app.count('href="/download"') == 1
-    print("OK — E 정적(start.html 하단 · app.html renderDevices 에 /download 링크 하나씩)")
+    assert 'href="/download"' not in (HERE / "app.html").read_text(encoding="utf-8"), "「연결 장치」 화면 = React(옛 쪽 링크 0)"
+    print("OK — E 정적(start.html 하단 /download 링크 하나 · 옛 app.html 0 — 연결 장치 화면 링크는 Vitest)")
 
 
 async def run():
