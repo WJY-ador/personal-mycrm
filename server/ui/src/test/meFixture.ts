@@ -7,7 +7,7 @@ const item = (id: string, object_id: string, title: string, o: object = {}) => (
 
 export function meState(o: object = {}) {
   return {
-    user: { display_name: "원", nav: "new" }, switches: { trash: true },
+    user: { display_name: "홍길동", nav: "new" }, switches: { trash: true },
     journal: [{ id: "r1", title: "도입 메모", excerpt: "도입 회의", created: T("11-01"), source: null, source_id: "s1", question_id: "q1", source_date: null, author_kind: "self" }],
     journal_next_before: null,
     questions: [{ id: "q1", text: "순서는?", created: T("10-02") }],

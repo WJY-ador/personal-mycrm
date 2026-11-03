@@ -16,7 +16,7 @@ beforeEach(() => {
 });
 afterEach(() => { hideMe(); vi.unstubAllGlobals(); });
 const posts = () => calls.filter(c => c.method === "POST");
-const S = (trash: boolean, nav = "new", items: unknown[] = meState().items) => meState({ switches: { trash }, user: { display_name: "원", nav }, items });
+const S = (trash: boolean, nav = "new", items: unknown[] = meState().items) => meState({ switches: { trash }, user: { display_name: "홍길동", nav }, items });
 const withDecision = (d: string): unknown[] => meState().items.map(it => (it.id === "p1" ? { ...it, decision: d } : it));
 
 test("휴지통 꺼짐(또는 옛 탐색) — 기준 = 옛 버튼(글자만 「반영 안 함」) · [삭제] 0", async () => {
