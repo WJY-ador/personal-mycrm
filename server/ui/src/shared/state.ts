@@ -35,7 +35,7 @@ export type Tab = { id: string; label: string; blocks: string[] };
 export type StructObj = { id: string; key: string; label: string; origin: string };
 
 export type AppState = {
-  user: { display_name: string | null; nav: string };
+  user: { display_name: string | null; nav: string; admin?: boolean };   // admin = 관리자일 때만 true(서버 Q1 strip 과 같은 조건)
   switches: { trash: boolean; converse?: boolean };
   read?: Record<string, { ok: boolean; error?: { code: string; msg: string } }>;   // 부분 읽기 실패 때만 온다
   stack_session?: StackSession | null;

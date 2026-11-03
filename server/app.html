@@ -471,10 +471,7 @@ dialog .db { padding: .9rem 1.2rem; max-height: 72vh; overflow: auto; }
 .fok { color: var(--accent); font-weight: 600; font-size: .82rem; margin: 0 0 .8rem; }
 .fok.bad { color: var(--fail); }
 .fnote { font-size: .8rem; color: var(--ink); background: var(--warn-bg); border-radius: 6px; padding: .4rem .6rem; margin: 0; }
-.namegate { max-width: 640px; }
-.namegate .after { margin-top: 1.2rem; padding-top: .8rem; border-top: 1px solid var(--line); font-size: .8rem; color: var(--muted);
-  display: flex; gap: .4rem .9rem; flex-wrap: wrap; align-items: center; }
-#name-dlg .acts, #leave-dlg .acts { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: .8rem; }
+#leave-dlg .acts { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: .8rem; }
 .melinks { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 .4rem; }
 .melinks .n { font-family: var(--mono); font-size: .7rem; color: var(--muted); }
 .mini { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .35rem; font-size: .84rem; }
@@ -598,6 +595,7 @@ button.mmore { margin-top: .3rem; padding-left: .4rem; padding-right: .4rem; }
 <main id="view" class="wrap"></main>
 <footer class="wrap foot"><span id="foot"></span> · <a href="/help">도움말</a> · <a href="/privacy">개인정보 처리방침</a></footer>
 <div id="ui-chat"></div>
+<div id="ui-namedlg"></div>
 <!--user--><dialog id="desk-dlg" aria-labelledby="desk-dlg-title"><div class="dh"><b id="desk-dlg-title">문의</b>
   <button class="small" type="button" id="desk-dlg-close">닫기</button></div><div class="db">
   <form id="desk-form" novalidate>
@@ -633,16 +631,6 @@ button.mmore { margin-top: .3rem; padding-left: .4rem; padding-right: .4rem; }
   <p class="hint">label 은 계속 바꿀 수 있고, 필드·선택지는 더할 수 있어요. 편입한 뒤엔 보류·거절로 되돌릴 수 없어요.</p>
   <label class="stdok"><input type="checkbox" id="std-dlg-ok"> <span id="std-dlg-oktext"></span></label>
   <div class="acts"><button class="primary" type="button" id="std-dlg-go" disabled>편입하기</button><button class="tertiary" type="button" id="std-dlg-cancel">취소</button></div>
-</div></dialog>
-<dialog id="name-dlg" aria-labelledby="name-dlg-title"><div class="dh"><b id="name-dlg-title">표시 이름 바꾸기</b>
-  <button class="small" type="button" id="name-dlg-close">닫기</button></div><div class="db">
-  <form class="fform" id="name-dlg-form" data-form="name" novalidate>
-    <label for="name-dlg-input">표시 이름</label>
-    <input class="finput" id="name-dlg-input" name="display_name" type="text" autocomplete="nickname" aria-describedby="name-dlg-help">
-    <p class="hint" id="name-dlg-help">실명이 아니어도 돼요. 다른 사람에게 보이지 않고 운영자 화면에도 나오지 않아요.</p>
-    <div class="acts"><button class="primary" type="submit">저장</button><button class="tertiary" type="button" id="name-dlg-cancel">취소</button></div>
-    <p class="ferr" role="alert" aria-atomic="true"></p>
-  </form>
 </div></dialog>
 <dialog id="leave-dlg" aria-labelledby="leave-dlg-title" aria-describedby="leave-dlg-lead"><div class="dh"><b id="leave-dlg-title">저장하지 않은 변경이 있어요</b></div><div class="db">
   <p id="leave-dlg-lead">이 화면을 떠나면 고친 내용이 사라져요.</p>
@@ -806,7 +794,20 @@ const lastView = {};   // 탭마다 마지막으로 본 화면(대조에서 돌�
 function render() {
   queueMicrotask(uiSweep);   // 이번 렌더가 다른 화면으로 #view 를 덮었으면(조기 return 포함) 끝난 뒤 React 섬을 내린다
   document.body.classList.remove("navnew-screen");
-  if (needName()) return renderNameGate();
+  if (needName()) {   // 이름 관문(React features/name) — 탭·대화 서랍·띠 없음. 이름을 정하면 다시 그린다. 로그아웃·처리방침·문의 보내기는 그대로
+    $("nav-tabs").innerHTML = "";
+    uiDrop("chat");
+    subnav("");
+    $("bands").innerHTML = "";
+    $("who").textContent = $("who").title = S.user.email || "";
+    acctApply();
+    const now = new Date();
+    $("date").textContent = `${now.getMonth() + 1}월 ${now.getDate()}일 ${DOW[now.getDay()]}요일`;
+    $("axistop").hidden = true;
+    $("legend").innerHTML = "";
+    $("foot").textContent = "표시 이름을 정하면 대시보드가 열려요.";
+    return uiMount("name");
+  }
   const R = route();
   { const to = navReplace(R); if (to) { location.replace(to); return; } }   // 옛 묶음 링크(자료 종류·내 구조 설정·연결 장치·지도·승인 대기·오늘·항목 보기) → 새 자리
   const tabs = tabsList();
@@ -869,7 +870,7 @@ function uiMount(name, args) {
   if (!el) { $("view").innerHTML = `<div id="ui-${esc(name)}"></div>`; el = $("ui-" + name); }
   if (uiOn && uiOn !== name) uiDrop(uiOn);   // #view 의 화면은 하나 — 앞 화면(이미 덮였다)을 내린다
   uiOn = name;
-  const ctx = {reload: load, state: S, args: args || [], setDirty: at => { uiDirty = at; }, flash: coreFlash};   // flash = 결과 한 줄 — 그 화면 머리에 한 번
+  const ctx = {reload: load, state: S, args: args || [], setDirty: at => { uiDirty = at; }, flash: coreFlash, done: coreDone};   // flash = 결과 한 줄 — 그 화면 머리에 한 번
   const how = uiIsland(name, el, ctx);
   if (how) coreFlash = null;
   if (how === "pending") el.innerHTML = LOADING;
@@ -1699,39 +1700,10 @@ async function openRec(id, quote) {
 // 「…으로/로 돌아가기」(판단 검토 돌아가기 문구 · 편입 대화창) — 받침 없거나 ㄹ 받침이면 「로」. 판단 검토 화면 = React(server/ui/src/features/review, R3)
 function roJosa(w) { const c = String(w).slice(-1).charCodeAt(0) - 0xAC00; return c < 0 || c > 11171 || c % 28 === 0 || c % 28 === 8 ? "로" : "으로"; }
 
-// ── 표시 이름 (PR B) — user.display_name 이 비면 다른 화면 대신 입력 화면. 건너뛰기 없음. 로그아웃·처리방침·문의 보내기는 그대로 ──
-const NAME_HELP = "실명이 아니어도 돼요. 다른 사람에게 보이지 않고 운영자 화면에도 나오지 않아요.";
-function renderNameGate() {
-  $("nav-tabs").innerHTML = "";
-  uiDrop("chat");   // 이름 입력 화면 = 탭·대화 서랍 없음(이름을 정하면 render 가 다시 띄운다)
-  subnav("");
-  $("bands").innerHTML = "";
-  $("who").textContent = S.user && S.user.email ? S.user.email : "";
-  $("who").title = S.user && S.user.email ? S.user.email : "";
-  acctApply();
-  const now = new Date();
-  $("date").textContent = `${now.getMonth() + 1}월 ${now.getDate()}일 ${DOW[now.getDay()]}요일`;
-  $("axistop").hidden = true;
-  $("legend").innerHTML = "";
-  $("foot").textContent = "표시 이름을 정하면 대시보드가 열려요.";
-  $("view").innerHTML = `<div class="paper namegate"><div class="eyebrow">처음 한 번</div><h2 class="title">표시 이름을 정해 주세요</h2>
-    <form class="fform" id="name-gate-form" data-form="name" novalidate>
-      <label for="name-gate-input">표시 이름</label>
-      <input class="finput" id="name-gate-input" name="display_name" type="text" autocomplete="nickname" aria-describedby="name-gate-help">
-      <p class="hint" id="name-gate-help">${esc(NAME_HELP)}</p>
-      <div class="frow"><button class="primary" type="submit">저장하고 시작하기</button></div>
-      <p class="ferr" role="alert" aria-atomic="true"></p>
-    </form>
-    <div class="after"><a href="/privacy">개인정보 처리방침</a>${$("desk-dlg") ? `<button class="tertiary" type="button" data-open="send">문의 보내기</button>` : ""}
-      <button class="tertiary" type="button" data-open="logout">로그아웃</button></div></div>`;
-  $("name-gate-input").focus();
-}
-function nameOpen() {
-  $("name-dlg-input").value = (S.user && S.user.display_name) || "";
-  $("name-dlg-form").querySelector(".ferr").textContent = "";
-  $("name-dlg").showModal();
-  $("name-dlg-input").focus();
-}
+// ── 대화창 섬(React) — 「표시 이름 바꾸기」(#ui-namedlg, 모든 역할 · features/name)·문의(#ui-desk, 관리자 응답엔 자리 없음).
+// 열 때마다 새 ctx(args[0] = 어디로) — 그 대화창이 받아 연다. done = 결과 한 줄 + 상태 다시 받기(이름 관문·「나」 머리가 보여 준다)
+const dlgCtx = where => ({reload: load, state: S, args: [where], done: coreDone});
+const nameDlg = () => uiIsland("namedlg", $("ui-namedlg"), dlgCtx("open"));
 
 // ── 코어 쓰기 공통 (PR B) — 세션 + Origin(브라우저가 붙인다). 403 NAME-REQUIRED·400 CONFLICT·404 NOT-FOUND 는 다시 불러온다 ──
 const CORE_ERR = {
@@ -1766,21 +1738,6 @@ async function coreDone(text, hash) {
   coreFlash = {text};
   if (hash != null) history.replaceState(null, "", hash);
   await load();
-}
-const fval = (f, n) => (f.elements[n] ? f.elements[n].value : "");
-async function coreSubmit(f) {   // 표시 이름(이름 관문·계정 메뉴 대화창). 사람·출처·읽고 든 생각·승인 대기 쓰기는 React(features/objects·today)
-  if (f.dataset.form !== "name") return;
-  const err = f.querySelector(".ferr"), btns = f.querySelectorAll("button");
-  if (err) err.textContent = "";
-  const body = {display_name: fval(f, "display_name")};
-  if (!String(body.display_name || "").trim()) { if (err) err.textContent = "표시 이름을 적어 주세요."; return; }   // 빈 값만 여기서 막는다(길이 규칙은 서버 문구 그대로)
-  btns.forEach(b => { b.disabled = true; });
-  const res = await corePost("/api/me/name", body);
-  btns.forEach(b => { b.disabled = false; });
-  if (!res) return;
-  if (!res.ok) return coreFail(res, err);
-  if ($("name-dlg").open) $("name-dlg").close();
-  return coreDone("표시 이름을 저장했어요.");
 }
 
 // ── 「나」 홈 (PR B) — 표시 이름 · 개수(서버 me.counts) · 최근 목록 · 진입 · 출처별 탭. 성향 문장·자동 요약 없음 ──
@@ -1896,12 +1853,6 @@ document.addEventListener("click", e => {
 const LOADING = `<p class="hint">불러오는 중이에요…</p>`;
 
 // ── 이벤트 ───────────────────────────────────────────
-document.addEventListener("submit", e => {
-  const f = e.target.closest("form[data-form]");
-  if (!f) return;
-  e.preventDefault();
-  coreSubmit(f);
-});
 window.addEventListener("beforeunload", e => { if (uiDirty) { e.preventDefault(); e.returnValue = ""; } });   // 새로 고침·닫기 — 옮긴 화면에서 고치던 글
 document.addEventListener("click", e => {
   const op = e.target.closest("[data-open]");
@@ -1941,8 +1892,6 @@ $("std-dlg-go").addEventListener("click", () => {
   $("std-dlg").close();
   stdChoose(o, "incorporated");
 });
-$("name-dlg-close").addEventListener("click", () => $("name-dlg").close());
-$("name-dlg-cancel").addEventListener("click", () => $("name-dlg").close());
 // 미저장 보호 — 링크·탭·뒤로 가기 모두 hashchange 로 온다. 옮긴 화면(React)에 고친 글이 있으면 주소를 편집 자리로 되돌리고 묻는다
 function uiLeaveGuard() {
   if (!uiDirty || location.hash === uiDirty) return false;
@@ -1996,7 +1945,7 @@ $("acct-menu").addEventListener("click", async e => {
   if (act === "logout") return;   // 로그아웃은 $("logout").onclick
   if (act === "name" || act === "settings" || act === "devices" || act === "inbox") {
     acctClose();
-    if (act === "name") nameOpen();
+    if (act === "name") nameDlg();
     else if (act === "devices") location.hash = "#_devices";
     else if (act === "inbox") location.hash = "#_inbox";
     else location.hash = "#_settings/structure";

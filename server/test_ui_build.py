@@ -100,7 +100,7 @@ def test_bridge_old_side():
     bridge = JS[a:JS.index("\n}\n", b) + 3]
     m = re.search(r"function applyState\(next\) \{.*?\n\}\n", JS, re.S).group(0)
     stub = """const esc = s => String(s); const LOADING = "LOADING"; const load = async () => true; let S = null, loadedAt = "";
-const recCache = {r1: 1}; let coreFlash = {text: "결과"}; const mdhm = () => ""; let renders = 0; const render = () => { renders++; };
+const recCache = {r1: 1}; let coreFlash = {text: "결과"}; const coreDone = async () => {}; const mdhm = () => ""; let renders = 0; const render = () => { renders++; };
 const nodes = {}; let made = 0;
 const view = {set innerHTML(h) { for (const k of Object.keys(nodes)) delete nodes[k]; const m = /id="([^"]+)"/.exec(h); if (m) { made++; nodes[m[1]] = {id: m[1], innerHTML: ""}; } }};
 const $ = id => id === "view" ? view : nodes[id] || null;

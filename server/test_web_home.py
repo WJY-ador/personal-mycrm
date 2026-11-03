@@ -453,9 +453,8 @@ def test_static_moved():
 
     # A5 24h 화면 — 플래그 0 · 이름 관문·새 경로·탭 · 안내 문구 · 재검토 표시 · 이름 대화창(구간 밖) · 메뉴 · 옛 탐색 0(R5a)
     assert "FEATURE-OFF" not in html, "플래그 제거 — 화면에도 FEATURE-OFF 0"
-    for w in ('if (needName()) return renderNameGate();', 'data-form="name"',
-              "실명이 아니어도 돼요. 다른 사람에게 보이지 않고 운영자 화면에도 나오지 않아요.",
-              '"/api/me/name"',
+    # 이름 관문·「표시 이름 바꾸기」 폼·문구·/api/me/name = React(features/name, R5b-2a) — Vitest Name.test.tsx. 옛 쪽은 관문 분기·대화창 섬 자리만
+    for w in ('if (needName()) {', 'return uiMount("name");', 'uiIsland("namedlg", $("ui-namedlg"), dlgCtx("open"))',
               'id: "_me"', 'id: "_obj"', 'id: "_settings"',
               "const tabsList = () => [NAVTAB._me, NAVTAB._today];",   # PR ①-b 탭: 나 · 오늘 · Setup(톱니)
               'if (R.tab === "_settings") return "#_setup/structure";', "function axisChips", "삭제 완료"):
@@ -467,7 +466,7 @@ def test_static_moved():
     assert re.search(r"REFL_HELP\s*=\s*\"출처를 접한 뒤 내가 한 생각만 적어요\. 다른 사람의 말·경험·생각을 옮기는 곳이 아니에요\.\"", otext)
     assert re.search(r"PERSON_HELP\s*=\s*\"별칭도 그 사람을 알아볼 수 있으면 개인정보예요\.\"", otext)
     assert html.count("${reviewNote(c)}") >= 1, "기록 화면 재검토 표시(판단 검토 화면 = React shared/ReviewNote, R3)"
-    outside_marks(html.index('<dialog id="name-dlg"'), "name-dlg")
+    outside_marks(html.index('<div id="ui-namedlg"></div>'), "ui-namedlg")   # 관리자도 쓰는 대화창 섬 — 구간 표식 밖
     menu = html[html.index('id="acct-menu"'):html.index("</details>")]
     for a in ("name", "settings"):
         assert f'data-acct="{a}"' in menu, a
