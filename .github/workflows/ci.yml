@@ -56,9 +56,25 @@ jobs:
           cache: pip
           cache-dependency-path: server/requirements.txt
 
+      # Render 빌드와 같은 node(server/render.yaml NODE_VERSION) — 바꿀 때 두 곳을 같이
       - uses: actions/setup-node@v5
         with:
-          node-version: "22"
+          node-version: "24.22.1"
+          cache: npm
+          cache-dependency-path: server/ui/package-lock.json
+
+      # React 화면 묶음(server/ui, 2026-11-03 R1) — 서버 시험보다 먼저 빌드한다(test_ui_build.py 가 dist/.vite/manifest.json 을 읽는다)
+      - name: "UI 의존성 (npm ci)"
+        run: npm ci --prefix server/ui
+
+      - name: "UI 빌드 (vite build)"
+        run: npm run build --prefix server/ui
+
+      - name: "UI 타입 검사 (tsc --noEmit)"
+        run: npm run typecheck --prefix server/ui
+
+      - name: "UI 시험 (vitest — 화면·arch·견본 타입)"
+        run: npm test --prefix server/ui
 
       - name: Install server dependencies
         run: pip install -r server/requirements.txt
@@ -66,6 +82,7 @@ jobs:
       - name: "① Python 문법 (py_compile)"
         run: python -m py_compile server/*.py
 
+      # 옛 화면(app.html 인라인 <script> 한 덩이)만 본다 — React 쪽은 tsc·vite build 가 본다. R5(app.html 삭제)에서 이 단계를 지운다
       - name: "② JS 문법 (app.html <script>)"
         run: |
           set -eo pipefail
@@ -241,6 +258,19 @@ jobs:
               c.execute("CREATE DATABASE crm_test_record_edit")
           PY
           python server/test_record_edit.py
+
+      # React 화면 묶음(2026-11-03 R1) — manifest 허용 목록 서빙·/app 진입 태그·CSP 인라인 수·manifest 없음·래칫·옛 쪽 다리(node).
+      # 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
+      - name: "④-m React 화면 묶음 시험 (test_ui_build.py)"
+        env:
+          DATABASE_URL: postgresql://postgres:crm@localhost:5432/crm_test_ui
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:crm@localhost:5432/crm", autocommit=True) as c:
+              c.execute("CREATE DATABASE crm_test_ui")
+          PY
+          python server/test_ui_build.py
 
       # board 이전(2026-10-20) — 로컬 에이전트(agent/, 표준 라이브러리만). 서버 DB 를 쓰지 않는다
       - name: "④-b 로컬 에이전트 시험 (agent/tests)"

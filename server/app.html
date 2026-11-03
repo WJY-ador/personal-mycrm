@@ -621,12 +621,6 @@ button.hval:focus-visible { outline: 2px solid var(--accent); outline-offset: 2p
 button.hval.hname { display: inline-block; width: auto; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .hdetail button.hval.hbody { margin: .6rem -.35rem 0; }
 .hacts { display: flex; flex-wrap: wrap; gap: .4rem; margin: .8rem 0 .2rem; }
-/* 휴지통 (trash PR-1) — 행 = 종류·제목·시각 + [복원]·[영구 삭제]. 좁은 폭은 버튼이 아래 줄로(잘리지 않게) */
-ul.trash { list-style: none; margin: .6rem 0 0; padding: 0; display: flex; flex-direction: column; gap: .5rem; }
-.trow { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .3rem .8rem; padding: .6rem .7rem; border: 1px solid var(--line); border-radius: 8px; }
-.trow .tmain { flex: 1 1 16rem; min-width: 0; overflow-wrap: anywhere; }
-.trow .recmeta { margin: .25rem 0 0; }
-.trow .hacts { margin: 0; }
 .hdetail .ferr, .hdetail .fok { margin: .3rem 0 0; }
 .heditor { margin: .6rem 0 0; }
 .heditor label { display: block; font-size: .76rem; color: var(--muted); margin-bottom: .25rem; }
@@ -918,6 +912,7 @@ body.chat-open { padding-right: 380px; }
 }
 @media (prefers-reduced-motion: reduce) { button, .btn, .asset-card { transition: none; } }
 </style>
+<!--{{ui}}-->
 </head>
 <body>
 <header class="mast"><div class="wrap">
@@ -1112,6 +1107,7 @@ function applyState(next) {
   meRec.extra = []; meRec.next = undefined; meRec.err = "";   // 이어 받은 기록 — 새 상태(S.journal·첫 커서)부터 다시
   loadedAt = mdhm(S.generated);
   render();
+  window.dispatchEvent(new Event("crm:state"));   // React 섬 — 새 상태마다 서버 조회를 다시 받는다
 }
 async function load() {
   let next;
@@ -1192,6 +1188,7 @@ const lastView = {};   // 탭마다 마지막으로 본 화면(대조에서 돌�
 
 function render() {
   renderSeq++;   // 늦게 온 화면 조각 응답이 다른 화면을 덮지 않게(fill)
+  queueMicrotask(uiSweep);   // 이번 렌더가 다른 화면으로 #view 를 덮었으면(조기 return 포함) 끝난 뒤 React 섬을 내린다
   document.body.classList.remove("navnew-screen");
   if (needName()) return renderNameGate();
   const R = route();
@@ -1243,6 +1240,25 @@ function render() {
   coreFlashShow();
 }
 let setupAt = "layout";
+// ── React 섬(R1~R5 다리) — 옮긴 화면(server/ui, 목록 = server/ui/migrated.json)은 #ui-<이름> 자리에 CrmUI.mount 로 띄운다.
+// 같은 화면에 다시 오면 자리를 그대로 두고 새 ctx 로 다시 그린다(화면 안 문구·더 받은 쪽 유지). 모듈이 아직이면 자리를 맡겨 두고(main.tsx 가 띄움),
+// 빌드가 없으면(<script type="module"> 없음) 한 줄 안내. R5 에서 다리째 지운다.
+let uiOn = "";
+function uiMount(name) {
+  let el = $("ui-" + name);
+  if (!el) { $("view").innerHTML = `<div id="ui-${esc(name)}"></div>`; el = $("ui-" + name); }
+  uiOn = name;
+  const ctx = {reload: load};
+  if (window.CrmUI) return window.CrmUI.mount(name, el, ctx);
+  if (document.querySelector('script[type="module"]')) { window.CrmUIPending = [name, el, ctx]; el.innerHTML = LOADING; return; }
+  el.innerHTML = `<div class="paper"><p class="hint">이 화면 파일이 서버에 없어요. 새로 고침해도 그대로면 운영자에게 알려 주세요.</p></div>`;
+}
+function uiSweep() {
+  if (!uiOn || $("ui-" + uiOn)) return;
+  if (window.CrmUI) window.CrmUI.unmount(uiOn);
+  window.CrmUIPending = undefined;
+  uiOn = "";
+}
 function subnav(html, label) {
   const n = $("subnav");
   n.innerHTML = html ? `<div class="wrap">${html}</div>` : "";
@@ -3263,7 +3279,7 @@ function renderSetup(tab, R) {
   else if (page === "objects") renderObjects(tab, R.b, R.c, R.d);
   else if (page === "devices") renderDevices();
   else if (page === "map") renderMap(BASE.map);
-  else if (page === "trash") renderTrash();
+  else if (page === "trash") uiMount("trash");
   else if (page === "migration") renderMigration(R.b);
   else renderSetupHelp();
   return page;
@@ -3413,20 +3429,12 @@ document.addEventListener("click", e => {
 // ── /Setup ──
 // ── 휴지통 (trash PR-1) — 스위치 S.switches.trash 켜짐 + 새 탐색일 때만: 상세의 [삭제] → 휴지통 · Setup 「휴지통」 페이지([복원]·[영구 삭제]).
 // 꺼짐 = 버튼·페이지 0, 기존 동작(사람·생각 즉시 삭제 · 기준 [반영 안 함]·[되돌리기]) 그대로. 휴지통 대상을 일반 화면에서 숨기는 일은 서버 몫(화면은 거르지 않는다).
-// 서버 접점은 trashApi 한 곳. 복원 기한은 서버 값(restore_until)을 그대로 보이고, 지난 행은 서버가 목록에서 뺀다. 「영구 삭제 처리 중」 같은 화면 상태는 없다.
+// 여기 남은 것 = 스위치·상세 [삭제](이동, 서버 접점 trashApi.del). Setup 「휴지통」 페이지는 React(server/ui/src/features/trash, R1 2026-11-03).
 const trashOn = () => !!(S && S.switches && S.switches.trash) && navNew();
-const TRASH_KIND = {record: "내 글", item: "항목", activity: "활동", person: "사람", reflection: "읽고 든 생각"};
 const TRASH_ASK = "삭제하면 휴지통으로 이동해요. 삭제 시각부터 168시간 동안 복원할 수 있고, 이후 서버 정리 때 영구 삭제돼요.";
-const TRASH_NOTE = "복원 기한이 지나면 목록에서 사라지고 복원할 수 없어요. 본문은 이후 서버 정리 때 삭제돼요.";
-const TRASH_PURGE_ASK = "지금부터 복원할 수 없어요. 본문은 서버 정리 때 영구 삭제돼요.";
-const TRASH_PURGED = "영구 삭제를 요청했어요. 이제 복원할 수 없어요.";
 const TRASH_EXPIRED = "복원 기간이 끝났어요.";
-const TRASH_EMPTY = "휴지통이 비어 있어요.";
-const trashApi = {
-  list: cursor => getJSON("/api/trash" + (cursor ? "?cursor=" + encodeURIComponent(cursor) : "")),   // {items, next_cursor} — 기한 지난 행은 서버가 뺀다
+const trashApi = {   // 목록·복원·영구 삭제는 Setup 「휴지통」(React, server/ui/src/features/trash)이 부른다
   del: (kind, id, rev) => corePost("/api/trash/move", Object.assign({kind, id}, rev != null && rev !== "" ? {expected_revision: Number(rev)} : {})),
-  restore: (kind, id) => corePost("/api/trash/restore", {kind, id}),
-  purge: (kind, id) => corePost("/api/trash/purge", {kind, id}),
 };
 // 상세의 [삭제] — 켜짐일 때만 그린다(꺼짐 = 빈 문자열). back = 삭제 뒤 갈 주소(지금 상세는 더 열리지 않는다)
 const trashBtn = (kind, id, rev, back) => trashOn() ? `<button class="secondary" type="button" data-trash="${esc(kind)}" data-id="${esc(id)}"${rev != null ? ` data-rev="${esc(rev)}"` : ""} data-back="${esc(back || "")}">삭제</button>` : "";
@@ -3452,70 +3460,10 @@ async function trashDel(b) {
   }
   return coreFail(res, err);
 }
-// Setup 「휴지통」 — 행 = 종류 · 제목 또는 별칭 · 삭제 시각 · 복원 가능 기한. 새 상태(S)를 받으면 목록도 다시 받는다
-const TRASH = {st: null, busy: false, rows: null, next: null, more: false, err: "", msg: "", bad: false};
-async function trashLoad() {
-  if (TRASH.busy) return;
-  TRASH.busy = true;
-  const st = S, res = await trashApi.list();
-  TRASH.busy = false;
-  const here = route().tab === "_setup" && route().a === "trash";
-  if (!res) return;
-  if (S !== st) { if (here) renderTrash(); return; }   // 그사이 새 상태 — 그 상태 기준으로 다시 받는다
-  TRASH.st = st;
-  TRASH.rows = res.ok ? res.j.items || [] : null; TRASH.next = res.ok ? res.j.next_cursor || null : null;
-  TRASH.err = res.ok ? "" : res.code === "OFFLINE" ? WHAT.OFFLINE : "휴지통을 불러오지 못했어요. 새로 고침해 주세요.";
-  if (here) renderTrash();
-}
-async function trashMore() {   // [더 보기] — 서버 커서 그대로 이어 받는다
-  if (!TRASH.next || TRASH.more) return;
-  TRASH.more = true; renderTrash();
-  const st = S, res = await trashApi.list(TRASH.next);
-  TRASH.more = false;
-  if (!res || S !== st) return;
-  if (res.ok) { TRASH.rows = TRASH.rows.concat(res.j.items || []); TRASH.next = res.j.next_cursor || null; }
-  else { TRASH.msg = "더 불러오지 못했어요. 다시 눌러 주세요."; TRASH.bad = true; }
-  if (route().tab === "_setup" && route().a === "trash") renderTrash();
-}
-function trashRow(x) {
-  const key = `data-kind="${esc(x.kind)}" data-id="${esc(x.id)}"`;
-  return `<li class="trow"><div class="tmain"><span class="chip">${esc(x.object_label || TRASH_KIND[x.kind] || x.kind)}</span> <b>${esc(x.title || "(제목 없음)")}</b>
-    <p class="recmeta">${esc(mdhm(x.trashed_at))} 삭제 · 복원 가능 기한 ${esc(mdhm(x.purge_at))}</p></div>
-    <div class="hacts" role="group" aria-label="휴지통 동작"><button class="primary" type="button" data-trash-restore ${key}>복원</button>
-      <button class="secondary" type="button" data-trash-purge ${key}>영구 삭제</button></div></li>`;
-}
-function renderTrash() {
-  if (TRASH.st !== S) trashLoad();
-  const rows = TRASH.rows;
-  const body = TRASH.err ? `<div class="empty">${esc(TRASH.err)}</div>` : !rows ? LOADING
-    : rows.length ? `<ul class="trash">${rows.map(trashRow).join("")}</ul>${TRASH.next ? `<button class="secondary more" type="button" data-trash-more${TRASH.more ? " disabled" : ""}>${TRASH.more ? "불러오는 중이에요…" : "더 보기"}</button>` : ""}`
-    : `<div class="empty">${TRASH_EMPTY}</div>`;
-  $("view").innerHTML = `<div class="paper sheet"><h2 class="title">휴지통</h2>
-    <p class="hint">${TRASH_NOTE}</p><p class="${TRASH.bad ? "ferr" : "fok"}" id="trash-msg" role="status" aria-atomic="true">${esc(TRASH.msg)}</p>${body}</div>`;
-}
-async function trashDo(b, act) {
-  const kind = b.dataset.kind, id = b.dataset.id;
-  if (act === "purge" && !window.confirm(TRASH_PURGE_ASK)) return;
-  TRASH.msg = ""; TRASH.bad = false;
-  document.querySelectorAll("button[data-trash-restore], button[data-trash-purge]").forEach(x => { x.disabled = true; });
-  const res = await trashApi[act](kind, id);
-  if (!res) return;
-  if (res.ok) {
-    TRASH.msg = act === "purge" ? TRASH_PURGED : "복원했어요.";   // 관계 일부 미복구 안내 = 서버 응답 필드 확정 뒤(core)
-  } else { TRASH.msg = trashErrText(res); TRASH.bad = true; }
-  await load();   // 상태(일반 화면) + 휴지통 목록을 다시 받는다 — 기한이 지난 행은 서버가 뺀다
-}
 document.addEventListener("click", e => {
   const t = e.target.closest("button[data-trash]");
-  if (t) { e.preventDefault(); if (!t.disabled && trashOn()) trashDel(t); return; }
-  const r = e.target.closest("button[data-trash-restore]");
-  if (r) { e.preventDefault(); if (!r.disabled) trashDo(r, "restore"); return; }
-  const p = e.target.closest("button[data-trash-purge]");
-  if (p) { e.preventDefault(); if (!p.disabled) trashDo(p, "purge"); return; }
-  const m = e.target.closest("button[data-trash-more]");
-  if (m) { e.preventDefault(); if (!m.disabled) trashMore(); }
+  if (t) { e.preventDefault(); if (!t.disabled && trashOn()) trashDel(t); }
 });
-window.addEventListener("hashchange", () => { const R = route(); if (!(R.tab === "_setup" && R.a === "trash")) { TRASH.msg = ""; TRASH.bad = false; } });   // 떠나면 지난 결과 문구를 지운다
 // ── /휴지통 ──
 // ── 이관 (migration, 2026-11-02 notes 이관경로-API계약 「웹 세션 경로」) — #_setup/migration[/<plan_id>]. 토큰 · plan 목록 · 확인 · 반영 · 영수증 ──
 // 웹 세션(쿠키)만. 읽기 = getJSON, 쓰기 = corePost(실패 응답 j 에 code·detail·resume_at 이 그대로 온다). 서버 값은 전부 esc(…) 로만 HTML 에 넣는다.

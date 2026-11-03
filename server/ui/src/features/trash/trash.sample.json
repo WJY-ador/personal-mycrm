@@ -1,0 +1,11 @@
+{
+  "items": [
+    {"kind": "reflection", "id": "f_sample", "trashed_at": "2026-10-23T01:05:00+00:00", "purge_at": "2026-10-30T01:05:00+00:00", "revision": 1, "restore_state": "pending", "title": "읽고 든 생각 첫 줄", "reflection_kind": "summary"},
+    {"kind": "person", "id": "p_sample", "trashed_at": "2026-10-23T01:04:00+00:00", "purge_at": "2026-10-30T01:04:00+00:00", "revision": 2, "restore_state": null, "title": "민수"},
+    {"kind": "activity", "id": "a_sample", "trashed_at": "2026-10-23T01:03:00+00:00", "purge_at": "2026-10-30T01:03:00+00:00", "revision": null, "restore_state": "active", "title": "좋아요", "occurred_on": "2026-10-22"},
+    {"kind": "item", "id": "i_sample", "trashed_at": "2026-10-23T01:02:00+00:00", "purge_at": "2026-10-30T01:02:00+00:00", "revision": 1, "restore_state": "pending", "title": "축 하나", "object_label": "축"},
+    {"kind": "record", "id": "r_sample", "trashed_at": "2026-10-23T01:01:00+00:00", "purge_at": "2026-10-30T01:01:00+00:00", "revision": null, "restore_state": null, "title": "첫 글"}
+  ],
+  "next_cursor": "",
+  "hours": 168
+}

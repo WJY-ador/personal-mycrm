@@ -5,10 +5,13 @@ services:
     region: singapore
     plan: free
     # rootDir 를 두지 않는다 — guides/(도움말 정본)가 같이 올라가야 한다. 파이썬 버전은 루트 .python-version.
-    buildCommand: pip install -r server/requirements.txt
+    # React 화면 묶음(server/ui) — node·npm 은 Render 네이티브 런타임 공통 도구. 산출물 server/ui/dist 는 git 에 없고 여기서 만든다
+    buildCommand: pip install -r server/requirements.txt && npm ci --prefix server/ui && npm run build --prefix server/ui
     startCommand: uvicorn --app-dir server main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
+      - key: NODE_VERSION   # 빌드 node 고정 — CI(.github/workflows/ci.yml setup-node)와 같은 값. 레포 루트 .node-version 은 두지 않는다
+        value: 24.22.1
       - key: DATABASE_URL
         sync: false
       - key: AUTHKIT_ISSUER

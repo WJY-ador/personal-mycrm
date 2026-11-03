@@ -1,0 +1,7 @@
+{
+  "_doc": "React 전환 래칫(server/test_ui_build.py 가 읽는다). screens = 옮긴 화면 이름 → 옛 app.html 에서 지운 이름(하나라도 남으면 실패). app_html_function_max = app.html 최상위 function 수 상한 — 화면을 옮길 때마다 내린다.",
+  "app_html_function_max": 267,
+  "screens": {
+    "trash": ["renderTrash", "trashRow", "trashLoad", "trashMore", "trashDo", "TRASH_KIND", "TRASH_NOTE", "TRASH_PURGE_ASK", "TRASH_PURGED", "TRASH_EMPTY"]
+  }
+}

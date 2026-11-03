@@ -537,25 +537,21 @@ CHAT.want = "j3"; chatShow(Object.assign({}, p2, {id: "p3"}), "j3", "r2"); out.c
 
 
 TRASH_ASK = "삭제하면 휴지통으로 이동해요. 삭제 시각부터 168시간 동안 복원할 수 있고, 이후 서버 정리 때 영구 삭제돼요."   # r4 §8 글자 그대로
-TRASH_PURGE_ASK = "지금부터 복원할 수 없어요. 본문은 서버 정리 때 영구 삭제돼요."
-TRASH_PURGED = "영구 삭제를 요청했어요. 이제 복원할 수 없어요."
-TRASH_NOTE = "복원 기한이 지나면 목록에서 사라지고 복원할 수 없어요. 본문은 이후 서버 정리 때 삭제돼요."
 
 
 def test_static_trash():
     """휴지통 PR-1 화면 — 스위치(S.switches.trash) 켜짐 + 새 탐색일 때만 [삭제]·Setup 「휴지통」 · 꺼짐 = 기존 동작 그대로 ·
-    「남기지 않음」 → 「반영 안 함」(스위치 무관, 글자만) · 삭제된 근거 빈 자리 = 「근거를 이용할 수 없어요.」 · 서버 접점 = trashApi 한 곳."""
+    「남기지 않음」 → 「반영 안 함」(스위치 무관, 글자만) · 삭제된 근거 빈 자리 = 「근거를 이용할 수 없어요.」 · 이동 접점 = trashApi.del 한 곳.
+    Setup 「휴지통」 페이지(목록·복원·영구 삭제)는 React(server/ui/src/features/trash) — 그 화면 시험은 TrashScreen.test.tsx(R1 2026-11-03)."""
     html = (HERE / "app.html").read_text(encoding="utf-8")
     js = re.search(r"<script>(.*?)</script>", html, re.S).group(1)
     tr = js[js.index("// ── 휴지통 (trash PR-1)"):js.index("// ── /휴지통 ──")]
     assert "const trashOn = () => !!(S && S.switches && S.switches.trash) && navNew();" in tr
-    for w in (TRASH_ASK, TRASH_PURGE_ASK, TRASH_PURGED, TRASH_NOTE, "복원 기간이 끝났어요.", "휴지통이 비어 있어요.", "복원 가능 기한 "):
+    for w in (TRASH_ASK, "복원 기간이 끝났어요."):
         assert w in tr, w
     code = "\n".join(l for l in tr.splitlines() if not l.lstrip().startswith("//"))
     assert "처리 중" not in code and "재시도 중" not in code and "예정" not in code, "「영구 삭제 처리 중·재시도 중·예정」 화면 상태 0(r4 §8)"
-    assert tr.count("/api/trash") == 4 and js.count("/api/trash") == 4, "휴지통 API 는 trashApi 한 곳에서만"
-    for w in ('getJSON("/api/trash" + (cursor ? "?cursor=" + encodeURIComponent(cursor) : ""))', 'corePost("/api/trash/move"', 'corePost("/api/trash/restore"', 'corePost("/api/trash/purge"'):
-        assert w in tr, w
+    assert tr.count("/api/trash") == 1 and js.count("/api/trash") == 1 and 'corePost("/api/trash/move"' in tr, "옛 쪽 휴지통 API = 이동(trashApi.del) 하나"
     assert "localStorage" not in tr and "Storage" not in tr
     # 진입점 — 상세마다 trashBtn(꺼짐 = 빈 문자열) · 사람·생각은 켜짐이면 휴지통, 꺼짐이면 기존 즉시 삭제(data-core) 그대로
     for w in ('trashBtn("record", x.id, null, "#_me")', 'trashBtn("item", x.id, x.revision, "#_me/" + meTabOfItem(x))',
@@ -575,7 +571,7 @@ def test_static_trash():
     assert 'data-iact="exclude"' in drawer and ">반영 안 함</button>" in drawer and "되돌리기" in drawer, "꺼짐 분기 = 옛 버튼(글자만 「반영 안 함」)"
     # Setup — SETUP_PAGES 리터럴은 그대로, 켜짐일 때만 「휴지통」 페이지
     assert 'const setupPages = () => trashOn() ? SETUP_PAGES.concat([["trash", "휴지통"]]) : SETUP_PAGES;' in js
-    assert "setupPages().some(p => p[0] === R.a)" in js and "else if (page === \"trash\") renderTrash();" in js
+    assert "setupPages().some(p => p[0] === R.a)" in js and "else if (page === \"trash\") uiMount(\"trash\");" in js
     # 「반영 안 함」 — 칩·필터·저장 메시지·이력·메타(스위치 무관). 기존 상태 표시만 바꾸고 동작은 그대로
     for w in ('<span class="badge b-off">반영 안 함</span>', '["excluded", "반영 안 함"]', 'excluded: ["st-off", "반영 안 함"]',
               'exclude: "반영 안 함으로 표시했어요."', '"반영 안 함으로 표시했어요. 목록에서 빠졌어요."', 'btn("tertiary", "exclude", "반영 안 함")',
@@ -591,7 +587,7 @@ def test_static_trash():
 
 
 def trash_run(scenario):
-    """휴지통 절 실행(node) — 휴지통 절(이벤트 연결 전까지) + Setup 페이지 목록 + 「나」 상세 동작 칸(homeActs) + 날짜·esc 도우미.
+    """휴지통 절 실행(node) — 휴지통 절(상세 [삭제]) + Setup 페이지 목록 + 「나」 상세 동작 칸(homeActs) + 날짜·esc 도우미.
     서버·DOM 은 가짜: api = 보낸 요청 기록, confirmAsk = 확인창 문구 기록, done/fail = coreDone·coreFail 호출 기록."""
     import json
     import shutil
@@ -601,7 +597,7 @@ def trash_run(scenario):
     html = (HERE / "app.html").read_text(encoding="utf-8")
     js = re.search(r"<script>(.*?)</script>", html, re.S).group(1)
     helpers = "\n".join(re.search(rf"^{p}.*$", js, re.M).group(0) for p in (
-        r"const esc = ", r"const toDate = ", r"const pad2 = ", r"function mdhm\(", r"const SETUP_PAGES = ", r"const setupPages = ", r"const LOADING = "))
+        r"const esc = ", r"const toDate = ", r"const pad2 = ", r"function mdhm\(", r"const SETUP_PAGES = ", r"const setupPages = "))
     a = js.index("function homeActs(r) {")
     acts = js[a:js.index("\n}\n", a) + 3]
     b = js.index("// ── 휴지통 (trash PR-1)")
@@ -660,8 +656,8 @@ NAVNEW = true; out.on = snap();
 
 
 def test_trash_flow():
-    """[삭제] = r4 §8 확인창 → 휴지통 API(종류·ID·revision) → 「휴지통으로 옮겼어요.」 + 목록 주소 · 취소 = 요청 0 · 축 정책 차단 = 장치 안내 ·
-    Setup 휴지통 = 행(종류·제목·삭제 시각·복원 가능 기한)·빈 상태·안내 · [복원] · [영구 삭제] = 확인·접수 문구 · 기한 이후 = 「복원 기간이 끝났어요.」."""
+    """[삭제] = r4 §8 확인창 → 휴지통 API(종류·ID·revision) → 「휴지통으로 옮겼어요.」 + 목록 주소 · 취소 = 요청 0 · 축 정책 차단 = 장치 안내.
+    Setup 휴지통(행·빈 상태·안내·[복원]·[영구 삭제]·기한 이후·더 보기·불러오기 실패)은 React — server/ui/src/features/trash/TrashScreen.test.tsx."""
     o = trash_run("""
 S = {switches: {trash: true}};
 const err = {textContent: ""};
@@ -672,21 +668,6 @@ REPLY = {ok: false, code: "AXIS-IN-POLICY", msg: "이 축은 장치 「회사 PC
 await trashDel(fakeBtn({trash: "item", id: "ax1", rev: "1", back: "#_me/axis"}, err)); out.axis = err.textContent; out.axisDone = done.length;
 REPLY = {ok: false, code: "CONFLICT"}; await trashDel(fakeBtn({trash: "person", id: "p1", rev: "2", back: "#_obj/person"}, err)); out.fail = fail.slice();
 out.ask = confirmAsk.slice();
-// Setup 휴지통
-LIST = {ok: true, j: {items: [], next_cursor: null, hours: 168}}; renderTrash(); await new Promise(r => setTimeout(r, 0)); out.empty = $("view").innerHTML;
-LIST = {ok: true, j: {items: [{kind: "record", id: "r1", title: "<첫 글>", trashed_at: "2026-10-23T01:00:00Z", purge_at: "2026-10-30T01:00:00Z", revision: null, restore_state: null},
-  {kind: "person", id: "p1", title: "민수", trashed_at: "2026-10-22T15:30:00Z", purge_at: "2026-10-29T15:30:00Z", revision: 2, restore_state: null}], next_cursor: "c2", hours: 168}};
-S = Object.assign({}, S); renderTrash(); await new Promise(r => setTimeout(r, 0)); out.list = $("view").innerHTML;
-LIST = {ok: true, j: {items: [{kind: "item", id: "i9", title: "결정 하나", object_label: "결정", trashed_at: "2026-10-21T00:00:00Z", purge_at: "2026-10-28T00:00:00Z"}], next_cursor: null}};
-await trashMore(); out.moreUrl = api.slice(-1)[0].url; out.more = $("view").innerHTML;
-const rb = d => ({dataset: d, disabled: false});
-REPLY = {ok: true, j: {kind: "record", id: "r1", restored: true}}; await trashDo(rb({kind: "record", id: "r1"}), "restore"); out.restore = api.slice(-1)[0]; renderTrash(); await new Promise(r => setTimeout(r, 0)); out.restoreMsg = $("view").innerHTML;
-REPLY = {ok: true, j: {}}; await trashDo(rb({kind: "record", id: "r1"}), "restore"); renderTrash(); out.restoreMsg2 = $("view").innerHTML;
-confirmAsk.length = 0; CONFIRM = false; const n = api.length; await trashDo(rb({kind: "person", id: "p1"}), "purge"); out.purgeCancel = api.length - n;
-confirmAsk.length = 0; CONFIRM = true; await trashDo(rb({kind: "person", id: "p1"}), "purge"); out.purge = api.slice(-1)[0]; out.purgeAsk = confirmAsk.slice(); renderTrash(); out.purgeMsg = $("view").innerHTML;
-REPLY = {ok: false, code: "TRASH-EXPIRED"}; await trashDo(rb({kind: "record", id: "r1"}), "restore"); renderTrash(); out.expired = $("view").innerHTML;
-HASH(); ROUTE = {tab: "_me", a: ""}; HASH(); out.leftMsg = TRASH.msg; ROUTE = {tab: "_setup", a: "trash"};
-LIST = {ok: false, code: "OFFLINE"}; S = Object.assign({}, S); renderTrash(); await new Promise(r => setTimeout(r, 0)); out.loadFail = $("view").innerHTML;
 """)
     assert o["cancel"] == 0, "확인창 취소 = 요청 0"
     assert o["del"] == {"url": "/api/trash/move", "body": {"kind": "item", "id": "i1", "expected_revision": 3}}
@@ -695,22 +676,7 @@ LIST = {ok: false, code: "OFFLINE"}; S = Object.assign({}, S); renderTrash(); aw
     assert o["axis"] == "이 축은 장치 「회사 PC」의 허용 규칙에 쓰여 삭제할 수 없어요." and o["axisDone"] == 0, "축 정책 차단 = 서버 장치 안내 그대로 · 이동 0"
     assert o["fail"] == ["CONFLICT"], "그 밖 오류 = 기존 coreFail(다시 불러오기)"
     assert set(o["ask"]) == {TRASH_ASK}, "삭제 확인창 = r4 §8 글자 그대로"
-    assert "휴지통이 비어 있어요." in o["empty"] and TRASH_NOTE in o["empty"] and "<button" not in o["empty"]
-    L = o["list"]
-    assert L.count('class="trow"') == 2 and "&lt;첫 글&gt;" in L and "<첫 글>" not in L, "제목 = esc"
-    assert "10월 23일 10:00 삭제 · 복원 가능 기한 10월 30일 10:00" in L and "10월 23일 00:30 삭제 · 복원 가능 기한 10월 30일 00:30" in L, "사용자 시간대 날짜·시각"
-    assert ">내 글</span>" in L and ">사람</span>" in L and L.count(">복원</button>") == 2 and L.count(">영구 삭제</button>") == 2
-    assert "처리 중" not in L and "영구 삭제 예정" not in L and L.count("data-trash-more") == 1, "다음 쪽이 있으면 [더 보기] 1"
-    assert o["moreUrl"] == "/api/trash?cursor=c2" and o["more"].count('class="trow"') == 3 and ">결정</span> <b>결정 하나</b>" in o["more"] and "data-trash-more" not in o["more"], \
-        "더 보기 = 서버 커서 그대로 · 항목 종류 = object_label · 끝이면 버튼 0"
-    assert o["restore"] == {"url": "/api/trash/restore", "body": {"kind": "record", "id": "r1"}}
-    assert "복원했어요.</p>" in o["restoreMsg"] and "복원했어요.</p>" in o["restoreMsg2"], "복원 문구는 목록을 다시 받아 그린 뒤에도 남는다"
-    assert o["purgeCancel"] == 0 and o["purgeAsk"] == [TRASH_PURGE_ASK] and o["purge"] == {"url": "/api/trash/purge", "body": {"kind": "person", "id": "p1"}}
-    assert TRASH_PURGED in o["purgeMsg"]
-    assert 'class="ferr" id="trash-msg"' in o["expired"] and "복원 기간이 끝났어요." in o["expired"], "기한 이후 = 「복원 기간이 끝났어요.」"
-    assert o["leftMsg"] == "", "휴지통을 떠나면 지난 결과 문구를 지운다(다시 들어와도 안 보인다)"
-    assert "서버에 연결하지 못했어요." in o["loadFail"]
-    print("OK — 휴지통 흐름(확인창 r4 문구·취소 요청 0·종류·ID·revision·성공 문구+주소·축 정책 장치 안내·행 종류·제목 esc·삭제 시각·복원 가능 기한(사용자 시간대)·빈 상태·안내·복원·영구 삭제 확인·접수·기한 이후·불러오기 실패) 통과")
+    print("OK — 휴지통 [삭제] 흐름(확인창 r4 문구·취소 요청 0·종류·ID·revision·성공 문구+주소·축 정책 장치 안내·그 밖 coreFail) 통과")
 
 
 def test_static_moved():

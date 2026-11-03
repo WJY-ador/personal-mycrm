@@ -138,6 +138,50 @@ def _fill_assets(html: str) -> str:
     return re.sub(r"\{\{asset:([A-Za-z0-9._-]+)\}\}", lambda m: asset_url(m.group(1)), html)
 
 
+# ── React 화면 묶음(server/ui, 2026-11-03 R1~) ─────────────────
+# 빌드 산출물 dist/.vite/manifest.json 을 시작 때 1회 읽어 허용 목록을 만든다. 요청 name 은 이 dict 키 조회만 — 경로를 잇지 않는다.
+# 파일 이름에 내용 해시가 있어 1년 immutable. /app 의 <!--{{ui}}--> 자리는 진입 <link>·<script type="module" src> 로 채운다(인라인 0).
+# manifest 가 없으면(빌드 안 한 로컬) 서버는 그대로 뜨고, 자리는 비고, 옮긴 화면은 app.html 이 「화면 파일 없음」 한 줄을 그린다.
+UI_DIST = Path(__file__).parent / "ui" / "dist"
+UI_ENTRY = "src/main.tsx"
+UI_SLOT = "<!--{{ui}}-->"
+UI_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8"}
+_UI_FILE = re.compile(r"assets/([A-Za-z0-9._-]+)")
+
+
+def load_ui(dist: Path) -> tuple[dict, str]:
+    """({name: (path, content_type)}, /app 에 넣을 태그). manifest 를 못 읽으면 ({}, "") + 로그 1줄."""
+    mf = dist / ".vite" / "manifest.json"
+    try:
+        man = json.loads(mf.read_text(encoding="utf-8"))
+        entry = man[UI_ENTRY]
+        chunks = list(man.values())
+        refs = [r for c in chunks for r in [c.get("file", ""), *c.get("css", []), *c.get("assets", [])]]
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+        print(f"[web] 화면 묶음 manifest 를 못 읽었어요({type(e).__name__}) — 옮긴 화면은 「화면 파일 없음」만 떠요: {mf}", flush=True)
+        return {}, ""
+    files = {}
+    for ref in refs:
+        m = _UI_FILE.fullmatch(ref) if isinstance(ref, str) else None
+        ctype = UI_TYPES.get(Path(m.group(1)).suffix) if m else None
+        if ctype and (dist / "assets" / m.group(1)).is_file():
+            files[m.group(1)] = (dist / "assets" / m.group(1), ctype)
+    js = _UI_FILE.fullmatch(str(entry.get("file", "")))
+    if not js or js.group(1) not in files:
+        print(f"[web] 화면 묶음 진입 파일이 없어요 — 옮긴 화면은 「화면 파일 없음」만 떠요: {dist}", flush=True)
+        return {}, ""
+    css = [m.group(1) for m in map(_UI_FILE.fullmatch, entry.get("css", [])) if m and m.group(1) in files]
+    tags = "".join(f'<link rel="stylesheet" href="/app/assets/{n}">' for n in css) + f'<script type="module" src="/app/assets/{js.group(1)}"></script>'
+    return files, tags
+
+
+UI_ASSETS, UI_TAGS = load_ui(UI_DIST)
+
+
+def _fill_ui(html: str) -> str:
+    return html.replace(UI_SLOT, UI_TAGS, 1)
+
+
 def _b64(b: bytes) -> str:
     return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
 
@@ -1238,7 +1282,7 @@ class Web:
         uid = await self.uid_of(request)
         if uid is None:
             return RedirectResponse("/", status_code=302)
-        html = structure_svg.fill_origin_labels(_fill_assets(APP_HTML.read_text(encoding="utf-8")))   # 요청마다 읽는다 — 헤더 해시와 본문이 같은 내용에서 나온다
+        html = structure_svg.fill_origin_labels(_fill_ui(_fill_assets(APP_HTML.read_text(encoding="utf-8"))))   # 요청마다 읽는다 — 헤더 해시와 본문이 같은 내용에서 나온다
         # Q1: 관리자는 <!--user-->(문의·이름 공유 메뉴·문의 섹션)를, 그 밖은 <!--admin-->(운영 콘솔)를 보내지 않는다. 표식도 남기지 않는다
         drop, keep = ("user", "admin") if getattr(request.state, "role", None) == "admin" else ("admin", "user")
         html = re.sub(rf"<!--{drop}-->.*?<!--/{drop}-->", "", html, flags=re.S).replace(f"<!--{keep}-->", "").replace(f"<!--/{keep}-->", "")
@@ -1263,6 +1307,13 @@ class Web:
         path, ctype, sha = a
         cc = ASSET_IMMUTABLE if request.query_params.get("v") == sha else "no-cache"
         return FileResponse(path, media_type=ctype, headers={"cache-control": cc, "x-content-type-options": "nosniff"})
+
+    async def ui_asset(self, request):
+        """React 화면 묶음 자산(/app/assets/<해시 이름>). manifest 허용 목록 밖 = 404. 이름이 내용 해시라 늘 1년 immutable."""
+        a = UI_ASSETS.get(request.path_params["name"])
+        if a is None:
+            return Response("없는 자산이에요.", status_code=404, media_type="text/plain; charset=utf-8")
+        return FileResponse(a[0], media_type=a[1], headers={"cache-control": ASSET_IMMUTABLE, "x-content-type-options": "nosniff"})
 
     async def help(self, request):
         """도움말. 로그인 불필요. DB 를 건드리지 않는다 — 세션은 쿠키 서명만 본다(DEV 는 dev_user 가 있으면 세션으로 친다)."""
@@ -3193,6 +3244,7 @@ class Web:
         return [
             Route("/", self.root),
             Route("/app", self.app),
+            Route("/app/assets/{name}", self.ui_asset),   # React 화면 묶음 — manifest 허용 목록만
             Route("/help", self.help),
             Route("/privacy", self.privacy),
             Route("/download", self.download),
