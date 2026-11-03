@@ -27,14 +27,14 @@ Claude Code 에서 붙이기: `claude mcp add --transport http my-crm http://127
 
 ## 화면 묶음 빌드 (server/ui, React)
 
-대시보드(`/app`)는 옛 `app.html` 껍데기 안에 옮긴 화면만 React 로 띄운다(지금은 Setup 「휴지통」·「이관」 `#_setup/migration[/<plan>]`·「연결 장치」 `#_setup/devices` · 「나」 `#_me` · 판단 검토 `#<탭>/review/…` · 활동 `#_obj/activity[/list/<쿼리>|/<id>]`·축 `#_obj/axis/<id>` · 「오늘」 `#_today[/inbox/<id>]`·지난 저장 승인 대기 `#_inbox/<상태>` · 자료 종류 `#_obj`(`#_setup/objects`)·사람·출처·읽고 든 생각 `#_obj/<person|source|reflection>[/…]` · 질문·기록 탭 `#q`·`#journal`·`#<탭 id>` · 구조 항목·판단 문장·항목 서랍 `#structure/<정의>[/<항목>]`·`#structure/cand/<결정>` · 내 구조 설정 `#_setup/structure` · 지도 `#_setup/map` · 머리글 스펙트럼·질문 레전드 · 원문 대화창 · Setup 「페이지 레이아웃」 `#_setup/layout`·「문의 및 개인정보」 `#_setup/help` · 이름 관문 · 대화 서랍 · 「표시 이름 바꾸기」·문의 대화창). 옮긴 화면 목록·옛 이름 래칫·일시 중복 기록은 `ui/migrated.json`.
+대시보드(`/app`)는 React 앱 하나다. `app.html` = 서버가 채우는 정적 뼈대(머리글·계정 메뉴·탭 줄·Setup 줄·띠·화면 자리·바닥 + 역할 구간 `<!--admin-->`·`<!--user-->`, 인라인 스크립트·`<style>` 0)이고, 앱(`ui/src/layout/App.tsx`)이 `#view` 에 떠서 라우터(hash, 라이브러리 없음 — 판정 한 벌 `ui/src/shared/route.ts`, 옛 묶음 주소 replace 포함)·상태 한 벌(`/api/state`, react-query)·탭 줄·Setup 줄·띠·계정 메뉴 동작·「저장하지 않은 변경」 확인·결과 한 줄을 소유한다. 뼈대의 다른 자리(`#nav-tabs`·`#subnav`·`#bands`·`#ui-mast`·`#ui-desk`·`#foot`)엔 포털로 그린다. 화면 목록 = `ui/src/layout/registry.ts`(화면마다 지연 불러오기 `React.lazy`), 상시 섬(대화 서랍·머리글 스펙트럼·「표시 이름 바꾸기」·문의 대화창)은 진입 묶음.
 클릭 편집(값 + 상시 연필 → 입력 칸·[저장]·[취소])은 `ui/src/shared` 의 edit store·`Editable`·`Editor` 하나를 「나」·자료 종류가 같이 쓴다.
 장치·이관 토큰 원문과 이관 항목 본문은 받은 화면의 React 상태에만 둔다 — 조회 캐시·브라우저 저장소·주소·결과 문구에 넣지 않고, 화면을 떠나면(목록 ↔ plan 하나 포함) 지운다. 브라우저 저장소 쓰기는 원문 보기 포트 하나(`crm-raw-port`).
-`#view` 화면은 `uiMount` 로 하나씩(다른 화면으로 가면 앞 화면을 내린다), 대화 서랍은 상시 섬 — 껍데기 고정 자리 `#ui-chat`(서랍)·`#ui-chatnav`(탭 줄 「대화」 버튼)·`#ui-chatnote`(좁은 화면 안내)에 `uiIsland` 로 띄운다. 「표시 이름 바꾸기」(`#ui-namedlg`)·문의(`#ui-desk` — `<!--user-->` 구간 안이라 관리자 응답엔 자리가 없다) 대화창도 상시 섬 — 껍데기가 열 때마다 새 `ctx`(`args[0]` = 어디로)로 띄운다. 모듈보다 라우터가 먼저면 이름별로 자리를 맡긴다(`window.CrmUIPending`).
+`#view` 화면은 하나씩(다른 화면으로 가면 앞 화면을 내린다 — 같은 화면이면 상태 유지, 주소 조각만 바뀐다). 대화 서랍은 탭 줄 「대화」 버튼(`#ui-chatnav`)·좁은 화면 안내(`#ui-chatnote`)에 포털로 그린다. 문의 대화창 자리(`#ui-desk`)는 `<!--user-->` 구간 안이라 관리자 응답엔 없다 — 앱은 그 자리가 있을 때만 띄운다. 관리자 조각(운영 콘솔)·사용자 조각(문의·이름 공유 메뉴 글자)은 번들에 두지 않고 뼈대 HTML 에서 읽는다.
 「나」 요약 블록은 `server/layout_registry.json`(Python `layout_check` 와 같은 파일)을 `ui/src/layout/registry.ts` 가 직접 읽어 블록 id → 컴포넌트로 묶는다 — 블록을 더하면 이 JSON 과 `BLOCKS` 를 같이 고친다(`registry.test.ts`).
 구조 그래프는 서버 `structure_svg` 결과(`/api/state` `structure_svg`)를 화면이 React 요소로 옮겨 그린다(HTML 문자열을 꽂지 않는다 — script·on* 속성·바깥 링크는 버린다). 출처 칩·범례 글자는 `/api/state` `origin_labels`(structure_svg `ORIGIN_TEXT`·`ORIGIN_CATEGORY` 정본, `/app` 전용 — MCP `state_get` 엔 없다).
 
-옛 껍데기 → 옮긴 화면 `ctx` = `reload`·상태 `S`·주소 조각(`args`)·`setDirty`(고치던 글 주소 → 「저장하지 않은 변경」 대화창)·`flash`(결과 한 줄)·`done`(결과 한 줄 + 상태 다시 받기 — 표시 이름 저장). 페이지 레이아웃은 「나」와 같은 조회 캐시(`/api/me/layout`)를 쓰고 v2 계약 그대로 PUT·DELETE 한다. `/api/journal` 응답에 `revision`·`author_kind`(수기 수정 저장·남이 쓴 글 판정).
+껍데기 → 화면 `ctx` = `reload`(서버 조회 전부 다시 받기 — 상태를 받았으면 true)·상태 `S`·주소 조각(`args`)·`setDirty`(고치던 글 주소 → 「저장하지 않은 변경」 대화창·새로 고침 경고)·`flash`(결과 한 줄 — 그 주소에서 한 번)·`done`(결과 한 줄 + 상태 다시 받기 — 표시 이름 저장). CSS = `ui/src/shared/tokens.css`(색·글꼴·축 색·구조 그래프 토큰) → `global.css`(정적 뼈대와 여러 화면이 같이 쓰는 이름) → 화면별 CSS Modules. 페이지 레이아웃은 「나」와 같은 조회 캐시(`/api/me/layout`)를 쓰고 v2 계약 그대로 PUT·DELETE 한다. `/api/journal` 응답에 `revision`·`author_kind`(수기 수정 저장·남이 쓴 글 판정).
 node 는 `ui/package.json` engines 범위(24.x) — Render·CI 는 24.22.1 로 고정한다(`render.yaml` `NODE_VERSION`, `ci.yml` setup-node).
 
 ```bash
@@ -45,12 +45,12 @@ npm run typecheck   # tsc --noEmit
 npm test            # vitest(jsdom) — 화면·구조 규약(arch.test.ts)·API 견본 타입
 ```
 
-서버는 manifest 에 적힌 파일만 `/app/assets/<해시 이름>` 으로 낸다(1년 immutable, 목록 밖 404). `/app` 의 `<!--{{ui}}-->` 자리는 그 진입 `<link>`·`<script type="module" src>` 로 채운다.
-빌드 안 한 로컬은 서버가 그대로 뜨고(로그 1줄), 옮긴 화면 자리에만 「이 화면 파일이 서버에 없어요」 한 줄이 보인다(대화 서랍은 안내 없이 빠진다).
+서버는 manifest 에 적힌 파일만(진입 + 화면별 지연 불러오기 묶음·CSS) `/app/assets/<해시 이름>` 으로 낸다(1년 immutable, 목록 밖 404). `/app` 의 `<!--{{ui}}-->` 자리는 진입(과 그 정적 import 묶음)의 `<link>`·`<script type="module" src>` 로 채운다. 지연 묶음의 CSS 는 그 화면을 열 때 번들이 붙인다.
+빌드 안 한 로컬은 서버가 그대로 뜨고(로그 1줄), 화면 자리의 「불러오는 중」 줄을 서버가 「이 화면 파일이 서버에 없어요」 한 줄로 바꿔 보낸다.
 
 ## 배포 (Render Free, singapore)
 
-배포 경로(2026-10-18): `main` 은 보호 브랜치 — 직접 push 불가. 브랜치 → PR → GitHub Actions `test`(`.github/workflows/ci.yml`: UI 빌드·tsc·vitest·py_compile·node --check·운영 DB 가드·init_schema·서버 시험, postgres:17 컨테이너) 초록 → merge → Render Auto-Deploy(After CI Checks Pass). 롤백은 Render Dashboard 직전 배포 복귀 → 문제 커밋 revert PR. 시작 시 ALTER 는 이전 코드와 호환돼야 한다.
+배포 경로(2026-10-18): `main` 은 보호 브랜치 — 직접 push 불가. 브랜치 → PR → GitHub Actions `test`(`.github/workflows/ci.yml`: UI 빌드·tsc·vitest·py_compile·운영 DB 가드·init_schema·서버 시험, postgres:17 컨테이너) 초록 → merge → Render Auto-Deploy(After CI Checks Pass). 롤백은 Render Dashboard 직전 배포 복귀 → 문제 커밋 revert PR. 시작 시 ALTER 는 이전 코드와 호환돼야 한다.
 예외: PR①(출처·revision·이력 격리) 마이그레이션은 `candidate_history.prev_decision`·`prev_text` 를 지운다 — 옛 인스턴스가 같이 돌면 결정 저장이 깨지고, 직전 배포 복귀만으로는 되돌아가지 않는다(raw §4 「구버전 writer와 혼용하지 않는다」).
 
 Blueprint 는 `server/render.yaml`(대시보드 Blueprint Path 에 지정). rootDir 없음 — 레포 루트에서 빌드 `pip install -r server/requirements.txt && npm ci --prefix server/ui && npm run build --prefix server/ui`, 시작 `uvicorn --app-dir server main:app --host 0.0.0.0 --port $PORT`(도움말 정본 `guides/` 가 같이 올라가야 한다. rootDir=`server` 면 안 올라간다). 파이썬은 루트 `.python-version`(3.13), 헬스체크 `/health`(DB 핑 포함). MCP 는 stateless(json_response) — 무료 인스턴스가 잠들어도 다음 호출이 산다.
@@ -272,7 +272,7 @@ DATABASE_URL=… .venv/bin/python migrate_cli.py close  <명세.json> --user <ui
 - **시험**: `test_tools.py` 30절(스키마·옛 DB 이전 · 스위치 꺼짐 회귀 · 4종 이동·차단 전 경로·직접 쓰기·목록/상세·168h 경계(`db.TRASH_CLOCK` 주입)·복원·관계 부활 방지·영구 삭제 요청·경합·ACTION-RETIRED·AXIS-IN-POLICY·400MB · 물리 정리(하루 미룸·참조 순서·실패 건너뛰기·상한·표식) · 웹·MCP·lifespan 비대기). 활동 원천·수신 차단은 `test_trash_flow.py`. 개발 중 한 절만: `CRM_TEST_ONLY=test_trash_core`.
 - **되돌림**: 스위치를 끄면 새 진입만 멈춘다 — 일반 이용 차단·물리 정리는 계속(휴지통 행이 있으면 지킨다). 열은 추가만이라 남겨도 된다. 휴지통을 쓴 뒤엔 휴지통을 모르는 옛 서버로 되돌리지 않는다(휴지통 행이 다시 보인다).
 
-## 웹 (`web.py` · `app.html`)
+## 웹 (`web.py` · `app.html` · `ui/`)
 - 로그인은 MCP 와 같은 AuthKit. `/login` 이 PKCE(S256)·`resource=<주소>/mcp` 로 authorize 에 보내고, 콜백에서 받은 액세스 토큰을
   **MCP 와 같은 `AuthKitVerifier`·`user_id_for`** 로 검증·연결한다 → 웹 사용자 = MCP 사용자(같은 sub).
 - 서버 메모리에 상태 없음. PKCE verifier·state 는 10분 서명 쿠키, 세션은 7일 서명 쿠키(HMAC-SHA256, HttpOnly, SameSite=Lax, https 면 Secure).
@@ -282,15 +282,15 @@ DATABASE_URL=… .venv/bin/python migrate_cli.py close  <명세.json> --user <ui
   PR ①-b(2026-10-22): 페이지 레이아웃 `GET /api/me/layout` → `{layout, version}`(행 없으면 기본 + 0) · `PUT /api/me/layout` `{layout, version}`(세션 + Origin + `write_gate`, layout JSON 8KB — 2026-11-03 계약 v2, 정본 `server/layout_registry.json`, v1 행은 읽을 때 v2 로) → version +1, 버전 불일치 409 `LAYOUT-STALE`, 모양 밖(탭 순열·영역별 허용 컴포넌트·중복 없음·props 모양 외) 400 `LAYOUT-INVALID` · `DELETE /api/me/layout` = 기본으로 되돌리기(행을 지우지 않고 layout NULL + version +1 — 옛 탭의 PUT 은 STALE). 저장 = `page_layouts`(사용자당 1행, 계정 삭제 대상), 기본값 = `db.DEFAULT_LAYOUT`(레지스트리에서 만든다), 관리자 API 없음. 대화 `layout_get`·`layout_set`·`layout_reset`(facade 전용, 같은 db 함수). 읽기 `GET /api/me/stats`(`db.me_stats`, 전체 범위) = 축 띠(축별 직접 연결 고유 항목 + 기록 + 읽기 자료, 활동 제외) · 히트맵(월요일 시작 13주 91칸, 기록 `COALESCE(source_date, kst(source_created_at))` · 활동 `occurred_on`, 날짜 없는 기록 제외) · 종류별 · 기다리는 결정. 기록 목록(`/api/state` journal · `/api/records`) 정렬 = `db.RECORD_SORT`(`COALESCE(source_date, kst(source_created_at), kst(created))`) DESC → created → id, 커서 꼴 `created|id` 는 그대로(정렬 날짜는 서버가 id 행에서 복원). journal 행에 `source_date`·`ingest_kind`·`generation_kind`.
   수기 수정 A0′(2026-11-03, 세션 + Origin + `write_gate`): `POST /api/records/{id}/body` `{expected_revision, body}`(새 본문 전체 → 공통 앞·뒤를 뺀 한 구간) · `POST /api/records/{id}/body/preview` 같은 본문(쓰기 없음 — `db.record_body_preview` 가 저장과 같은 `_edit_plan` 으로 판정, `{before, after, drop, msg}`, msg = 지워질 미결 후보가 있을 때만 서버 문구 → 화면은 그때만 [이대로 저장] 1번) · `POST /api/records/{id}/title` `{expected_revision, title}` · `POST /api/item/edit` `{item_id, expected_revision, title, body}`(제안+적용 한 트랜잭션). 대화 `record_edit`(decide, bind)·`record_title_set`(write)과 같은 db 함수 — 이력 `record_history`(via web/mcp). 막힘 = 휴지통·남이 쓴 글·결정이 붙은 글의 본문(`RECORD-LOCKED`)·revision 다름(`CONFLICT`).
   기록·질문·후보 추가는 웹에 없다 — 연결한 AI 대화에서 한다.
-- `app.html` 은 원작자가 쓰던 로컬 보드 화면(체크포인트 보드·360·지도) 구조를 옮긴 보드형 화면(2026-10-18): 마스트(날짜·상태 스펙트럼·질문 레전드) + 기본 탭 오늘/질문/기록/구조/지도(사용자 정의 tabs 있으면 그 탭 + 구조·지도 고정) + 대조 2열(≥1000px). 토큰은 보드 값. 가안·스펙은 레포 `notes/`(gitignore).
+- 화면 결은 원작자가 쓰던 로컬 보드 화면(체크포인트 보드·360·지도) 구조를 옮긴 보드형(2026-10-18): 머리글(날짜·상태 스펙트럼·질문 레전드) + 카드·서랍·칸반. 토큰은 보드 값(`ui/src/shared/tokens.css`). 가안·스펙은 레포 `notes/`(gitignore).
 - 탐색(PR B·PR ①-b, 모든 계정 — R5a 2026-11-03 에서 옛 다섯 탭 화면 삭제) = 이름 입력 화면(표시 이름 없을 때, 건너뛰기 없음) → 탭 줄 「나」(`#_me`) · 「오늘」(`#_today`) + 오른쪽 위 톱니 설정(`#_setup/<페이지>` — 페이지 레이아웃·내 구조 설정·자료 종류·연결 장치·지도·문의 및 개인정보·이관·휴지통). 새 화면 id 는 `_` 로 시작해 사용자 탭 id 와 겹치지 않는다. 옛 묶음 주소(`#_obj`·`#_settings`·`#_devices`·`#map`·`#_inbox`·`#today`·`#home`·`#structure/defs`)는 새 자리로 replace(`#today/review/…` 옛 대조 링크는 그대로). 질문·기록·사용자 탭(`#q`·`#journal`·`#<탭 id>`)·종류별 항목(`#structure…`)·판단 대조는 탭 줄에 없고 자료 종류 화면 링크로 연다.
 - 내 구조 설정(`#_setup/structure`, PR #20 「구조 정의」) = 오브젝트·필드 목록(표시명·표준명·구분 코어/표준/선택 템플릿/직접 추가·「표준 정의 보호」·참조 대상·cardinality)과 그래프 전환(서버 `structure_svg` 결정적 SVG) + 표준 편입 미리보기·선택(확인 대화창). 기록 탭은 기록마다 출처(없으면 「출처 미확인」)·출처 필터·「확정 전 재검토」. 문의는 하단 섹션 없이 계정 메뉴 대화창.
-- 2단계(항목 보기): 360(서브 필: 기준 오브젝트 · 후보 · 그 밖의 오브젝트, 카드 그리드 + 오른쪽 서랍 `#panel`). 서랍은 본문·필드·관계 대상·들어오는 관계·이력·승격 사실, 제안이 있으면 diff + [적용][제외(discard)], 기준이면 [남기기][반영 안 함][되돌리기](휴지통 켜짐 = [남기기][삭제]). 라우트 `#structure/<오브젝트ID>[/<항목ID>]` · `#structure/cand/<필터>`. 지도 「쌓이는 재료」에 확정 기준을 함께 둔다.
-- 옛 설명: `app.html` 은 `web/index.html` 의 이식본. 필드명(`record_id`·`quote`·`question_id`), 문구(Claude Code·파일 전제 제거), 기본 탭 「시작」+「기록」, 시각은 브라우저 시간대.
+- 2단계(항목 보기): 360(서브 필: 기준 오브젝트 · 후보 · 그 밖의 오브젝트, 카드 그리드 + 오른쪽 서랍 `#panel`). 서랍 = 적용 전 새 항목 제안만(제안 값·연결할 대상 + [적용][제외(discard)]) — 적용된 항목(`#structure/<정의>/<항목>`)은 라우터가 「나」 의 그 탭으로 replace 하고 상세·결정·[삭제]는 「나」 에서 한다(R5b-2b). 라우트 `#structure/<오브젝트ID>[/<항목ID>]` · `#structure/cand/<필터>`. 지도 「쌓이는 재료」에 확정 기준을 함께 둔다.
+- 옛 설명: 대시보드는 `web/index.html` 의 이식본에서 출발했다. 필드명(`record_id`·`quote`·`question_id`), 문구(Claude Code·파일 전제 제거), 시각은 브라우저 시간대.
   `web/index.html` 은 로컬 키트가 아직 쓰므로 그대로 둔다.
 - 도움말 `GET /help`(로그인 불필요, DB 안 건드림): 레포의 `guides/09-hosted-start.md`·`10-words.md` 를 서버 시작 때 읽어(`CRM_GUIDES_DIR` 가 있으면 그 폴더, 없으면 `server/../guides`) 정규식으로 HTML 로 바꾼다(제목·문단·표·굵게·목록·인라인 코드·링크, `10-words.md` 링크는 `#words`). 모든 글자를 먼저 escape(raw HTML 통과 없음), 링크는 http(s)·#앵커·상대경로만. 좁은 화면의 표는 가로 스크롤. 토큰·글꼴은 `start.html` 의 `:root` 블록을 그대로 쓴다. 세션 쿠키가 있으면 [노트로], 없으면 [로그인]. 문서가 없으면 시작 로그에 경고 + 503.
-  문서 정본은 guides 이고 서버는 읽기만 한다. `app.html` 푸터·`start.html` 하단에 [도움말].
-- 보안 헤더(웹 HTML 응답만 — MCP·JSON·/health 제외): `nosniff`·`X-Frame-Options: DENY`·`Referrer-Policy: same-origin`·CSP `frame-ancestors 'none'; base-uri 'none'; object-src 'none'; script-src 'self'`. `/app` 은 보낼 본문의 `src` 없는 인라인 `<script>` 1개를 요청마다 sha256 해 `'sha256-…'` 를 더한다(1개가 아니면 해시 없이 `'self'` 만 + 로그 — 화면 스크립트가 막힌다). `'unsafe-inline'`·`'unsafe-eval'` 은 넣지 않는다.
+  문서 정본은 guides 이고 서버는 읽기만 한다. 대시보드 바닥(`app.html` 뼈대)·`start.html` 하단에 [도움말].
+- 보안 헤더(웹 HTML 응답만 — MCP·JSON·/health 제외): `nosniff`·`X-Frame-Options: DENY`·`Referrer-Policy: same-origin`·CSP `frame-ancestors 'none'; base-uri 'none'; object-src 'none'; script-src 'self'` — `/app` 도 같다(인라인 스크립트 0, 화면 = 외부 묶음, 해시 없음 — R5b-2b). `'unsafe-inline'`·`'unsafe-eval'` 은 넣지 않는다.
 - 개인정보 처리방침 `GET /privacy`(로그인 불필요, DB 안 건드림): 정본 `guides/11-privacy.md` 를 /help 와 같은 렌더러·보안 헤더로. 권리 행사 경로는 대시보드 계정 메뉴 「문의 보내기」. 문안의 `{{CONTACT_LINE}}` 은 env `CRM_CONTACT`(선택 — 보조 메일, 레포에 적지 않는다)가 있으면 메일 한 줄로, 없으면 빈 문자열로 바꾼다. help_get 에는 안 들어간다. 문서가 없으면 503. 링크는 `start.html` 하단·`app.html` 푸터·/help 하단.
 
 ## 경계
