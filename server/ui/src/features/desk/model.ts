@@ -15,4 +15,3 @@ export function deskPage(S: AppState | undefined, hash: string): string {
 }
 
 export const bytes = (s: string) => new TextEncoder().encode(s).length;
-export const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : s);

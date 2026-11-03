@@ -10,7 +10,8 @@ from pathlib import Path
 import structure_svg
 
 HERE = Path(__file__).parent
-HTML = structure_svg.fill_origin_labels((HERE / "app.html").read_text())
+HTML = (HERE / "app.html").read_text()
+UI = HERE / "ui" / "src"
 JS = re.search(r"<script>(.*?)</script>", HTML, re.S).group(1)
 
 
@@ -21,10 +22,8 @@ def js_run(code):
 
 class UIAlignmentTest(unittest.TestCase):
     def test_type_labels_keep_origins_and_protection(self):
-        chips = JS[JS.index("const ORIGIN_TEXT"):JS.index("const VTYPE")]
-        result = js_run('const esc = x => x, NT = x => x;\n' + chips +
-                        '\nconsole.log(JSON.stringify(["core","standard","template","custom"].map(originChip)));')
-        self.assertEqual([re.sub('<[^>]+>', '', x) for x in result], ["표준", "표준", "커스텀", "커스텀"])
+        # 칩 글자 = 서버 ORIGIN_TEXT(/api/state origin_labels) — React shared/origin.tsx 가 그대로 쓴다(Vitest DefsScreen·ObjectsScreen)
+        self.assertEqual([structure_svg.ORIGIN_TEXT[k] for k in ("core", "standard", "template", "custom")], ["표준", "표준", "커스텀", "커스텀"])
         fixture = {"objects": [{"id": "o1", "label": "샘플", "origin": "standard", "locked": True, "fields": []}],
                    "core": [{"kind": "record"}], "relations": []}
         before = json.dumps(fixture, ensure_ascii=False)
@@ -97,16 +96,19 @@ console.log(JSON.stringify([R("map"), R("map", "review", "q1"), R("today"), R("t
         self.assertEqual(result, ["#_setup/map", "", "#_today", "#_today", "", ""])
 
     def test_one_origin_definition_for_app_and_graph(self):
-        self.assertTrue(hasattr(structure_svg, 'fill_origin_labels'))
-        rendered = structure_svg.fill_origin_labels(HTML)
-        self.assertNotIn('/*{{origin-text}}*/ {}', rendered)
-        labels = re.search(r'const ORIGIN_TEXT = (.*?);', rendered).group(1)
-        self.assertEqual(json.loads(labels), structure_svg.ORIGIN_TEXT)
-        self.assertNotIn('"코어"', rendered)
+        """출처 표시 정의는 서버 하나(structure_svg) — /api/state origin_labels 로 내려 주고, 화면(app.html·React)엔 사본·자리표가 없다(R5b-1)."""
+        web = (HERE / "web.py").read_text(encoding="utf-8")
+        self.assertIn('st["origin_labels"] = {"text": structure_svg.ORIGIN_TEXT, "category": structure_svg.ORIGIN_CATEGORY}', web)
+        self.assertNotIn("fill_origin_labels(", web)
+        self.assertNotIn("{{origin-text}}", HTML)
+        self.assertNotIn("ORIGIN_TEXT", HTML)
+        src = "".join(p.read_text(encoding="utf-8") for p in UI.rglob("*.ts*") if ".test." not in p.name)
+        self.assertNotIn("ORIGIN_CHIP", src)
+        self.assertIn("S.origin_labels", (UI / "shared" / "origin.tsx").read_text(encoding="utf-8"))
+        self.assertNotIn('"코어"', src)
 
     def test_standard_confirmation_uses_material_type_terms(self):
-        confirmation = JS[JS.index("const STRUCT_TEXT"):JS.index("async function stdChoose(")]
-        self.assertNotIn('오브젝트', confirmation)
+        self.assertNotIn('오브젝트', (UI / "features" / "defs" / "text.ts").read_text(encoding="utf-8").split("\n", 2)[2])
 
     def test_lock_accessible_names_use_standard_category(self):
         self.assertFalse('aria-label="기본"' in HTML)
@@ -127,35 +129,16 @@ console.log(JSON.stringify([R("map"), R("map", "review", "q1"), R("today"), R("t
 
     def test_legend_and_list_use_two_categories(self):
         self.assertEqual(structure_svg.legend_origins(), ("standard", "template"))
-        # 자료 종류 색인은 React(features/objects, R4-2) — 묶음 이름 표준 🔒 · 카드 칩 = structure_svg 범주(손 사본 대조)
-        objs = HERE / "ui" / "src" / "features" / "objects"
-        index = (objs / "Index.tsx").read_text(encoding="utf-8")
+        # 자료 종류 색인은 React(features/objects, R4-2) — 묶음 이름 표준 🔒 · 카드 칩 = 서버 origin_labels(shared/origin.tsx, 손 사본 없음 R5b-1)
+        index = (UI / "features" / "objects" / "Index.tsx").read_text(encoding="utf-8")
         self.assertIn('title="표준 🔒"', index)
         self.assertNotIn("기본 🔒", index)
-        chip = re.search(r"export const ORIGIN_CHIP[^=]*= (\{.*?\});", (objs / "text.ts").read_text(encoding="utf-8")).group(1)
-        chip = json.loads(re.sub(r"(\w+):", r'"\1":', chip))
-        self.assertEqual({k: v[1] for k, v in chip.items()}, structure_svg.ORIGIN_TEXT)
-        self.assertEqual({k: v[0] == "o-std" for k, v in chip.items()}, {k: c == "standard" for k, c in structure_svg.ORIGIN_CATEGORY.items()})
+        self.assertIn("originChip(S, c.oc)", index)
 
     def test_body_bold_renders_safely(self):
-        """사용자 글 본문의 **굵게** 는 <strong>, 그 밖은 escape. 홀수·빈 ** 는 그대로, 인용 mark 안에서도 짝이 맞는다.
-        사례 = ui/src/shared/rich.cases.json — 새 TS(rich.test.tsx)가 같은 사례를 통과한다. 옛 rich·paraHtml 은 R5 까지 일시 중복(migrated.json)."""
-        cases = json.loads((HERE / "ui" / "src" / "shared" / "rich.cases.json").read_text(encoding="utf-8"))
-        funcs = JS[JS.index("const esc ="):JS.index("const $ = id")] + JS[JS.index("function paraHtml"):JS.index("function attachHtml")]
-        result = js_run(funcs + "\nconst C = " + json.dumps(cases, ensure_ascii=False) + ";\n" +
-                        "console.log(JSON.stringify({rich: C.rich.map(c => rich(c.in)), para: C.para.map(c => paraHtml(c.in, c.quote))}));")
-
-        def esc(t):
-            return html.escape(t, quote=True).replace("&#x27;", "&#39;")
-
-        def want(out):
-            return "".join(f"<{tag}>{esc(t)}</{tag}>" if tag else esc(t) for tag, t in out)
-        self.assertEqual(len(result["rich"]), len(cases["rich"]))
-        for c, got in zip(cases["rich"], result["rich"]):
-            self.assertEqual(got, want(c["out"]), c["in"])
-            self.assertNotIn("<img", got)
-        for c, got in zip(cases["para"], result["para"]):
-            self.assertEqual(got, f'<p class="{"h" if c["h"] else ""}">{want(c["out"])}</p>', c["in"])
+        """사용자 글 본문의 **굵게** 는 <strong>, 그 밖은 글자 그대로 — 화면은 전부 React(shared/rich.tsx·Para.tsx, 사례 rich.cases.json = Vitest rich.test.tsx).
+        옛 app.html 의 rich·paraHtml 은 R5b-1 에서 지웠다. 남은 옛 쪽엔 사용자 본문을 HTML 로 꽂는 자리가 없다."""
+        self.assertNotIn("const rich =", JS)
         self.assertNotIn("${esc(x.body)}", JS.replace('esc(x.body) : ""', ""))
         self.assertNotIn("${esc(cur.body)}", JS)
 

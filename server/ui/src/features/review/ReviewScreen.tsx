@@ -8,7 +8,7 @@ import type { ScreenProps } from "../../shared/ctx";
 import { candidateDecide } from "../../shared/journal";
 import { readOk, type AppState, type Cand } from "../../shared/state";
 import { Card } from "./Card";
-import { PartFail } from "./Fail";
+import { PartFail } from "../../shared/PartFail";
 import { CHECKING, CONFLICT_TEXT, NO_QUESTION, SAVE_FAIL, SAVING, UNKNOWN, unsavedEdit, WORDS as w } from "./text";
 import css from "./Review.module.css";
 

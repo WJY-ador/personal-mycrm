@@ -18,6 +18,7 @@ const st = (trash = true, nav = "new") => ({
   journal: [{ id: "r1", title: "홍길동 메모", excerpt: "", created: T, source_id: "s1", ingest_kind: null }], source_counts: { by_source: { s1: 1 }, unconfirmed: 2 },
   questions: [{ id: "q1" }], candidates: [{ id: "c1", status: "pending" }], items: [{ id: "i1", object_id: "od_x" }], definitions: [{ id: "od_principles", label: "기준", fields: [{ key: "people", label: "사람" }] }],
   structure: { objects: [{ id: "od_ax", key: "axes", label: "축", origin: "standard" }, { id: "od_x", key: "homework", label: "숙제", origin: "template" }] },
+  origin_labels: { text: { core: "표준", standard: "표준", template: "커스텀", custom: "커스텀" }, category: { core: "standard", standard: "standard", template: "template", custom: "template" } },
   me: { counts: { people: 1, sources: 2, reflections: 2 } }, activity: { total: 5 }, tabs: [],
 });
 const confirm = vi.fn((_ask?: string) => true);

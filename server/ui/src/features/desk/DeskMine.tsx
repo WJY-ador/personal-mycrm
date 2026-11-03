@@ -1,10 +1,10 @@
 // 내 문의 — 본인 글·상태만(GET /api/feedback). 접수일을 누르면 상세 대화창(DeskTicket)이 위에 겹쳐 열린다. 사용자 글은 글자로만 넣는다
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { clip } from "../../shared/clip";
 import { md } from "../../shared/date";
 import { DESK_KEY, deskApi } from "./deskApi";
 import { DeskTicket } from "./DeskTicket";
-import { clip } from "./model";
 import { DESK, DESK_CHIP, TICKET_KIND, TICKET_STATUS } from "./text";
 import css from "./Desk.module.css";
 

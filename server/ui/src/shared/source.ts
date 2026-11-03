@@ -10,3 +10,7 @@ export function srcText(sources: Source[] | undefined, sid: string | null): stri
 }
 
 export const oldSrc = (raw: string | null | undefined) => (!raw ? "" : raw.startsWith("파일:") ? "파일에서 가져옴" : raw);
+
+// 원문 머리말 한 줄 — 출처 + 옛 문자열(있으면)「쓸 당시 표기」(옛 srcLine)
+export const srcLine = (sources: Source[] | undefined, sid: string | null, raw: string | null | undefined) =>
+  srcText(sources, sid) + (oldSrc(raw) ? ` · 쓸 당시 표기 「${oldSrc(raw)}」` : "");

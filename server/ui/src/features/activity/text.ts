@@ -8,8 +8,7 @@ export const PERIODS: [string, string][] = [["7d", "최근 7일"], ["30d", "최�
 export const LOADING = "불러오는 중이에요…";
 export const MORE_FAIL = "더 불러오지 못했어요. 다시 눌러 주세요.";
 export const LIST_HINT = "PC의 로컬 에이전트가 보낸 행동이에요. 원문은 PC에 남고, 여기엔 행동·날짜·별칭·출처 종류만 있어요.";
-export const TRASH_ASK = "삭제하면 휴지통으로 이동해요. 삭제 시각부터 168시간 동안 복원할 수 있고, 이후 서버 정리 때 영구 삭제돼요.";
-export const TRASH_DONE = "휴지통으로 옮겼어요.";
+export { TRASH_ASK, TRASH_DONE } from "../../shared/item";
 export const HELP = {
   axisSum: "축이 여러 개인 활동은 축마다 한 번씩 세요. 축별 합계가 전체와 다를 수 있어요.",
   people: "좋아요·리포스트·댓글·답장에서 글쓴이·상대로 연결된 별칭만 세요. 사람마다 한 번씩이라 합계는 전체 활동량이 아니에요.",

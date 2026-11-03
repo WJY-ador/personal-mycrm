@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiErr } from "../../shared/api";
 import { fetchJournal, journalKey } from "../../shared/journal";
+import { AiWording, DecisionBadge, OriginBadge } from "../../shared/CandChips";
 import { ReviewNote } from "../../shared/ReviewNote";
 import type { AppState, Cand } from "../../shared/state";
 import { quoteOk, Source } from "./Source";
@@ -19,9 +20,9 @@ type Props = {
 // 칩 — AI 문안(사용자가 아직 승인하지 않은 AI 문안, 옛 서버엔 키 없음) · 쓴 쪽(옛 origin·aiWordingChip 그대로)
 function Labels({ c }: { c: Cand }) {
   return (
-    <div className="labels"><span className="badge b-wait">아직 안 정함</span>
-      <span className={`badge ${c.origin === "ai" ? "b-ai" : "b-memo"}`}>{c.origin === "ai" ? "AI가 쓴 문장" : "내가 쓴 메모"}{c.edited_by_user ? " · 내가 고침" : ""}</span>
-      {c.wording_approved === false && c.wording_by === "ai" && <span className="chip o-ai">AI 문안</span>}</div>
+    <div className="labels"><DecisionBadge status="pending" />
+      <OriginBadge c={c} />
+      <AiWording c={c} /></div>
   );
 }
 
