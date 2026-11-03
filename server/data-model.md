@@ -1,4 +1,4 @@
-# 데이터 모델 (2026-10-18 확정 · 2026-11-02 이관 경로·이관 MCP(가안 X)·PC 연결(가안 2)까지 정정)
+# 데이터 모델 (2026-10-18 확정 · 2026-11-02 이관 경로·이관 MCP(가안 X)·PC 연결(가안 2) · 2026-11-03 수기 수정 A0′·레이아웃 v2까지 정정)
 
 전제: 사용자 AI 클라이언트 → MCP → 이 서버 → Postgres. 서버 모델 호출 0. 사용자 10~100명, 1인당 월 기록 10~30편 — 작아서 파티션·아카이브 없음. DDL은 `schema.sql`. `db.py` 는 psycopg(Postgres) 판이다(끝 절).
 
@@ -19,14 +19,15 @@
 | users | 계정. 이메일 하나 = 사용자 하나 | — |
 | agreements | 옛 약관·개인정보 동의 이력(2026-10-19 필수 동의 제거 뒤 새로 쓰지 않음) | users M-D |
 | questions | 계속 돌아오는 질문. 삭제 없음, `archived` 만 | users M-D |
-| records | 기록 원문. soft delete | users M-D · questions Lookup |
+| records | 기록 원문. soft delete · `revision`(수기 수정마다 +1) | users M-D · questions Lookup |
+| record_history | 기록 본문·제목 수정 이력(2026-11-03 수기 수정 A0′) — 아래 「수기 수정」 절 | records M-D |
 | candidates | 판단 후보. 두 축 `origin`(ai/self) × `decision`(pending/confirmed/excluded) | users M-D(반정규화) · records M-D · questions RESTRICT |
 | candidate_history | 결정 이력, 되돌리기 근거. `user_id`·`prev_revision`·`prev_state`(변경 전 스냅샷) | candidates M-D(`(user_id,candidate_id)` 복합 FK) |
 | profile | 프로필 항목 key-value, 상태 4값 | users M-D |
 | tabs | 화면 탭. `doc`=적용본, `draft_doc`=제안 | users M-D |
 | (2단계) object_defs·field_defs·items·item_links·item_history | 사용자 정의 층 — 아래 절 | users M-D |
 | (board 이전·연결 장치) import_streams·import_entries·import_counters·activities·activity_links·people·source_reflections | 연결 장치 입력원·접수 대응표·한도 카운터·활동·사람·출처 요약/반응 — DDL 주석이 정본(`schema.sql`) | users M-D |
-| (쌓기·휴지통·화면) jobs·stack_sessions·confirm_events·item_versions·item_stage·page_layouts | 작업 전달·쌓기 세션·확인 이벤트·항목 판·단계·레이아웃 — DDL 주석이 정본 | users M-D |
+| (쌓기·휴지통·화면) jobs·stack_sessions·confirm_events·item_versions·item_stage·page_layouts | 작업 전달·쌓기 세션·확인 이벤트·항목 판·단계·레이아웃 — DDL 주석이 정본. 레이아웃 모양은 아래 「레이아웃 계약 v2」 | users M-D |
 | (이관 경로, 2026-11-02) migration_tokens·migration_plans·migration_plan_items | 이관 토큰·이관 plan·plan 항목(영수증) — 아래 「이관 경로」 절 | users M-D |
 | (앱 로그인 넘김, 2026-11-02) desktop_handoffs | 시스템 브라우저 로그인(`/desktop/login` → `/auth/callback`) 뒤 앱(`mycrm://auth/callback`)이 `/desktop/claim` 으로 세션을 받는 일회용 코드. 코드 원문은 저장하지 않는다(`code_hash` = SHA-256) · `challenge` = base64url(sha256(verifier)), verifier 는 앱 메모리에만 · 앱 `state` 그대로 · 2분 만료 · `used_at` 일회용(교환은 UPDATE 한 문장) · 만료 행은 발급 때마다 지운다. 로그·감사에 값 없음 · `loopback`(PC 연결 2026-11-02) = CLI `--browser` 코드(`redirect_uri=http://127.0.0.1|[::1]:<port>/cb` 로 302, `/desktop/cli/claim` 만 받는다 — 앱 코드와 섞지 않는다) | users M-D |
 | (PC 연결, 2026-11-02 가안 2) desktop_installations·token_grants | 로그인한 데스크톱 앱 설치본(이름·OS·로그인·폴링 시각·해제 기록·연결 장치 id — IP 없음)과 대화가 남긴 토큰 전달 요청(scope device·migration, 10분, 토큰 값·해시 없음) — 아래 「PC 연결」 절 | users M-D |
@@ -58,7 +59,7 @@ imports(3단계)가 기대는 저장 계약을 코어에 먼저 넣었다. 기�
 ### 판단 로그
 - **인용 적격** = `db._ELIGIBLE_SQL` 한 곳: `author_kind='self' AND deleted_at IS NULL AND trashed_at IS NULL AND ((text_process='verbatim' AND generation_kind NOT IN ('ai','routine')) OR (generation_kind='conversation' AND 확인 이벤트 실재))`(PR ②-b·휴지통 PR-1 뒤 — 2026-11-02 정정). 후보(판단 근거)는 적격 기록에서만 만든다 — 비적격이면 dropped 「이 기록은 본인 원문이 아니라 근거로 쓸 수 없어요」. 승격 근거 수도 적격 기록의 확정 후보만 센다. 목록에서는 빼지 않는다.
 - 기존 기록은 `unknown` 그대로 둔다. 과거 기록 전부를 self/verbatim 으로 백필할 근거가 없다. MCP `record_add` 는 사용자가 대화에서 직접 준 말이라 self/verbatim. `author_kind='external'` 입력은 `SCOPE-SELF-ONLY`(PR #20 — 서버는 작성자 표시만 검사, 내용은 확인 못 함). 확정(confirm·edit_confirm)도 근거 기록을 다시 검사해 비적격이면 `CANDIDATE-REVIEW`(사유 author_unknown·external·processed·deleted), 미확정 후보 응답에 `review`. 이미 확정한 판단은 그대로.
-- 본문·인용 구간은 생성 뒤 불변. **작성 판정은 정정 가능**(`record_provenance_set`, 사유 필수). 후보가 있는 기록의 적격 → 비적격 정정은 거절(`PROVENANCE-LOCKED`) — 과거 오판정은 별도 복구 작업. 후보 생성과 출처 정정은 같은 기록 행을 `FOR UPDATE` 로 잠가 경합을 막는다. 직접 SQL 은 이 계약을 우회할 수 있다(트리거는 지인 시험 뒤, raw R3).
+- 인용 구간은 생성 뒤 불변. 본문은 수기 수정(아래 「수기 수정」 절)으로만 바뀌고, 내가 결정한 판단이 붙은 글은 고칠 수 없다. **작성 판정은 정정 가능**(`record_provenance_set`, 사유 필수). 후보가 있는 기록의 적격 → 비적격 정정은 거절(`PROVENANCE-LOCKED`) — 과거 오판정은 별도 복구 작업. 후보 생성과 출처 정정은 같은 기록 행을 `FOR UPDATE` 로 잠가 경합을 막는다. 직접 SQL 은 이 계약을 우회할 수 있다(트리거는 지인 시험 뒤, raw R3).
 - 후보 변경 = 변경 전 스냅샷 이력 한 줄 + revision+1(`UNIQUE(user_id,candidate_id,prev_revision)`). 같은 결정 반복은 no-op(revision 그대로). 웹 결정은 `expected_revision`(선택)이 틀리면 CONFLICT. MCP 도구는 revision 인자를 받지 않는다(서명 불변).
 - 문장 수정(edit·edit_confirm)은 `wording_approved=false`·pending. `wording_by` 는 웹 편집 self, MCP edit 은 모름(NULL). 새 후보는 origin=ai 면 ai, self 면 NULL(AI 가 다듬었는지 모름). 승인(`wording_approved=true`) 경로는 아직 없다 — 다음 PR.
 - 복원(`candidate_restore`)도 새 변경: 지금 상태를 이력(action=restore)으로 남기고 revision+1. v1 이력은 text·decision 만, wording_by NULL. 승인은 넘기지 않는다(승인은 그 revision 에 대한 것). 웹·MCP 노출은 다음 PR.
@@ -67,7 +68,7 @@ imports(3단계)가 기대는 저장 계약을 코어에 먼저 넣었다. 기�
 
 ## 사용자 정의 층 (2단계, 2026-10-18)
 공통 코어(원문·인용·확정·이력·격리) + 제한된 정의 층. 사용자는 오브젝트·필드·Lookup 까지만 정의한다. 수식·롤업·자동화·사용자 M-D 없음.
-증거 규칙(원문 불변·인용 1곳·후보≠판단)은 코어가 지키고 정의로 바꿀 수 없다. 근거: 레포 `notes/2026-10-18_내-구조-서버-스키마-매핑.md`.
+증거 규칙(결정이 붙은 원문은 잠김·인용 1곳·후보≠판단)은 코어가 지키고 정의로 바꿀 수 없다. 근거: 레포 `notes/2026-10-18_내-구조-서버-스키마-매핑.md`.
 
 | 오브젝트 | 용도 | 관계 |
 |---|---|---|
@@ -162,3 +163,26 @@ Governor limit 없음. M-D 깊이 최대 2(users→candidates→candidate_histor
 
 ## `db.py` psycopg 판 메모(옛 SQLite 임시판과의 차이)
 Postgres 전환은 끝났다(2026-10-18, `db.py` psycopg 판). 후보 revision 검사는 PR① 에서 웹 결정에 넣었다(`expected_revision`). 남은 것(지인 검증 전): 같은 본문 10분 중복 억제, `state_get` 요약+커서, 입력 상한 거절. 토론 raw 는 세션 스크래치패드 `arch/`.
+
+## 수기 수정 A0′ (2026-11-03)
+계약 문장: **내가 결정한 판단이 붙지 않은 글은 고칠 수 있다. 고친 흔적은 이력에 남는다.** 근거: 레포 `notes/2026-11-03_React전환-구현계획.md` §5-1(gitignore).
+
+| 대상 | 컬럼 | 뜻 |
+|---|---|---|
+| records | `revision`(1부터) | 본문·제목 수정마다 +1. 옛 행은 1(`db._migrate_record_edit`) |
+| record_history | `action` edit/title · `prev_revision` · `change` jsonb · `via` web/mcp | 한 줄 = revision +1(`UNIQUE(user_id,record_id,prev_revision)`). edit = `{start, old, new, deleted_candidates, moved_candidates}`(start = 고치기 전 본문의 코드포인트 오프셋) · title = `{old, new}`. 기록과 같이 지워진다 |
+
+- 본문: 대화 `record_edit(record_id, expected_revision, old, new)`(facade decide — `decide_preview` 의 shown = 전·후 + 지워질 미결 후보 수, bind 필수). `old` 는 원문에 정확히 한 번(겹침 포함) — 0번 `EDIT-NOT-FOUND`, 2번 이상 `EDIT-AMBIGUOUS`(앞뒤를 포함해 더 길게). 웹 `POST /api/records/{id}/body` 는 새 본문 전체를 받아 공통 앞·뒤를 뺀 한 구간으로 같은 서버 함수(`db._edit_apply`)를 부른다.
+- 제목: `record_title_set`(facade write) · 웹 `POST /api/records/{id}/title`. 판단 잠금과 무관(제목은 인용 근거가 아니다). 같은 제목은 no-op.
+- 막힘: 휴지통 안(`IN-TRASH`) · `author_kind=external`(`RECORD-LOCKED`) · 확정·남기지 않음 후보가 붙은 글의 본문(`RECORD-LOCKED` — 고친 글은 새 기록으로) · revision 다름(`CONFLICT`). 행 잠금(users → records)으로 후보 생성·출처 정정과 직렬화한다.
+- 미결 후보(다시 뽑을 수 있는 제안 — 휴지통·복원 없음): 변경 구간 [s, e)(고치기 전 본문)와 겹치거나 닿으면(`quote_start <= e` 이고 `quote_end >= s`) 지운다(가리키던 `item_links` 도) · 앞이면 그대로 · 뒤면 `quote_start`·`quote_end` 에 delta(새 길이 − 옛 길이)를 더한다. 옮긴 뒤 새 본문[quote_start:quote_end] ≠ quote 면 지운다. 옮기기는 한 행씩(늘면 뒤에서부터·줄면 앞에서부터)이라 UNIQUE 순간 충돌이 없다. 미리보기 shown = 「검토할 판단 N개가 지워져요(다시 뽑을 수 있어요)」(N = 지울 수, 0이면 줄 없음).
+- 그대로인 것: 출처 판정(self·verbatim 적격 유지) · notes(「어디에 붙나」)·색인 재계산 없음 · 일일 기록 한도(새 기록이 아니다) · 「오타만」 범주 없음(서버가 판정하지 못한다).
+- 출처 정정 이력(`provenance_history`) 한 줄에도 `via`(web/mcp).
+- 항목(기준·결정·축·커스텀) 웹 인라인 편집: `POST /api/item/edit` = `db.item_edit` = `item_propose` + `item_decide(apply)` 한 트랜잭션(`tx_scope`) — expected_revision·code 불변·관계 검증 그대로, `item_history` 한 줄. 확정 기준의 문장을 고쳐도 확정 유지. 대화는 새 op 없이 `item_propose` → `item_decide(apply)`.
+
+## 레이아웃 계약 v2 (2026-11-03)
+- 정본 = `server/layout_registry.json` 한 곳: `components`(id → label·허용 영역 `regions`·`props` 모양 `{type: string|integer|boolean, enum?, max?}`) · `pages`(페이지 → 영역 목록·`default`). `db.DEFAULT_LAYOUT` 은 이 파일에서 만든다(사본 없음). 화면(TS)도 같은 파일을 읽는다.
+- 모양: `{"v": 2, "pages": {페이지: {"tabs": 기본 탭의 순열, "regions": {영역: [{"c": 컴포넌트, "p": {props}}]}}}}`. 영역마다 허용된 컴포넌트만·중복 없이(빼기는 된다). 모르는 키 `LAYOUT-INVALID`. JSON 상한 8192 바이트.
+- v1 행(`{"v":1,"tabs","blocks"}`)은 읽을 때 v2 로 올려 돌려준다(쓰기 없음). 다음 저장부터 v2. v1 모양 저장은 거절.
+- 대화: `layout_get`(read) · `layout_set(page, layout, version)`(write — 그 페이지만 바꾼다) · `layout_reset(page)`(write). 웹 `GET·PUT·DELETE /api/me/layout` 은 v2 전체. 버전 불일치 `LAYOUT-STALE`.
+
