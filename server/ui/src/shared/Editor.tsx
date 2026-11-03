@@ -2,7 +2,7 @@
 // 서버 미리보기(ask)가 있으면 그 문구를 그대로 보이고 [이대로 저장] 한 번 더.
 import { useEffect, useRef } from "react";
 import { useEdit } from "./edit";
-import css from "./Me.module.css";
+import css from "./Edit.module.css";
 
 export function Editor() {
   const { edit: e, set, cancel, save } = useEdit();

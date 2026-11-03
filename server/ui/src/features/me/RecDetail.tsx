@@ -10,9 +10,9 @@ import { oldSrc } from "../../shared/source";
 import type { Rec } from "../../shared/state";
 import { Acts } from "./Acts";
 import { Conn } from "./Conn";
-import { useEdit, type EditSpec } from "./edit";
-import { Editable } from "./Editable";
-import { Editor } from "./Editor";
+import { useEdit, type EditSpec } from "../../shared/edit";
+import { Editable } from "../../shared/Editable";
+import { Editor } from "../../shared/Editor";
 import { Head } from "./Head";
 import { meApi, type Journal } from "./meApi";
 import { qById, srcText, type World } from "./model";
@@ -46,12 +46,12 @@ export function RecDetail({ W, id, x, trashOn }: { W: World; id: string; x: Rec 
   return (
     <>
       {ts && editing(ts.key) ? <><div className={css.kind}>내 글</div><Editor /></>
-        : <Head kind="내 글" title={can && ts ? <Editable spec={ts} cls={css.inline}>{title}</Editable> : title} meta={meta.filter(Boolean).join(" · ")} />}
+        : <Head kind="내 글" title={can && ts ? <Editable spec={ts} look="inline">{title}</Editable> : title} meta={meta.filter(Boolean).join(" · ")} />}
       {trashOn && <Acts W={W} r={{ k: "journal", id, title, kind: "내 글", at: x?.created || "", x: x || ({ id } as Rec) }} trashOn />}
       {fail ? <div className="partfail" role="alert"><b>이 글을 읽지 못했어요 · 나머지는 정상</b><p>{fail.code === "OFFLINE" ? "서버에 연결하지 못했어요." : "글이 지워졌거나 찾을 수 없어요."} 새로 고침해도 그대로면 다시 로그인해 보세요.</p></div>
         : !j ? <p className="hint">{LOADING}</p>
         : bs && editing(bs.key) ? <Editor />
-        : can && bs ? <Editable spec={bs} block cls={css.docEdit}><Doc title={j.title} body={j.body} qText={id2 => qById(W, id2)?.text || null} /></Editable>
+        : can && bs ? <Editable spec={bs} block look="doc"><Doc title={j.title} body={j.body} qText={id2 => qById(W, id2)?.text || null} /></Editable>
         : <Doc title={j.title} body={j.body} qText={id2 => qById(W, id2)?.text || null} />}
       <Conn W={W} kind="journal" id={id} />
     </>

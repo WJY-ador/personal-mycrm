@@ -1,7 +1,7 @@
 // 상세의 동작 칸 — 동시에 최대 3개 + [삭제](휴지통 켜짐일 때만), 편집 중엔 숨긴다. 버튼 한 번 = 쓰기 한 번(옛 homeActs·homeDo 그대로).
 // [고쳐서 남기기] = 판단 문장 인라인 편집(기존 edit_confirm). 결과 문구는 그 자리에 짧게.
 import type { ApiError } from "../../shared/api";
-import { useEdit } from "./edit";
+import { useEdit } from "../../shared/edit";
 import { meApi } from "./meApi";
 import type { Row, World } from "./model";
 import { tabOfItem } from "./model";

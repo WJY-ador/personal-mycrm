@@ -1,10 +1,11 @@
-// 「나」 쓰기 상태 — 편집은 한 번에 하나(값을 눌러 인라인), 버튼 동작은 한 번에 하나(중복 방지). 쓰기는 [저장]·동작 버튼을 눌렀을 때만 —
+// 쓰기 상태(「나」·자료 종류 공용 — R4-2 에 features/me 에서 올림) — 편집은 한 번에 하나(값을 눌러 인라인), 버튼 동작은 한 번에 하나(중복 방지). 쓰기는 [저장]·동작 버튼을 눌렀을 때만 —
 // 선택·입력·취소·Esc·전환은 요청 0. 다시 그려도 쓰던 글은 남는다(draft). 고친 게 있는 동안 껍데기에 주소를 알린다(setDirty →
 // 「저장하지 않은 변경」 대화창·새로 고침 경고). 주소가 바뀌어 여기 왔으면(= 껍데기가 이동을 허락) 편집을 버린다.
 import { createContext, useContext, useEffect, useState } from "react";
-import { apiErr, type ApiError } from "../../shared/api";
-import type { UiCtx } from "../../shared/ctx";
-import { EMPTY_DRAFT } from "./text";
+import { apiErr, type ApiError } from "./api";
+import type { UiCtx } from "./ctx";
+
+export const EMPTY_DRAFT = "비어 있어요. 내용을 적은 뒤 저장해 주세요.";
 
 export type EField = { name: string; label: string; multi: boolean; orig: string; optional?: boolean };
 export type EditSpec = {
@@ -17,10 +18,10 @@ type Edit = EditSpec & { at: string; draft: Record<string, string>; busy: boolea
 type Act = { at: string; busy: boolean; ok: string; err: string };
 export type Flash = { at: string; text: string; bad: boolean; shown?: string };   // shown = 처음 보인 주소(한 번만)
 
-export const here = () => location.hash || "#_me";
-
 // routing = 이번 그리기가 주소를 replace 하는 중(그 주소에선 결과 문구를 「보였다」고 치지 않는다 — 옛 coreFlash 처럼 옮긴 뒤 한 번)
-export function useEditStore(ctx: UiCtx, routing = false) {
+// home = 주소가 비었을 때의 자리(「나」 = #_me)
+export function useEditStore(ctx: UiCtx, routing = false, home = "") {
+  const here = () => location.hash || home;
   const [edit, setEdit] = useState<Edit | null>(null);
   const [act, setAct] = useState<Act | null>(null);
   const [flash, setFlash] = useState<Flash | null>(null);

@@ -7,7 +7,7 @@ import type { ScreenProps } from "../../shared/ctx";
 import { Back } from "./Back";
 import { AxisBand } from "./AxisBand";
 import { Detail } from "./Detail";
-import { EditCtx, here, useEditStore } from "./edit";
+import { EditCtx, useEditStore } from "../../shared/edit";
 import { LensView } from "./LensView";
 import { pick } from "./links";
 import { meApi, type MePage } from "./meApi";
@@ -22,6 +22,8 @@ import { axisCtx, QK, useWorld } from "./useWorld";
 import { isAxis } from "./Conn";
 import { backNav, useMobile, useViewStore, ViewCtx } from "./view";
 import css from "./Me.module.css";
+
+const here = () => location.hash || "#_me";
 
 type Props = ScreenProps & { blocks: Blocks; layoutDefault: MePage };
 
@@ -51,7 +53,7 @@ export function MeScreen({ ctx, blocks, layoutDefault }: Props) {
   const center = solo ? here() : sel ? `#_me/${t}/${sel.id}` : "";
   // 껍데기가 아직 이 주소를 그리지 않았거나(내가 방금 replace) 이번에 replace 하는 중이면 결과 문구를 「보였다」고 치지 않는다
   const settled = !redirect && here() === (a ? `#_me/${a}${b ? "/" + b : ""}` : "#_me");
-  const edit = useEditStore(ctx, !settled), view = useViewStore(center);
+  const edit = useEditStore(ctx, !settled, "#_me"), view = useViewStore(center);
   useEffect(() => { if (mobile && !b && !solo && backNav.y) { window.scrollTo(0, backNav.y); backNav.y = 0; } }, [mobile, b, solo]);
   if (redirect) return null;
   const trashOn = !!S.switches?.trash && S.user?.nav === "new";

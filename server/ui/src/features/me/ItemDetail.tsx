@@ -4,9 +4,9 @@ import { mdhm } from "../../shared/date";
 import { rich } from "../../shared/rich";
 import { Acts } from "./Acts";
 import { Conn } from "./Conn";
-import { useEdit, type EditSpec } from "./edit";
-import { Editable } from "./Editable";
-import { Editor } from "./Editor";
+import { useEdit, type EditSpec } from "../../shared/edit";
+import { Editable } from "../../shared/Editable";
+import { Editor } from "../../shared/Editor";
 import { FieldRows } from "./FieldRows";
 import { Head } from "./Head";
 import { meApi } from "./meApi";
@@ -26,8 +26,8 @@ export function ItemDetail({ W, r, lens, trashOn }: { W: World; r: Extract<Row, 
   return (
     <>
       {editing(key) ? <><Head kind={r.kind} title={<>{code}{r.title}</>} meta={meta} /><Editor /></> : <>
-        <Head kind={r.kind} title={<>{code}{can ? <Editable spec={spec} cls={css.inline}>{r.title}</Editable> : r.title}</>} meta={meta} />
-        {x.body ? (can ? <Editable spec={spec} cls={css.body}>{rich(x.body)}</Editable> : <p className={css.body}>{rich(x.body)}</p>) : null}
+        <Head kind={r.kind} title={<>{code}{can ? <Editable spec={spec} look="inline">{r.title}</Editable> : r.title}</>} meta={meta} />
+        {x.body ? (can ? <Editable spec={spec} look="body" cls={css.body}>{rich(x.body)}</Editable> : <p className={css.body}>{rich(x.body)}</p>) : null}
       </>}
       <FieldRows W={W} it={x} />
       <Acts W={W} r={r} trashOn={trashOn} />
