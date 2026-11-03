@@ -19,7 +19,7 @@ type Props = { ctx: UiCtx; S: AppState; id: string; open: (id: string, quote?: s
 export function Drawer({ ctx, S, id, open, gone }: Props) {
   const q = useQuery({ queryKey: itemKey(id), queryFn: () => fetchItem(id) });
   const [busy, setBusy] = useState(false);
-  const [st, setSt] = useState(""), [er, setEr] = useState("");   // st = 저장하는 중 한 줄
+  const [st, setSt] = useState(""), [er, setEr] = useState("");
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => { if (q.data && window.matchMedia?.("(max-width: 900px)").matches) box.current?.scrollIntoView?.({ block: "start" }); }, [q.data?.id]);
   if (q.isError) return <PartFail err={apiErr(q.error)} what="이 항목" />;
@@ -29,17 +29,19 @@ export function Drawer({ ctx, S, id, open, gone }: Props) {
 
   async function act(a: string) {
     setEr(""); setSt("저장하고 있어요…"); setBusy(true);
+    let j: { deleted?: boolean };
     try {
-      await itemDecide({ item_id: it.id, expected_revision: it.revision, action: a, proposal_id: it.proposal!.proposal_id });
+      j = await itemDecide({ item_id: it.id, expected_revision: it.revision, action: a, proposal_id: it.proposal!.proposal_id });
     } catch (x) {
       const e = apiErr(x);
       setBusy(false); setSt("");
       setEr(e.code === "OFFLINE" ? "서버에 연결하지 못했어요. 새로 고침해 확인해 주세요." : e.code === "CONFLICT" ? CONFLICT_TEXT : e.msg || "저장하지 못했어요.");
       return;
     }
-    // 적용 = 카드가 적용된 항목이 되고(상세는 「나」), 제외 = 카드가 사라진다 — 둘 다 정의 주소 + 결과 한 줄
-    gone(ITEM_SAVED[a] || "저장했어요.", back);
-    await ctx.reload();
+    if (j.deleted) { gone(ITEM_SAVED[a] || "저장했어요.", back); await ctx.reload(); return; }   // 제안을 제외 — 카드가 사라진다
+    setSt(ITEM_SAVED[a] || "저장했어요.");
+    await ctx.reload();   // 적용 = 상태를 다시 받으면 적용된 항목이 되어 라우터가 「나」 의 그 항목으로 replace 한다(shared/route)
+    setBusy(false);
   }
   return (
     <div ref={box}>

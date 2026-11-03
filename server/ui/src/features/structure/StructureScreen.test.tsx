@@ -35,9 +35,9 @@ test("정의 필 · 카드(새 제안 먼저 · 칩) · 카드 누르면 그 항
 const NEW = { ...ITEM, id: "n1", code: null, title: null, body: null, decision: null, revision: 0, links: [], incoming: [], history: [], promotion: null,
   proposal: { ...ITEM.proposal, proposal_id: "pr_n1", title: "새 기준 제안", code: "P-2" } };
 
-test("서랍 = 새 항목 제안만 — 제안 값 · 연결할 대상(근거 빈 자리 포함) · [적용] = 서버 action 그대로 → 정의 주소 + 결과 한 줄 · [삭제]·결정 버튼 없음", async () => {
+test("서랍 = 새 항목 제안만 — 제안 값 · 연결할 대상(근거 빈 자리 포함) · [적용] = 서버 action 그대로 + 상태 다시 받기 · [삭제]·결정 버튼 없음", async () => {
   GET_ITEM = NEW;
-  let el = await show("od_p", "n1", structState({ switches: { trash: true } }));
+  const el = await show("od_p", "n1", structState({ switches: { trash: true } }));
   const p = el.querySelector("#panel")!;
   expect(calls[0].url).toBe("/api/item?id=n1");
   expect(p.querySelector(".eyebrow")!.textContent).toBe("기준 · 새 제안");
@@ -49,10 +49,8 @@ test("서랍 = 새 항목 제안만 — 제안 값 · 연결할 대상(근거 �
   expect(text(p, "button")).toEqual(["적용", "제외"]);
   await click(byText(p, "button", "적용")[0]);
   expect(posts()).toEqual([{ url: "/api/item/decide", body: { item_id: "n1", expected_revision: 0, action: "apply", proposal_id: "pr_n1" } }]);
-  expect(reload).toHaveBeenCalledTimes(1);
-  expect(location.hash).toBe("#structure/od_p");
-  el = await show("od_p");
-  expect(el.querySelector("#panel")!.textContent).toBe("적용했어요.");
+  expect(p.querySelector(".pstatus")!.textContent).toBe("적용했어요.");
+  expect(reload).toHaveBeenCalledTimes(1);   // 적용된 항목 = 라우터가 「나」 로 replace(shared/route.test.ts)
 });
 
 test("적용된 항목 주소 = 서랍 없음(「나」 에서 본다 — 라우터 replace) · 실패 = 충돌 화면 문구 / 그 밖 서버 msg", async () => {
