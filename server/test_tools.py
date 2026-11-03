@@ -5771,14 +5771,13 @@ async def test_q45_user():
         assert "<script" not in svg.lower() and "&lt;script&gt;" in svg and "&lt;b onclick=y&gt;" in svg, "label 은 escape — 글자로만 남는다"
         assert "Q45B" not in svg and "Q45B" not in json.dumps(st, ensure_ascii=False), "다른 사용자 이름 0"
 
-        # /app — 일반·관리자 모두 편입 대화창·구조 정의 보기 코드가 있다(CSP 해시 = 보낸 본문)
+        # /app — 일반·관리자 모두 그래프 토큰·React 자리가 있다(CSP 해시 = 보낸 본문). 화면 동작은 Vitest features/defs
         for admin in (False, True):
             _set_role(A, "admin" if admin else "user")
             r = await get("/app", A)
             hs = web.inline_script_hashes(r.text)
             assert len(hs) == 1 and f"'sha256-{hs[0]}'" in r.headers["content-security-policy"]
-            assert r.text.count('<dialog id="std-dlg"') == 1 and "renderDefs" in r.text, admin
-            assert tokens in r.text and "defsJump" in r.text, ("그래프 전환·토큰", admin)
+            assert tokens in r.text and 'id="ui-mast"' in r.text, ("그래프 토큰 · React 화면 자리(내 구조 설정·편입 대화창 = server/ui features/defs, R5b-1)", admin)
             assert ('id="desk-dlg"' in r.text) is not admin, "Q1b·Q1 분기 유지"
         _set_role(A, "user")
     finally:

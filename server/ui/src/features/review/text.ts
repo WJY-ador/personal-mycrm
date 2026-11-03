@@ -2,7 +2,7 @@
 // 옛 쪽에 같은 문구가 남은 것(CONFLICT_TEXT·FIXHINT·WHAT·칩 origin·decision)은 다른 옛 화면이 쓰는 일시 중복 — R5 에서 한쪽만(migrated.json temp_duplicates).
 export const CONFLICT_TEXT = "다른 곳에서 먼저 바뀌었어요. 새로 고침해 다시 봐 주세요.";
 export { FIXHINT } from "../../shared/Tech";
-export const NO_QUESTION = "질문 없음";
+export { NO_QUESTION } from "../../shared/clip";
 
 const SAVED: Record<string, string> = { confirm: "확정한 판단으로 남겼어요.", edit_confirm: "고친 문장을 확정한 판단으로 남겼어요.", exclude: "반영 안 함으로 표시했어요." };
 export const WORDS = {

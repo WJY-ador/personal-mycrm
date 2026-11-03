@@ -1,0 +1,86 @@
+{
+  "id": "i_sample",
+  "object_id": "od_principles",
+  "code": "P-1",
+  "title": "기준",
+  "body": "본문",
+  "data": {},
+  "decision": "pending",
+  "revision": 1,
+  "created_at": "2026-11-03T16:14:52.244942+09:00",
+  "updated_at": "2026-11-03T16:14:52.247080+09:00",
+  "links": [
+    {
+      "field_key": "evidence_claims",
+      "target_kind": "candidate",
+      "target_id": "c_sample"
+    }
+  ],
+  "semantic_kind": "principle",
+  "proposal": {
+    "proposal_id": "ip_sample",
+    "body": "본문",
+    "code": "P-1",
+    "data": {},
+    "links": [],
+    "title": "기준 고침",
+    "proposed_at": "2026-11-03T16:14:52+09:00"
+  },
+  "promotion": {
+    "met": false,
+    "confirmed_claims": 0,
+    "confirmed_claims_min": 2,
+    "distinct_events": 0,
+    "distinct_events_min": 0
+  },
+  "object": {
+    "id": "od_principles",
+    "key": "principles",
+    "label": "기준",
+    "semantic_kind": "principle",
+    "revision": 1
+  },
+  "fields": [
+    {
+      "key": "evidence_claims",
+      "label": "근거 판단",
+      "value_type": "reference",
+      "options": [],
+      "target_kind": "candidate",
+      "target_object_id": null
+    }
+  ],
+  "targets": [
+    {
+      "target_kind": "candidate",
+      "target_id": "c_sample",
+      "target": {
+        "id": "c_sample",
+        "record_id": "r_sample",
+        "text": "담당 먼저",
+        "quote": "담당을 먼저",
+        "status": "pending"
+      }
+    }
+  ],
+  "incoming": [
+    {
+      "field_key": "evidence_events",
+      "source_item_id": "i_e",
+      "source_record_id": null,
+      "code": null,
+      "title": "결정",
+      "object_id": "od_events",
+      "object_label": "결정",
+      "record_title": null
+    }
+  ],
+  "history": [
+    {
+      "id": 1,
+      "action": "apply",
+      "prev_revision": 0,
+      "at": "2026-11-03T16:14:52.247080+09:00"
+    }
+  ]
+}

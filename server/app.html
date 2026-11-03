@@ -584,8 +584,7 @@ ol.dnd .grip { color: var(--muted); font-size: 1rem; padding: .2rem .25rem; touc
 <body>
 <header class="mast"><div class="wrap">
   <h1 id="date"></h1><span class="sub">대시보드 — 여기서는 보기·결정·내 글 고치기</span>
-  <div class="axiswrap"><div class="axistop" id="axistop"><span class="speclabel">오늘</span><div class="specbox"><div class="spectrum" id="spectrum" role="img"></div><div class="speckey" id="speckey"></div></div></div>
-    <div class="axislegend" id="legend"></div></div>
+  <div class="axiswrap" id="ui-mast"></div>
   <div class="who"><details class="acct" id="acct"><summary><span class="sr">계정 메뉴 </span><span id="who"></span><span class="caret" aria-hidden="true">▾</span></summary>
     <div class="acct-menu" id="acct-menu">
       <!--admin--><a class="btn" href="/admin" id="acct-console" hidden>운영 콘솔</a>
@@ -641,15 +640,6 @@ ol.dnd .grip { color: var(--muted); font-size: 1rem; padding: .2rem .25rem; touc
 </div></dialog><!--/user-->
 <dialog id="dlg" aria-labelledby="dlg-title"><div class="dh"><div><b id="dlg-title"></b><div id="dlg-meta" class="recmeta" style="margin:2px 0 0"></div></div>
   <button class="small" id="dlg-close">닫기</button></div><div class="db" id="dlg-body"></div></dialog>
-<dialog id="std-dlg" aria-labelledby="std-dlg-title" aria-describedby="std-dlg-lead"><div class="dh"><b id="std-dlg-title">표준으로 편입하기</b>
-  <button class="small" type="button" id="std-dlg-close">닫기</button></div><div class="db">
-  <p id="std-dlg-lead"></p>
-  <h3>편입하면 막히는 변경</h3><ul id="std-dlg-lock"></ul>
-  <p class="hint" id="std-dlg-fields"></p>
-  <p class="hint">label 은 계속 바꿀 수 있고, 필드·선택지는 더할 수 있어요. 편입한 뒤엔 보류·거절로 되돌릴 수 없어요.</p>
-  <label class="stdok"><input type="checkbox" id="std-dlg-ok"> <span id="std-dlg-oktext"></span></label>
-  <div class="acts"><button class="primary" type="button" id="std-dlg-go" disabled>편입하기</button><button class="tertiary" type="button" id="std-dlg-cancel">취소</button></div>
-</div></dialog>
 <dialog id="name-dlg" aria-labelledby="name-dlg-title"><div class="dh"><b id="name-dlg-title">표시 이름 바꾸기</b>
   <button class="small" type="button" id="name-dlg-close">닫기</button></div><div class="db">
   <form class="fform" id="name-dlg-form" data-form="name" novalidate>
@@ -667,8 +657,6 @@ ol.dnd .grip { color: var(--muted); font-size: 1rem; padding: .2rem .25rem; touc
 <script>
 "use strict";
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
-// 사용자 글 본문 전용: escape 먼저, 그다음 한 줄 안의 **굵게** 만 <strong>. 링크·이미지·그 밖 마크다운은 하지 않는다(web.py 의 서버 쪽 규칙과 같음).
-const rich = s => esc(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
 const $ = id => document.getElementById(id);
 let S = null, loadedAt = "";
 // 코어 화면 라벨 — 원작자가 고르는 중(예: 질문 → 「주제」). 한 줄씩 바꾸면 탭·필·칩·서랍·대조 머리말이 같이 바뀐다.
@@ -682,14 +670,6 @@ const LABELS = {
   ticketKind: {bug: "버그", request: "요청", question: "질문", privacy: "개인정보 요청"},
   ticketStatus: {open: "접수", ack: "확인", doing: "처리중", done: "완료", wontfix: "보류"},
 };
-const recCache = {};
-// PR① 표시 용어(호스팅 웹 · 가이드 09·10 과 같은 말). NT = 라벨 한 덩이를 통째로 바꾼다
-// (부분 치환 없음 — 사용자 본문·식별자·「활동 기록」 같은 일반 문장은 건드리지 않는다)
-const NEWTERM = {"기록": "내 글", "후보": "검토할 판단", "내 판단": "확정한 판단", "검토 대기": "확인 전", "검토 완료": "확인했어요",
-  "출처 요약/반응": "읽고 든 생각", "요약/반응": "읽고 든 생각", "승인 대기": "저장 승인 대기", "오브젝트": "자료 종류",
-  "사용자 정의": "커스텀", "선택 템플릿": "커스텀", "직접 추가": "커스텀"};
-const NT = w => NEWTERM[w] || w;
-const LBL = k => NT(LABELS[k]);
 
 // ── 날짜·이름 ─────────────────────────────────────────
 const DOW = ["일", "월", "화", "수", "목", "금", "토"];
@@ -698,27 +678,7 @@ const toDate = iso => { const d = new Date(iso || ""); return isNaN(d) ? null : 
 const pad2 = n => String(n).padStart(2, "0");
 function md(iso) { const d = toDate(iso); return d ? `${d.getMonth() + 1}월 ${d.getDate()}일` : ""; }
 function mdhm(iso) { const d = toDate(iso); return d ? `${d.getMonth() + 1}월 ${d.getDate()}일 ${pad2(d.getHours())}:${pad2(d.getMinutes())}` : ""; }
-function dayParts(iso) { const d = toDate(iso); return d ? {d: d.getDate(), mo: d.getMonth() + 1} : {d: "", mo: ""}; }
 const ok = part => !S.read || !S.read[part] || S.read[part].ok;
-const qById = id => (S.questions || []).find(q => q.id === id);
-const recById = id => (S.journal || []).find(j => j.id === id);
-function recLabel(id) {
-  const r = recById(id);
-  if (!r) return "찾을 수 없는 글";
-  if (r.broken) return "읽지 못한 글";
-  return `${r.title} · ${md(r.created)}`;
-}
-function origin(c) {
-  const base = c.origin === "ai" ? "AI가 쓴 문장" : "내가 쓴 메모";
-  return `<span class="badge ${c.origin === "ai" ? "b-ai" : "b-memo"}">${base}${c.edited_by_user ? " · 내가 고침" : ""}</span>`;
-}
-// AI 가 쓴 문안을 사용자가 아직 승인하지 않은 후보. 구버전 서버(키 없음)에선 그리지 않는다.
-const aiWordingChip = c => c.wording_approved === false && c.wording_by === "ai" ? `<span class="chip o-ai">${esc(LABELS.aiWording)}</span>` : "";
-function decision(c) {
-  if (c.status === "confirmed") return `<span class="badge b-mine">${NT("내 판단")}</span>`;
-  if (c.status === "excluded") return `<span class="badge b-off">반영 안 함</span>`;
-  return `<span class="badge b-wait">아직 안 정함</span>`;
-}
 
 // ── 못 읽음 표시 — 서버의 조치 문장(명령어 포함)은 그리지 않고 코드로 사람 말을 고른다 ──
 const WHAT = {
@@ -738,9 +698,6 @@ function partFail(err, what) {
     <p>${esc(WHAT[err && err.code] || "읽는 중에 문제가 생겼어요.")} ${esc(FIXHINT)}</p>
     ${techInfo(err)}</div>`;
 }
-function sayLine(phrase) {
-  return `<div class="say">연결한 AI 대화에서 「${esc(phrase)}」라고 말하기 <button class="small" data-copy="${esc(phrase)}">요청 복사</button></div>`;
-}
 
 // ── 불러오기 ─────────────────────────────────────────
 // 상태 한 벌을 받아 온다. 로그인이 풀렸으면 null(이미 시작 화면 / 으로 보냄). 연결 실패는 throw.
@@ -751,7 +708,6 @@ async function fetchState() {
 }
 function applyState(next) {
   S = next;
-  for (const k in recCache) delete recCache[k];   // 기록 본문 캐시 — 「나」(React)에서 고친 글을 옛 화면이 옛 본문으로 보이지 않게
   loadedAt = mdhm(S.generated);
   render();
   window.dispatchEvent(new Event("crm:state"));   // React 섬 — 새 상태마다 서버 조회를 다시 받는다
@@ -832,7 +788,6 @@ function render() {
   const curId = navOn(tab);
   // 새 화면(나·자료 종류·내 구조 설정·연결 장치·저장 승인 대기·지도)은 마스트를 숨긴다 — 머리글 = 화면 제목만
   document.body.classList.toggle("navnew-screen", R.a !== "review" && ["me", "objects", "settings", "devices", "inbox", "map", "today2", "setup"].includes(tab.view));
-  if (!(tab.view === "settings" || (tab.view === "structure" && R.a === "defs"))) defsAt = "";   // 구조 화면을 떠나면 보기 방식을 잊는다
   $("nav-tabs").innerHTML = tabs.map(t => {
     const on = t.id === curId, n = tabCount(t);
     return `<a href="#${esc(t.id)}" class="tab${on ? " on" : ""}${t.maplink ? " maplink" : ""}"${on ? ' aria-current="page"' : ""}>${esc(t.label)}${n ? `<span class="n">${n}</span>` : ""}</a>`;
@@ -841,7 +796,9 @@ function render() {
   $("who").textContent = S.user && S.user.email ? S.user.email : "";
   $("who").title = S.user && S.user.email ? S.user.email : "";   // 말줄임 — 전체 이메일은 title
   acctApply();
-  mast(tabs);
+  const now = new Date();   // 머리글 날짜 — 스펙트럼·질문 레전드는 React 상시 섬(#ui-mast)
+  $("date").textContent = `${now.getMonth() + 1}월 ${now.getDate()}일 ${DOW[now.getDay()]}요일`;
+  uiIsland("mast", $("ui-mast"), {reload: load, state: S});
   subnav("");
   $("foot").textContent = loadedAt ? `불러온 시각 ${loadedAt}.` : "";
   let b = "";
@@ -859,17 +816,18 @@ function render() {
     return uiMount("review", [tab.id, R.b, R.c, qk ? `#${tab.id}/${R.b}` : (lastView[tab.id] || `#${tab.id}`), qk ? "질문으로 돌아가기" : `${tab.label}${roJosa(tab.label)} 돌아가기`]);
   }
   lastView[tab.id] = location.hash || "#" + tab.id;
-  if (tab.view === "structure") renderStructure(tab, R.a, R.b);
-  else if (tab.view === "map") renderMap(tab);
-  else if (tab.view === "record") renderRecordTab(tab, R.a);
+  const sheet = view => uiMount("sheet", [tab.id, view, tab.blocks.join(" "), R.a || ""]);   // 질문·기록 탭(React) — 탭 고르기는 이 라우터
+  if (tab.view === "structure") uiMount("structure", [R.a || "", R.b || ""]);   // 구조 항목·판단 문장 + 항목 서랍(React)
+  else if (tab.view === "map") uiMount("map", [tab.id]);
+  else if (tab.view === "record") sheet("record");
   else if (tab.view === "me") { subnav(""); uiMount("me", [R.a || "", R.b || ""]); }
   else if (tab.view === "today2") uiMount("today", ["today", R.a || "", R.b || ""]);   // 오늘(React) — 대기 하나 = #_today/inbox/<id>
   else if (tab.view === "setup") setupAt = renderSetup(tab, R);
   else if (tab.view === "objects") objMount(R.a, R.b, R.c);
-  else if (tab.view === "settings") renderDefs(tab);
+  else if (tab.view === "settings") uiMount("defs");
   else if (tab.view === "devices") uiMount("devices");
   else if (tab.view === "inbox") uiMount("today", ["inbox", R.a || ""]);   // 지난 승인 대기(React — 오늘과 같은 화면 묶음)
-  else renderQuestionTab(tab, R.a);
+  else sheet("question");
   // Setup 안 화면(자료 종류의 상세·옛 항목 보기 포함)엔 Setup 페이지 줄 — 각 화면이 subnav("") 로 비운 뒤 얹는다
   if ((tab.view === "setup" || navOn(tab) === "_setup") && tab.view !== "question") subnav(setupNav(tab.id === "_setup" ? setupAt : "objects"), "설정");
   coreFlashShow();
@@ -916,803 +874,10 @@ function subnav(html, label) {
   if (label) n.setAttribute("aria-label", label); else n.removeAttribute("aria-label");
 }
 
-// ── 마스트: 날짜 · 오늘 스펙트럼 · 질문 레전드 ─────────────
+// 옛 묶음 주소 replace(navReplace·meTabOfItem)가 읽는 정의·항목 — 화면은 React(구조·내 구조 설정·지도·질문·기록, R5b-1)
 const clip = (s, n) => { s = String(s || ""); return s.length > n ? s.slice(0, n) + "…" : s; };
-const qNo = id => { if (!id) return LABELS.noQuestion; const i = (S.questions || []).findIndex(q => q.id === id); return i < 0 ? "Q?" : `Q${i + 1}`; };
-// 대조 경로의 목록 키: 질문 있으면 질문 ID, 없으면 r:<기록ID>(그 기록의 질문 없는 미결정)
-const listKey = c => c.question_id || `r:${c.record_id}`;
-const reviewHref = (tab, c) => `#${tab.id}/review/${listKey(c)}/${c.id}`;
-const noQPending = () => (S.candidates || []).filter(c => !c.question_id && c.status === "pending");
-function mast(tabs) {
-  const now = new Date();
-  $("date").textContent = `${now.getMonth() + 1}월 ${now.getDate()}일 ${DOW[now.getDay()]}요일`;
-  const cs = ok("candidates") ? (S.candidates || []) : [];
-  const js = ok("journal") ? (S.journal || []) : [];
-  const used = new Set(cs.map(c => c.record_id));
-  // 색 순서: 내 판단 · 아직 안 정함 · 반영 안 함 · 후보 없는 기록. 비율 = 개수.
-  const parts = [[NT("내 판단"), cs.filter(c => c.status === "confirmed").length, "--mine"],
-                 ["아직 안 정함", cs.filter(c => c.status === "pending").length, "--warn"],
-                 ["반영 안 함", cs.filter(c => c.status === "excluded").length, "--soft"],
-                 ["판단이 없는 글", js.filter(j => !used.has(j.id)).length, "--line"]];
-  const total = parts.reduce((s, p) => s + p[1], 0);
-  const sum = parts.map(p => `${p[0]} ${p[1]}`).join(" · ");
-  $("axistop").hidden = !total;
-  $("spectrum").innerHTML = parts.filter(p => p[1]).map(p => `<div style="flex:${p[1]};background:var(${p[2]})" title="${esc(p[0])} ${p[1]}"></div>`).join("");
-  $("spectrum").title = sum;
-  $("spectrum").setAttribute("aria-label", sum);
-  $("speckey").innerHTML = parts.map(p => `<span><i style="background:var(${p[2]})"></i>${esc(p[0])} ${p[1]}</span>`).join("");
-  // [한 장] — 사용자 tabs 가 있으면 첫 질문형 사용자 탭, 없으면 기본 질문 탭(q)
-  const qTab = qTabId();
-  const qs = ok("questions") ? (S.questions || []) : [];
-  $("legend").innerHTML = qs.length ? qs.map((q, i) => {
-    const m = pendingOf(q.id).length;
-    return `<span class="ax"><b>Q${i + 1}</b><span title="${esc(q.text)}">${esc(clip(q.text, 30))}</span><em class="${m ? "on" : ""}">미결정 ${m}</em><button class="axpage" type="button" data-go="#${esc(qTab)}/${esc(q.id)}">한 장</button></span>`;
-  }).join("") : `<span class="ax">질문이 아직 없어요</span>`;
-  const nq = ok("candidates") ? noQPending().length : 0;
-  if (nq) $("legend").innerHTML += `<span class="ax"><b>—</b><span>${esc(LABELS.noQuestion)}</span><em class="on">미결정 ${nq}</em></span>`;
-}
-
-// ── 다음 할 일 한 줄 ──────────────────────────────────
-const SAY = {record: "기록 남기자", digest: "후보 뽑아 줘", question: "질문 하나 남길게", free: "기록 남기자"};
-function nextLine(tab, qid) {
-  const n = S.next;
-  if (!n || typeof n !== "object") return "";
-  let how = "";
-  if (n.kind !== "review" && SAY[n.kind]) how = `<details><summary>어떻게 하나요?</summary>${sayLine(SAY[n.kind])}</details>`;
-  return `<div class="nextline"><span class="lbl">다음 할 일</span><span class="txt">${esc(n.text)}</span>${how}</div>`;
-}
-
-const byNewest = (a, b) => String(b.updated || b.created || "").localeCompare(String(a.updated || a.created || ""));
-
-// ── 질문형 탭 ─────────────────────────────────────────
-const pendingOf = qid => (S.candidates || []).filter(c => c.question_id === qid && c.status === "pending");
-function pickQuestions(tab, qs, sel) {
-  if (!qs.length) return subnav("");
-  subnav(qs.map((q, i) => {
-    const w = pendingOf(q.id).length;
-    const on = sel === q.id;
-    return `<a href="#${esc(tab.id)}/${esc(q.id)}" class="${on ? "on" : ""}"${on ? ' aria-current="true"' : ""} title="${esc(q.text)}">Q${i + 1} · ${esc(clip(q.text, 36))}${w ? `<span class="n">${w}</span>` : ""}</a>`;
-  }).join(""), "질문 고르기");
-}
-function renderQuestionTab(tab, sel) {
-  const bl = new Set(tab.blocks);
-  const qs = ok("questions") ? (S.questions || []) : [];
-  const q = qs.find(x => x.id === sel) || qs[0];
-  let body;
-  if (!ok("questions")) {
-    body = partFail(S.read.questions.error, "질문 목록");
-  } else if (!q) {
-    body = firstRun(tab, bl);
-  } else {
-    body = `<div class="eyebrow">질문 · ${esc(qNo(q.id))}</div><h2 class="title">${esc(q.text)}</h2>
-      ${bl.has("next") ? nextLine(tab, q.id) : ""}
-      ${bl.has("sheet") || bl.has("candidates") ? sheetSections(tab, q) : ""}
-      ${bl.has("journal") ? recentRecords() : ""}
-      ${bl.has("status") ? runStatus() : ""}`;
-  }
-  pickQuestions(tab, qs, q ? q.id : "");
-  $("view").innerHTML = `<div class="paper sheet">${body}</div>`;
-}
-
-// ── 구조 — 360: 서브 필 = 기준(principle) 오브젝트 + 「후보」 + 그 밖의 오브젝트. 카드 그리드 + 오른쪽 서랍 ──
-// 라우트: #structure/<오브젝트ID>[/<항목ID>] · #structure/cand/<결정 필터>. 옛 #structure/confirmed 등은 후보 필터로.
-const FILTERS = [["confirmed", "내 판단"], ["pending", "아직 안 정함"], ["excluded", "반영 안 함"], ["all", "전부"]];
-const STCHIP = {confirmed: ["st-mine", "내 판단"], pending: ["st-wait", "아직 안 정함"], excluded: ["st-off", "반영 안 함"]};
-const NOCARD = {confirmed: "아직 확정한 판단이 없어요. 검토할 판단을 원문과 대조해 남기면 여기에 쌓여요.",
-  pending: "정할 문장이 남아 있지 않아요.", excluded: "반영 안 함으로 둔 문장이 없어요.", all: "아직 뽑힌 문장이 없어요. 내 글에서 판단을 뽑으면 여기에 떠요."};
-const defsList = () => S.definitions || [];
-const defById = id => defsList().find(d => d.id === id);
-const objLabel = id => { const d = defById(id); return d ? d.label : LABELS.item; };
-// 기준 정의의 결정(event) 필드가 가리키는 오브젝트 라벨 — 원작자 템플릿이면 「결정」
-const eventLabel = d => { const p = promoOf(d), f = p && ((d.fields || []).find(x => x.key === p.event_field));
-  return f && f.target_object_id && defById(f.target_object_id) ? objLabel(f.target_object_id) : LABELS.event; };
+const defById = id => (S.definitions || []).find(d => d.id === id);
 const itemById = id => (S.items || []).concat(S.item_proposals || []).find(it => it.id === id);
-const promoOf = d => ((d && d.policy) || {}).promotion || null;
-const linkCount = (it, key) => key ? (it.links || []).filter(l => l.field_key === key).length : 0;
-// 들어오는 관계(다른 항목이 이 항목을 가리킴)를 오브젝트 라벨별로 센다 — 원작자 템플릿이면 「숙제 N」
-function incomingCounts(id) {
-  const out = {};
-  for (const it of S.items || []) for (const l of it.links || [])
-    if (l.target_kind === "item" && l.target_id === id) { const lb = objLabel(it.object_id); out[lb] = (out[lb] || 0) + 1; }
-  return out;
-}
-function selectChips(it, d) {
-  return ((d && d.fields) || []).filter(f => f.value_type === "select" && it.data && it.data[f.key] != null && it.data[f.key] !== "").map(f => {
-    const o = (f.options || []).find(x => x.value === it.data[f.key]);
-    return `<span class="chip" title="${esc(f.label)}">${esc(o ? o.label : it.data[f.key])}</span>`;
-  }).join("");
-}
-function decisionChip(it) {
-  if (it.semantic_kind !== "principle" || !it.revision) return "";
-  const st = STCHIP[it.decision] || STCHIP.pending;
-  return `<span class="chip ${st[0]}">${NT(st[1])}</span>`;
-}
-// 「구조」 탭 두 보기 — 항목(카드 그리드) · 구조 정의(#structure/defs). 정의 id 는 od_ 로 시작해 defs 와 겹치지 않는다
-// 보기 전환이 맨 위 · 오브젝트 필(sub, 「구조 고르기」)은 그 아래 — 항목 보기에서만 넘긴다
-// 내 구조 설정(tab.settings)엔 보기 전환이 없고, 항목 보기의 전환은 「내 구조 설정」 으로 간다
-function structViews(tab, on, sub = "") {
-  if (tab.settings) return sub;
-  const a = (href, label, v) => `<a href="${esc(href)}" class="${on === v ? "on" : ""}"${on === v ? ' aria-current="true"' : ""}>${label}</a>`;
-  const defs = a("#_settings/structure", "내 구조 설정", "defs");
-  return `<nav class="pills sview" aria-label="구조 보기">${a(`#${tab.id}`, "항목", "items")}${defs}</nav>` + sub;
-}
-function renderStructure(tab, a, b) {
-  const ds = defsList();
-  const rules = ds.filter(d => d.semantic_kind === "principle"), others = ds.filter(d => d.semantic_kind !== "principle");
-  const cs = ok("candidates") ? (S.candidates || []) : [];
-  let sel = a, filter = "";
-  if (FILTERS.some(x => x[0] === a)) { sel = "cand"; filter = a; }
-  else if (a === "cand") filter = b;
-  if (sel !== "cand" && !defById(sel)) sel = rules[0] ? rules[0].id : "cand";
-  if (!FILTERS.some(x => x[0] === filter)) filter = "confirmed";
-  const cnt = d => (S.items || []).filter(it => it.object_id === d.id).length;
-  const pill = (href, label, n, on) => `<a href="${esc(href)}" class="${on ? "on" : ""}"${on ? ' aria-current="true"' : ""}>${esc(label)}<span class="n m">${n}</span></a>`;
-  subnav("");
-  const sub = `<nav class="pills sobjs" aria-label="구조 고르기">${rules.map(d => pill(`#${tab.id}/${d.id}`, d.label, cnt(d), sel === d.id)).join("")
-    + pill(`#${tab.id}/cand/${filter}`, "판단 문장", cs.length, sel === "cand")
-    + others.map(d => pill(`#${tab.id}/${d.id}`, d.label, cnt(d), sel === d.id)).join("")}</nav>`;
-  if (sel === "cand") return renderCandGallery(tab, cs, filter, sub);
-  const d = defById(sel);
-  const list = (S.items || []).filter(it => it.object_id === d.id);
-  const props = (S.item_proposals || []).filter(it => it.object_id === d.id);
-  const cards = props.map(it => itemCard(tab, it, d, b)).join("") + list.map(it => itemCard(tab, it, d, b)).join("");
-  $("view").innerHTML = structViews(tab, "items", sub) + `<div class="struct"><div>${cards ? `<div class="gallery">${cards}</div>`
-      : `<div class="empty">아직 ${esc(d.label)} 항목이 없어요. 연결한 AI 대화에서 제안하면 여기서 적용할 수 있어요.</div>`}</div>
-    <aside id="panel" aria-label="${esc(d.label)} 서랍" aria-live="polite"><p class="empty">카드를 누르면 여기 떠요.</p></aside></div>`;
-  if (b && itemById(b)) openDrawer(tab, b);
-}
-function itemCard(tab, it, d, selId) {
-  const p = promoOf(d), isNew = !it.revision, pr = it.proposal || {};
-  const title = isNew ? pr.title : it.title, body = isNew ? pr.body : it.body;
-  const view = isNew ? Object.assign({}, it, {data: pr.data || {}, links: pr.links || [], code: pr.code}) : it;
-  const inc = incomingCounts(it.id);
-  const top = [view.code ? `<span class="chip code">${esc(view.code)}</span>` : "", selectChips(view, d), decisionChip(it),
-    it.promotion && it.promotion.met ? `<span class="chip promo-met" title="승격 조건 충족 — 남길지는 내가 정해요">승격</span>` : "",
-    p ? `<span class="chip">근거 ${linkCount(view, p.claim_field)}</span>` : "",
-    p && p.event_field ? `<span class="chip">${esc(eventLabel(d))} ${linkCount(view, p.event_field)}</span>` : "",
-    isNew ? `<span class="chip flag">새 제안</span>` : it.proposal ? `<span class="chip flag">제안 있음</span>` : ""].join("");
-  const summary = d.semantic_kind === "principle" ? body : dataSummary(view, d) || body;
-  return `<article class="asset-card${isNew ? " new" : ""}${selId === it.id ? " on" : ""}" data-go="#${esc(tab.id)}/${esc(d.id)}/${esc(it.id)}" tabindex="0" role="button">
-    <div class="top">${top}</div><h3>${esc(title || "(제목 없음)")}</h3>${summary ? `<p class="summary">${esc(summary)}</p>` : ""}
-    <div class="meta"><span>${esc(md(it.updated_at))}</span>${Object.entries(inc).map(([k, n]) => `<span>${esc(k)} ${n}</span>`).join("")}</div></article>`;
-}
-function dataSummary(it, d) {
-  return ((d && d.fields) || []).filter(f => !["reference", "select"].includes(f.value_type)).map(f => {
-    const v = (it.data || {})[f.key];
-    if (v == null || v === "" || (Array.isArray(v) && !v.length)) return "";
-    return `${f.label} ${Array.isArray(v) ? v.join(", ") : v}`;
-  }).filter(Boolean).join(" · ");
-}
-function renderCandGallery(tab, cs, f, sub) {
-  if (!ok("candidates")) { $("view").innerHTML = structViews(tab, "items", sub) + partFail(S.read.candidates.error, "문장 목록"); return; }
-  const pills = `<nav class="pills" aria-label="결정 고르기">${FILTERS.map(([k, l]) => {
-    const n = k === "all" ? cs.length : cs.filter(c => c.status === k).length, on = k === f;
-    return `<a href="#${esc(tab.id)}/cand/${k}" class="${on ? "on" : ""}"${on ? ' aria-current="true"' : ""}>${NT(l)}<span class="n">${n}</span></a>`;
-  }).join("")}</nav>`;
-  const list = cs.filter(c => f === "all" || c.status === f).sort(byNewest);
-  $("view").innerHTML = structViews(tab, "items", sub) + pills + (list.length ? `<div class="gallery">${list.map(c => assetCard(tab, c)).join("")}</div>` : `<div class="empty">${esc(NOCARD[f])}</div>`);
-}
-function assetCard(tab, c) {
-  const st = STCHIP[c.status] || STCHIP.pending;
-  const r = recById(c.record_id);
-  const title = !r ? "찾을 수 없는 글" : r.broken ? "읽지 못한 글" : r.title;
-  // 아직 안 정한 문장은 대조 화면으로, 정한 문장은 근거 원문으로
-  const act = c.status === "pending" ? `data-go="${esc(reviewHref(tab, c))}"`
-                                     : `data-rec="${esc(c.record_id)}" data-quote="${esc(c.quote)}"`;
-  return `<article class="asset-card" ${act} tabindex="0" role="button">
-    <div class="top"><span class="chip">${esc(qNo(c.question_id))}</span><span class="chip ${st[0]}">${NT(st[1])}</span>
-      <span class="chip${c.origin === "ai" ? " o-ai" : ""}">${c.origin === "ai" ? "AI가 쓴 문장" : "내가 쓴 메모"}</span>
-      ${c.edited_by_user ? `<span class="chip st-mine">내가 고침</span>` : ""}${c.status === "pending" && c.origin === "ai" ? `<span class="chip flag">⚠️AI 미확정</span>` : ""}${aiWordingChip(c)}</div>
-    <h3>${esc(c.text)}</h3>
-    <p class="summary"><mark>${rich(c.quote)}</mark></p>
-    <div class="meta"><span>${esc(md(c.created))}</span><a data-rec="${esc(c.record_id)}" data-quote="${esc(c.quote)}" tabindex="0" role="button">${esc(title)}</a></div></article>`;
-}
-
-// ── 구조 정의 (Q5) — S.structure(서버 contract.respond 본인 응답)만 그린다. origin·locked·cardinality 를 여기서 다시 판정하지 않는다.
-// 편집은 연결한 AI 대화에서 — 이 화면에서 쓰는 것은 표준 편입 선택(보류·거절·편입)뿐이다.
-// structure_svg의 공통 표시 정의를 서버가 삽입한다. 내부 origin은 그대로다.
-const ORIGIN_TEXT = /*{{origin-text}}*/ {};
-const ORIGIN_CATEGORY = /*{{origin-category}}*/ {};
-const ORIGIN_CHIP = Object.fromEntries(Object.keys(ORIGIN_TEXT).map(k => [k,
-  [ORIGIN_CATEGORY[k] === "standard" ? "o-std" : "o-tpl", ORIGIN_TEXT[k]]]));
-const originChip = o => { const x = ORIGIN_CHIP[o] || ["", o]; return `<span class="chip ${o === "custom" ? "o-tpl" : x[0]}">${esc(NT(x[1]))}</span>`; };
-const LOCK_TIP = "편입된 표준 정의예요. key·종류·표준 필드 모양은 바꿀 수 없고, label 은 바꿀 수 있어요.";
-const lockChip = on => on ? `<span class="chip lock" title="${esc(LOCK_TIP)}">표준 정의 보호</span>` : "";
-const VTYPE = {text: "글", number: "숫자", boolean: "예/아니오", date: "날짜", select: "고르기", text_list: "글 목록", reference: "참조"};
-const KIND_LABEL = {principle: LABELS.principle, event: LABELS.event, collection: LABELS.collection};
-const CORE_LABEL = {record: LABELS.record, candidate: LABELS.candidate};
-// 목록/그래프 전환 — 기본 그래프. 라우트(해시)를 쓰지 않는다: 해시를 바꾸면 render → scrollTo(0,0) 과
-// 편입 미리보기 재요청이 돈다. 고른 보기는 그 화면에 머무는 동안만(영속 없음) — 다른 화면에 갔다 오면 기본으로
-let defsMode = "graph", defsAt = "";
-const DMO_ORIGIN = [...new Set(Object.values(ORIGIN_CATEGORY))];
-const josa = (w, a, b) => { const c = String(w).slice(-1).charCodeAt(0) - 0xAC00; return c < 0 || c > 11171 || c % 28 === 0 ? b : a; };   // 받침 있으면 a
-function renderDefs(tab) {
-  subnav("");
-  if (defsAt !== location.hash) { defsMode = "graph"; defsAt = location.hash; }
-  const st = S.structure;
-  if (!st || !Array.isArray(st.objects)) {
-    $("view").innerHTML = structViews(tab, "defs") + `<div class="empty">구조 정의를 읽지 못했어요. ${esc(FIXHINT)}</div>`;
-    return;
-  }
-  const objs = st.objects, rels = st.relations || [];
-  const oById = id => objs.find(o => o.id === id);
-  const tgt = r => r.target_kind === "item" ? (oById(r.target_object_id) || {}).label || "찾을 수 없는 자료 종류" : NT(CORE_LABEL[r.target_kind] || r.target_kind);
-  const relOf = (oid, fk) => rels.find(r => r.object_id === oid && r.field_key === fk);
-  const nItems = id => (S.items || []).filter(it => it.object_id === id).length;
-  const fieldRow = (o, f) => {
-    const r = f.value_type === "reference" ? relOf(o.id, f.key) : null;
-    return `<tr><td>${esc(f.label)}${f.std_name && f.std_name !== f.label ? ` <span class="tech">표준 「${esc(f.std_name)}」</span>` : ""}</td>
-      <td><span class="tech">${esc(f.key)}</span></td>
-      <td>${esc(VTYPE[f.value_type] || f.value_type)}${r ? ` → ${esc(tgt(r))} <span class="chip">${esc(r.cardinality)}</span>` : ""}</td>
-      <td>${originChip(f.origin)}</td><td>${f.locked ? lockChip(true) : `<span class="tech">—</span>`}</td></tr>`;
-  };
-  // id dmo-o<n>·dmo-r<n>·dmo-core-<kind> = structure_svg node_anchor·rel_anchor·core_anchor(응답 순서 그대로) — 그래프 링크가 가리킨다
-  const objCard = (o, i) => `<article class="sobj${o.locked ? " locked" : ""}" id="dmo-o${i + 1}" aria-labelledby="sobj-${esc(o.id)}">
-    <div class="sohead"><h3 id="sobj-${esc(o.id)}">${esc(o.label)}</h3><span class="tech">${esc(o.key)}</span></div>
-    <div class="labels">${originChip(o.origin)}${lockChip(o.locked)}${o.std_name ? `<span class="chip">표준 「${esc(o.std_name)}」</span>` : ""}
-      <span class="chip">${esc(KIND_LABEL[o.semantic_kind] || o.semantic_kind)}</span><span class="chip">항목 ${nItems(o.id)}</span></div>
-    ${o.fields.length ? `<div class="sftbl-wrap"><table class="sftbl"><thead><tr><th scope="col">필드</th><th scope="col">key</th><th scope="col">값</th>
-      <th scope="col">구분</th><th scope="col">보호</th></tr></thead><tbody>${o.fields.map(f => fieldRow(o, f)).join("")}</tbody></table></div>`
-      : `<p class="hint">필드가 없어요.</p>`}</article>`;
-  const relRow = (r, i) => { const o = oById(r.object_id) || {}, f = (o.fields || []).find(x => x.key === r.field_key) || {};
-    return `<li id="dmo-r${i + 1}"><b>${esc(o.label || "")}</b><span class="tech">${esc(f.label || r.field_key)}</span> → <b>${esc(tgt(r))}</b>
-      <span class="chip">${esc(r.cardinality)}</span>${originChip(r.origin)}${lockChip(r.locked)}</li>`; };
-  const core = st.core || [];
-  const svg = typeof S.structure_svg === "string" ? S.structure_svg : "";
-  const mode = m => `<button type="button" data-dmode="${m}" aria-pressed="${defsMode === m}">${m === "list" ? "목록" : "그래프"}</button>`;
-  $("view").innerHTML = structViews(tab, "defs") + `<div class="paper"><div class="eyebrow">${tab.settings ? "내 구조 설정" : "구조 정의"}</div>
-    <p class="hint" style="margin:.3rem 0 .9rem">정의를 바꾸는 일은 연결한 AI 대화에서 해요.</p>
-    <div class="dmode" role="group" aria-label="구조 정의 보기 방식">${mode("list")}${mode("graph")}</div>
-    <div id="dlist"${defsMode === "list" ? "" : " hidden"}>
-    <section class="sec"><h3>${NT("오브젝트")}<span class="count">${objs.length}</span></h3>
-      ${objs.length ? `<div class="sdef">${objs.map(objCard).join("")}</div>` : `<div class="empty">아직 자료 종류가 없어요.</div>`}</section>
-    <section class="sec"><h3>관계<span class="count">${rels.length}</span></h3>
-      ${rels.length ? `<ul class="srel">${rels.map(relRow).join("")}</ul>` : `<div class="empty">참조 필드가 없어요.</div>`}
-      ${core.length ? `<p class="hint" style="margin:.6rem 0 0">${originChip("core")} 공통으로 쓰는 ${core.map(x => `<b id="dmo-core-${esc(x.kind)}">${esc(NT(CORE_LABEL[x.kind] || x.kind))}</b>`).join("·")}${josa(NT(CORE_LABEL[core[core.length - 1].kind] || ""), "을", "를")} 가리키는 관계가 있어요.</p>` : ""}</section></div>
-    <section class="sec" id="dgraph"${defsMode === "graph" ? "" : " hidden"} aria-label="구조 그래프">
-      <div class="dlegend">${DMO_ORIGIN.map(k => `<span><i class="o-${k}"></i>${esc(NT((ORIGIN_CHIP[k] || ["", k])[1]))}</span>`).join("")}
-        <span>점선 고리 = 표준 정의 보호</span><span>선 = 관계(화살표 없음) · 세 갈래 = 여러(N) · 두 줄 = 하나(1) · 참조를 가진 쪽이 N</span></div>
-      ${svg ? `<div class="dmo">${svg}</div>` : `<div class="empty">그래프를 읽지 못했어요. 목록으로 보세요. ${esc(FIXHINT)}</div>`}
-      <p class="hint" style="margin:.6rem 0 0">원을 누르면 목록의 그 자료 종류로, 선을 누르면 그 관계로 가요.</p></section>
-    ${tab.settings && $("acct-names") ? namesBox() : ""}
-    ${tab.settings ? `<details class="fold" id="std-adv"${stdAdvOpen ? " open" : ""}><summary>고급</summary>` : ""}
-    <section class="sec" aria-labelledby="std-pv-title"><h3 id="std-pv-title">공통 구조 적용 검토</h3>
-      <p class="hint">표준 정의마다 편입·보류·거절을 골라요. 편입한 정의는 「표준 정의 보호」를 받아요. 고르지 않아도 다른 기능은 그대로예요.</p>
-      <p id="std-msg" role="status" aria-atomic="true"></p><div id="std-pv" aria-busy="true"><p class="empty">미리보기를 불러오는 중이에요…</p></div></section>${tab.settings ? "</details>" : ""}</div>`;
-  loadPreview();
-}
-
-// PR① 내 구조 설정 — 이름 공유 동의(계정 메뉴 항목을 옮김, 같은 API) · 고급 접힘(다시 그려도 열린 채로).
-// 문구는 사용자 전용 구간(user 표식)의 메뉴 요소에서 읽는다 — 관리자 /app 본문엔 그 글자가 없어야 한다(서버가 구간을 뺀다)
-let stdAdvOpen = false;
-function namesBox() {
-  const on = (S.user || {}).struct_names === true;
-  const label = esc(($("acct-names").firstChild || {}).textContent.trim()), note = document.querySelector("#acct-menu .acct-note");
-  return `<section class="sec" aria-labelledby="names-h"><h3 id="names-h">${label}</h3>
-    ${note ? `<p class="hint">${note.innerHTML}</p>` : ""}
-    <button type="button" class="secondary" data-names-toggle aria-pressed="${on}">${label} <span class="tech">${on ? "켜짐" : "꺼짐"}</span></button>
-    <p class="ferr" id="names-err" role="alert" aria-atomic="true"></p></section>`;
-}
-document.addEventListener("click", async e => {
-  const b = e.target.closest("button[data-names-toggle]");
-  if (!b || b.disabled || !S) return;
-  b.disabled = true;
-  const res = await corePost("/api/optional-consent", {kind: "struct_names", on: S.user.struct_names !== true});
-  b.disabled = false;
-  if (!res) return;
-  if (res.ok) await load(); else if ($("names-err")) $("names-err").textContent = res.msg;
-});
-document.addEventListener("toggle", e => { if (e.target.id === "std-adv") stdAdvOpen = e.target.open; }, true);
-function defsShow(m) {
-  defsMode = m === "graph" ? "graph" : "list";
-  const l = $("dlist"), g = $("dgraph");
-  if (!l || !g) return;
-  l.hidden = defsMode !== "list";
-  g.hidden = defsMode !== "graph";
-  for (const b of document.querySelectorAll("[data-dmode]")) b.setAttribute("aria-pressed", String(b.dataset.dmode === defsMode));
-}
-// 그래프 원·선 → 목록의 같은 id. SVG <a href="#dmo-…"> 는 해시를 바꾸지 않게 가로챈다(라우트 해시 앱 — #dmo-o1 은 탭이 아니다)
-function defsJump(id) {
-  const n = /^dmo-/.test(id) ? document.getElementById(id) : null;
-  if (!n) return;
-  defsShow("list");
-  n.setAttribute("tabindex", "-1");
-  n.scrollIntoView({block: "start"});
-  n.focus({preventScroll: true});
-  n.classList.add("dmo-hit");
-  setTimeout(() => n.classList.remove("dmo-hit"), 1600);
-}
-
-// ── 편입 미리보기 · 선택 (§3) — GET /api/std/preview(본인 것만, 읽기 전용) → 보류·거절·편입. 편입은 명시 확인 대화창을 거친다 ──
-const STD_STATE = {seeded: ["st-mine", "처음부터 표준"], incorporated: ["st-mine", "편입함"], deferred: ["st-wait", "보류"],
-  refused: ["st-off", "거절"], none: ["", "아직 고르지 않음"]};
-const STD_READY = ["seeded", "incorporated"];
-const STRUCT_TEXT = {match: "일치 — 표준과 같은 모양", extend: "확장 — 표준 + 내가 더한 필드", missing: "누락 — 같은 key 자료 종류가 없어요",
-  conflict: "충돌 — 표준과 모양이 달라요"};
-const STD_CONFLICT = {
-  key_draft_only: () => "같은 key 자료 종류가 아직 적용 전 초안이에요. 대화에서 초안을 적용하거나 key 를 바꾼 뒤 다시 보세요",
-  key_archived: () => "같은 key 자료 종류가 보관돼 있어요",
-  kind: () => "자료 종류의 의미 유형(semantic_kind)가 표준과 달라요",
-  field_missing: f => `표준 필드 ${f} 가 없어요`,
-  field_archived: f => `표준 필드 ${f} 가 보관돼 있어요`,
-  field_value_type: f => `필드 ${f} 의 값 종류가 표준과 달라요`,
-  field_target_kind: f => `필드 ${f} 가 가리키는 종류가 표준과 달라요`,
-  field_target: f => `필드 ${f} 가 표준 대상 자료 종류를 가리키지 않아요`,
-  field_multiple: f => `필드 ${f} 의 여러 개 허용이 표준과 달라요`,
-  field_required: f => `필드 ${f} 의 필수 여부가 표준과 달라요`,
-  field_options: f => `필드 ${f} 에 표준 선택지가 빠져 있어요`,
-};
-const BLOCK_TEXT = {already: "이미 표준으로 쓰고 있어요.", conflict: "구조가 표준과 달라요. 대화로 정의를 표준 모양에 맞춘 뒤 다시 보세요.",
-  needs_target: "참조 대상 표준을 먼저 편입해야 해요."};
-// 편입하면 막히는 변경 — 서버 contract.LOCKED_CHANGES 코드와 같은 뜻
-const LOCK_TEXT = {archive: "자료 종류 삭제·보관", key: "자료 종류 key 바꾸기", semantic_kind: "자료 종류의 의미 유형(semantic_kind) 바꾸기",
-  std_id: "표준 식별자 떼기·바꾸기 — 보류·거절로 되돌리기 포함", field_remove: "표준 필드 빼기",
-  field_shape: "표준 필드의 key·값 종류·대상·여러 개·필수 바꾸기", option_remove: "표준 선택지 빼기·값 바꾸기"};
-const STD_DONE = {deferred: "보류로 남겼어요. 다른 기능은 그대로예요.", refused: "거절로 남겼어요. 기존 자료 종류와 링크는 그대로예요.",
-  incorporated: "편입했어요. 이 정의는 이제 「표준 정의 보호」를 받아요."};
-const STD_ERR = {
-  "DEF-INVALID": "지금 구조로는 편입할 수 없어요. 미리보기를 다시 불러왔어요 — 사유를 확인해 주세요.",
-  "CONFLICT": "다른 곳에서 먼저 바뀌었어요. 미리보기를 다시 불러왔어요 — 다시 확인해 주세요.",
-  "STANDARD-LOCKED": "이미 편입된 표준은 보류·거절로 바꿀 수 없어요.",
-};
-let stdPv = null, stdMsg = "", stdAsk = null, pvAt = 0;
-const stdName = k => { const o = stdPv && stdPv.objects.find(x => x.std_key === k); return o ? o.std_name : k; };
-function pvCard(o) {
-  const stc = STD_STATE[o.state] || ["", o.state], ready = STD_READY.includes(o.state);
-  const obj = o.object;
-  const lock = o.lock || {changes: [], fields: []};
-  let acts;
-  if (ready) acts = `<p class="hint" style="margin:.5rem 0 0">${esc(BLOCK_TEXT.already)}</p>`;
-  else acts = `<div class="acts" role="group" aria-label="표준 ${esc(o.std_name)} 선택">
-      <button class="secondary" type="button" data-std="deferred" data-key="${esc(o.std_key)}"${o.state === "deferred" ? " disabled" : ""}>보류</button>
-      <button class="secondary" type="button" data-std="refused" data-key="${esc(o.std_key)}"${o.state === "refused" ? " disabled" : ""}>거절</button>
-      ${o.can_incorporate ? `<button class="primary" type="button" data-std="incorporated" data-key="${esc(o.std_key)}" aria-haspopup="dialog">편입…</button>` : ""}</div>
-    ${o.can_incorporate ? "" : `<p class="blocked">편입할 수 없어요 — ${(o.blocked || []).map(b => esc(BLOCK_TEXT[b] || "지금은 편입할 수 없어요.")).join(" ")}</p>`}`;
-  return `<article class="spvc" aria-labelledby="spv-${esc(o.std_key)}"><h4 id="spv-${esc(o.std_key)}">표준 「${esc(o.std_name)}」<span class="chip ${stc[0]}">${esc(stc[1])}</span></h4>
-    <dl><dt>내 자료 종류</dt><dd>${obj ? `${esc(obj.label)} <span class="tech">${esc(obj.key)} · r${esc(obj.revision)}${obj.archived ? " · 보관됨" : ""}</span>` : "없음 — 편입하면 표준 정의를 새로 넣어요"}</dd>
-      <dt>구조</dt><dd>${esc(STRUCT_TEXT[o.structure] || o.structure)}${(o.conflicts || []).length ? `<ul>${o.conflicts.map(x =>
-        `<li>${esc((STD_CONFLICT[x.code] || (() => "표준과 다른 곳이 있어요"))(x.field || ""))}</li>`).join("")}</ul>` : ""}</dd>
-      ${o.meaning_check ? `<dt>뜻 확인</dt><dd>key 가 같아도 뜻이 같다는 보장은 없어요. 편입할 때 같은 뜻으로 쓰는지 확인해요.</dd>` : ""}
-      <dt>필요한 대상</dt><dd>${(o.needs || []).length ? `<ul>${o.needs.map(n => `<li><span class="tech">${esc(n.field)}</span> → 표준 「${esc(stdName(n.std_key))}」 · ${esc((STD_STATE[n.state] || ["", n.state])[1])}${n.ready ? "" : " — 먼저 편입해야 해요"}</li>`).join("")}</ul>` : "없음"}</dd>
-      <dt>잠금 영향</dt><dd><details><summary>편입하면 막히는 변경 ${lock.changes.length}가지</summary><ul>${lock.changes.map(ch => `<li>${esc(LOCK_TEXT[ch] || ch)}</li>`).join("")}</ul>
-        ${lock.fields.length ? `잠기는 표준 필드: <span class="tech">${lock.fields.map(esc).join(", ")}</span>` : ""}</details></dd></dl>
-    ${acts}<p class="pstatus" role="status" aria-atomic="true" id="spv-st-${esc(o.std_key)}"></p><p class="perror" role="alert" aria-atomic="true" id="spv-er-${esc(o.std_key)}"></p></article>`;
-}
-async function loadPreview() {
-  const box = $("std-pv");
-  if (!box) return;
-  const at = ++pvAt;
-  let r, j = {};
-  try { r = await fetch("/api/std/preview", {cache: "no-store"}); j = await r.json(); } catch (e) { r = null; }
-  if ($("std-pv") !== box || pvAt !== at) return;
-  box.setAttribute("aria-busy", "false");
-  if (r && r.status === 401) { location.href = "/"; return; }
-  if (!r || !r.ok || !Array.isArray(j.objects)) { box.innerHTML = partFail({code: (j && j.code) || "OFFLINE", msg: (j && j.msg) || ""}, "편입 미리보기"); return; }
-  stdPv = j;
-  box.innerHTML = `<div class="spv">${j.objects.map(pvCard).join("")}</div>`;
-  if (stdMsg) { $("std-msg").textContent = stdMsg; stdMsg = ""; }
-  box.onclick = e => {
-    const b = e.target.closest("button[data-std]");
-    if (!b || b.disabled) return;
-    const o = stdPv.objects.find(x => x.std_key === b.dataset.key);
-    if (!o) return;
-    if (b.dataset.std === "incorporated") stdConfirm(o); else stdChoose(o, b.dataset.std);
-  };
-}
-// 편입 확인 — 「이 자료 종류를 표준 ○○ 와 같은 뜻으로 쓴다」 + 잠금 영향. 체크해야 편입 버튼이 켜진다(confirmed_meaning=true)
-function stdConfirm(o) {
-  stdAsk = o;
-  const nm = o.std_name, obj = o.object;
-  $("std-dlg-title").textContent = `표준 「${nm}」${roJosa(nm)} 편입하기`;
-  $("std-dlg-lead").textContent = obj ? `내 자료 종류 「${obj.label}」(key ${obj.key})에 표준 식별자를 달아요. 데이터·항목은 그대로예요.`
-                                      : `같은 key 자료 종류가 없어 표준 「${nm}」 정의를 새로 넣어요.`;
-  $("std-dlg-oktext").textContent = obj ? `이 자료 종류를 표준 「${nm}」${josa(nm, "과", "와")} 같은 뜻으로 쓴다. 아래 잠금 영향을 확인했다.`
-                                        : `표준 「${nm}」 정의를 새로 넣는다. 아래 잠금 영향을 확인했다.`;
-  const lock = o.lock || {changes: [], fields: []};
-  $("std-dlg-lock").replaceChildren(...lock.changes.map(ch => { const li = document.createElement("li"); li.textContent = LOCK_TEXT[ch] || ch; return li; }));
-  $("std-dlg-fields").textContent = lock.fields.length ? `잠기는 표준 필드: ${lock.fields.join(", ")}` : "";
-  $("std-dlg-ok").checked = false;
-  $("std-dlg-go").disabled = true;
-  $("std-dlg").showModal();
-  $("std-dlg-ok").focus();
-}
-async function stdChoose(o, state) {
-  const st = $("spv-st-" + o.std_key), er = $("spv-er-" + o.std_key);
-  if (er) er.textContent = "";
-  if (st) st.textContent = "저장하고 있어요…";
-  const btns = document.querySelectorAll("#std-pv button[data-std]");
-  btns.forEach(b => { b.disabled = true; });
-  const body = {std_key: o.std_key, state};
-  if (state === "incorporated") { body.confirmed_meaning = true; body.expected_revision = o.object ? o.object.revision : null; }
-  let r, j = {};
-  try {
-    r = await fetch("/api/std/choose", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(body)});
-    j = await r.json().catch(() => ({}));
-  } catch (e) { r = null; }
-  if (r && r.status === 401) { location.href = "/"; return; }
-  if (r && r.ok) { stdMsg = `표준 「${o.std_name}」 — ${STD_DONE[state]}`; await load(); return; }
-  const code = j && j.code;
-  if (code === "CONFLICT" || code === "DEF-INVALID") { stdMsg = `표준 「${o.std_name}」 — ${STD_ERR[code]}`; await load(); return; }
-  const msg = STD_ERR[code] || (r ? (j && j.msg) || "저장하지 못했어요. 다시 해 보세요." : "서버에 연결하지 못했어요. 잠시 뒤 다시 해 보세요.");
-  if (stdPv && $("std-pv")) $("std-pv").innerHTML = `<div class="spv">${stdPv.objects.map(pvCard).join("")}</div>`;   // 버튼을 되살린다
-  const er2 = $("spv-er-" + o.std_key);
-  if (er2) er2.textContent = msg;
-}
-
-// ── 서랍 — 항목 전문·관계·이력·제안(diff)·결정 ──
-const ITEM_SAVED = {apply: "적용했어요.", confirm: "내 판단으로 남겼어요.", exclude: "반영 안 함으로 표시했어요.", pending: "아직 안 정함으로 돌렸어요.",
-  discard: "제안을 제외했어요."};
-const HIST_LABEL = {apply: "적용", confirm: "내 판단으로", exclude: "반영 안 함", pending: "아직 안 정함", archive: "보관", restore: "되돌림"};
-const CONFLICT_TEXT = "다른 곳에서 먼저 바뀌었어요. 새로 고침해 다시 봐 주세요.";
-let drawerSaved = "";   // 저장 직후 다시 그린 서랍의 상태 줄에 한 번 찍는다
-let drawerAt = "";
-async function openDrawer(tab, id) {
-  const panel = $("panel");
-  if (!panel) return;
-  const at = drawerAt = id;
-  document.querySelectorAll(".asset-card[data-go]").forEach(c => c.classList.toggle("on", c.dataset.go.endsWith("/" + id)));
-  panel.innerHTML = `<p class="empty">불러오는 중이에요…</p>`;
-  let r, it;
-  try { r = await fetch("/api/item?id=" + encodeURIComponent(id), {cache: "no-store"}); it = await r.json(); }
-  catch (e) { r = null; }
-  if ($("panel") !== panel || drawerAt !== at) return;
-  if (r && r.status === 401) { location.href = "/"; return; }
-  if (!r || !r.ok) { panel.innerHTML = partFail({code: (it && it.code) || "OFFLINE", msg: (it && it.msg) || ""}, "이 항목"); return; }
-  panel.innerHTML = drawerHtml(tab, it);
-  const st = panel.querySelector(".pstatus");
-  if (drawerSaved && st) { st.textContent = drawerSaved; }
-  drawerSaved = "";
-  panel.onclick = e => {
-    const btn = e.target.closest("button[data-iact]");
-    if (btn && !btn.disabled) itemAct(tab, it, btn.dataset.iact);
-  };
-  if (window.matchMedia("(max-width: 900px)").matches) panel.scrollIntoView({block: "start"});
-}
-function tgtHtml(it, l) {
-  const t = (it.targets || []).find(x => x.target_kind === l.target_kind && x.target_id === l.target_id);
-  const v = t && t.target;
-  if (!v) return `<span class="tech">근거를 이용할 수 없어요.</span>`;   // 서버가 지운·휴지통 대상을 응답에서 뺀 빈 자리
-  if (l.target_kind === "candidate")
-    return `<div>${esc(v.text)} ${decision(v)}</div><div class="ev">근거 <a data-rec="${esc(v.record_id)}" data-quote="${esc(v.quote)}" tabindex="0" role="button">${esc(recLabel(v.record_id))}</a> · <q><mark>${rich(v.quote)}</mark></q></div>`;
-  if (l.target_kind === "record")
-    return `<a data-rec="${esc(v.id)}" tabindex="0" role="button">${esc(v.title)}</a> <span class="tech">${esc(md(v.created))}</span>`;
-  return `<a data-go="#structure/${esc(v.object_id)}/${esc(v.id)}" tabindex="0" role="button">${v.code ? `<span class="chip code">${esc(v.code)}</span> ` : ""}${esc(v.title)}</a> <span class="tech">${esc(v.object_label)}${v.archived_at ? " · 보관됨" : ""}</span>`;
-}
-function fieldVal(f, v) {
-  if (v == null || v === "" || (Array.isArray(v) && !v.length)) return "";
-  if (f.value_type === "select") { const o = (f.options || []).find(x => x.value === v); return o ? o.label : String(v); }
-  if (f.value_type === "boolean") return v ? "예" : "아니오";
-  return Array.isArray(v) ? v.join(", ") : String(v);
-}
-function drawerHtml(tab, it) {
-  const d = it.object || {}, fields = it.fields || [], isNew = !it.revision, pr = it.proposal;
-  const p = promoOf(defById(d.id));
-  const cur = isNew ? Object.assign({}, it, {title: pr.title, body: pr.body, data: pr.data || {}, links: pr.links || [], code: pr.code}) : it;
-  const plain = fields.filter(f => f.value_type !== "reference").map(f => [f.label, fieldVal(f, (cur.data || {})[f.key])]).filter(x => x[1]);
-  let h = `<div class="eyebrow">${esc(d.label || LABELS.item)}${isNew ? " · 새 제안" : ` · r${it.revision}`}</div>
-    <div class="labels" style="margin-top:.4rem">${cur.code ? `<span class="chip code">${esc(cur.code)}</span>` : ""}${selectChips(cur, defById(d.id))}${decisionChip(it)}</div>
-    <h4>${esc(cur.title || "(제목 없음)")}</h4>${cur.body ? `<div class="pbody">${rich(cur.body)}</div>` : ""}
-    ${plain.length ? `<dl class="pf">${plain.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>` : ""}`;
-  if (it.promotion) {
-    const m = it.promotion;
-    h += `<p class="promo">승격 조건 — 확정 근거 <b>${m.confirmed_claims}/${m.confirmed_claims_min}</b>${m.distinct_events_min ? ` · ${esc(eventLabel(defById(d.id)))} <b>${m.distinct_events}/${m.distinct_events_min}</b>` : ""}
-      · ${m.met ? "충족" : "아직 미충족"}. 남길지는 내가 정해요.</p>`;
-  }
-  if (pr) h += proposalHtml(it, pr, fields);
-  if (!isNew && trashOn()) {   // 휴지통 켜짐 — 기준 결정 버튼은 [남기기] 하나 + [삭제](r4 §8)
-    const keep = it.semantic_kind === "principle" && it.decision !== "confirmed" ? `<button class="primary" type="button" data-iact="confirm">남기기</button>` : "";
-    h += `<div class="pacts" role="group" aria-label="${esc(d.label || LABELS.item)} 동작">${keep}${trashBtn("item", it.id, it.revision, `#${tab.id}/${d.id}`)}</div>`;
-  } else if (it.semantic_kind === "principle" && !isNew) {
-    h += `<div class="pacts" role="group" aria-label="${esc(d.label || LABELS.principle)} 결정">
-      <button class="primary" type="button" data-iact="confirm"${it.decision === "confirmed" ? " disabled" : ""}>남기기</button>
-      <button class="secondary" type="button" data-iact="exclude"${it.decision === "excluded" ? " disabled" : ""}>반영 안 함</button>
-      <button class="tertiary" type="button" data-iact="pending"${it.decision === "pending" ? " disabled" : ""}>되돌리기</button></div>`;
-  }
-  h += `<p class="pstatus" role="status" aria-atomic="true"></p><p class="perror" role="alert" aria-atomic="true"></p>`;
-  for (const f of fields.filter(f => f.value_type === "reference")) {
-    const ls = (cur.links || []).filter(l => l.field_key === f.key);
-    if (!ls.length) continue;
-    h += `<h5>${esc(f.label)} <span class="count">${ls.length}</span></h5><ul class="plist">${ls.map(l => `<li>${tgtHtml(it, l)}</li>`).join("")}</ul>`;
-  }
-  const inc = it.incoming || [];
-  const groups = {};
-  for (const x of inc) { const k = x.object_label || (x.source_record_id ? LBL("record") : LABELS.item); (groups[k] = groups[k] || []).push(x); }
-  for (const [k, xs] of Object.entries(groups)) {
-    h += `<h5>${esc(k)} <span class="count">${xs.length}</span></h5><ul class="plist">${xs.map(x => x.source_item_id
-      ? `<li><a data-go="#structure/${esc(x.object_id)}/${esc(x.source_item_id)}" tabindex="0" role="button">${x.code ? `<span class="chip code">${esc(x.code)}</span> ` : ""}${esc(x.title)}</a></li>`
-      : `<li><a data-rec="${esc(x.source_record_id)}" tabindex="0" role="button">${esc(x.record_title || "글")}</a></li>`).join("")}</ul>`;
-  }
-  if ((it.history || []).length) h += `<h5>이력</h5><ul class="plist">${it.history.slice().reverse().map(x =>
-    `<li class="phist">r${x.prev_revision + 1} · ${esc(x.action === "confirm" ? "남김" : HIST_LABEL[x.action] || x.action)} · ${esc(mdhm(x.at))}</li>`).join("")}</ul>`;
-  return h;
-}
-function proposalHtml(it, pr, fields) {
-  const isNew = !it.revision;
-  const rows = [];
-  const row = (k, a, b) => { if (JSON.stringify(a ?? "") !== JSON.stringify(b ?? "")) rows.push(`<dt>${esc(k)}</dt><dd>${a ? `<del>${rich(clip(a, 120))}</del> → ` : ""}<ins>${rich(clip(b || "(비움)", 200))}</ins></dd>`); };
-  if (!isNew) {
-    row("제목", it.title, pr.title);
-    row("본문", it.body, pr.body);
-    for (const f of fields.filter(f => f.value_type !== "reference")) row(f.label, fieldVal(f, (it.data || {})[f.key]), fieldVal(f, (pr.data || {})[f.key]));
-    for (const f of fields.filter(f => f.value_type === "reference")) {
-      const a = (it.links || []).filter(l => l.field_key === f.key).length, b = (pr.links || []).filter(l => l.field_key === f.key).length;
-      const same = JSON.stringify((it.links || []).filter(l => l.field_key === f.key).map(l => l.target_id).sort()) === JSON.stringify((pr.links || []).filter(l => l.field_key === f.key).map(l => l.target_id).sort());
-      if (!same) rows.push(`<dt>${esc(f.label)}</dt><dd>${a}개 → <ins>${b}개</ins></dd>`);
-    }
-  }
-  return `<div class="proposal"><b>제안이 있어요</b> <span class="tech">${esc(mdhm(pr.proposed_at))}</span>
-    ${isNew ? `<p class="hint" style="margin:.3rem 0 0">연결한 AI 대화에서 새로 제안한 항목이에요. 적용하면 목록에 들어가요.</p>`
-            : rows.length ? `<dl class="diff">${rows.join("")}</dl>` : `<p class="hint" style="margin:.3rem 0 0">바뀌는 내용이 없어요.</p>`}
-    <div class="pacts"><button class="primary" type="button" data-iact="apply">적용</button><button class="secondary" type="button" data-iact="discard">제외</button></div></div>`;
-}
-async function itemAct(tab, it, act) {
-  const panel = $("panel"), st = panel.querySelector(".pstatus"), er = panel.querySelector(".perror");
-  er.textContent = ""; st.textContent = "저장하고 있어요…";
-  panel.querySelectorAll("button[data-iact]").forEach(b => b.disabled = true);
-  const body = {item_id: it.id, expected_revision: it.revision, action: act};
-  if (act === "apply" || act === "discard") body.proposal_id = it.proposal.proposal_id;
-  let r, j = {};
-  try {
-    r = await fetch("/api/item/decide", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(body)});
-    j = await r.json().catch(() => ({}));
-  } catch (e) { r = null; }
-  if (r && r.status === 401) { location.href = "/"; return; }
-  if (!r || !r.ok) {
-    st.textContent = "";
-    er.textContent = !r ? "서버에 연결하지 못했어요. 새로 고침해 확인해 주세요." : j.code === "CONFLICT" ? CONFLICT_TEXT : (j.msg || "저장하지 못했어요.");
-    panel.querySelectorAll("button[data-iact]").forEach(b => b.disabled = false);
-    return;
-  }
-  drawerSaved = act === "confirm" ? "남겼어요." : ITEM_SAVED[act] || "저장했어요.";
-  if (j.deleted) {   // 새 항목 제안을 제외 — 카드가 사라진다
-    const msg = drawerSaved; drawerSaved = "";
-    history.replaceState(null, "", `#${tab.id}/${it.object.id}`);
-    await load();
-    if ($("panel")) $("panel").innerHTML = `<p class="pstatus" role="status">${esc(msg)}</p>`;
-    return;
-  }
-  await load();   // 상태를 다시 받아 카드·서랍을 같이 그린다(서랍은 라우트로 다시 열린다)
-}
-
-// ── 지도 — 칸반(들어오는 것 · 내 손 대기 · 쌓이는 재료) ─────
-function renderMap(tab) {
-  if (!ok("candidates") || !ok("journal")) {
-    $("view").innerHTML = partFail((ok("candidates") ? S.read.journal : S.read.candidates).error, ok("candidates") ? "내 글 목록" : "문장 목록");
-    return;
-  }
-  const cs = S.candidates || [], js = S.journal || [];
-  const used = new Set(cs.map(c => c.record_id));
-  const inbox = js.filter(j => !used.has(j.id));
-  const wait = cs.filter(c => c.status === "pending");
-  const mine = cs.filter(c => c.status === "confirmed").sort(byNewest);
-  const rules = (S.items || []).filter(it => it.semantic_kind === "principle" && it.decision === "confirmed");
-  const col = (title, n, hint, cards) => `<section class="kcol"><h2>${title} <span class="count">${n}</span></h2><p class="khint">${hint}</p>${cards || `<div class="kempty">비어 있어요</div>`}</section>`;
-  const src = c => `<button type="button" data-rec="${esc(c.record_id)}" data-quote="${esc(c.quote)}">원문</button>`;
-  const flags = c => `<div class="kflags"><span class="kflag${c.origin === "ai" ? "" : " memo"}">${c.origin === "ai" ? "AI가 쓴 문장" : "내가 쓴 메모"}</span>${c.edited_by_user ? `<span class="kflag memo">내가 고침</span>` : ""}</div>`;
-  $("view").innerHTML = `<div class="kanban">
-    ${col("들어오는 것", inbox.length, "AI 대화에서 검토할 판단을 뽑으면 다음 열로", inbox.map(j => `<div class="kcard"><div class="kname">${esc(j.broken ? "읽지 못한 글" : j.title)}</div>
-      <div class="kmeta"><span>${esc(md(j.created))}</span><span>${esc(srcText(j))}</span></div>
-      <div class="kacts"><button type="button" data-rec="${esc(j.id)}">원문</button></div></div>`).join(""))}
-    ${col("내 손 대기", wait.length, "원문과 대조해 정해요", wait.map(c => `<div class="kcard hot"><div class="kname">${esc(c.text)}</div>${flags(c)}
-      <div class="kacts">${src(c)}<a class="btn" href="${esc(reviewHref(tab, c))}">대조</a></div></div>`).join(""))}
-    ${col("쌓이는 재료", mine.length + rules.length, `내가 남긴 판단과 ${(defsList().find(d => d.semantic_kind === "principle") || {}).label || LABELS.principle}`, rules.map(it => `<div class="kcard mine"><div class="kname">${esc(it.title)}</div>
-      <div class="kflags"><span class="kflag memo">${esc(objLabel(it.object_id))}</span>${it.code ? `<span class="kflag memo">${esc(it.code)}</span>` : ""}</div>
-      <div class="kmeta"><span>${esc(md(it.updated_at))}</span></div>
-      <div class="kacts"><a class="btn" href="#structure/${esc(it.object_id)}/${esc(it.id)}">보기</a></div></div>`).join("") + mine.map(c => { const q = qById(c.question_id);
-      return `<div class="kcard mine"><div class="kname">${esc(c.text)}</div>
-      <div class="kmeta"><span title="${esc(q ? q.text : "")}">${esc(qNo(c.question_id))} ${esc(clip(q ? q.text : "", 20))}</span><span>${esc(md(c.updated || c.created))}</span></div>
-      <div class="kacts">${src(c)}</div></div>`; }).join(""))}
-    <!-- 출구(발행) 열 자리 — 2단계(정의 층) 뒤에 연다. 지금은 만들지 않는다. -->
-  </div>`;
-}
-
-function firstRun(tab, bl) {
-  const n = (S.journal || []).length;
-  return `<div class="first"><h2>최근에 겪은 일을 한 편 적어볼까요?</h2><p>질문은 나중에 정해도 돼요.${n ? ` 지금 내 글이 ${n}편 있어요.` : ""}</p>
-    <ol class="steps"><li><b>${LBL("record")}</b>겪은 일을 내 말로 적어요.</li>
-    <li class="cand"><b>${LBL("candidate")}</b>내 글에서 판단이 될 만한 문장을 뽑아요. 아직 확정한 판단은 아니에요.</li>
-    <li class="mine"><b>${LBL("mine")}</b>원문과 대조해 내가 남긴 문장만 쌓여요.</li></ol>
-    ${sayLine("기록 남기자")}</div>
-    ${bl.has("status") ? runStatus() : ""}`;
-}
-
-function evLine(c) {
-  return `<div class="ev">근거 <a data-rec="${esc(c.record_id)}" data-quote="${esc(c.quote)}" tabindex="0" role="button">${esc(recLabel(c.record_id))}</a> · <q><mark>${rich(c.quote)}</mark></q></div>`;
-}
-function recRow(id, on) {
-  const r = recById(id);
-  const dp = dayParts(r ? r.created : "");
-  const title = !r ? "찾을 수 없는 글" : r.broken ? "읽지 못한 글" : r.title;
-  return `<li><a data-rec="${esc(id)}" tabindex="0" role="button" class="${on ? "on" : ""}"><div class="d">${esc(dp.d)}<small>${dp.mo ? dp.mo + "월" : ""}</small></div>
-    <div><div class="t">${esc(title)}</div><div class="s">${esc(r && r.excerpt ? r.excerpt : "")}</div></div></a></li>`;
-}
-
-function sheetSections(tab, q) {
-  if (!ok("candidates")) return `<section class="sec">${partFail(S.read.candidates.error, "문장 목록")}</section>`;
-  const cs = (S.candidates || []).filter(c => c.question_id === q.id);
-  const mine = cs.filter(c => c.status === "confirmed"), wait = cs.filter(c => c.status === "pending"),
-        off = cs.filter(c => c.status === "excluded");
-  let h = `<section class="sec"><h3>${NT("내 판단")}<span class="count">${mine.length}</span></h3>
-    ${mine.length ? `<div class="cards">${mine.map(c => `<div class="card mine"><p class="sent">${esc(c.text)}</p>
-      <div class="labels">${decision(c)}${origin(c)}</div>${evLine(c)}</div>`).join("")}</div>`
-      : `<div class="empty">아직 확정한 판단이 없어요. 아래 문장을 원문과 대조해 남기면 여기에 쌓여요.</div>`}</section>`;
-  h += `<section class="sec"><h3>아직 안 정한 문장<span class="count">${wait.length}</span></h3>
-    ${wait.length ? `<div class="cards">${wait.map(c => `<div class="card cand"><p class="sent">${esc(c.text)}</p>
-      <div class="labels">${origin(c)}${decision(c)}</div></div>`).join("")}</div>
-      <div class="cta"><p class="hint">남기기 전까진 확정한 판단이 아니에요.</p><a class="btn primary" href="#${esc(tab.id)}/review/${esc(q.id)}/${esc(wait[0].id)}">원문과 대조하기 · ${wait.length}개</a></div>`
-      : `<div class="empty">${cs.length ? "정할 문장이 남아 있지 않아요." : "아직 이 질문에 뽑힌 문장이 없어요. 내 글에서 판단을 뽑으면 여기에 떠요."}</div>`}</section>`;
-  if (off.length) h += `<details class="fold"><summary>반영 안 함 문장 보기 · ${off.length}개</summary><div class="cards">${off.map(c =>
-      `<div class="card cand"><p class="sent">${esc(c.text)}</p><div class="labels">${origin(c)}${decision(c)}</div>${evLine(c)}</div>`).join("")}</div></details>`;
-  const recs = [...new Set(cs.map(c => c.record_id))];
-  if (recs.length) h += `<section class="sec"><h3>연결된 글<span class="count">${recs.length}</span></h3>
-    <ul class="recs">${recs.map(r => recRow(r, false)).join("")}</ul></section>`;
-  return h;
-}
-
-function recentRecords() {
-  if (!ok("journal")) return `<section class="sec">${partFail(S.read.journal.error, "내 글 목록")}</section>`;
-  const js = (S.journal || []).slice(0, 8);
-  return `<section class="sec"><h3>최근 글<span class="count">${(S.journal || []).length}</span></h3>
-    ${js.length ? `<ul class="recs">${js.map(j => recRow(j.id, false)).join("")}</ul>` : `<div class="empty">아직 내 글이 없어요.</div>`}</section>`;
-}
-
-function runStatus() { return ""; }
-
-// ── 기록형 탭 — 왼: 고른 기록 원문 + 이 기록에서 나온 문장 / 오른: 다른 기록(sticky) ──
-function renderRecordTab(tab, sel) {
-  const bl = new Set(tab.blocks);
-  const all = ok("journal") ? (S.journal || []) : [];
-  const filt = all.length ? srcFilter(all.length) : "";   // 먼저 — 없는 출처를 고른 상태면 「전부」로 되돌린다
-  const js = all.filter(srcMatch);
-  const j = js.find(x => x.id === sel) || js[0];
-  let body, side = "";
-  if (!ok("journal")) body = partFail(S.read.journal.error, "내 글 목록");
-  else if (!all.length) body = firstRun(tab, bl);
-  else if (!j) body = `${filt}<div class="empty">불러온 글 중에 이 출처에서 온 글이 없어요.</div>`;
-  else {
-    const cs = (S.candidates || []).filter(c => c.record_id === j.id);
-    const q = qById(j.question_id);
-    body = `${filt}<div class="eyebrow">${LBL("record")}${q ? ` · ${esc(q.text)}` : ""}</div><h2 class="title">${esc(j.broken ? "읽지 못한 글" : j.title)}</h2>
-      <div class="labels">${srcChip(j)}${axisChips(j.id)}</div>
-      ${bl.has("next") ? nextLine(tab, "") : ""}
-      <div id="recbody"><div class="doc"><p class="dim">원문을 불러오는 중이에요…</p></div></div>
-      ${(bl.has("candidates") || bl.has("sheet")) && cs.length ? `<section class="sec"><h3>이 글에서 나온 문장<span class="count">${cs.length}</span></h3>
-        <div class="cards">${cs.map(c => `<div class="card ${c.status === "confirmed" ? "mine" : "cand"}"><p class="sent">${esc(c.text)}</p>
-        <div class="labels">${decision(c)}${origin(c)}</div>${reviewNote(c)}</div>`).join("")}</div></section>` : ""}
-      ${bl.has("status") ? runStatus() : ""}`;
-    if (js.length > 1) side = `<h2 class="sh">다른 글 <span class="speclabel">${js.length - 1}</span></h2>
-      <div class="recbox"><ul class="recs">${js.filter(x => x.id !== j.id).slice(0, 12).map(x => `<li><a href="#${esc(tab.id)}/${esc(x.id)}">
-        <div class="d">${esc(dayParts(x.created).d)}<small>${dayParts(x.created).mo ? dayParts(x.created).mo + "월" : ""}</small></div>
-        <div><div class="t">${esc(x.broken ? "읽지 못한 글" : x.title)}</div><div class="s">${esc(x.excerpt || "")}</div><div class="srcl">${srcChip(x)}${axisChips(x.id)}</div></div></a></li>`).join("")}</ul></div>`;
-  }
-  $("view").innerHTML = side ? `<div class="board"><div class="paper">${body}</div><aside class="rside" aria-label="다른 글">${side}</aside></div>`
-                             : `<div class="paper sheet">${body}</div>`;
-  if (j) fetchRec(j.id).then(r => {
-    const box = $("recbody");
-    if (!box) return;
-    box.innerHTML = r.ok ? `<div class="recmeta">${esc(mdhm(r.meta.created))} · ${esc(srcLine(j.id, r.meta.source))}</div><div class="doc">${docHtml(r, "").html}</div>`
-                         : partFail({code: r.code, msg: r.msg}, "이 글");
-  });
-}
-
-// ── 원문 그리기 ───────────────────────────────────────
-function fetchRec(id) {
-  if (!recCache[id]) recCache[id] = fetch("/api/journal?id=" + encodeURIComponent(id), {cache: "no-store"})
-    .then(async r => Object.assign({ok: r.ok}, await r.json()))
-    .catch(() => ({ok: false, code: "OFFLINE", msg: "서버에 연결하지 못했어요"}));
-  return recCache[id];
-}
-function srcLabel(s) {
-  if (!s) return "";
-  if (s.startsWith("파일:")) return "파일에서 가져옴";
-  return s;
-}
-// ── 출처 (Q4) — 기록의 source_id → S.sources 이름·종류. source_id 가 없으면 「출처 미확인」. 옛 source 문자열은 「기록 당시 표기」로 보조 ──
-const SRC_KIND = {file: "파일", url: "웹 주소", chat: "대화", other: "기타"};
-const SRC_NONE = "출처 미확인";
-const srcById = id => (S.sources || []).find(x => x.id === id);
-const srcOf = r => (r && r.source_id && srcById(r.source_id)) || null;
-function srcText(r) { const x = srcOf(r); return x ? `${x.name} · ${SRC_KIND[x.kind] || x.kind}` : SRC_NONE; }
-function srcChip(r) {
-  const x = srcOf(r);
-  return x ? `<span class="chip src" title="${esc(x.location || "")}">${esc(srcText(r))}</span>` : `<span class="chip src none">${SRC_NONE}</span>`;
-}
-// 원문 머리말 한 줄 — 출처 + 옛 문자열(있으면)
-function srcLine(id, raw) {
-  const old = srcLabel(raw);
-  return srcText(recById(id)) + (old ? ` · 쓸 당시 표기 「${old}」` : "");
-}
-// 기록 탭 출처 필터 — all · none(출처 미확인) · 출처 id. 개수는 source_counts(전체 기록 기준, 목록은 최근 기록만 온다)
-let recSrc = "all";
-const srcMatch = r => recSrc === "all" || (recSrc === "none" ? !srcOf(r) : r.source_id === recSrc);
-function srcFilter(shown) {
-  const cnt = S.source_counts || {}, by = cnt.by_source || {};
-  const total = Object.values(by).reduce((a, n) => a + n, 0) + (cnt.unconfirmed || 0);
-  const opts = [["all", "전부", total]].concat((S.sources || []).map(x => [x.id, `${x.name} · ${SRC_KIND[x.kind] || x.kind}`, by[x.id] || 0]),
-    [["none", SRC_NONE, cnt.unconfirmed || 0]]);
-  if (!opts.some(o => o[0] === recSrc)) recSrc = "all";
-  return `<nav class="pills srcf" aria-label="출처별 보기">${opts.map(([k, l, n]) => {
-    const on = k === recSrc;
-    return `<a data-srcf="${esc(k)}" tabindex="0" role="button" aria-pressed="${on}" class="${on ? "on" : ""}">${esc(l)}<span class="n">${n}</span></a>`;
-  }).join("")}</nav>${total > shown ? `<p class="hint">목록엔 글 ${shown}편까지 보여요. 개수는 전체 글 기준이에요.</p>` : ""}`;
-}
-// 기록에 붙은 축 항목(record_links field_key=axes → 항목 제목). 대상이 지금 목록에 없으면(보관 등) 「찾을 수 없는 항목」
-function axisChips(rid) {
-  const ls = (S.record_links || []).filter(l => l.record_id === rid && l.field_key === "axes");
-  if (!ls.length) return "";
-  return `<span class="axl">붙은 축</span>` + ls.map(l => {
-    const it = l.target_kind === "item" ? itemById(l.target_id) : null;
-    return `<span class="chip axis"${it ? ` title="${esc(objLabel(it.object_id))}"` : ""}>${esc(it ? it.title || "(제목 없음)" : "찾을 수 없는 항목")}</span>`;
-  }).join("");
-}
-// ── 확정 전 재검토 (§6) — 후보의 review = 근거 기록의 사유 코드. 문구는 서버 CANDIDATE-REVIEW 와 같은 뜻. 정정 안내는 author_unknown·processed 에만 ──
-const REVIEW_TEXT = {
-  author_unknown: "근거 글의 작성자를 확인할 수 없어 이 판단을 확정할 수 없어요.",
-  external: "근거 글이 남이 쓴 글이라 이 판단을 확정할 수 없어요.",
-  processed: "근거 글이 원문 그대로가 아니라 이 판단을 확정할 수 없어요.",
-  deleted: "근거 글이 삭제돼 이 판단을 확정할 수 없어요.",
-};
-const REVIEW_FIX = {
-  author_unknown: "작성자 정보가 실제로 틀렸을 때만 연결한 AI 대화에서 글 정보를 정정하세요.",
-  processed: "가공 방식 정보가 실제로 틀렸을 때만 연결한 AI 대화에서 글 정보를 정정하세요.",
-};
-function reviewNote(c) {
-  if (!c.review) return "";
-  return `<p class="recheck"><span class="chip flag">확정 전 재검토</span>${esc(REVIEW_TEXT[c.review] || "근거 글이 인용 조건에 맞지 않아 이 판단을 확정할 수 없어요.")}
-    ${REVIEW_FIX[c.review] ? esc(REVIEW_FIX[c.review]) + " " : ""}반영 안 함이나 아직 안 정함으로 둘 수는 있어요.</p>`;
-}
-// 본문을 빈 줄 기준 문단으로 나눈다. 제목(# …)은 화면 제목과 겹쳐 뺀다.
-// 「이게 어디에 붙나」 절은 키트가 붙이는 양식이라 따로 그리고, 질문 ID 는 질문 문장으로 바꿔 보인다.
-function splitDoc(body, title) {
-  const parts = String(body || "").split(/\n\s*\n/).map(s => s.replace(/^\n+|\s+$/g, "")).filter(Boolean);
-  const out = [], attach = [];
-  let inAttach = false;
-  for (const p of parts) {
-    if (/^##\s*이게 어디에 붙나/.test(p)) { inAttach = true; continue; }
-    if (inAttach) { attach.push(p); continue; }
-    if (/^#\s/.test(p) && p.replace(/^#\s+/, "").trim() === String(title || "").trim()) continue;
-    out.push(p);
-  }
-  return {paras: out, attach: attach.join("\n")};
-}
-function paraHtml(p, quote) {
-  const isH = /^#{1,6}\s/.test(p);
-  const text = isH ? p.replace(/^#{1,6}\s+/, "") : p;
-  let inner = rich(text);
-  if (quote && text.includes(quote)) { const i = text.indexOf(quote);
-    inner = rich(text.slice(0, i)) + `<mark>${rich(quote)}</mark>` + rich(text.slice(i + quote.length)); }
-  return `<p class="${isH ? "h" : ""}">${inner}</p>`;
-}
-function attachHtml(raw) {
-  const KEYS = {"질문": "질문", "판단": "판단 메모", "다음": "다음", "출처": "출처"};
-  const rows = [];
-  for (const line of raw.split("\n")) {
-    const m = /^\s*-\s*([^:：]+)\s*[:：]\s*(.*)$/.exec(line);
-    if (!m || !m[2].trim()) continue;
-    let v = m[2].trim();
-    if (m[1].trim() === "질문") { const q = qById(v); v = q ? `「${q.text}」` : "연결된 질문을 찾을 수 없음"; }
-    rows.push(`<dt>${esc(KEYS[m[1].trim()] || m[1].trim())}</dt><dd>${esc(v)}</dd>`);
-  }
-  if (!rows.length) return "";
-  return `<div class="attach"><h4>이 글이 붙는 곳</h4><dl>${rows.join("")}</dl></div>`;
-}
-function docHtml(r, quote) {
-  const d = splitDoc(r.body, r.title);
-  return {html: d.paras.map(p => paraHtml(p, quote)).join("") + attachHtml(d.attach), split: d};
-}
-
-// 원문 대화상자
-async function openRec(id, quote) {
-  $("dlg-title").textContent = recLabel(id).split(" · ")[0];
-  $("dlg-meta").textContent = "";
-  $("dlg-body").innerHTML = `<p style="color:var(--muted)">원문을 불러오는 중이에요…</p>`;
-  $("dlg").showModal();
-  const r = await fetchRec(id);
-  if (!r.ok) { $("dlg-body").innerHTML = partFail({code: r.code, msg: r.msg}, "이 글"); return; }
-  $("dlg-title").textContent = r.title;
-  $("dlg-meta").textContent = `${mdhm(r.meta.created)} · ${srcLine(id, r.meta.source)}`;
-  $("dlg-body").innerHTML = `<div class="doc">${docHtml(r, quote || "").html}</div>`;
-}
 
 // 「…으로/로 돌아가기」(판단 검토 돌아가기 문구 · 편입 대화창) — 받침 없거나 ㄹ 받침이면 「로」. 판단 검토 화면 = React(server/ui/src/features/review, R3)
 function roJosa(w) { const c = String(w).slice(-1).charCodeAt(0) - 0xAC00; return c < 0 || c > 11171 || c % 28 === 0 || c % 28 === 8 ? "로" : "으로"; }
@@ -1729,8 +894,7 @@ function renderNameGate() {
   acctApply();
   const now = new Date();
   $("date").textContent = `${now.getMonth() + 1}월 ${now.getDate()}일 ${DOW[now.getDay()]}요일`;
-  $("axistop").hidden = true;
-  $("legend").innerHTML = "";
+  uiDrop("mast");   // 이름 입력 화면 = 스펙트럼·질문 레전드 없음
   $("foot").textContent = "표시 이름을 정하면 대시보드가 열려요.";
   $("view").innerHTML = `<div class="paper namegate"><div class="eyebrow">처음 한 번</div><h2 class="title">표시 이름을 정해 주세요</h2>
     <form class="fform" id="name-gate-form" data-form="name" novalidate>
@@ -1802,7 +966,6 @@ async function coreSubmit(f) {   // 표시 이름(이름 관문·계정 메뉴 �
 }
 
 // ── 「나」 홈 (PR B) — 표시 이름 · 개수(서버 me.counts) · 최근 목록 · 진입 · 출처별 탭. 성향 문장·자동 요약 없음 ──
-const qTabId = () => (userTabs().find(t => t.view === "question") || BASE.q).id;
 // ── 「나」 (R2 2026-11-03) — 화면은 React(server/ui/src/features/me, CrmUI.mount("me")). 여기 남은 것 = Setup 「페이지 레이아웃」이 쓰는 레이아웃 상태
 // (ME·meSync·meV1·meV2·ME_TABS…) · 옛 묶음 주소 replace 의 meTabOfItem. R5 에서 지운다(일시 중복 — server/ui/migrated.json).
 // 같은 화면 다시 그리기 — 페이지 스크롤 유지
@@ -1879,10 +1042,10 @@ function renderSetup(tab, R) {
   const page = setupPages().some(p => p[0] === R.a) ? R.a : "layout";
   if (R.a && page !== R.a) { location.replace("#_setup/" + page); return; }
   if (page === "layout") renderLayout();
-  else if (page === "structure") renderDefs(NAVTAB._settings);
+  else if (page === "structure") uiMount("defs");   // 내 구조 설정(React)
   else if (page === "objects") objMount(R.b, R.c, R.d);
   else if (page === "devices") uiMount("devices");
-  else if (page === "map") renderMap(BASE.map);
+  else if (page === "map") uiMount("map", [BASE.map.id]);   // 지도(React)
   else if (page === "trash") uiMount("trash");
   else if (page === "migration") uiMount("migration", [R.b || ""]);   // 이관(React) — plan 하나 = R.b
   else renderSetupHelp();
@@ -2034,41 +1197,8 @@ document.addEventListener("click", e => {
 // ── /Setup ──
 // ── 휴지통 (trash PR-1) — 스위치 S.switches.trash 켜짐일 때만: 상세의 [삭제] → 휴지통 · Setup 「휴지통」 페이지([복원]·[영구 삭제]).
 // 꺼짐 = 버튼·페이지 0, 기존 동작(사람·생각 즉시 삭제 · 기준 [반영 안 함]·[되돌리기]) 그대로. 휴지통 대상을 일반 화면에서 숨기는 일은 서버 몫(화면은 거르지 않는다).
-// 여기 남은 것 = 스위치·상세 [삭제](이동, 서버 접점 trashApi.del). Setup 「휴지통」 페이지는 React(server/ui/src/features/trash, R1 2026-11-03).
+// 여기 남은 것 = 스위치(Setup 「휴지통」 페이지 줄). 페이지는 React(server/ui/src/features/trash, R1) · 상세 [삭제]는 React 「나」·구조 서랍·활동·자료 종류(shared/item.ts).
 const trashOn = () => !!(S && S.switches && S.switches.trash);
-const TRASH_ASK = "삭제하면 휴지통으로 이동해요. 삭제 시각부터 168시간 동안 복원할 수 있고, 이후 서버 정리 때 영구 삭제돼요.";
-const TRASH_EXPIRED = "복원 기간이 끝났어요.";
-const trashApi = {   // 목록·복원·영구 삭제는 Setup 「휴지통」(React, server/ui/src/features/trash)이 부른다
-  del: (kind, id, rev) => corePost("/api/trash/move", Object.assign({kind, id}, rev != null && rev !== "" ? {expected_revision: Number(rev)} : {})),
-};
-// 상세의 [삭제] — 켜짐일 때만 그린다(꺼짐 = 빈 문자열). back = 삭제 뒤 갈 주소(지금 상세는 더 열리지 않는다)
-const trashBtn = (kind, id, rev, back) => trashOn() ? `<button class="secondary" type="button" data-trash="${esc(kind)}" data-id="${esc(id)}"${rev != null ? ` data-rev="${esc(rev)}"` : ""} data-back="${esc(back || "")}">삭제</button>` : "";
-// 축 삭제가 장치 허용 규칙에 막혔을 때 — 서버 문구(장치 이름 포함) 그대로, 없으면 기본 안내
-function trashErrText(res) {
-  if (res.code === "AXIS-IN-POLICY") return res.msg || "이 축을 쓰는 장치 허용 규칙이 있어 삭제할 수 없어요. 연결 장치에서 이 축을 뺀 뒤 다시 해 주세요.";
-  if (res.code === "TRASH-EXPIRED") return TRASH_EXPIRED;
-  return res.msg || "처리하지 못했어요. 다시 해 보세요.";
-}
-async function trashDel(b) {
-  if (!window.confirm(TRASH_ASK)) return;
-  const box = b.closest("[data-errbox], #home-detail, #panel, .paper");
-  const err = box ? box.querySelector(".ferr, .perror") : null;
-  if (err) err.textContent = "";
-  b.disabled = true;
-  const res = await trashApi.del(b.dataset.trash, b.dataset.id, b.dataset.rev);
-  b.disabled = false;
-  if (!res) return;
-  if (res.ok) return coreDone("휴지통으로 옮겼어요.", b.dataset.back || null);
-  if (res.code === "AXIS-IN-POLICY") {
-    if (err) err.textContent = trashErrText(res); else { coreFlash = {text: trashErrText(res), bad: true}; coreFlashShow(); }
-    return;
-  }
-  return coreFail(res, err);
-}
-document.addEventListener("click", e => {
-  const t = e.target.closest("button[data-trash]");
-  if (t) { e.preventDefault(); if (!t.disabled && trashOn()) trashDel(t); }
-});
 // ── /휴지통 ──
 // 화면 조각 공통 — 「불러오는 중」 한 줄(uiMount 가 모듈을 기다리는 동안) · 읽기(Setup 페이지 레이아웃 meSync·laySend).
 // 오늘·저장 승인 대기·자료 종류(사람·출처·읽고 든 생각)는 React(server/ui/src/features/today·objects, R4-2 2026-11-03).
@@ -2097,36 +1227,11 @@ document.addEventListener("click", e => {
     else if ($("desk-dlg")) deskOpen(op.dataset.open);
     return;
   }
-  const dm = e.target.closest("[data-dmode]");
-  if (dm) { defsShow(dm.dataset.dmode); return; }
-  const da = e.target.closest(".dmo a");
-  if (da) { e.preventDefault(); defsJump((da.getAttribute("href") || "").slice(1)); return; }
-  const a = e.target.closest("[data-rec]");
-  if (a) { e.preventDefault(); openRec(a.dataset.rec, a.dataset.quote || ""); return; }
-  const g = e.target.closest("[data-go]");
-  if (g) { e.preventDefault(); location.hash = g.dataset.go; return; }
-  const sf = e.target.closest("[data-srcf]");
-  if (sf) { e.preventDefault(); recSrc = sf.dataset.srcf; render(); const n = document.querySelector(`[data-srcf="${CSS.escape(recSrc)}"]`); if (n) n.focus(); return; }
-  const cp = e.target.closest("[data-copy]");
-  if (cp) {
-    const done = () => { const t = cp.textContent; cp.textContent = "요청을 복사했어요."; setTimeout(() => cp.textContent = t, 1500); };
-    if (navigator.clipboard) navigator.clipboard.writeText(cp.dataset.copy).then(done, () => {});
-  }
 });
 document.addEventListener("keydown", e => {
-  if ((e.key === "Enter" || e.key === " ") && e.target.matches("[data-rec], [data-go], [data-srcf], [data-open]")) { e.preventDefault(); e.target.click(); }
+  if ((e.key === "Enter" || e.key === " ") && e.target.matches("[data-open]")) { e.preventDefault(); e.target.click(); }
 });
 $("dlg-close").onclick = () => $("dlg").close();
-$("std-dlg-close").addEventListener("click", () => $("std-dlg").close());
-$("std-dlg-cancel").addEventListener("click", () => $("std-dlg").close());
-$("std-dlg-ok").addEventListener("change", () => { $("std-dlg-go").disabled = !$("std-dlg-ok").checked; });
-$("std-dlg-go").addEventListener("click", () => {
-  if (!$("std-dlg-ok").checked || !stdAsk) return;
-  const o = stdAsk;
-  stdAsk = null;
-  $("std-dlg").close();
-  stdChoose(o, "incorporated");
-});
 $("name-dlg-close").addEventListener("click", () => $("name-dlg").close());
 $("name-dlg-cancel").addEventListener("click", () => $("name-dlg").close());
 // 미저장 보호 — 링크·탭·뒤로 가기 모두 hashchange 로 온다. 옮긴 화면(React)에 고친 글이 있으면 주소를 편집 자리로 되돌리고 묻는다
@@ -2141,7 +1246,7 @@ function uiLeaveGuard() {
 $("leave-stay").addEventListener("click", () => { $("leave-dlg").close(); const i = $("hedit-input"); if (i) i.focus(); });
 $("leave-go").addEventListener("click", () => { $("leave-dlg").close(); uiDirty = null; const to = uiLeaveTo; uiLeaveTo = ""; location.hash = to || "#_me"; });
 window.addEventListener("hashchange", () => { if (uiLeaveGuard()) return; if (S) { render(); window.scrollTo(0, 0); } });   // 1열 목록 위치는 그 화면이 되살린다
-$("reload").onclick = () => { for (const k in recCache) delete recCache[k]; load(); };
+$("reload").onclick = () => load();
 $("logout").onclick = async () => {
   let to = "/?out=1";
   try { const j = await (await fetch("/logout", {method: "POST"})).json(); if (j && j.ok && j.redirect) to = j.redirect; } catch (e) {}

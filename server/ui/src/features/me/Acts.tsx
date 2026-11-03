@@ -1,21 +1,13 @@
 // 상세의 동작 칸 — 동시에 최대 3개 + [삭제](휴지통 켜짐일 때만), 편집 중엔 숨긴다. 버튼 한 번 = 쓰기 한 번(옛 homeActs·homeDo 그대로).
 // [고쳐서 남기기] = 판단 문장 인라인 편집(기존 edit_confirm). 결과 문구는 그 자리에 짧게.
-import type { ApiError } from "../../shared/api";
 import { useEdit } from "../../shared/edit";
 import { meApi } from "./meApi";
 import type { Row, World } from "./model";
 import { tabOfItem } from "./model";
+import { trashErr } from "../../shared/item";
 import { oldErrText, TRASH_ASK, TRASH_DONE } from "./text";
 
 const ITEM_DONE: Record<string, string> = { confirm: "남겼어요.", exclude: "반영 안 함으로 표시했어요.", pending: "되돌렸어요.", apply: "제안을 적용했어요.", discard: "제안을 제외했어요." };
-const CORE: Record<string, string> = {
-  CONFLICT: "다른 곳에서 먼저 바뀌었어요. 다시 불러왔어요 — 확인하고 다시 해 주세요.", "NOT-FOUND": "찾을 수 없어요. 지워졌을 수 있어요. 다시 불러왔어요.",
-};
-function trashErr(e: ApiError) {
-  if (e.code === "AXIS-IN-POLICY") return e.msg || "이 축을 쓰는 장치 허용 규칙이 있어 삭제할 수 없어요. 연결 장치에서 이 축을 뺀 뒤 다시 해 주세요.";
-  if (e.code === "OFFLINE") return "서버에 연결하지 못했어요. 잠시 뒤 다시 해 보세요.";
-  return CORE[e.code] || e.msg || "처리하지 못했어요. 다시 해 보세요.";
-}
 
 export function Acts({ W, r, trashOn }: { W: World; r: Row; trashOn: boolean }) {
   const { edit, act, run, start } = useEdit();

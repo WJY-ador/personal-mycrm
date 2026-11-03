@@ -20,8 +20,7 @@ export const CONN_FAIL = "연결을 불러오지 못했어요.";
 export const MORE_FAIL = "더 불러오지 못했어요. 다시 눌러 주세요.";
 export { SRC_KIND, SRC_NONE } from "../../shared/source";
 export const REFL_KIND: Record<string, string> = { summary: "내 요약", reaction: "내 반응" };
-export const TRASH_ASK = "삭제하면 휴지통으로 이동해요. 삭제 시각부터 168시간 동안 복원할 수 있고, 이후 서버 정리 때 영구 삭제돼요.";
-export const TRASH_DONE = "휴지통으로 옮겼어요.";
+export { TRASH_ASK, TRASH_DONE } from "../../shared/item";
 export const OFFLINE = "서버에 연결하지 못했어요. 잠시 뒤 다시 해 주세요.";
 
 export const firstLine = (s: string | null | undefined) => (String(s || "").split("\n").find(l => l.trim()) || "").trim();

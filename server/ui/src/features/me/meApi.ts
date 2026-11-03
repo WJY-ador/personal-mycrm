@@ -1,6 +1,7 @@
 // 「나」 서버 접점 — 읽기(통계·레이아웃·기록 본문·이어 받기·문맥) + 쓰기(기존 경로 + 수기 수정). 응답 모양 정본 = server/web.py·db.py.
 // 견본 대조 = me.sample.json(stats·layout·journal) ↔ server/test_web_home.py test_me_samples.
 import { getJSON, postJSON } from "../../shared/api";
+import { itemDecide, trashMove, type ItemDecide } from "../../shared/item";
 import { candidateDecide, fetchJournal, type CandDecide } from "../../shared/journal";
 import type { Act } from "../../shared/activity";
 import type { Rec } from "../../shared/state";
@@ -38,9 +39,8 @@ export const meApi = {
   reflection: (id: string, body: object) => postJSON(`/api/reflections/${enc(id)}`, body),
   review: (id: string, reviewed: boolean, expected_revision: number) => postJSON(`/api/reflections/${enc(id)}/review`, { reviewed, expected_revision }),
   candidate: (body: CandDecide) => candidateDecide(body),
-  itemDecide: (body: object) => postJSON("/api/item/decide", body),
-  trash: (kind: string, id: string, rev: number | null) =>
-    postJSON("/api/trash/move", rev == null ? { kind, id } : { kind, id, expected_revision: rev }),
+  itemDecide: (body: ItemDecide) => itemDecide(body),
+  trash: trashMove,
   // 쓰기 — 수기 수정(A0′, R2)
   recordTitle: (id: string, expected_revision: number, title: string) => postJSON(`/api/records/${enc(id)}/title`, { expected_revision, title }),
   recordBody: (id: string, expected_revision: number, body: string) => postJSON(`/api/records/${enc(id)}/body`, { expected_revision, body }),

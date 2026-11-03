@@ -1282,7 +1282,7 @@ class Web:
         uid = await self.uid_of(request)
         if uid is None:
             return RedirectResponse("/", status_code=302)
-        html = structure_svg.fill_origin_labels(_fill_ui(_fill_assets(APP_HTML.read_text(encoding="utf-8"))))   # 요청마다 읽는다 — 헤더 해시와 본문이 같은 내용에서 나온다
+        html = _fill_ui(_fill_assets(APP_HTML.read_text(encoding="utf-8")))   # 요청마다 읽는다 — 헤더 해시와 본문이 같은 내용에서 나온다
         # Q1: 관리자는 <!--user-->(문의·이름 공유 메뉴·문의 섹션)를, 그 밖은 <!--admin-->(운영 콘솔)를 보내지 않는다. 표식도 남기지 않는다
         drop, keep = ("user", "admin") if getattr(request.state, "role", None) == "admin" else ("admin", "user")
         html = re.sub(rf"<!--{drop}-->.*?<!--/{drop}-->", "", html, flags=re.S).replace(f"<!--{keep}-->", "").replace(f"<!--/{keep}-->", "")
@@ -1792,6 +1792,7 @@ class Web:
             "definitions": st["definitions"], "sources": srcs, "std_choices": std["objects"],
             "std_marks": {"version": std["version"], "state": std["state"]} if std["version"] else None}, "self")
         st["structure_svg"] = structure_svg.render(st["structure"])   # 같은 응답의 DMO 그래프(서버 결정적 배치) — 목록과 같은 순번 앵커. /app 전용
+        st["origin_labels"] = {"text": structure_svg.ORIGIN_TEXT, "category": structure_svg.ORIGIN_CATEGORY}   # 출처 칩·그래프 범례 표시 정의(정본 하나 — 화면은 사본을 두지 않는다). /app 전용
         st["user"] = {"email": me["email"], "struct_names": flags["struct_names"], "desk_hidden": flags["desk_hidden"],   # /app 계정 메뉴용 — MCP state_get 에는 넣지 않는다
                       "display_name": home["display_name"], "nav": home["nav"]}   # PR B: 표시 이름(null = 이름 입력 화면) · nav = 항상 "new"(옛 탐색 삭제, 화면은 읽지 않는다)
         st["switches"] = {"converse": db.job_switch_on("converse"),   # PR ②-b — 「대화」 버튼 표시(켜짐일 때만). /app 전용, MCP state_get 에는 넣지 않는다
