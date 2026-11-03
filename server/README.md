@@ -27,7 +27,8 @@ Claude Code 에서 붙이기: `claude mcp add --transport http my-crm http://127
 
 ## 화면 묶음 빌드 (server/ui, React)
 
-대시보드(`/app`)는 옛 `app.html` 껍데기 안에 옮긴 화면만 React 로 띄운다(지금은 Setup 「휴지통」 · 「나」 `#_me`). 옮긴 화면 목록·옛 이름 래칫·일시 중복 기록은 `ui/migrated.json`.
+대시보드(`/app`)는 옛 `app.html` 껍데기 안에 옮긴 화면만 React 로 띄운다(지금은 Setup 「휴지통」 · 「나」 `#_me` · 판단 검토 `#<탭>/review/…` · 대화 서랍). 옮긴 화면 목록·옛 이름 래칫·일시 중복 기록은 `ui/migrated.json`.
+`#view` 화면은 `uiMount` 로 하나씩(다른 화면으로 가면 앞 화면을 내린다), 대화 서랍은 상시 섬 — 껍데기 고정 자리 `#ui-chat`(서랍)·`#ui-chatnav`(탭 줄 「대화」 버튼)·`#ui-chatnote`(좁은 화면 안내)에 `uiIsland` 로 띄운다. 모듈보다 라우터가 먼저면 이름별로 자리를 맡긴다(`window.CrmUIPending`).
 「나」 요약 블록은 `server/layout_registry.json`(Python `layout_check` 와 같은 파일)을 `ui/src/layout/registry.ts` 가 직접 읽어 블록 id → 컴포넌트로 묶는다 — 블록을 더하면 이 JSON 과 `BLOCKS` 를 같이 고친다(`registry.test.ts`).
 옛 껍데기 → 옮긴 화면 `ctx` = `reload`·상태 `S`·주소 조각(`args`)·`setDirty`(고치던 글 주소 → 「저장하지 않은 변경」 대화창)·`flash`(결과 한 줄). `/api/journal` 응답에 `revision`·`author_kind`(수기 수정 저장·남이 쓴 글 판정).
 node 는 `ui/package.json` engines 범위(24.x) — Render·CI 는 24.22.1 로 고정한다(`render.yaml` `NODE_VERSION`, `ci.yml` setup-node).
@@ -41,7 +42,7 @@ npm test            # vitest(jsdom) — 화면·구조 규약(arch.test.ts)·API
 ```
 
 서버는 manifest 에 적힌 파일만 `/app/assets/<해시 이름>` 으로 낸다(1년 immutable, 목록 밖 404). `/app` 의 `<!--{{ui}}-->` 자리는 그 진입 `<link>`·`<script type="module" src>` 로 채운다.
-빌드 안 한 로컬은 서버가 그대로 뜨고(로그 1줄), 옮긴 화면 자리에만 「이 화면 파일이 서버에 없어요」 한 줄이 보인다.
+빌드 안 한 로컬은 서버가 그대로 뜨고(로그 1줄), 옮긴 화면 자리에만 「이 화면 파일이 서버에 없어요」 한 줄이 보인다(대화 서랍은 안내 없이 빠진다).
 
 ## 배포 (Render Free, singapore)
 
