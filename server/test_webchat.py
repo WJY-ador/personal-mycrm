@@ -41,6 +41,7 @@ import db  # noqa: E402
 import imports  # noqa: E402
 import main  # noqa: E402
 import webchat  # noqa: E402
+from agent import chat as agent_chat  # noqa: E402
 from agent import wsclient  # noqa: E402
 
 EMAILS = ("wc-a@example.com", "wc-b@example.com", "wc-rate@example.com", "wc-del@example.com", "wc-rev@example.com")
@@ -536,29 +537,6 @@ def _review(srv):
             webchat.TURN_IDLE_SECONDS = old
         ok("유휴 정리: 세션 목록·SSE 연결 때도 돈다(화면은 실행 중이면 보내기를 막는다)")
 
-        orig = webchat.ingest
-        calls = {"n": 0}
-
-        def boom(*a, **k):
-            calls["n"] += 1
-            if calls["n"] == 1:
-                raise RuntimeError("일시 장애")
-            return orig(*a, **k)
-
-        webchat.ingest = boom
-        try:
-            tid = h.post(f"/api/chat/sessions/{sid}/turns", json={"text": "예외", "client_turn_id": "rv-exc"}).json()["turn_id"]
-            pc.wait(lambda m: m["type"] == "turn.start")
-            pc.event(tid, 1, "delta", {"text": "a"})
-            assert pc.ack(tid, 1.0) is None, "예외 = ack 없음"
-            pc.event(tid, 1, "delta", {"text": "a"})   # PC 재전송
-            assert pc.ack(tid) == 1 and pc.closed is None, "연결 유지"
-            pc.event(tid, 2, "done", {})
-            assert pc.ack(tid) == 2
-        finally:
-            webchat.ingest = orig
-        ok("수신 예외(DB 일시 장애 등): 연결 유지 · ack 없음 → PC 재전송으로 회복")
-
         errs = []
         for i in range(6):   # 답 나오는 중 중지 — 잠금 순서(세션 → 턴)가 같아 교착·500 없음
             tid = h.post(f"/api/chat/sessions/{sid}/turns", json={"text": "중지 경합", "client_turn_id": f"rv-race-{i}"}).json()["turn_id"]
@@ -585,12 +563,55 @@ def _review(srv):
 
         tid = h.post(f"/api/chat/sessions/{sid}/turns", json={"text": "닫힘", "client_turn_id": "rv-close"}).json()["turn_id"]
         pc.wait(lambda m: m["type"] == "turn.start")
+        sse = SSE(srv, u, sid, last_id=f"{tid}:0")
+        assert sse.next()["event"] == "pc"
         s2 = h.post("/api/chat/sessions", json={"device_id": d2["device"]["id"]}).json()["session_id"]
+        e, last = sse.until("error")
+        assert last["data"]["turn_id"] == tid and last["data"]["data"] == {"code": "SESSION-CLOSED"}, ("닫으며 끝낸 턴을 SSE 에", e)
+        sse.close()
         assert s2 != sid and rows("SELECT status FROM chat_sessions WHERE id=%s", (sid,))[0]["status"] == "closed"
         assert rows("SELECT status FROM chat_turns WHERE id=%s", (tid,))[0]["status"] == "failed"
         assert rows("SELECT data FROM chat_events WHERE turn_id=%s ORDER BY seq DESC LIMIT 1", (tid,))[0]["data"] == {"code": "SESSION-CLOSED"}
-        ok("세션 닫기(다른 장치 선택) = 실행 중 턴 failed(SESSION-CLOSED)")
+        ok("세션 닫기(다른 장치 선택) = 실행 중 턴 failed(SESSION-CLOSED) · 그 끝 이벤트를 보던 SSE 에 보냄")
     pc.close()
+
+    # 수신 예외 → 서버가 1011 로 닫음 → 실제 PC 에이전트(agent.chat)가 다시 붙어 미확인 이벤트를 재전송 → 턴 done, 출력 손실 없음
+    orig = webchat.ingest
+    calls = {"n": 0}
+
+    def boom(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("일시 장애")
+        return orig(*a, **k)
+
+    stopping = threading.Event()
+    agent = agent_chat.ChatAgent(srv.ws, d2["token"], agent_chat.FakeProvider(step=0.05), agent_version="t", stopping=stopping,
+                                 backoff=wsclient.Backoff(base=0.1, cap=0.3, jitter=0), recv_tick=0.05, coalesce=0.0)
+    th = threading.Thread(target=agent.run, daemon=True)
+    th.start()
+    webchat.ingest = boom
+    try:
+        with web(srv, u) as h:
+            for _ in range(50):
+                if h.get("/api/chat/sessions").json()["sessions"][0]["connected"]:
+                    break
+                time.sleep(0.1)
+            tid = h.post(f"/api/chat/sessions/{s2}/turns", json={"text": "안녕", "client_turn_id": "rv-exc"}).json()["turn_id"]
+            for _ in range(100):
+                if rows("SELECT status FROM chat_turns WHERE id=%s", (tid,))[0]["status"] != "running":
+                    break
+                time.sleep(0.1)
+            assert rows("SELECT status FROM chat_turns WHERE id=%s", (tid,))[0]["status"] == "done"
+            body = [m["body"] for m in h.get(f"/api/chat/sessions/{s2}/messages").json()["messages"] if m["turn_id"] == tid and m["role"] == "assistant"]
+            assert body == ["가짜 답이에요. 받은 글은 2자예요. 끝."], body
+            seqs = [r["seq"] for r in rows("SELECT seq FROM chat_events WHERE turn_id=%s ORDER BY seq", (tid,))]
+            assert seqs == list(range(1, len(seqs) + 1)) and calls["n"] >= 3 and agent.connects >= 2, (seqs, calls, agent.connects)
+    finally:
+        webchat.ingest = orig
+        stopping.set()
+        th.join(5)
+    ok("수신 예외(DB 일시 장애 등): 서버 1011 로 닫음 → PC 에이전트 재연결·재전송 → 턴 done · 출력 손실 없음 · seq 연속")
 
 
 def test_rate(srv):
@@ -697,6 +718,13 @@ def main_():
     db.init_schema()
     db.init_schema()   # 멱등
     cleanup()
+    with db.tx() as c:   # PR 1 첫 판 표(누계 열 없음) → init_schema 가 열을 더한다
+        c.execute("ALTER TABLE chat_turns DROP COLUMN n_events, DROP COLUMN n_bytes")
+    db.init_schema()
+    cols = {r["column_name"]: r["column_default"] for r in rows(
+        "SELECT column_name, column_default FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='chat_turns'")}
+    assert cols.get("n_events") == "0" and cols.get("n_bytes") == "0", cols
+    ok("옛 표 업그레이드: chat_turns 누계 열이 없으면 init_schema 가 ADD COLUMN IF NOT EXISTS(기본 0)")
     test_static()
     ua = db.user_by_email(EMAILS[0])["id"]
     ub = db.user_by_email(EMAILS[1])["id"]

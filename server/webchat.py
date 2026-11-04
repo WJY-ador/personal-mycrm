@@ -108,8 +108,9 @@ def _session_out(s, connected=None):
     return out
 
 
-def session_open(uid: str, device_id: str | None) -> dict:
-    """활성 세션 하나 — 있으면 그것(다른 device_id 를 고르면 닫고 새로), 없으면 만든다. 장치 = 사용자의 연결된 장치(1대면 자동)."""
+def session_open(uid: str, device_id: str | None):
+    """활성 세션 하나 — 있으면 그것(다른 device_id 를 고르면 닫고 새로), 없으면 만든다. 장치 = 사용자의 연결된 장치(1대면 자동).
+    반환 (세션, 닫은 세션의 끝 이벤트 [(session_id, 이벤트)] — 호출한 쪽이 SSE 로 보낸다)."""
     with tx() as c:
         _user_lock(c, uid)
         devs = _active_devices(c, uid)
@@ -117,9 +118,8 @@ def session_open(uid: str, device_id: str | None) -> dict:
             raise CrmError("NOT-FOUND", "그 장치를 찾을 수 없어요.", "웹의 「연결 장치」에서 확인하세요.")
         cur = _one(c, "SELECT * FROM chat_sessions WHERE user_id=%s AND status='active' FOR NO KEY UPDATE", (uid,))
         if cur and cur["device_id"] in devs and (device_id is None or device_id == cur["device_id"]):
-            return _session_out(cur)
-        if cur:
-            _close_session(c, cur["id"])
+            return _session_out(cur), []
+        closed = [(cur["id"], e) for e in _close_session(c, cur["id"])] if cur else []
         if device_id is None:
             if not devs:
                 raise CrmError("NO-DEVICE", "연결된 PC 가 없어요.", "PC 에서 my-crm 에이전트를 연결하세요.")
@@ -127,7 +127,7 @@ def session_open(uid: str, device_id: str | None) -> dict:
                 raise CrmError("DEVICE-REQUIRED", "연결된 PC 가 여러 대예요.", "device_id 로 PC 하나를 고르세요.")
             device_id = devs[0]
         s = _one(c, "INSERT INTO chat_sessions (id,user_id,device_id) VALUES (%s,%s,%s) RETURNING *", (_id("cs"), uid, device_id))
-        return _session_out(s)
+        return _session_out(s), closed
 
 
 def sessions_list(uid: str) -> list:
@@ -193,8 +193,10 @@ def _sweep_idle(c, sid):
 
 def turn_create(uid: str, sid: str, text, client_turn_id, *, connected) -> dict:
     out = _turn_create(uid, sid, text, client_turn_id, connected)
-    if out is None:
-        raise CrmError("DEVICE-GONE", "이 대화의 PC 연결이 해제됐어요.", "새 대화를 시작하세요.")
+    if isinstance(out, list):   # 장치 철회 — 세션을 닫았다(커밋). 끝낸 턴 이벤트는 거절과 함께 넘겨 SSE 로 보낸다
+        e = CrmError("DEVICE-GONE", "이 대화의 PC 연결이 해제됐어요.", "새 대화를 시작하세요.")
+        e.events = out
+        raise e
     return out
 
 
@@ -215,8 +217,7 @@ def _turn_create(uid, sid, text, client_turn_id, connected):
         if s["status"] != "active":
             raise CrmError("SESSION-CLOSED", "끝난 대화예요.", "새 대화를 시작하세요.")
         if s["device_id"] not in _active_devices(c, uid):   # 닫기는 커밋하고(트랜잭션을 정상으로 끝낸 뒤) 거절한다
-            _close_session(c, sid, "DEVICE-GONE")
-            return None
+            return _close_session(c, sid, "DEVICE-GONE")
         evs = [e for e in _sweep_idle(c, sid) if e]
         if _one(c, "SELECT 1 FROM chat_turns WHERE session_id=%s AND status='running'", (sid,)):
             raise CrmError("TURN-BUSY", "앞 답이 아직 끝나지 않았어요.", "끝나거나 중지한 뒤 보내세요.")
@@ -293,20 +294,26 @@ def replay(uid: str, sid: str, cursor) -> list:
     이벤트는 한 쿼리로 읽는다."""
     with tx() as c:
         _session_get(c, uid, sid)
-        turns = _all(c, "SELECT t.id, t.client_turn_id, t.created_at, t.n_bytes, m.body FROM chat_turns t "
-                        "LEFT JOIN chat_messages m ON m.turn_id=t.id AND m.role='user' WHERE t.session_id=%s ORDER BY t.created_at, t.id", (sid,))
-        idx = next((i for i, t in enumerate(turns) if cursor and t["id"] == cursor[0]), None)
-        cand = turns[idx:] if idx is not None else turns
+        cols = "SELECT t.id, t.client_turn_id, t.created_at, t.n_bytes, m.body FROM chat_turns t LEFT JOIN chat_messages m ON m.turn_id=t.id AND m.role='user' "
+        rows = _all(c, cols + "WHERE t.session_id=%s ORDER BY t.created_at DESC, t.id DESC LIMIT %s", (sid, REPLAY_TURNS + 1))
+        more = len(rows) > REPLAY_TURNS   # 최근 N턴보다 앞이 더 있다
+        rows = list(reversed(rows[:REPLAY_TURNS]))
+        ct = _one(c, cols + "WHERE t.session_id=%s AND t.id=%s", (sid, cursor[0])) if cursor else None   # 커서 턴은 따로
+        idx = next((i for i, t in enumerate(rows) if ct and t["id"] == ct["id"]), None)
+        if ct and idx is not None:
+            cand, cut = rows[idx:], False
+        else:   # 커서 없음·모름 = 최근 N턴 · 커서가 그보다 앞 = 최근 N턴(사이는 생략)
+            cand, cut = rows, more or bool(ct)
         pick, size = [], 0
         for t in reversed(cand):
-            if pick and (len(pick) >= REPLAY_TURNS or size + t["n_bytes"] > REPLAY_BYTES):
+            if pick and size + t["n_bytes"] > REPLAY_BYTES:
                 break
             pick.append(t)
             size += t["n_bytes"]
         pick.reverse()
         cur = cursor if idx is not None and pick and pick[0]["id"] == cursor[0] else None
         out = []
-        if len(pick) < len(cand):
+        if cut or len(pick) < len(cand):
             out.append((None, "trimmed", {"first_turn_id": pick[0]["id"]}))
         evs = {}
         if pick:
@@ -555,7 +562,9 @@ class Routes:
                 did = (await self._body(request)).get("device_id")
                 if did is not None and not isinstance(did, str):
                     raise CrmError("ARG-INVALID", "device_id 는 글자여야 해요.")
-                out = await run_in_threadpool(session_open, uid, did)
+                out, closed = await run_in_threadpool(session_open, uid, did)
+                for old_sid, ev in closed:   # 닫은 세션의 실행 중 턴 끝 — 그 세션을 보던 SSE 에 알린다
+                    hub.publish_event(uid, old_sid, ev)
                 out["connected"] = hub.connected(uid, out["device_id"])
                 return JSONResponse(out, headers={"cache-control": "no-store"})
             rows = await run_in_threadpool(sessions_list, uid)
@@ -588,6 +597,8 @@ class Routes:
             r = await run_in_threadpool(turn_create, uid, sid, b.get("text"), b.get("client_turn_id"),
                                         connected=lambda did: hub.connected(uid, did))
         except CrmError as e:
+            for ev in getattr(e, "events", []):   # DEVICE-GONE — 세션을 닫으며 끝낸 턴
+                hub.publish_event(uid, sid, ev)
             return _err(e)
         for ev in r["events"]:
             hub.publish_event(uid, sid, ev)
@@ -773,9 +784,12 @@ class Routes:
                     r = await run_in_threadpool(ingest, dev, m.get("turn_id"), m.get("seq"), m.get("kind"), m.get("data"))
                 except CrmError:
                     continue
-                except Exception as e:   # DB 일시 장애·교착 등 — 연결은 살린다(ack 없음 = PC 가 재전송). 코드만 집계
-                    db.usage_count(None, "api:chat_ws_event", type(e).__name__[:30].upper() if _CODE.match(type(e).__name__[:30].upper()) else "EXC")
-                    continue
+                except Exception as e:   # DB 일시 장애·교착 등 — 1011 로 닫아 PC 가 다시 붙어 미확인 이벤트를 재전송하게 한다(코드만 집계).
+                    # 연결을 살려 두면 그 seq 이후가 전부 「빈 칸」이 되어 다음 재연결까지 묶인다
+                    name = type(e).__name__[:30].upper()
+                    db.usage_count(None, "api:chat_ws_event", name if _CODE.match(name) else "EXC")
+                    await d.ws.close(code=1011)
+                    return
                 if r["state"] == "foreign":
                     continue
                 await d.send({"type": "ack", "turn_id": m["turn_id"], "seq": r["ack"]})

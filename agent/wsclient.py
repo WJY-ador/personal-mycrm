@@ -23,6 +23,7 @@ GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 OP_CONT, OP_TEXT, OP_BIN, OP_CLOSE, OP_PING, OP_PONG = 0x0, 0x1, 0x2, 0x8, 0x9, 0xA
 MAX_MESSAGE = 256 * 1024        # 받는 메시지 하나 상한(서버 → PC 는 turn.start 가 가장 크다: 8,000자 ≤ 32KiB)
 HEADER_MAX = 16 * 1024
+STALL_MAX = 50.0               # 메시지 중간에서 이만큼 바이트가 안 오면 끊긴 연결로 본다(chat 은 silence_max 로 맞춘다)
 DENIAL_BODY_MAX = 4 * 1024
 
 
@@ -82,6 +83,7 @@ class WebSocket:
         self.closed = False
         self.close_code = None
         self.last_rx = time.monotonic()   # 마지막으로 바이트를 받은 단조 시각 — 반쯤 열린 연결(half-open) 감지용
+        self.stall_max = STALL_MAX
     # ── 연결 ──
     @classmethod
     def connect(cls, url: str, headers: dict | None = None, timeout: float = 10.0, ssl_context=None,
@@ -246,15 +248,20 @@ class WebSocket:
 
     def recv(self, timeout: float | None = None) -> str:
         """다음 텍스트 메시지. ping 은 pong 으로 답하고 넘어간다. 닫힘 = WsError(closed, code). timeout = socket.timeout.
-        timeout 은 메시지 첫 바이트를 기다리는 시간 — 메시지 중간이면 끝까지 기다린다(읽은 바이트는 버퍼에 남는다)."""
+        timeout 은 메시지 첫 바이트를 기다리는 시간 — 메시지 중간이면 더 기다리되(읽은 바이트는 버퍼에 남는다),
+        마지막 수신에서 stall_max 가 지나면 WsError(network)(반쯤 보낸 채 멈춘 연결)."""
         self.sock.settimeout(timeout)
         parts, size, op = [], 0, None
         while True:
             try:
                 fin, opcode, payload = self._frame()
             except socket.timeout:
-                if parts or self.buf:
-                    self.sock.settimeout(None)   # 메시지 중간 — 끝까지 기다린다
+                if parts or self.buf:   # 메시지 중간 — 더 기다리되 상한을 둔다
+                    left = self.stall_max - (time.monotonic() - self.last_rx)
+                    if left <= 0:
+                        self.close(1001)
+                        raise WsError("network", code="stall") from None
+                    self.sock.settimeout(min(1.0, left))
                     continue
                 raise
             if opcode == OP_PING:

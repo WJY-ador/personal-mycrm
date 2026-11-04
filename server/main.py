@@ -1305,4 +1305,4 @@ app = Starlette(
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT") or env("PORT") or "8800")
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=port, ws_max_size=webchat.WS_MESSAGE_MAX)   # render.yaml --ws-max-size 와 같은 값

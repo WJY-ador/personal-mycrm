@@ -504,6 +504,9 @@ def _init_schema(c):
         if not _has_constraint(c, "records", "fk_records_source"):
             c.execute("ALTER TABLE records ADD CONSTRAINT fk_records_source FOREIGN KEY (user_id, source_id) REFERENCES sources(user_id, id)")
         _migrate_board_import(c)   # board 이전(2026-10-20) — 열·이름 붙은 CHECK·부분 UNIQUE·item_links 대상 확장
+        for n, ddl in _CHAT_TURNS_COLS:   # 웹 「대화」 PR 1 리뷰 — 누계 열(PR 1 첫 판으로 만든 표엔 없다). schema.sql 최종형과 같은 모양
+            if not _has_col(c, "chat_turns", n):
+                c.execute(f"ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS {n} {ddl}")
         _migrate_stack(c)   # PR ②-b — jobs 새 열·definitions_version text·items 판 포인터·generation_kind 넓히기
         _migrate_trash(c)   # 휴지통 PR-1 — 5종 휴지통 열·CHECK·부분 인덱스 · 사람 표식 · 접수 deleted 상태
         _migrate_pc_connect(c)   # PC 연결(2026-11-02) — import_streams M2 대기 토큰 열·CHECK·UNIQUE. 새 표 2개는 schema.sql
@@ -555,6 +558,10 @@ _ITEM_LINK_TARGETS = (("target_person_id", "fk_item_links_person", "people"), ("
                       ("target_activity_id", "fk_item_links_activity", "activities"))
 ITEM_LINK_TARGET_CHECK = ("CHECK (num_nonnulls(target_item_id, target_record_id, target_candidate_id, "
                           "target_person_id, target_source_id, target_activity_id) = 1)")
+
+
+_CHAT_TURNS_COLS = (("n_events", "integer NOT NULL DEFAULT 0 CHECK (n_events >= 0)"),
+                    ("n_bytes", "bigint NOT NULL DEFAULT 0 CHECK (n_bytes >= 0)"))
 
 
 def _migrate_board_import(c):

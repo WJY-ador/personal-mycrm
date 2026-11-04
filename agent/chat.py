@@ -316,6 +316,8 @@ class ChatAgent:
     # ── 연결 ──
     def _session(self, ws) -> str:
         """연결 하나 — hello → 미확인 재전송 → 받기. 끝난 이유."""
+        if hasattr(ws, "stall_max"):   # 메시지 중간 대기도 같은 상한(반쯤 보낸 채 멈춘 연결)
+            ws.stall_max = self.silence_max
         with self.out_lock:   # hello·재전송이 끝날 때까지 턴 스레드의 새 이벤트를 붙든다(seq 순서 보장)
             with self.ws_lock:
                 self.ws = ws

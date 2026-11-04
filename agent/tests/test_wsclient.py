@@ -162,6 +162,19 @@ class RecvTest(unittest.TestCase):
             ws3.recv(timeout=0.1)
         ws3.close()
 
+    def test_stall_mid_frame_gives_up(self):
+        def h(c):
+            c.sock.sendall(bytes([0x81, 20]) + b"0123")   # 20바이트 중 4바이트만 보내고 멈춘다
+            time.sleep(3)
+
+        srv, ws = self.run_srv(h)
+        ws.stall_max = 0.3
+        t0 = time.monotonic()
+        with self.assertRaises(wsclient.WsError) as cm:
+            ws.recv(timeout=0.1)
+        self.assertEqual((cm.exception.kind, cm.exception.code), ("network", "stall"))
+        self.assertLess(time.monotonic() - t0, 2.0, "상한 안에서 포기")
+
     def test_close_code_parse(self):
         def h(c):
             c.frame(0x8, struct.pack("!H", 1013))
