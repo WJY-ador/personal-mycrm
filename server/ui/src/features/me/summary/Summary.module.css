@@ -1,5 +1,13 @@
 /* 요약 — 블록 2열(좁은 폭 1열). 히트맵 = 주색 한 색 농도 5단 · 막대 = 주색 한 색 · 기다리는 결정 = 3 칸 + 글자 범례. 옛 app.html .mesum 를 옮김(R2) */
 .sum { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; align-items: start; }
+.firstRecord { margin: 0 0 1rem; padding: .9rem 1rem; min-width: 0; background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+.firstRecord h2 { margin: 0 0 .4rem; font-size: 1rem; line-height: 1.4; }
+.firstRecord p { margin: .3rem 0; }
+.firstRecord ol { display: flex; flex-wrap: wrap; gap: .25rem 1.7rem; margin: .55rem 0; padding-left: 1.35rem; }
+.firstRecord li { padding-right: .1rem; }
+.webChatNote { color: var(--muted); font-size: .8rem; }
+.helpLink { display: inline-flex; align-items: center; min-height: 40px; margin-top: .15rem; padding: .3rem .65rem; border: 1px solid var(--line); border-radius: 6px; color: var(--accent); font-size: .82rem; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; transition: border-color .12s, background-color .12s, color .12s; }
+.helpLink:hover { border-color: var(--accent); background: var(--accent-soft); }
 .blk { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: .9rem 1rem; min-width: 0; }
 .blk.full { grid-column: 1 / -1; }
 .blk > header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: .2rem .6rem; margin: 0 0 .7rem; }
@@ -41,3 +49,4 @@
   .sum { grid-template-columns: minmax(0, 1fr); }
   .kinds li { grid-template-columns: minmax(0, 5rem) minmax(2rem, 1fr) 2rem; gap: .45rem; }
 }
+@media (prefers-reduced-motion: reduce) { .helpLink { transition: none; } }

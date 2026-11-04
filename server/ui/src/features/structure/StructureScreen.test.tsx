@@ -1,6 +1,7 @@
 // 구조·제안 서랍(R5b-1, R5b-2b 에서 적용된 항목 경로 삭제 — 상세·결정·[삭제]는 「나」: MeActs.test.tsx) — 정의 필·카드 · 판단 문장 필터 ·
 // 서랍 = 새 항목 제안만([적용]·[제외] = 서버 action 그대로 · 근거 빈 자리) · 실패 = 서버 msg(충돌만 화면 문구).
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { act } from "react";
 import { queryClient } from "../../shared/queries";
 import { calls, click, installFetch, json, serve, text } from "../../test/fakeServer";
 import { byText, hideScreen, reload, showScreen } from "../../test/showScreen";
@@ -84,12 +85,51 @@ test("판단 문장 — 필터(개수) · 최신순 · 아직 안 정함 = 대�
   expect(text(el, ".asset-card .top")[1]).toContain("AI 미확정");
   expect(el.querySelector(".asset-card .chip.flag svg")!.getAttribute("aria-label")).toBe("주의");
   expect(text(el, ".asset-card .top")[1]).toContain("AI 문안");
-  await click(el.querySelectorAll(".asset-card")[1]);
+  const pending = el.querySelectorAll(".asset-card")[1];
+  expect(pending.getAttribute("role")).toBeNull();
+  expect(pending.querySelector("button")?.textContent).toBe("원문 보기 · 회고");
+  const compare = [...pending.querySelectorAll("a, button")].find(control => control.textContent === "대조하기");
+  expect(compare?.textContent).toBe("대조하기");
+  expect(compare?.tagName).toBe("BUTTON");
+  expect(compare?.getAttribute("role")).toBeNull();
+  expect((compare as HTMLButtonElement).tabIndex).toBe(0);
+  await click(pending.querySelector("h3"));
+  expect(location.hash).toBe("#structure/review/r:r2/c4");
+  await click(compare);
   expect(location.hash).toBe("#structure/review/r:r2/c4");
   const done = await showScreen("structure", "#structure/confirmed", ["confirmed", ""], structState());
   expect(done.querySelector('nav[aria-label="결정 고르기"] a.on')!.textContent).toBe("확정한 판단1");
+  const confirmed = done.querySelector(".asset-card")!;
+  expect(confirmed.getAttribute("role")).toBeNull();
+  const sourceAction = confirmed.querySelector("button");
+  expect(sourceAction?.textContent).toBe("원문 보기 · 도입 메모");
+  expect(confirmed.querySelectorAll("button")).toHaveLength(1);
   serve(() => json(200, { id: "r1", title: "도입 메모", body: "입력 **담당**", revision: 1, author_kind: "self", meta: { created: "", source: null, question_id: null } }));
-  await click(done.querySelector(".asset-card"));
+  await click(confirmed.querySelector("h3"));
   expect(calls.at(-1)!.url).toBe("/api/journal?id=r1");
   expect(done.querySelector("dialog.recdlg mark")!.textContent).toBe("입력 담당");
+  const dialog = done.querySelector("dialog.recdlg")!;
+  const anotherControl = done.querySelector('nav[aria-label="결정 고르기"] a.on') as HTMLElement;
+  anotherControl.focus();
+  await click(done.querySelector("dialog [data-close]"));
+  await act(async () => { dialog.dispatchEvent(new Event("close")); });
+  expect(document.activeElement).toBe(sourceAction);
+  await click(sourceAction);
+  expect(calls.at(-1)!.url).toBe("/api/journal?id=r1");
+  expect(done.querySelector("dialog.recdlg mark")!.textContent).toBe("입력 담당");
+  expect(done.querySelectorAll(".asset-card button")).toHaveLength(1);
+  expect(calls.filter(call => call.url === "/api/journal?id=r1")).toHaveLength(1);
+});
+
+test("원문 모달을 연 카드가 목록에서 사라지면 닫을 때 현재 결정 필터로 포커스 복귀", async () => {
+  const initial = structState();
+  let el = await show("cand", "confirmed", initial);
+  await click(el.querySelector(".asset-card h3"));
+  const remaining = { ...initial, candidates: initial.candidates.filter(c => c.id !== "c1") };
+  el = await show("cand", "confirmed", remaining);
+  const filter = el.querySelector('nav[aria-label="결정 고르기"] a.on');
+  const dialog = el.querySelector("dialog.recdlg")!;
+  await click(el.querySelector("dialog [data-close]"));
+  await act(async () => { dialog.dispatchEvent(new Event("close")); });
+  expect(document.activeElement).toBe(filter);
 });

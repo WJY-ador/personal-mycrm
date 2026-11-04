@@ -26,15 +26,19 @@ export function ReviewScreen({ ctx }: ScreenProps) {
   const qText = byRec ? `${NO_QUESTION} · ${w.record} 「${rec ? rec.title : w.recGone}」` : q ? q.text : "찾을 수 없는 질문";
   const base = `#${tabId}/review/${qid}/`;
   const ok = readOk(S, "candidates");
+  const scopeReadOk = readOk(S, byRec ? "journal" : "questions");
+  const scopePending = scopeReadOk && byRec && !rec && S.journal_next_before !== null;
+  const scopeMissing = scopeReadOk && (byRec ? !rec && S.journal_next_before === null : !q);
+  const scopeValid = scopeReadOk && !scopePending && !scopeMissing;
   const pend = (S.candidates || []).filter(c => c.status === "pending");
   const wait = !ok ? [] : byRec ? pend.filter(c => !c.question_id && c.record_id === qid.slice(2)) : pend.filter(c => c.question_id === qid);
   const idx = wait.findIndex(x => x.id === key);
   let target = "";
-  if (ok && !key.startsWith("c_") && key !== "end") {   // 옛 숫자 idx(또는 빈 자리)
+  if (ok && scopeValid && !key.startsWith("c_") && key !== "end") {   // 옛 숫자 idx(또는 빈 자리)
     const t = wait[parseInt(key || "0", 10) || 0];
     target = t ? t.id : wait.length ? "end" : "";
   }
-  if (ok && key.startsWith("c_") && idx < 0) {   // 이미 정한(또는 없는) 판단 — 저장 직후면 기억해 둔 다음, 아니면 남은 첫 판단
+  if (ok && scopeValid && key.startsWith("c_") && idx < 0) {   // 이미 정한(또는 없는) 판단 — 저장 직후면 기억해 둔 다음, 아니면 남은 첫 판단
     const nav = after.current?.qid === qid ? after.current : null;
     target = ((nav && wait.find(x => x.id === nav.nextId)) || wait[0])?.id || "";
   }
@@ -49,8 +53,6 @@ export function ReviewScreen({ ctx }: ScreenProps) {
     setSay({ text: say.text, pin: drawn });
     if (say.focus) title.current?.focus();
   }, [drawn, say]);
-  if (target) return null;
-
   const status = say.pin === drawn ? say.text : "", err = say.pin === drawn ? say.err || "" : "";
   const head = (m: number, link: boolean) => (
     <div className={css.head}><h2 id="review-title" tabIndex={-1} ref={title}>원문과 대조하기</h2>
@@ -58,9 +60,17 @@ export function ReviewScreen({ ctx }: ScreenProps) {
   );
   const statusP = <p id="save-status" className={css.status} role="status" aria-atomic="true">{status}</p>;
   if (!ok) return <>{head(0, true)}<div className="paper"><PartFail err={{ code: "", msg: "", ...S.read!.candidates.error }} what="문장 목록" recMissing={w.recMissing} /></div></>;
+  if (!scopeReadOk) return <>{head(0, true)}<div className="paper"><PartFail err={{ code: "", msg: "", ...S.read?.[byRec ? "journal" : "questions"]?.error }} what={byRec ? "내 글 목록" : "질문 목록"} recMissing={w.recMissing} /></div></>;
+  if (scopePending) return <>{head(0, true)}<div className={`paper ${css.done}`}><b>기록을 확인할 수 없어요.</b>
+    <p>이 기록이 현재 목록에 없어 검토가 끝났는지 확인하지 못했어요.</p>
+    <div className={css.row}><a className="btn primary" href={back}>{backText}</a></div></div></>;
+  if (scopeMissing) return <>{head(0, true)}<div className={`paper ${css.done}`}><b>{byRec ? "이 기록을 찾을 수 없어요." : "이 질문을 찾을 수 없어요."}</b>
+    <div className={css.row}><a className="btn primary" href={back}>{backText}</a></div></div></>;
+  if (target) return null;
   if (!wait.length) {
-    return <>{head(0, false)}<div className={`paper ${css.done}`}><b>아직 안 정한 문장이 없어요.</b><p>{w.emptyHint}</p>
-      <div className={css.row}><a className="btn primary" href={back}>{backText}</a></div>{statusP}</div></>;
+    return <>{head(0, false)}<div className={`paper ${css.done}`}><b>아직 안 정한 문장이 없어요.</b>
+      <p className={css.scopeDone}>{byRec ? "이 기록의 미결 문장 검토가 끝났어요." : "이 질문의 미결 문장 검토가 끝났어요."}</p><p>{w.emptyHint}</p>
+      <div className={css.row}><a className="btn primary" href={back}>{backText}</a><a className="link" href="#structure/cand/confirmed">전체 확정 판단 보기</a></div>{statusP}</div></>;
   }
   if (idx < 0) {   // end — 건너뛰기로 목록 끝에 닿았다
     return <>{head(0, false)}<div className={`paper ${css.done}`}><b>목록 끝이에요. 아직 안 정한 문장 {wait.length}개가 남아 있어요.</b>

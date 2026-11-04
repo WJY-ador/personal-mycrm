@@ -14,6 +14,7 @@ const cand = (id: string, x: object = {}) => ({ id, text: "담당을 먼저 정�
   review: null, revision: 2, created: "2026-11-02T01:00:00Z", origin: "ai", edited_by_user: false, wording_by: "ai", wording_approved: false, ...x });
 const state = (cands: object[], x: object = {}) => ({
   user: { display_name: "홍길동", nav: "new" }, switches: { trash: true }, questions: [{ id: "q1", text: "도입 순서는?", created: "" }],
+  journal_next_before: null,
   journal: [{ id: "r1", title: "도입 회고", excerpt: "", created: "", source: null, source_id: "s1", question_id: "q1", source_date: null, author_kind: "self" }],
   sources: [{ id: "s1", kind: "file", name: "회고 메모", location: null }], candidates: cands, ...x }) as unknown as AppState;
 
@@ -97,7 +98,7 @@ test("주소 바꿔 끼우기 — 빈 자리·옛 숫자 = 그 자리 판단 · 
   expect([...el.querySelectorAll("a.btn")].map(a => [a.textContent, a.getAttribute("href")])).toEqual([["남은 문장 보기", "#q/review/q1/c_1"], ["질문으로 돌아가기", "#q/q1"]]);
   await show(st, "c_gone"); expect(await landed("#q/review/q1/c_1")).toBe("#q/review/q1/c_1");
   await show(state([]), "c_1");
-  expect(el.textContent).toContain("아직 안 정한 문장이 없어요.새 글에서 판단을 뽑으면 여기에 떠요.");
+  expect(el.textContent).toContain("아직 안 정한 문장이 없어요.이 질문의 미결 문장 검토가 끝났어요.새 글에서 판단을 뽑으면 여기에 떠요.");
   await show(state([cand("c_9", { question_id: null })]), "c_9", "r:r1");
   expect(el.querySelector("[data-candidate-id]")!.textContent).toContain("질문 없음 · 내 글 「도입 회고」");
   expect(el.querySelector("#decision-help")!.textContent).toBe("남기면 확정한 판단에 들어가요(질문 없음). 반영 안 함으로 둬도 판단 문장과 원문은 삭제되지 않아요. 원문은 바뀌지 않아요.");
@@ -154,5 +155,110 @@ test("고쳐서 남기기 · 충돌 = 서버 문구 + 고치던 문장 · 실패
   await show(state([cand("c_1")]), "c_1");
   await click(btn("반영 안 함"));
   expect(el.querySelector("#save-error")!.textContent).toBe("저장 여부를 확인하지 못했어요. 새로 고침해 확인해 주세요.");
+});
+
+test("현재 질문의 마지막 확정 뒤에는 범위를 밝히고 전체 확정 판단 목록으로 연결한다", async () => {
+  POST = () => json(200, {});
+  reload.mockImplementation(async () => { S = state([cand("c_1", { status: "confirmed" })]); return true; });
+  await show(state([cand("c_1")]), "c_1");
+  await click(btn("남기기")); await redraw();
+
+  expect(el.textContent).toContain("이 질문의 미결 문장 검토가 끝났어요.");
+  expect(el.textContent).not.toContain("이번 세션");
+  expect(el.textContent).not.toContain("전체 판단을 확정했어요");
+  expect([...el.querySelectorAll("a")].map(a => [a.textContent, a.getAttribute("href")])).toContainEqual(["전체 확정 판단 보기", "#structure/cand/confirmed"]);
+  expect([...el.querySelectorAll("a.btn")].map(a => [a.textContent, a.getAttribute("href")])).toContainEqual(["질문으로 돌아가기", "#q/q1"]);
+});
+
+test("마지막 문장을 수정 확정해도 전체 목록을 이번 판단 결과라고 부르지 않는다", async () => {
+  POST = () => json(200, {});
+  reload.mockImplementation(async () => { S = state([cand("c_1", { status: "confirmed", text: "수정한 판단" })]); return true; });
+  await show(state([cand("c_1")]), "c_1");
+  await click(btn("고쳐서 남기기"));
+  const ta = el.querySelector("textarea")!;
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(ta, "수정한 판단"); ta.dispatchEvent(new Event("input", { bubbles: true })); });
+  await click(btn("고친 문장으로 남기기")); await redraw();
+
+  expect(el.textContent).toContain("이 질문의 미결 문장 검토가 끝났어요.");
+  expect(el.textContent).not.toContain("방금 확정한 판단");
+  expect(el.querySelector('a[href="#structure/cand/confirmed"]')?.textContent).toBe("전체 확정 판단 보기");
+});
+
+test("마지막 문장을 반영 안 함으로 처리해도 확정 완료로 오인시키지 않는다", async () => {
+  POST = () => json(200, {});
+  reload.mockImplementation(async () => { S = state([cand("c_1", { status: "excluded" })]); return true; });
+  await show(state([cand("c_1")]), "c_1");
+  await click(btn("반영 안 함")); await redraw();
+
+  expect(el.textContent).toContain("이 질문의 미결 문장 검토가 끝났어요.");
+  expect(el.textContent).not.toContain("확정했어요");
+  expect(el.querySelector('a[href="#structure/cand/confirmed"]')?.textContent).toBe("전체 확정 판단 보기");
+});
+
+test("건너뛰기로 목록 끝에 도달하면 남은 문장 분기를 유지하고 완료 안내를 보이지 않는다", async () => {
+  await show(state([cand("c_1")]), "c_1");
+  await click(btn("건너뛰기")); await follow();
+
+  expect(el.textContent).toContain("목록 끝이에요. 아직 안 정한 문장 1개가 남아 있어요.");
+  expect(el.querySelector('a[href="#q/review/q1/c_1"]')?.textContent).toBe("남은 문장 보기");
+  expect(el.querySelector('a[href="#structure/cand/confirmed"]')).toBeNull();
+  expect(el.textContent).not.toContain("미결 문장 검토가 끝났어요");
+});
+
+test("저장 오류는 완료 화면이나 전체 확정 판단 링크로 바뀌지 않는다", async () => {
+  POST = () => json(400, { code: "CANDIDATE-REVIEW", msg: "근거가 바뀌었어요." });
+  await show(state([cand("c_1")]), "c_1");
+  await click(btn("반영 안 함"));
+
+  expect(el.querySelector("#save-error")?.textContent).toBe("근거가 바뀌었어요.");
+  expect(el.querySelector("[data-candidate-id]")?.getAttribute("data-candidate-id")).toBe("c_1");
+  expect(el.querySelector('a[href="#structure/cand/confirmed"]')).toBeNull();
+});
+
+test("질문 ID가 전체 질문 목록에 없으면 완료로 보지 않고 원래 경로로 돌아갈 수 있다", async () => {
+  await show(state([]), "end", "q_missing");
+
+  expect(el.textContent).toContain("이 질문을 찾을 수 없어요.");
+  expect(el.querySelector('a[href="#q/q1"]')?.textContent).toBe("질문으로 돌아가기");
+  expect(el.querySelector('a[href="#structure/cand/confirmed"]')).toBeNull();
+  expect(el.textContent).not.toContain("검토가 끝났어요");
+});
+
+test("질문 목록 읽기에 실패하면 질문 부재나 완료로 추정하지 않는다", async () => {
+  await show(state([], { read: { questions: { ok: false, error: { code: "OFFLINE", msg: "" } } } }), "end");
+
+  expect(el.querySelector(".partfail")).toBeTruthy();
+  expect(el.textContent).toContain("질문 목록을 읽지 못했어요");
+  expect(el.querySelector('a[href="#q/q1"]')?.textContent).toBe("질문으로 돌아가기");
+  expect(el.querySelector('a[href="#structure/cand/confirmed"]')).toBeNull();
+  expect(el.textContent).not.toContain("검토가 끝났어요");
+});
+
+test("기록 ID가 전체 목록에 없으면 완료로 보지 않고 원래 경로로 돌아갈 수 있다", async () => {
+  await show(state([]), "end", "r:r_missing");
+
+  expect(el.textContent).toContain("이 기록을 찾을 수 없어요.");
+  expect(el.querySelector('a[href="#q/q1"]')?.textContent).toBe("질문으로 돌아가기");
+  expect(el.querySelector('a[href="#structure/cand/confirmed"]')).toBeNull();
+  expect(el.textContent).not.toContain("검토가 끝났어요");
+});
+
+test("기록 목록의 다음 페이지가 남아 있으면 현재 기록 부재를 완료로 취급하지 않는다", async () => {
+  await show(state([], { journal_next_before: "opaque-cursor" }), "end", "r:r_missing");
+
+  expect(el.textContent).toContain("이 기록이 현재 목록에 없어 검토가 끝났는지 확인하지 못했어요.");
+  expect(el.querySelector('a[href="#q/q1"]')?.textContent).toBe("질문으로 돌아가기");
+  expect(el.querySelector('a[href="#structure/cand/confirmed"]')).toBeNull();
+  expect(el.textContent).not.toContain("검토가 끝났어요.");
+});
+
+test("기록 목록 읽기에 실패하면 기록 부재나 완료로 추정하지 않는다", async () => {
+  await show(state([], { read: { journal: { ok: false, error: { code: "OFFLINE", msg: "" } } } }), "end", "r:r_missing");
+
+  expect(el.querySelector(".partfail")).toBeTruthy();
+  expect(el.textContent).toContain("내 글 목록을 읽지 못했어요");
+  expect(el.querySelector('a[href="#q/q1"]')?.textContent).toBe("질문으로 돌아가기");
+  expect(el.querySelector('a[href="#structure/cand/confirmed"]')).toBeNull();
+  expect(el.textContent).not.toContain("검토가 끝났어요");
 });
 
