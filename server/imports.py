@@ -1161,8 +1161,6 @@ def inbox_decide_preview(uid: str, p: dict):
     s = _approve_shape(r["kind"], pl)
     shown = {"할 일": "승인 — 내 글로 저장" if action == "approve" else "제외 — 저장하지 않고 대기 본문을 지움(되돌릴 수 없음)",
              "종류": _INBOX_KIND_LABEL[r["kind"]], "제목": _inbox_title(pl), "본문 앞부분": head, "출처": s["src"]}
-    if action == "approve" and s["owner"] == "self":
-        shown["「내 결정」 표시"] = "붙음 — 판단 후보의 근거로 쓸 수 있어요"
     if action == "approve" and r["kind"] == "self_summary":
         shown["안내"] = AI_APPROVE_NOTICE
     snap = {"state": r["state"], "latest": r["is_latest_received"], "expires_at": _j(r["expires_at"]),

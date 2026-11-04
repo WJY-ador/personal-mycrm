@@ -290,7 +290,8 @@ async def test_inbox_decide(uid):
             a1 = {"import_id": e1, "action": "approve"}
             pv = val(await c.call_tool("read", {"op": "decide_preview", "params": {"op": "inbox_decide", "params": a1}}))
             assert pv["shown"] == {"할 일": "승인 — 내 글로 저장", "종류": "내 글", "제목": "합성 세션 정리 제목", "본문 앞부분": wrap_body,
-                                   "출처": "세션 정리", "「내 결정」 표시": "붙음 — 판단 후보의 근거로 쓸 수 있어요"}, pv["shown"]
+                                   "출처": "세션 정리"}, pv["shown"]
+            assert not any("내 결정" in k or "결정은 본인" in k for k in pv["shown"]), pv["shown"]   # 운영에 안 보인다(원작자)
             assert pv["irreversible"] is False and pv["impact"]["import_id"] == e1
             assert code(await c.call_tool("decide", {"op": "inbox_decide", "params": a1})) == "BIND-REQUIRED"
             assert code(await c.call_tool("write", {"op": "inbox_decide", "params": a1})) == "TIER-MISMATCH"
@@ -334,7 +335,7 @@ async def test_inbox_decide(uid):
             os.environ.pop("CRM_" + n, None)
             if v is not None:
                 os.environ["CRM_" + n] = v
-    ok("MCP inbox_decide(facade D) — find·decide_preview shown(제목·본문 앞부분·출처·「내 결정」) · BIND-REQUIRED·STALE·TIER-MISMATCH "
+    ok("MCP inbox_decide(facade D) — find·decide_preview shown(제목·본문 앞부분·출처 · 「내 결정」 줄 없음) · BIND-REQUIRED·STALE·TIER-MISMATCH "
        "· 승인 = 세션 정리 기록(가린 경로 수 메타) · 처리 뒤 INBOX-RESOLVED · 제외 되돌릴 수 없음 · APPROVALS-OFF · NAME-REQUIRED")
 
 
