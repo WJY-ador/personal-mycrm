@@ -8878,10 +8878,10 @@ async def test_pr2b_stack_b2():
             with _job_fast():
                 with _job_switch():
                     st = (await h.get("/api/state")).json()
-                    assert st["switches"] == {"converse": False, "trash": False}, st.get("switches")   # trash = 휴지통 PR-1(30절)
+                    assert st["switches"] == {"converse": False, "trash": False, "webchat": False}, st.get("switches")   # trash = 휴지통 PR-1(30절) · webchat = 웹 「대화」(test_webchat.py)
                 with _job_switch("CONVERSE_ENABLED"):
                     st = (await h.get("/api/state")).json()
-                    assert st["switches"] == {"converse": True, "trash": False} and st["stack_session"] is None, st.get("stack_session")
+                    assert st["switches"] == {"converse": True, "trash": False, "webchat": False} and st["stack_session"] is None, st.get("stack_session")
                     r = await h.post("/api/jobs", json={"kind": "converse", "text": TXT, "input_kind": "verbatim"}, headers=origin)
                     assert r.status_code == 201, r.text
                     J = r.json()

@@ -4,6 +4,7 @@
   "agent/adapters/base.py",
   "agent/adapters/likes.py",
   "agent/adapters/skeletons.py",
+  "agent/chat.py",
   "agent/cli.py",
   "agent/config.py",
   "agent/contract.py",
@@ -20,5 +21,6 @@
   "agent/store.py",
   "agent/summary.py",
   "agent/uploader.py",
-  "agent/viewer.py"
+  "agent/viewer.py",
+  "agent/wsclient.py"
 ]

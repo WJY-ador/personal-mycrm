@@ -42,6 +42,7 @@ import migration
 import migration_mcp
 import token_grants
 import web
+import webchat
 from envnames import env
 
 INSTRUCTIONS = """이 서버는 사용자의 「내 판단 대시보드」다. 사용자의 기록에서 판단 후보를 찾고, 사용자가 원문과 대조해 남길지 정한다.
@@ -1236,6 +1237,11 @@ async def purge_once():
             print(f"[desktop] 만료 넘김 코드 {n}건 정리", flush=True)
     except Exception as e:
         print(f"[desktop] 넘김 코드 정리 실패 — 계속: {type(e).__name__}", flush=True)
+    try:   # 웹 「대화」 — 보관 30일(생성일 기준) 지난 대화 기록 삭제(스위치와 무관하게 돈다)
+        if n := await run_in_threadpool(webchat.purge):
+            print(f"[webchat] {webchat.KEEP_DAYS}일 지난 대화 기록 {n}행 삭제", flush=True)
+    except Exception as e:
+        print(f"[webchat] 대화 기록 삭제 실패 — 계속: {type(e).__name__}", flush=True)
 
 
 async def trash_purge_round():
@@ -1288,6 +1294,7 @@ app = Starlette(
         Route("/api/imports/device", api_import_device, methods=["GET"]),              # 경로 순서: {import_id} 보다 먼저
         Route("/api/imports/device/revoke", api_import_device, methods=["POST"]),
         Route("/api/imports/{import_id}", api_import_status, methods=["GET"]),
+        *webchat.Routes(site, web._usage).routes(),   # 웹 「대화」(2026-11-04) — /api/chat/* · 장치 WS /api/device/chat/ws. 스위치 CRM_WEBCHAT_ENABLED
         *site.routes(),
         Mount("/", app=mcp_app),
     ],

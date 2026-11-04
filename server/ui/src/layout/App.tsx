@@ -6,6 +6,7 @@ import { ChatRoot } from "../features/chat/ChatRoot";
 import { DeskDialog } from "../features/desk/DeskDialog";
 import { Mast } from "../features/mast/Mast";
 import { NameDialog } from "../features/name/NameDialog";
+import { WebchatRoot } from "../features/webchat/WebchatRoot";
 import type { UiCtx } from "../shared/ctx";
 import { mdhm } from "../shared/date";
 import { PartFail } from "../shared/PartFail";
@@ -97,6 +98,7 @@ export function App() {
       {at("ui-mast", gate ? null : <Mast ctx={island} />)}
       {at("foot", gate ? "표시 이름을 정하면 대시보드가 열려요." : loadedAt ? `불러온 시각 ${loadedAt}.` : "")}
       {gate ? null : <ChatRoot ctx={island} />}
+      {gate || !S.switches?.webchat ? null : <WebchatRoot ctx={island} />}
       <NameDialog ctx={nameCtx} />
       {at("ui-desk", <DeskDialog ctx={deskCtx} />)}
       <LeaveDialog open={leave}
