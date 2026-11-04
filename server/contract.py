@@ -242,14 +242,15 @@ REVIEW_ACT = {
 
 
 def review_reason(record):
-    """근거 기록 → 재검토 사유 코드, 적격(_eligible 전체 조건)이면 None."""
+    """근거 기록 → 재검토 사유 코드, 적격(_eligible 전체 조건)이면 None.
+    decision_owner='self'(사용자가 「내 결정」이라고 한 정리 기록)는 원문 그대로가 아니어도 processed 가 아니다(2026-11-04 A안)."""
     if record.get("deleted_at") is not None:
         return "deleted"
     if record["author_kind"] == "external":
         return "external"
     if record["author_kind"] != "self":
         return "author_unknown"
-    if record["text_process"] != "verbatim":
+    if record["text_process"] != "verbatim" and record.get("decision_owner") != "self":
         return "processed"
     return None
 

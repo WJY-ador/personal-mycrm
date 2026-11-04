@@ -51,6 +51,7 @@ TRANSFORMS = {
     "board-likes/1": "activity",
     "self-text/1": "self_text",
     "self-summary/1": "self_summary",
+    "session-wrap/1": "self_text",   # 세션 정리 묶음(agent/sessionwrap.py) — 서버 승인 뒤 정리 기록
 }
 # 변환 버전별 허용 행동·제공자(activity 만)
 TRANSFORM_ACTIVITY = {

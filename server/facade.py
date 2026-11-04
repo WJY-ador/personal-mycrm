@@ -324,14 +324,23 @@ def _pv_def_archive(archive):
     return build
 
 
+_OWNER_TEXT = {None: "표시 없음", "self": "내 결정"}
+
+
 def _pv_record_provenance_set(uid, p):
-    r = _row("SELECT id,title,body,author_kind,text_process FROM records WHERE user_id=%s AND id=%s AND deleted_at IS NULL "
+    r = _row("SELECT id,title,body,author_kind,text_process,decision_owner FROM records WHERE user_id=%s AND id=%s AND deleted_at IS NULL "
              "AND trashed_at IS NULL", (uid, p["record_id"]))
     if not r:
         raise db.CrmError("RECORD-MISSING", f"기록을 찾을 수 없어요: {p['record_id']}")
     shown = {"기록": r["title"], "작성자 전": r["author_kind"], "작성자 후": p["author_kind"],
-             "가공 방식 전": r["text_process"], "가공 방식 후": p["text_process"], "사유": p["reason"]}
-    snap = {"author_kind": r["author_kind"], "text_process": r["text_process"], "body": _h(r["title"], r["body"])}
+             "가공 방식 전": r["text_process"], "가공 방식 후": p["text_process"]}
+    want = p.get("decision_owner") or ""
+    if want:   # 대화 미리보기만 — 바꿀 때만 한 줄(운영 화면에는 없다)
+        shown["「내 결정」 표시 전"] = _OWNER_TEXT[r["decision_owner"]]
+        shown["「내 결정」 표시 후"] = _OWNER_TEXT[None if want == "none" else want]
+    shown["사유"] = p["reason"]
+    snap = {"author_kind": r["author_kind"], "text_process": r["text_process"], "decision_owner": r["decision_owner"],
+            "body": _h(r["title"], r["body"])}
     return snap, shown, {"record_id": r["id"]}, False
 
 

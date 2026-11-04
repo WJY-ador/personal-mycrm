@@ -250,6 +250,18 @@ jobs:
           PY
           python server/test_record_edit.py
 
+      # 세션 정리 → 판단 확정 A안(2026-11-04) — 적격 표·「내 결정」 정정·session-wrap/1 승인·화면 표시 0·옛 DB 업그레이드
+      - name: "④-n 세션 정리 시험 (test_session_wrap.py)"
+        env:
+          DATABASE_URL: postgresql://postgres:crm@localhost:5432/crm_test_session_wrap
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:crm@localhost:5432/crm", autocommit=True) as c:
+              c.execute("CREATE DATABASE crm_test_session_wrap")
+          PY
+          python server/test_session_wrap.py
+
       # React 화면 묶음(2026-11-03 R1·R5b-2b) — manifest 허용 목록(지연 불러오기 묶음 포함) 서빙·/app 진입 태그·CSP self·인라인 0·manifest 없음·정적 뼈대.
       # 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
       - name: "④-m React 화면 묶음 시험 (test_ui_build.py)"

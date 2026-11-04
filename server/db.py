@@ -508,6 +508,7 @@ def _init_schema(c):
         _migrate_trash(c)   # 휴지통 PR-1 — 5종 휴지통 열·CHECK·부분 인덱스 · 사람 표식 · 접수 deleted 상태
         _migrate_pc_connect(c)   # PC 연결(2026-11-02) — import_streams M2 대기 토큰 열·CHECK·UNIQUE. 새 표 2개는 schema.sql
         _migrate_record_edit(c)   # 수기 수정 A0′(2026-11-03) — records.revision · 후보 휴지통 열. record_history 표는 schema.sql
+        _migrate_decision_owner(c)   # 세션 정리 → 판단 확정(2026-11-04) — records.decision_owner 열·CHECK
         _migrate_migration_path(c)   # 이관 경로(2026-11-02) — records.date_kind · 가안 X(plan reverted·via · 항목 created · 접수 reverted). 새 표 3개는 schema.sql
         _init_tmp(c)   # PR ②-a 임시 보관 — schema.sql 의 jobs 뒤(FK 대상). 위치는 current_schema() 로 정한다
         _migrate_classify_roles(c)
@@ -695,6 +696,15 @@ def _migrate_record_edit(c):
         c.execute("ALTER TABLE records ADD COLUMN revision integer NOT NULL DEFAULT 1")
     if not _has_constraint(c, "records", "ck_records_revision"):
         c.execute("ALTER TABLE records ADD CONSTRAINT ck_records_revision CHECK (revision > 0)")
+
+
+def _migrate_decision_owner(c):
+    """세션 정리 → 판단 확정(2026-11-04 A안) — 옛 DB 에 records.decision_owner 열(옛 행 NULL — 추측 백필 없음) + 이름 붙은 CHECK.
+    매번 돌아도 된다(있으면 건드리지 않는다)."""
+    if not _has_col(c, "records", "decision_owner"):
+        c.execute("ALTER TABLE records ADD COLUMN decision_owner text")
+    if not _has_constraint(c, "records", "ck_records_decision_owner"):
+        c.execute("ALTER TABLE records ADD CONSTRAINT ck_records_decision_owner CHECK (decision_owner IS NULL OR decision_owner = 'self')")
 
 
 def _migrate_migration_path(c):
@@ -1115,9 +1125,12 @@ def question_get(uid, qid):
 AUTHOR_KINDS = ("self", "external", "unknown")
 TEXT_PROCESSES = ("verbatim", "structured", "rewritten", "generated", "unknown")
 # PR ②-b(K4·Q2): 확인 1번을 거친 대화 정리(conversation + 실재 확인 이벤트)도 적격. ai·routine 은 원문이어도 비적격. unknown·mixed 는 그대로
+# 세션 정리 A안(2026-11-04): decision_owner='self'(사용자가 「내 결정」이라고 한 정리 기록)면 원문 그대로가 아니어도 적격. self·휴지통 아님 조건은 그대로
 _ELIGIBLE_SQL = ("(r.author_kind='self' AND r.deleted_at IS NULL AND r.trashed_at IS NULL AND ((r.text_process='verbatim' AND r.generation_kind NOT IN ('ai','routine')) "
+                 "OR r.decision_owner='self' "
                  "OR (r.generation_kind='conversation' AND EXISTS (SELECT 1 FROM confirm_events ce WHERE ce.user_id=r.user_id "
                  "AND ce.id::text = r.generation_meta->>'confirm_event_id'))))")
+DECISION_OWNERS = ("self",)   # records.decision_owner — NULL(표시 없음) | 'self'. 화면에 보이지 않는다
 INELIGIBLE_WHY = "이 기록은 본인 원문이 아니라 근거로 쓸 수 없어요"
 _REC_COLS = "id,title,body,source,source_id,question_id,author_kind,text_process,created,revision"   # source = 옛 문자열(보존), source_id = 출처 연결
 
@@ -1126,8 +1139,10 @@ def _eligible(r):
     """r 에 SQL 판정(eligible, _ELIGIBLE_SQL)이 실려 있으면 그것 — 대화 정리는 확인 이벤트 실재까지 SQL 로만 본다."""
     if "eligible" in r:
         return bool(r["eligible"])
-    return r["author_kind"] == "self" and r["text_process"] == "verbatim" and r.get("deleted_at") is None \
-        and r.get("trashed_at") is None and r.get("generation_kind") not in ("ai", "routine", "conversation")
+    if r["author_kind"] != "self" or r.get("deleted_at") is not None or r.get("trashed_at") is not None:
+        return False
+    return r.get("decision_owner") == "self" or (r["text_process"] == "verbatim"
+                                                 and r.get("generation_kind") not in ("ai", "routine", "conversation"))
 
 
 def _check_provenance(author_kind, text_process):
@@ -1167,8 +1182,18 @@ def _source_find_or_create(c, uid, kind, name, loc):
     return _one(c, q, (uid, kind, name, loc))["id"]
 
 
-def record_add(uid, title, body, question_id=None, source="대화에서 입력", author_kind="self", text_process="verbatim", source_ref=None):
+def _check_decision_owner(decision_owner, author_kind):
+    """decision_owner — None(표시 없음) | 'self'. 'self' 는 내가 쓴 기록(author_kind=self)에만 — 남의 글·작성자 모름에는 붙이지 않는다."""
+    if decision_owner is not None and decision_owner not in DECISION_OWNERS:
+        raise CrmError("ARG-INVALID", "decision_owner 는 self 이거나 비워요.")
+    if decision_owner == "self" and author_kind != "self":
+        raise CrmError("ARG-INVALID", "「내 결정」 표시는 내가 쓴 기록(author_kind=self)에만 붙여요.")
+
+
+def record_add(uid, title, body, question_id=None, source="대화에서 입력", author_kind="self", text_process="verbatim", source_ref=None,
+               decision_owner=None):
     """body 는 받은 그대로 저장한다. 공백도 안 다듬는다.
+    decision_owner='self' = 사용자가 「내 결정」이라고 말한 기록(2026-11-04 A안) — 원문 그대로가 아니어도 후보 근거로 쓸 수 있다. 화면엔 안 보인다.
     출처 기본값 self·verbatim = MCP record_add(사용자가 대화에서 직접 준 말). 확인 못 한 출처는 호출자가 unknown 으로 넘긴다.
     수집 범위(§6): author_kind='external'(남이 쓴 글)은 SCOPE-SELF-ONLY. 메타데이터 검사일 뿐 — 실제 작성자는 검증하지 않는다.
     source = 옛 출처 문자열(그대로 저장). source_ref = 출처 연결 {kind, name, location}(§4): 같은 사용자의 같은 출처를
@@ -1180,6 +1205,7 @@ def record_add(uid, title, body, question_id=None, source="대화에서 입력",
     _check_provenance(author_kind, text_process)
     if author_kind == "external":
         raise _scope_self()
+    _check_decision_owner(decision_owner, author_kind)
     ref = None
     if source_ref is not None:
         ref = _source_norm(source_ref)
@@ -1189,12 +1215,14 @@ def record_add(uid, title, body, question_id=None, source="대화에서 입력",
         question_get(uid, question_id)
     rid = new_id("r")
     hist = [{"at": now().isoformat(), "by": "tool", "author_kind": author_kind, "text_process": text_process}]
+    if decision_owner:
+        hist[0]["decision_owner"] = decision_owner
     with tx() as c:
         _daily_gate(c, uid, "records")   # users 행 잠금 — 출처 찾거나 만들기도 이 사용자 안에서 직렬화
         sid = _source_find_or_create(c, uid, *ref) if ref else None
-        c.execute("INSERT INTO records (id,user_id,title,body,source,source_id,question_id,author_kind,text_process,provenance_history) "
-                  "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                  (rid, uid, title, body, source, sid, question_id or None, author_kind, text_process, Jsonb(hist)))
+        c.execute("INSERT INTO records (id,user_id,title,body,source,source_id,question_id,author_kind,text_process,provenance_history,"
+                  "decision_owner) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                  (rid, uid, title, body, source, sid, question_id or None, author_kind, text_process, Jsonb(hist), decision_owner))
         out = _iso(_one(c, f"SELECT {_REC_COLS} FROM records WHERE id=%s", (rid,)))
     out["source_linked"] = None if source_ref is None else sid is not None
     return out
@@ -1214,17 +1242,24 @@ def _record_in(c, uid, rid):
     return _iso(_one(c, f"SELECT {_REC_COLS},provenance_history FROM records WHERE user_id=%s AND id=%s", (uid, rid)))
 
 
-def record_provenance_set(uid, rid, author_kind, text_process, reason, by="user", via="mcp"):
+KEEP = object()   # record_provenance_set decision_owner 기본값 — 「그대로」(None 은 표시 지우기)
+
+
+def record_provenance_set(uid, rid, author_kind, text_process, reason, by="user", via="mcp", decision_owner=KEEP):
     """출처 판정 정정. 본문은 안 바뀐다. 같은 값이면 no-op.
-    후보가 있는 기록을 적격(self·verbatim) → 비적격으로 바꾸면 거절(PROVENANCE-LOCKED) — 이미 그 원문을 근거로 한 판단이 있다.
-    정정마다 provenance_history 에 {at, by, from, author_kind, text_process, reason, via(web|mcp)} 한 줄. 후보 생성과 같은 행 잠금(FOR UPDATE)."""
+    후보가 있는 기록을 적격 → 비적격으로 바꾸면 거절(PROVENANCE-LOCKED) — 이미 그 원문을 근거로 한 판단이 있다.
+    decision_owner(2026-11-04 A안): KEEP = 그대로 · 'self' = 「내 결정」 표시 · None = 표시 지우기. 작성자·가공 방식은 그대로 두고
+    이 표시만 바꾸는 정정은 AI·대화 정리 생성 잠금(PROVENANCE-AI-LOCKED)을 받지 않는다 — 생성 이력을 지우지 않는다(세션 정리 기록 = mixed).
+    정정마다 provenance_history 에 {at, by, from, author_kind, text_process[, decision_owner], reason, via(web|mcp)} 한 줄. 후보 생성과 같은 행 잠금(FOR UPDATE)."""
     _check_provenance(author_kind, text_process)
+    if decision_owner is not KEEP:
+        _check_decision_owner(decision_owner, author_kind)
     reason = (reason or "").strip()
     if not reason:
         raise CrmError("ARG-INVALID", "출처를 고치는 사유가 비었어요.")
     check_len("reason", reason, LIMIT_TEXT)   # α1 ② — provenance_history 에 그대로 쌓인다
     with tx() as c:
-        r = _one(c, f"SELECT r.id,r.author_kind,r.text_process,r.deleted_at,r.trashed_at,r.generation_kind,r.ingest_kind,"
+        r = _one(c, f"SELECT r.id,r.author_kind,r.text_process,r.decision_owner,r.deleted_at,r.trashed_at,r.generation_kind,r.ingest_kind,"
                     f"({_ELIGIBLE_SQL}) AS eligible FROM records r WHERE r.user_id=%s AND r.id=%s AND r.deleted_at IS NULL FOR UPDATE OF r",
                  (uid, rid))
         if not r:
@@ -1234,20 +1269,29 @@ def record_provenance_set(uid, rid, author_kind, text_process, reason, by="user"
         if r["ingest_kind"] == "board_migration":   # 이관 경로 K2 — 이관 기록의 출처는 신고값 그대로(사후 승격 차단). 같은 값 재지정도 막는다
             raise CrmError("PROVENANCE-MIGRATION-LOCKED", "이관한 기록은 출처 판정을 바꿀 수 없어요.",
                            "PC 에서 검토를 고친 뒤 새 source_revision 으로 다시 이관하세요.")
-        if (r["author_kind"], r["text_process"]) == (author_kind, text_process):
+        owner = r["decision_owner"] if decision_owner is KEEP else decision_owner
+        same_kind = (r["author_kind"], r["text_process"]) == (author_kind, text_process)
+        if same_kind and owner == r["decision_owner"]:
             return _record_in(c, uid, rid)
-        if r["generation_kind"] in ("ai", "mixed", "conversation", "routine"):   # board 이전 r3 T2 · ②-b — 출처 정정으로 생성 이력을 지우지 않는다
+        if not same_kind and r["generation_kind"] in ("ai", "mixed", "conversation", "routine"):   # board 이전 r3 T2 · ②-b — 출처 정정으로 생성 이력을 지우지 않는다
             raise CrmError("PROVENANCE-AI-LOCKED", "AI 요약으로 보관한 기록은 출처 판정을 바꿀 수 없어요.",
                            "직접 쓴 글은 새 기록으로 남기세요.")
-        if _eligible(r) and not (author_kind == "self" and text_process == "verbatim"):
+        after = {k: v for k, v in r.items() if k != "eligible"}
+        after.update(author_kind=author_kind, text_process=text_process, decision_owner=owner)
+        # 바꾼 뒤에도 적격인가 — 대화 정리(conversation)의 확인 이벤트 실재는 SQL 만 본다: 작성자·가공 방식이 그대로면 지금 판정을 잇는다
+        still = _eligible(after) or (same_kind and r["generation_kind"] == "conversation" and _eligible(r))
+        if _eligible(r) and not still:
             n = _one(c, "SELECT count(*) AS n FROM candidates WHERE user_id=%s AND record_id=%s", (uid, rid))["n"]
             if n:
                 raise CrmError("PROVENANCE-LOCKED", f"이 기록을 근거로 한 후보가 {n}개 있어 본인 원문이 아니라고 바꿀 수 없어요.",
                                  "과거 오판정 정정은 별도 복구 작업으로 하세요.")
         line = {"at": now().isoformat(), "by": by, "from": {"author_kind": r["author_kind"], "text_process": r["text_process"]},
                 "author_kind": author_kind, "text_process": text_process, "reason": reason, "via": _edit_via(via)}
-        c.execute("UPDATE records SET author_kind=%s, text_process=%s, provenance_history = provenance_history || %s "
-                  "WHERE user_id=%s AND id=%s", (author_kind, text_process, Jsonb([line]), uid, rid))
+        if owner != r["decision_owner"]:
+            line["from"]["decision_owner"] = r["decision_owner"]
+            line["decision_owner"] = owner
+        c.execute("UPDATE records SET author_kind=%s, text_process=%s, decision_owner=%s, provenance_history = provenance_history || %s "
+                  "WHERE user_id=%s AND id=%s", (author_kind, text_process, owner, Jsonb([line]), uid, rid))
         return _record_in(c, uid, rid)
 
 
@@ -1633,7 +1677,7 @@ def _with_review(c, uid, rows):
     """후보마다 review = 근거 기록의 재검토 사유 코드(contract.review_reason) — 미확정(pending·excluded)이고 근거가 비적격일 때만,
     그 밖은 None(§6). 후보·quote·기록 연결은 그대로 둔다 — 바뀌는 건 확정 가능 여부뿐."""
     ids = list({r["record_id"] for r in rows})
-    recs = {x["id"]: x for x in _all(c, "SELECT id,author_kind,text_process,deleted_at FROM records WHERE user_id=%s AND id = ANY(%s)",
+    recs = {x["id"]: x for x in _all(c, "SELECT id,author_kind,text_process,decision_owner,deleted_at FROM records WHERE user_id=%s AND id = ANY(%s)",
                                        (uid, ids))} if ids else {}
     out = []
     for r in rows:
@@ -1695,7 +1739,8 @@ def _cand_bump(c, uid, r, action, sets, args):
 def _confirm_check(c, uid, r):
     """확정 시 재검사(§6) — 근거 기록을 _eligible 전체 조건으로 다시 본다(FOR SHARE: 출처 정정 FOR UPDATE 와 직렬화).
     비적격이면 CANDIDATE-REVIEW(사유별 문구). 결정이 confirmed 로 바뀔 때만 부른다 — 이미 확정된 판단은 건드리지 않는다."""
-    rec = _one(c, "SELECT author_kind,text_process,deleted_at FROM records WHERE user_id=%s AND id=%s FOR SHARE", (uid, r["record_id"]))
+    rec = _one(c, "SELECT author_kind,text_process,decision_owner,deleted_at FROM records WHERE user_id=%s AND id=%s FOR SHARE",
+               (uid, r["record_id"]))
     why = contract.review_reason(rec) if rec else "deleted"
     if why:
         raise _cand_review(why)

@@ -48,6 +48,7 @@ INSTRUCTIONS = """이 서버는 사용자의 「내 판단 대시보드」다. �
 
 규칙:
 - 기록(record_add)은 사용자의 말을 그대로 저장한다. 다듬거나 요약하지 않는다.
+- 후보 근거는 원문 그대로인 기록이거나, 사용자가 「이 정리의 결정은 내가 했다」고 말한 정리 기록(decision_owner=self)이다. 그 표시는 사용자가 그렇게 말한 기록에만 붙인다(record_add 인자, 이미 넣은 기록은 record_provenance_set). 네가 추정해서 붙이지 않는다.
 - 사용자가 고치라고 말한 구절만 record_edit 로 바꾼다. 다듬기·맞춤법 제안을 스스로 하지 않는다. 내가 결정한(남기기·남기지 않기) 판단이 붙은 글은 고칠 수 없다 — 고친 글은 새 기록으로 남긴다.
 - 후보(candidates_propose)는 네가 뽑되, 각 후보의 quote 는 그 기록 원문에서 글자 그대로 복사한 연속 구간이어야 한다. 원문에 같은 구간이 두 번 이상 나오면 앞뒤를 포함해 한 곳만 가리키게 더 길게 인용한다. 원문에 없는 사실·수치를 만들지 않는다. 타인의 말로 보이는 문장은 후보로 내지 않는다. 기록 1편당 최대 3개 — 넘기면 거절된다.
 - 후보는 사용자의 판단이 아니다. 사용자가 원문과 대조해 "남길게/빼줘/고쳐서 남길게"라고 말할 때만 candidate_decide 를 부른다. 네가 대신 confirm 하지 않는다. 확정 전에 후보 문장을 사용자에게 그대로 보여 준다.
@@ -209,6 +210,8 @@ def record_add(
     source_kind: Annotated[Literal["", "file", "url", "chat", "other"],
                            Field(description="출처 연결: 종류 (선택, 비우면 other)")] = "",
     source_location: Annotated[str, Field(description="출처 연결: 위치 — 파일 경로·URL 등 (선택)")] = "",
+    decision_owner: Annotated[Literal["", "self"],
+                              Field(description="self = 사용자가 이 기록의 결정은 「내 결정」이라고 말했을 때만. 비우면 표시 없음")] = "",
 ) -> dict:
     """기록 1편을 원문 그대로 남긴다. 직접 쓴 내 기록만 넣는다 — 남의 말·AI 요약은 넣지 않는다.
     남이 쓴 글은 넣지 않는다. 이미 넣었다면 record_provenance_set 으로 author_kind=external 표시한다.
@@ -217,7 +220,7 @@ def record_add(
     저장 뒤 사용자에게 '지금 후보를 뽑을까요?' 하나만 묻는다.
     저장한 본문은 사용자가 고치라고 말한 구절만 record_edit 로 바꾼다(내가 결정한 판단이 붙지 않은 글만, 이력이 남는다)."""
     ref = {"kind": source_kind, "name": source_name, "location": source_location} if source_name.strip() else None
-    r = db.record_add(uid_of(ctx), title, text, question_id or None, source, source_ref=ref)
+    r = db.record_add(uid_of(ctx), title, text, question_id or None, source, source_ref=ref, decision_owner=decision_owner or None)
     out = {"id": r["id"], "title": r["title"], "created": r["created"]}
     if ref is not None:
         out["source_id"], out["source_linked"] = r["source_id"], r["source_linked"]
@@ -260,7 +263,7 @@ def candidate_decide(
     bind: BindArg = "",
 ) -> dict:
     """사용자가 원문과 대조한 뒤 말한 결정을 저장한다. 사용자가 말하기 전에 부르지 않는다. 이전 상태·문장은 이력에 남아 되돌릴 수 있다.
-    confirm 은 근거 기록이 지금도 인용 적격(본인이 쓴 원문 그대로·삭제 안 됨)일 때만 된다 — 아니면 CANDIDATE-REVIEW 로 거절되고
+    confirm 은 근거 기록이 지금도 인용 적격(본인이 쓴 원문 그대로이거나 내가 결정했다고 표시한 정리 기록·삭제 안 됨)일 때만 된다 — 아니면 CANDIDATE-REVIEW 로 거절되고
     exclude·pending·edit 은 그대로 된다. 후보의 review 에 사유 코드가 있으면 사용자에게 그대로 알린다. 이미 확정한 판단은 바뀌지 않는다.
     review 가 author_unknown·processed 이고 사용자가 메타데이터가 실제로 틀렸다고 하면, 연결한 AI 대화에서 record_provenance_set 으로 정정한다."""
     return db.candidate_decide(uid_of(ctx), candidate_id, action, text or None)
@@ -420,11 +423,16 @@ def record_provenance_set(
     reason: Annotated[str, Field(description="사용자가 말한 정정 사유 그대로")],
     ctx: Context,
     bind: BindArg = "",
+    decision_owner: Annotated[Literal["", "self", "none"],
+                              Field(description="「내 결정」 표시: 비우면 그대로, self = 붙이기, none = 지우기. 사용자가 말했을 때만")] = "",
 ) -> dict:
-    """기록의 출처 판정(작성자·가공 방식)을 정정한다. 본문은 바뀌지 않는다. 사용자가 「실제로 틀렸다」고 말했을 때만 부른다 — 확정을 풀려고 바꾸지 않는다.
-    남이 쓴 글을 기록으로 넣었으면 author_kind=external 로 표시한다. 이 기록을 근거로 한 후보가 있는데 본인 원문이 아니라고 바꾸면 PROVENANCE-LOCKED.
+    """기록의 출처 판정(작성자·가공 방식·「내 결정」 표시)을 정정한다. 본문은 바뀌지 않는다. 사용자가 「실제로 틀렸다」고 말했을 때만 부른다 — 확정을 풀려고 바꾸지 않는다.
+    남이 쓴 글을 기록으로 넣었으면 author_kind=external 로 표시한다. 이 기록을 근거로 한 후보가 있는데 근거로 쓸 수 없게 바꾸면 PROVENANCE-LOCKED.
+    「내 결정」 표시(decision_owner=self)는 사용자가 그 정리 기록의 결정은 자기가 했다고 말한 기록에만 붙인다 — 원문 그대로가 아니어도 후보 근거가 된다.
+    작성자·가공 방식은 지금 값 그대로 보내고 이 표시만 바꿀 수 있다(AI 요약·세션 정리 기록도).
     정정은 provenance_history 에 사유와 함께 남는다."""
-    return db.record_provenance_set(uid_of(ctx), record_id, author_kind, text_process, reason, by="tool")
+    owner = db.KEEP if not decision_owner else (None if decision_owner == "none" else decision_owner)
+    return db.record_provenance_set(uid_of(ctx), record_id, author_kind, text_process, reason, by="tool", decision_owner=owner)
 
 
 @mcp.tool()

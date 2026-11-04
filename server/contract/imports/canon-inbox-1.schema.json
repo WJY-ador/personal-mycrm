@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "canon-inbox-1.schema.json",
   "title": "canon-inbox/1 schema_revision 2 — POST /api/imports 요청 본문",
-  "$comment": "정본 판정 = server/imports.py validate() + 공용 벡터 vectors/canon-inbox-1.json. 이 스키마로 표현 못 하는 규칙: (1) UTF-8 JSON 객체 하나·중복 키 금지·실수(1.0 포함) 금지 (2) previous_revision ≠ revision (3) transform_version 별 허용 kind·action·provider(board-likes/1 = activity·like·sns, self-text/1 = self_text, self-summary/1 = self_summary) (4) title·body 에 URL·이메일·로컬 경로 꼴 금지, title 한 줄, body 8000 코드 포인트·UTF-8 32 KiB (5) source_created_at 과 source_date 는 함께 쓰지 않음 (6) people 의 (hmac, role) 중복·axes 중복 금지 (7) 요청 64 KiB, activity 요청 8 KiB. Idempotency-Key = ci1_ + sha256hex(JCS([\"canon-inbox/1\", 2, source_instance_id, original_id, revision])). JCS = json.dumps(sort_keys=True, separators=(',', ':'), ensure_ascii=False).",
+  "$comment": "정본 판정 = server/imports.py validate() + 공용 벡터 vectors/canon-inbox-1.json. 이 스키마로 표현 못 하는 규칙: (1) UTF-8 JSON 객체 하나·중복 키 금지·실수(1.0 포함) 금지 (2) previous_revision ≠ revision (3) transform_version 별 허용 kind·action·provider(board-likes/1 = activity·like·sns, self-text/1 = self_text, self-summary/1 = self_summary, session-wrap/1 = self_text) (4) title·body 에 URL·이메일·로컬 경로 꼴 금지, title 한 줄, body 8000 코드 포인트·UTF-8 32 KiB (5) source_created_at 과 source_date 는 함께 쓰지 않음 (6) people 의 (hmac, role) 중복·axes 중복 금지 (7) 요청 64 KiB, activity 요청 8 KiB. Idempotency-Key = ci1_ + sha256hex(JCS([\"canon-inbox/1\", 2, source_instance_id, original_id, revision])). JCS = json.dumps(sort_keys=True, separators=(',', ':'), ensure_ascii=False).",
   "type": "object",
   "required": ["contract", "schema_revision", "source_instance_id", "original_id", "revision", "previous_revision", "kind", "execution",
                "transform_version", "policy_revision"],
@@ -15,7 +15,7 @@
     "previous_revision": {"type": ["string", "null"], "pattern": "^v_[0-9a-f]{32}$"},
     "kind": {"enum": ["self_text", "activity", "self_summary"]},
     "execution": {"enum": ["attended", "unattended"]},
-    "transform_version": {"enum": ["board-likes/1", "self-text/1", "self-summary/1"]},
+    "transform_version": {"enum": ["board-likes/1", "self-text/1", "self-summary/1", "session-wrap/1"]},
     "policy_revision": {"type": "integer", "minimum": 1}
   },
   "oneOf": [

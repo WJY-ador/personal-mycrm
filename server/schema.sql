@@ -93,6 +93,9 @@ CREATE TABLE IF NOT EXISTS records (
   last_trashed_at    timestamptz,
   -- 수기 수정 A0′(2026-11-03). 본문·제목 수정마다 +1(이력 한 줄 = +1). 옛 DB 는 db._migrate_record_edit 가 더한다(옛 행 1)
   revision           integer NOT NULL DEFAULT 1,
+  -- 세션 정리 → 판단 확정(2026-11-04 A안). 'self' = 사용자가 「내 결정」이라고 한 정리 기록 — 원문 그대로가 아니어도 인용 적격.
+  -- NULL = 표시 없음(옛 행 전부 — 추측 백필 없음). 화면 어디에도 보이지 않는다(web.CORE_HIDDEN). 옛 DB 는 db._migrate_decision_owner
+  decision_owner     text,
   UNIQUE (user_id, id),
   CONSTRAINT ck_records_revision CHECK (revision > 0),
   CONSTRAINT ck_records_trash CHECK ((trashed_at IS NULL) = (purge_at IS NULL) AND (trashed_at IS NULL OR last_trashed_at IS NOT NULL)),
@@ -106,7 +109,8 @@ CREATE TABLE IF NOT EXISTS records (
   CONSTRAINT ck_records_generation_kind CHECK (generation_kind IN ('unknown','human','ai','mixed','conversation','routine')),
   CONSTRAINT ck_records_generation_meta CHECK (jsonb_typeof(generation_meta) = 'object'),
   CONSTRAINT ck_records_source_when CHECK (source_created_at IS NULL OR source_date IS NULL),
-  CONSTRAINT ck_records_date_kind CHECK (date_kind IS NULL OR date_kind IN ('written','occurred','registered','heading'))
+  CONSTRAINT ck_records_date_kind CHECK (date_kind IS NULL OR date_kind IN ('written','occurred','registered','heading')),
+  CONSTRAINT ck_records_decision_owner CHECK (decision_owner IS NULL OR decision_owner = 'self')
 );
 CREATE INDEX IF NOT EXISTS ix_records_user ON records (user_id, created DESC) WHERE deleted_at IS NULL;
 

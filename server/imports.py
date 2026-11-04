@@ -40,8 +40,12 @@ TRANSFORMS = {
     "board-likes/1": {"kind": "activity", "actions": ("like",), "providers": ("sns",)},
     "self-text/1": {"kind": "self_text"},
     "self-summary/1": {"kind": "self_summary"},
+    "session-wrap/1": {"kind": "self_text"},   # 세션 정리(2026-11-04 A안) — 대화 묶음 하나 = 내 글 하나. 승인 뒤 정리 기록(아래 SESSION_WRAP)
 }
-DEFAULT_POLICY = {"actions": ["like"], "transform_versions": ["board-likes/1", "self-text/1", "self-summary/1"], "axes": []}
+DEFAULT_POLICY = {"actions": ["like"], "transform_versions": ["board-likes/1", "self-text/1", "self-summary/1", "session-wrap/1"], "axes": []}
+# 세션 정리 승인 = 내가 쓴(author self) 구조 정리(structured) · 나와 AI 가 함께 만든 글(mixed) · 「내 결정」 표시(decision_owner self — 화면엔 안 보인다)
+SESSION_WRAP = "session-wrap/1"
+SESSION_WRAP_SOURCE = "세션 정리"
 SUMMARY_TOOL_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,31}$")    # 신고 도구 코드(예 claude-cli) — 짧은 코드만
 SUMMARY_MODEL_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")   # 신고 모델 코드 또는 unknown
 
@@ -1054,6 +1058,7 @@ def _inbox_lock(c, uid, import_id):
 def inbox_approve(uid: str, import_id: str) -> dict:
     """승인(웹만) — 스위치 INBOX_APPROVALS 필요. 최신 대기 개정만. 기록 한도(기록 50) 사용. 한 트랜잭션:
     self_text → records(self/verbatim, ingest_kind=inbox) · self_summary → records(unknown/generated, generation_kind=ai, generation_meta)
+    · self_text 중 session-wrap/1 → records(self/structured, generation_kind=mixed, decision_owner=self, 출처 「세션 정리」)
     · activity_ref 있으면 activity_links(활동 → 기록, relation=reaction) · 접수 행 applied·현재 판 이동·payload 삭제.
     반환 {"import_id", "state": "applied", "record_id"}. 실패하면 전체 롤백."""
     if not switch_on("INBOX_APPROVALS_ENABLED"):
@@ -1068,7 +1073,11 @@ def inbox_approve(uid: str, import_id: str) -> dict:
         p = e["payload"]
         body = p["body"]
         title = (p.get("title") or "").strip() or body.strip().splitlines()[0][:40]
-        if e["kind"] == "self_text":
+        src, owner = RECORD_SOURCE_TEXT, None
+        if e["kind"] == "self_text" and p.get("transform_version") == SESSION_WRAP:
+            ak, tp, gk, owner, src = "self", "structured", "mixed", "self", SESSION_WRAP_SOURCE
+            gm = {"transform_version": p["transform_version"], "execution": p["execution"], "reported_by": "device"}
+        elif e["kind"] == "self_text":
             ak, tp, gk, gm = "self", "verbatim", "unknown", {}
         else:
             g = p["generation"]
@@ -1077,11 +1086,14 @@ def inbox_approve(uid: str, import_id: str) -> dict:
                   "transform_version": p["transform_version"], "execution": p["execution"], "reported_by": "device"}
         rid = db.new_id("r")
         hist = [{"at": db.now().isoformat(), "by": "inbox", "author_kind": ak, "text_process": tp}]
+        if owner:
+            hist[0]["decision_owner"] = owner
         sca = p.get("source_created_at")
         c.execute("INSERT INTO records (id,user_id,title,body,source,author_kind,text_process,provenance_history,ingest_kind,"
-                  "generation_kind,generation_meta,source_created_at,source_date) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'inbox',%s,%s,%s,%s)",
-                  (rid, uid, title, body, RECORD_SOURCE_TEXT, ak, tp, Jsonb(hist), gk, Jsonb(gm),
-                   _dt.datetime.fromisoformat(sca.replace("Z", "+00:00")) if sca else None, _d(p.get("source_date"))))
+                  "generation_kind,generation_meta,source_created_at,source_date,decision_owner) "
+                  "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'inbox',%s,%s,%s,%s,%s)",
+                  (rid, uid, title, body, src, ak, tp, Jsonb(hist), gk, Jsonb(gm),
+                   _dt.datetime.fromisoformat(sca.replace("Z", "+00:00")) if sca else None, _d(p.get("source_date")), owner))
         ref = p.get("activity_ref")
         if ref and _one(c, "SELECT 1 FROM activities WHERE user_id=%s AND id=%s AND deleted_at IS NULL AND trashed_at IS NULL", (uid, ref)):
             c.execute("INSERT INTO activity_links (user_id,id,activity_id,linked_record_id,relation) VALUES (%s,%s,%s,%s,'reaction') "

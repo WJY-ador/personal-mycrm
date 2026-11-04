@@ -216,6 +216,8 @@ def run_once(paths, *, ks: keystore.KeyStore, uploader_factory=None, summarizer=
             counts = new_counts()
             collect(st, cfg, hkey, counts)
             result = {"collect": counts}
+            from . import sessionwrap   # 세션 정리 폴더(설정에서 켰을 때만) — 같은 전송 대기·업로드 경로
+            result["session_wrap"] = sessionwrap.collect(st, cfg, counts)
             if summarizer is not None:
                 result["summary"] = summarizer(st, cfg)
             if upload:
