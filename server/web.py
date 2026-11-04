@@ -2149,7 +2149,7 @@ class Web:
 
     # ── board 이전 (2026-10-20, 구현계획 §2-11 D7 · r3 T2·T3) — 연결 장치(#_devices) · 승인 대기(#_inbox) · 「나」 집계·활동/사람/출처/축 상세 ──
     # 쓰기 = _core_write(세션 401 → Origin 403 → JSON 모양 400 → db.write_gate(표시 이름 관문 · 전역 크기) → imports). 페이로드 상한은 main.BodyLimit(/api/*).
-    # 읽기 = 세션 → 서버 함수(본인 uid 만) → no-store. 승인·제외는 웹에서만(MCP 는 읽기만). 대상 사용자 = 세션 uid 뿐.
+    # 읽기 = 세션 → 서버 함수(본인 uid 만) → no-store. 승인·제외는 이 웹 경로와 MCP inbox_decide(facade, 같은 imports 함수). 대상 사용자 = 세션 uid 뿐.
     # 장치 토큰 원문은 device_connect·device_reissue 응답에서 한 번만(no-store) — 화면도 그 자리에서만 그리고 저장하지 않는다.
     async def _core_read(self, request, call):
         """call(uid) → JSON(no-store). CrmError = NOT-FOUND 404 · NAME-REQUIRED 403 · 그 밖 400(_crm_err)."""

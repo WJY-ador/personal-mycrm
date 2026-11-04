@@ -4,7 +4,8 @@
 원문은 PC, 서버엔 구조화 데이터만. 이 모듈은 모델을 부르지 않고, 본문·토큰·URL 을 로그·감사·오류 문구에 넣지 않는다.
 
 호출하는 곳
-  · main.py  — POST /api/imports · GET /api/imports/{import_id}(장치 토큰) · MCP 읽기 inbox_list·inbox_get · 주기 파기 expire_pending
+  · main.py  — POST /api/imports · GET /api/imports/{import_id}(장치 토큰) · MCP 읽기 inbox_list·inbox_get · MCP 확정 inbox_decide(facade)
+               · 주기 파기 expire_pending
   · web.py   — 「연결 장치」(#_devices) device_* · 「승인 대기」(#_inbox) inbox_* (세션·Origin·write_gate 는 web 이 먼저)
   · migrate_cli.py — migration_* (DATABASE_URL 명시, 웹 실행 없음)
 
@@ -46,6 +47,8 @@ DEFAULT_POLICY = {"actions": ["like"], "transform_versions": ["board-likes/1", "
 # 세션 정리 승인 = 내가 쓴(author self) 구조 정리(structured) · 나와 AI 가 함께 만든 글(mixed) · 「내 결정」 표시(decision_owner self — 화면엔 안 보인다)
 SESSION_WRAP = "session-wrap/1"
 SESSION_WRAP_SOURCE = "세션 정리"
+# 세션 정리 묶음의 경로 가림 표기 — PC(agent/sessionwrap.py PATH_MASK)가 넣고, 서버는 승인 때 개수만 센다(기록 메타 redacted_paths)
+SESSION_WRAP_PATH_MASK = "‹경로›"
 SUMMARY_TOOL_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,31}$")    # 신고 도구 코드(예 claude-cli) — 짧은 코드만
 SUMMARY_MODEL_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")   # 신고 모델 코드 또는 unknown
 
@@ -1055,8 +1058,38 @@ def _inbox_lock(c, uid, import_id):
     return r
 
 
+def _inbox_title(p: dict) -> str:
+    """승인하면 남을 기록 제목 — 보낸 제목, 없으면 본문 첫 줄 앞 40자."""
+    return (p.get("title") or "").strip() or p["body"].strip().splitlines()[0][:40]
+
+
+def _approve_shape(kind: str, p: dict) -> dict:
+    """승인하면 남을 기록의 꼴 — inbox_approve 와 미리보기(inbox_decide_preview)가 같이 쓴다(정본 하나).
+    반환 {ak, tp, gk, gm, owner, src}. session-wrap/1 의 gm 에 가린 경로 수(redacted_paths, 0 이면 키 없음) — 기록 메타에만 둔다."""
+    if kind == "self_text" and p.get("transform_version") == SESSION_WRAP:
+        gm = {"transform_version": p["transform_version"], "execution": p["execution"], "reported_by": "device"}
+        n = sum((p.get(k) or "").count(SESSION_WRAP_PATH_MASK) for k in ("title", "body"))
+        if n:
+            gm["redacted_paths"] = n
+        return {"ak": "self", "tp": "structured", "gk": "mixed", "gm": gm, "owner": "self", "src": SESSION_WRAP_SOURCE}
+    if kind == "self_text":
+        return {"ak": "self", "tp": "verbatim", "gk": "unknown", "gm": {}, "owner": None, "src": RECORD_SOURCE_TEXT}
+    g = p["generation"]
+    gm = {"method": g["method"], "tool": g["tool"], "model": g["model"], "input_scope": g["input_scope"], "inputs": g["inputs"],
+          "transform_version": p["transform_version"], "execution": p["execution"], "reported_by": "device"}
+    return {"ak": "unknown", "tp": "generated", "gk": "ai", "gm": gm, "owner": None, "src": RECORD_SOURCE_TEXT}
+
+
+def _approve_check(e: dict):
+    """승인 선행 조건(대기 상태 다음) — 실행과 미리보기가 같은 오류를 낸다."""
+    if not e["is_latest_received"]:
+        raise CrmError("INBOX-NOT-LATEST", "더 새 개정이 있어요. 최신 대기만 승인할 수 있어요.")
+    if not e["alive"]:
+        raise CrmError("INBOX-EXPIRED", "보관 기간이 지난 승인 대기예요.")
+
+
 def inbox_approve(uid: str, import_id: str) -> dict:
-    """승인(웹만) — 스위치 INBOX_APPROVALS 필요. 최신 대기 개정만. 기록 한도(기록 50) 사용. 한 트랜잭션:
+    """승인(웹 [승인] · MCP inbox_decide approve) — 스위치 INBOX_APPROVALS 필요. 최신 대기 개정만. 기록 한도(기록 50) 사용. 한 트랜잭션:
     self_text → records(self/verbatim, ingest_kind=inbox) · self_summary → records(unknown/generated, generation_kind=ai, generation_meta)
     · self_text 중 session-wrap/1 → records(self/structured, generation_kind=mixed, decision_owner=self, 출처 「세션 정리」)
     · activity_ref 있으면 activity_links(활동 → 기록, relation=reaction) · 접수 행 applied·현재 판 이동·payload 삭제.
@@ -1066,24 +1099,12 @@ def inbox_approve(uid: str, import_id: str) -> dict:
     with tx() as c:
         db._daily_gate(c, uid, "records")   # users 잠금 + 기록 한도
         e = _inbox_lock(c, uid, import_id)
-        if not e["is_latest_received"]:
-            raise CrmError("INBOX-NOT-LATEST", "더 새 개정이 있어요. 최신 대기만 승인할 수 있어요.")
-        if not e["alive"]:
-            raise CrmError("INBOX-EXPIRED", "보관 기간이 지난 승인 대기예요.")
+        _approve_check(e)
         p = e["payload"]
         body = p["body"]
-        title = (p.get("title") or "").strip() or body.strip().splitlines()[0][:40]
-        src, owner = RECORD_SOURCE_TEXT, None
-        if e["kind"] == "self_text" and p.get("transform_version") == SESSION_WRAP:
-            ak, tp, gk, owner, src = "self", "structured", "mixed", "self", SESSION_WRAP_SOURCE
-            gm = {"transform_version": p["transform_version"], "execution": p["execution"], "reported_by": "device"}
-        elif e["kind"] == "self_text":
-            ak, tp, gk, gm = "self", "verbatim", "unknown", {}
-        else:
-            g = p["generation"]
-            ak, tp, gk = "unknown", "generated", "ai"
-            gm = {"method": g["method"], "tool": g["tool"], "model": g["model"], "input_scope": g["input_scope"], "inputs": g["inputs"],
-                  "transform_version": p["transform_version"], "execution": p["execution"], "reported_by": "device"}
+        title = _inbox_title(p)
+        s = _approve_shape(e["kind"], p)
+        ak, tp, gk, gm, owner, src = s["ak"], s["tp"], s["gk"], s["gm"], s["owner"], s["src"]
         rid = db.new_id("r")
         hist = [{"at": db.now().isoformat(), "by": "inbox", "author_kind": ak, "text_process": tp}]
         if owner:
@@ -1106,13 +1127,47 @@ def inbox_approve(uid: str, import_id: str) -> dict:
 
 
 def inbox_exclude(uid: str, import_id: str) -> dict:
-    """제외(웹만, 스위치 무관) — pending → excluded, payload 삭제. 반환 {"import_id", "state": "excluded"}."""
+    """제외(웹 [제외] · MCP inbox_decide exclude, 스위치 무관) — pending → excluded, payload 삭제. 반환 {"import_id", "state": "excluded"}."""
     with tx() as c:
         db._user_lock(c, uid)
         e = _inbox_lock(c, uid, import_id)
         c.execute("UPDATE import_entries SET state='excluded', payload=NULL, payload_bytes=0, resolved_at=now(), resolved_by='user' "
                   "WHERE user_id=%s AND id=%s", (uid, e["id"]))
     return {"import_id": e["id"], "state": "excluded"}
+
+
+INBOX_PREVIEW_CHARS = 300    # decide_preview shown 「본문 앞부분」 글자 수(코드 포인트)
+_INBOX_KIND_LABEL = {"self_text": "내 글", "self_summary": "내 글 AI 요약"}
+
+
+def inbox_decide_preview(uid: str, p: dict):
+    """MCP inbox_decide 의 decide_preview shown 빌더(facade K2 — main.py 가 facade.PREVIEWS 에 더한다). 읽기만 한다(잠금 없음).
+    막힘(없음·이미 처리·승인 스위치 꺼짐·최신 아님·만료)은 실행과 같은 오류. 반환 (스냅샷, shown, impact, irreversible).
+    shown = 할 일 · 종류 · 승인될 기록 제목 · 본문 앞부분(INBOX_PREVIEW_CHARS) · 출처 그대로. 시각으로 바뀌는 alive 는 스냅샷에 넣지 않는다."""
+    action = p["action"]
+    with tx() as c:
+        r = _one(c, _INBOX_SQL + " AND e.id=%s", (uid, str(p.get("import_id") or "")))
+    if not r:
+        raise _nf("그 승인 대기 글")
+    if r["state"] != "pending":
+        raise CrmError("INBOX-RESOLVED", "이미 처리한 승인 대기예요.", "목록을 새로 고치세요.")
+    if action == "approve":
+        if not switch_on("INBOX_APPROVALS_ENABLED"):
+            raise _off("APPROVALS-OFF", "승인 대기 글의 승인")
+        _approve_check(r)
+    pl = r["payload"]
+    body = pl["body"]
+    head = body[:INBOX_PREVIEW_CHARS] + ("…" if len(body) > INBOX_PREVIEW_CHARS else "")
+    s = _approve_shape(r["kind"], pl)
+    shown = {"할 일": "승인 — 내 글로 저장" if action == "approve" else "제외 — 저장하지 않고 대기 본문을 지움(되돌릴 수 없음)",
+             "종류": _INBOX_KIND_LABEL[r["kind"]], "제목": _inbox_title(pl), "본문 앞부분": head, "출처": s["src"]}
+    if action == "approve" and s["owner"] == "self":
+        shown["「내 결정」 표시"] = "붙음 — 판단 후보의 근거로 쓸 수 있어요"
+    if action == "approve" and r["kind"] == "self_summary":
+        shown["안내"] = AI_APPROVE_NOTICE
+    snap = {"state": r["state"], "latest": r["is_latest_received"], "expires_at": _j(r["expires_at"]),
+            "body": sha256_hex(jcs([r["kind"], pl.get("title"), body]))[:16]}
+    return snap, shown, {"import_id": r["id"], "kind": r["kind"], "body_chars": len(body)}, action == "exclude"
 
 
 def counters_purge() -> int:

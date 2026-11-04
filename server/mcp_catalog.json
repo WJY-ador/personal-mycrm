@@ -119,6 +119,8 @@
       "examples": [{"state": "pending"}]},
     "inbox_get": {"family": "inbox", "tier": "read", "keywords": ["승인 대기", "받은 글"],
       "examples": [{"import_id": "ie_example01"}]},
+    "inbox_decide": {"family": "inbox", "tier": "decide", "direct": false, "keywords": ["승인", "제외", "승인 대기", "저장 승인", "받은 글 저장", "빼줘"],
+      "examples": [{"import_id": "ie_example01", "action": "approve"}]},
 
     "trash_list": {"family": "trash", "tier": "read", "keywords": ["휴지통", "지운 것", "삭제 목록"],
       "examples": [{"kind": ""}]},

@@ -11,7 +11,10 @@
   self·structured·mixed·「내 결정」 표시로 기록한다(서버 imports.inbox_approve).
 - 중복 기준(PC 대응표만, 서버로 안 감) = 다이제스트(변환 버전, 폴더 실경로, 파일 이름, 제목, 같은 제목의 순번).
   같은 묶음의 문단을 고치면 새 개정, 제목을 고치면 새 원본이다. original_id 는 runner 가 난수로 1회 발급한다.
-- 본문에 URL·이메일·절대 경로가 있거나 길이 한도를 넘으면 계약 검증에서 격리된다(보내지 않는다).
+- 제목·본문의 로컬 경로(`~/`·`/Users/`·`/home/`·`/private/`·`/var/`·`/Volumes/`·Windows 드라이브·UNC 로 시작하는 덩어리)는
+  격리하지 않고 PATH_MASK(`‹경로›`)로 가린 뒤 보낸다(원작자 2026-11-04 「b」). 덩어리 = 접두부터 공백·닫는 괄호·따옴표·백틱·`|` 앞까지
+  (붙은 조사도 함께 가린다 — 폴더 이름이 새지 않게). 가린 수는 collect 반환 redacted 와, 서버가 승인 때 센 기록 메타에만 남는다.
+- URL·이메일이 있거나 길이 한도를 넘으면 계약 검증에서 격리된다(보내지 않는다) — 지금 규칙 그대로.
 - 장치 허용 규칙에 session-wrap/1 이 없으면 아무것도 만들지 않는다(skipped=policy) — 웹 「연결 장치」에서 「세션 정리」를 켠다.
 """
 from __future__ import annotations
@@ -32,6 +35,17 @@ _H1 = re.compile(r"^#[ \t]+\S")
 _RULE = re.compile(r"^-{3,}[ \t]*$")
 _FENCE = re.compile(r"^[ \t]{0,3}(```|~~~)")
 _DROP = re.compile(r"^[ \t]*(?:[-*][ \t]+)?→[ \t]*남긴[ \t]*곳[ \t]*[:：]")
+PATH_MASK = "‹경로›"                  # 서버 imports.SESSION_WRAP_PATH_MASK 와 같은 문자열(서버는 승인 때 개수만 센다)
+# 경로 덩어리 — 계약 차단 규칙(contract._BLOCK_PATTERNS path)의 접두를 모두 덮고 앞 경계는 더 넓다(영숫자·._/~- 뒤만 아니면).
+# 그래서 가린 결과는 path 규칙에 걸리지 않는다(시험이 본다). UNC 는 계약처럼 앞 경계 없이.
+_PATH_TAIL = r"[^\s)\]}>\"'`|]*"
+_PATH_SPAN = re.compile(r"(?<![A-Za-z0-9._/~-])(?:~/|/Users/|/home/|/private/|/var/|/Volumes/|[A-Za-z]:\\)" + _PATH_TAIL
+                        + r"|\\\\[A-Za-z0-9._-]+\\" + _PATH_TAIL)
+
+
+def redact_paths(text: str) -> tuple:
+    """로컬 경로 덩어리를 PATH_MASK 로 바꾼다. 반환 (바꾼 글, 가린 수)."""
+    return _PATH_SPAN.subn(PATH_MASK, text)
 
 
 def _strip_frontmatter(lines: list) -> list:
@@ -98,9 +112,10 @@ def list_files(folder: str) -> list:
 
 
 def collect(st, cfg: dict, counts: dict | None = None) -> dict:
-    """설정 폴더의 세션 정리 묶음을 전송 대기로 만든다. 반환 {"files", "blocks", "staged", "skipped", "missing_folders"} — 값·경로 없음."""
+    """설정 폴더의 세션 정리 묶음을 전송 대기로 만든다. 반환 {"files", "blocks", "staged", "redacted", "skipped", "missing_folders"}
+    — 값·경로 없음. redacted = 이번 실행에서 가린 경로 수(전송 대기로 만든 묶음만이 아니라 읽은 묶음 전부)."""
     sc = cfg.get("session_wrap") or {}
-    out = {"files": 0, "blocks": 0, "staged": 0, "missing_folders": 0, "skipped": None}
+    out = {"files": 0, "blocks": 0, "staged": 0, "redacted": 0, "missing_folders": 0, "skipped": None}
     if not sc.get("enabled"):
         out["skipped"] = "disabled"
         return out
@@ -135,8 +150,11 @@ def collect(st, cfg: dict, counts: dict | None = None) -> dict:
                 n = seen.get(title, 0)
                 seen[title] = n + 1
                 out["blocks"] += 1
-                key = jcs.sha256_hex([TRANSFORM, root, fn, title, n])
-                fields = {"title": title, "body": body, "source_date": date}
+                key = jcs.sha256_hex([TRANSFORM, root, fn, title, n])   # 중복 기준은 가리기 전 제목(PC 대응표만)
+                t, n1 = redact_paths(title)
+                b, n2 = redact_paths(body)
+                out["redacted"] += n1 + n2
+                fields = {"title": t, "body": b, "source_date": date}
                 if _runner.stage_self_text(st, cfg, adapter_name=ADAPTER, dedupe_key=key, fingerprint=key, kind="self_text",
                                            transform_version=TRANSFORM, execution=execution, fields=fields, counts=counts):
                     out["staged"] += 1

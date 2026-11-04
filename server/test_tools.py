@@ -146,7 +146,7 @@ PRB_TOOLS = {"display_name_set", "me_get", "person_list", "person_get", "person_
              "source_create", "source_reflection_list", "source_reflection_get", "source_reflection_save", "source_reflection_review",
              "source_reflection_delete",   # PR B 계획 §5 — 기존 19개는 그대로
              "record_provenance_set", "definition_archive", "definition_restore"}   # R5 결함(PR B 범위 추가) 3
-# board 이전(25절) MCP 읽기 7 — 쓰기 없음(승인·제외는 웹에서만)
+# board 이전(25절) MCP 읽기 7 — 쓰기 없음(승인·제외는 웹 또는 facade 전용 inbox_decide — test_session_wrap)
 BI_TOOLS = {"activity_list", "activity_get", "person_context_get", "source_context_get", "me_aggregate_get", "inbox_list", "inbox_get"}
 # 휴지통 PR-1(30절) MCP 4 — 목록(읽기) + 이동·복원·영구 삭제 요청(쓰기, 전역 크기 관문 면제)
 TRASH_TOOLS = {"trash_list", "trash_move", "trash_restore", "trash_purge"}

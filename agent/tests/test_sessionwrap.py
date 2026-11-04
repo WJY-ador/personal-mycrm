@@ -1,5 +1,5 @@
 """세션 정리 폴더 → 내 글(승인 대기, session-wrap/1). 가짜 세션 정리 글로만 — 묶음 나누기 · `→ 남긴 곳:` 줄 빼기 ·
-날짜 이름 파일만 · 개정·중복 · 정책에 없으면 안 만듦 · 기본 꺼짐 · run_once 업로드."""
+날짜 이름 파일만 · 개정·중복 · 정책에 없으면 안 만듦 · 기본 꺼짐 · run_once 업로드 · 경로는 가리고 보냄(URL·이메일은 격리)."""
 from __future__ import annotations
 
 import json
@@ -58,6 +58,40 @@ class ParseTest(unittest.TestCase):
 
     def test_heading_keeps_inner_hash(self):
         self.assertEqual(sessionwrap.parse("## C# 쓰기로 정했다 ##\n문단")[0][0], "C# 쓰기로 정했다")
+
+
+# 가짜 경로만(합성) — 계약 path 규칙의 접두마다, 여러 앞 경계. 홈 접두는 이어 붙여 만든다(crm.py check 스크럽이 레포 글자를 본다)
+U = "/" + "Users/"
+PATH_CASES = [
+    ("파일 /Volumes/disk/x.md 를 봤다", "파일 ‹경로› 를 봤다", 1),
+    ("`~/합성/세션정리/2030-01-02.md`에 남김", "`‹경로›`에 남김", 1),
+    ("(~/a/b) 와 \"" + U + "someone/x y\"", "(‹경로›) 와 \"‹경로› y\"", 2),
+    ("'/home/u/a' /private/tmp/x /var/log/y", "'‹경로›' ‹경로› ‹경로›", 3),
+    ("D:\\data\\x\\y.txt 확인", "‹경로› 확인", 1),
+    ("공유 \\\\host\\share\\f 끝", "공유 ‹경로› 끝", 1),
+    ("표 |~/p| 칸", "표 |‹경로›| 칸", 1),
+    ("경로:" + U + "x 붙음", "경로:‹경로› 붙음", 1),
+    ("server/var/x · a~/b · 2/3 은 그대로", "server/var/x · a~/b · 2/3 은 그대로", 0),
+]
+
+
+class RedactTest(unittest.TestCase):
+    def test_cases(self):
+        for src, want, n in PATH_CASES:
+            with self.subTest(src):
+                self.assertEqual(sessionwrap.redact_paths(src), (want, n))
+
+    def test_masked_never_blocked_as_path(self):
+        """불변식 — 가린 결과는 계약 path 규칙에 걸리지 않는다(원문은 걸리는 것도 있다)."""
+        paths = [pat for code, pat in contract._BLOCK_PATTERNS if code == "path"]
+        for src, _, _ in PATH_CASES:
+            out, _ = sessionwrap.redact_paths(src)
+            with self.subTest(src):
+                self.assertFalse(any(p.search(out) for p in paths), out)
+        self.assertTrue(any(p.search(PATH_CASES[0][0]) for p in paths))
+
+    def test_mask_matches_server_constant(self):
+        self.assertEqual(sessionwrap.PATH_MASK, "‹경로›")   # 서버 imports.SESSION_WRAP_PATH_MASK — 서버가 승인 때 개수를 센다
 
 
 class CollectTest(unittest.TestCase):
@@ -133,10 +167,20 @@ class CollectTest(unittest.TestCase):
         self.assertEqual(self.go()["skipped"], "policy")
         self.assertEqual(self.pending(), [])
 
-    def test_path_in_body_is_quarantined_not_sent(self):
-        self.write("2030-01-02.md", "## 합성 제목\n파일 /Volumes/disk/x.md 를 봤다")
+    def test_path_is_masked_and_sent(self):
+        self.write("2030-01-02.md", "## 합성 제목 ~/합성/x.md\n파일 /Volumes/disk/x.md 를 봤다\n`~/합성/y.md`에 남김")
         r = self.go()
-        self.assertEqual(r["staged"], 0)
+        self.assertEqual((r["staged"], r["redacted"]), (1, 3))
+        (o,) = self.pending()
+        self.assertEqual(o["title"], "합성 제목 ‹경로›")
+        self.assertEqual(o["body"], "파일 ‹경로› 를 봤다\n`‹경로›`에 남김")
+        self.assertNotIn("/Volumes/", json.dumps(o, ensure_ascii=False))
+        contract.validate(o)
+
+    def test_url_and_email_still_quarantined(self):
+        self.write("2030-01-02.md", "## 합성 URL\n링크 https://example.invalid/x 를 봤다\n\n## 합성 메일\n주소 a@example.invalid 로 보냄")
+        r = self.go()
+        self.assertEqual((r["blocks"], r["staged"]), (2, 0))
         self.assertEqual(self.pending(), [])
 
     def test_missing_folder_does_not_stop_others(self):

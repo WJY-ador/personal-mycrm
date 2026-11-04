@@ -8,6 +8,7 @@
 2) MCP record_add decision_owner · record_provenance_set 로 표시 붙이기·지우기(세션 정리 기록 = mixed 여도 AI 잠금 없음) · 후보 있으면 지우기 PROVENANCE-LOCKED
    · 가공 방식 바꾸기는 여전히 PROVENANCE-AI-LOCKED · 이력 한 줄 · decide_preview shown
 3) 가져오기: session-wrap/1 → 승인 대기 → 승인 = self·structured·mixed·「내 결정」·출처 「세션 정리」 → 후보 확정 OK · 허용 규칙에 없으면 POLICY-DENIED
+3b) MCP inbox_decide(facade 전용 D): decide_preview shown · bind 규칙 · 승인 = 같은 기록 꼴 + 가린 경로 수 메타 · 제외 · 스위치·표시 이름 관문
 4) 화면 표시 0: /api/state·/api/records·/api/journal·/api/inbox·/api/trash 응답 · 코어 정의(web.core_schema·service_schema)에 decision_owner 없음
 5) 옛 DB 업그레이드(records.decision_owner 없음 → 열·CHECK, 옛 행 NULL · 멱등)
 """
@@ -262,6 +263,81 @@ async def test_import(uid):
     ok("가져오기 session-wrap/1 — 승인 = self·structured·mixed·「내 결정」·출처 「세션 정리」 → 후보 확정 · self-text/1 그대로 · 허용 규칙 밖 거절")
 
 
+# ── 3b) MCP inbox_decide(승인·제외, facade 전용 D) ────────
+
+async def test_inbox_decide(uid):
+    saved = {n: os.environ.get("CRM_" + n) for n in ("IMPORTS_ENABLED", "INBOX_APPROVALS_ENABLED")}
+    os.environ["CRM_IMPORTS_ENABLED"] = os.environ["CRM_INBOX_APPROVALS_ENABLED"] = "1"
+    mask = imports.SESSION_WRAP_PATH_MASK
+    try:
+        con = imports.device_connect(uid, "합성 PC 2")
+        dev, tok = con["device"], con["token"]
+
+        async def pending(**kw):
+            r = await _post(tok, _req(dev["id"], **kw))
+            assert r.status_code == 201 and r.json()["state"] == "pending", r.text
+            return r.json()["import_id"]
+        wrap_body = f"합성 정리 글이다. {mask} 에 남긴 계획을 보고 칸을 하나로 줄이기로 정했다. 비교 표는 {mask} 에 있다."
+        e1 = await pending(body=wrap_body)
+        long_body = "합성 원문 문장이다. " * 40
+        e2 = await pending(transform="self-text/1", title="합성 원문 제목", body=long_body)
+        async with Client(main.mcp) as c:
+            d = val(await c.call_tool("find", {"op": "inbox_decide"}))
+            assert d["tier"] == "decide" and d["family"] == "inbox" and "decide_preview" in d["flow"][0]
+            assert "승인·제외를 말한 뒤에만" in d["rule"], d["rule"]
+            assert "inbox_decide" in [m["op"] for m in val(await c.call_tool("find", {"query": "승인 대기 승인"}))["matches"]]
+            assert "inbox_decide" not in {t.name for t in (await c.list_tools()).tools}, "직접 도구로 등록하지 않는다"
+            a1 = {"import_id": e1, "action": "approve"}
+            pv = val(await c.call_tool("read", {"op": "decide_preview", "params": {"op": "inbox_decide", "params": a1}}))
+            assert pv["shown"] == {"할 일": "승인 — 내 글로 저장", "종류": "내 글", "제목": "합성 세션 정리 제목", "본문 앞부분": wrap_body,
+                                   "출처": "세션 정리", "「내 결정」 표시": "붙음 — 판단 후보의 근거로 쓸 수 있어요"}, pv["shown"]
+            assert pv["irreversible"] is False and pv["impact"]["import_id"] == e1
+            assert code(await c.call_tool("decide", {"op": "inbox_decide", "params": a1})) == "BIND-REQUIRED"
+            assert code(await c.call_tool("write", {"op": "inbox_decide", "params": a1})) == "TIER-MISMATCH"
+            # 같은 bind 로 action 만 바꾸면 STALE(인자가 바뀜)
+            r = await c.call_tool("decide", {"op": "inbox_decide", "params": {**a1, "action": "exclude"}, "bind": pv["bind"]})
+            assert code(r) == "BIND-STALE", r
+            out = val(await c.call_tool("decide", {"op": "inbox_decide", "params": a1, "bind": pv["bind"]}))
+            assert out["state"] == "applied" and out["via"] == "facade", out
+            x = row(uid, out["record_id"])
+            assert (x["author_kind"], x["text_process"], x["generation_kind"], x["decision_owner"], x["source"], x["ingest_kind"]) == \
+                ("self", "structured", "mixed", "self", "세션 정리", "inbox"), x
+            with db.tx() as cx:
+                gm = cx.execute("SELECT generation_meta FROM records WHERE user_id=%s AND id=%s", (uid, out["record_id"])).fetchone()["generation_meta"]
+            assert gm["redacted_paths"] == 2, gm   # 가린 수는 기록 메타에만
+            r = await c.call_tool("read", {"op": "decide_preview", "params": {"op": "inbox_decide", "params": a1}})
+            assert code(r) == "INBOX-RESOLVED", "처리한 대기는 미리보기도 같은 오류"
+            # 원문(self-text/1) — 본문 앞부분 300자 + …, 출처 「연결 장치에서 가져옴」, 「내 결정」 줄 없음 · 제외 = 되돌릴 수 없음
+            pv2 = val(await c.call_tool("read", {"op": "decide_preview", "params": {"op": "inbox_decide",
+                                                                                   "params": {"import_id": e2, "action": "approve"}}}))
+            assert pv2["shown"]["본문 앞부분"] == long_body[:imports.INBOX_PREVIEW_CHARS] + "…" and pv2["shown"]["출처"] == imports.RECORD_SOURCE_TEXT
+            assert "「내 결정」 표시" not in pv2["shown"]
+            a2 = {"import_id": e2, "action": "exclude"}
+            px = val(await c.call_tool("read", {"op": "decide_preview", "params": {"op": "inbox_decide", "params": a2}}))
+            assert px["irreversible"] is True and px["shown"]["할 일"].startswith("제외")
+            # 승인 스위치 꺼짐 — 승인 미리보기는 APPROVALS-OFF, 제외는 된다(웹과 같다)
+            os.environ["CRM_INBOX_APPROVALS_ENABLED"] = "0"
+            r = await c.call_tool("read", {"op": "decide_preview", "params": {"op": "inbox_decide", "params": {"import_id": e2, "action": "approve"}}})
+            assert code(r) == "APPROVALS-OFF", r
+            # 표시 이름 관문 = 웹과 같은 write_gate
+            with db.tx() as cx:
+                cx.execute("UPDATE users SET display_name=NULL WHERE id=%s", (uid,))
+            try:
+                assert code(await c.call_tool("decide", {"op": "inbox_decide", "params": a2, "bind": px["bind"]})) == "NAME-REQUIRED"
+            finally:
+                db.display_name_set(uid, "세션 정리 시험")
+            out = val(await c.call_tool("decide", {"op": "inbox_decide", "params": a2, "bind": px["bind"]}))
+            assert out == {"import_id": e2, "state": "excluded", "via": "facade"}, out
+            assert imports.inbox_get(uid, e2)["body"] is None
+    finally:
+        for n, v in saved.items():
+            os.environ.pop("CRM_" + n, None)
+            if v is not None:
+                os.environ["CRM_" + n] = v
+    ok("MCP inbox_decide(facade D) — find·decide_preview shown(제목·본문 앞부분·출처·「내 결정」) · BIND-REQUIRED·STALE·TIER-MISMATCH "
+       "· 승인 = 세션 정리 기록(가린 경로 수 메타) · 처리 뒤 INBOX-RESOLVED · 제외 되돌릴 수 없음 · APPROVALS-OFF · NAME-REQUIRED")
+
+
 # ── 4) 화면 표시 0 ────────────────────────────────────
 
 async def test_no_display(uid, trashed_rid):
@@ -317,6 +393,7 @@ async def run():
         trashed = test_eligibility(uid)
         await test_mcp(uid)
         await test_import(uid)
+        await test_inbox_decide(uid)
         await test_no_display(uid, trashed)
         test_upgrade(uid)
     finally:
