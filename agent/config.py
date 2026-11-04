@@ -27,6 +27,7 @@ DEFAULT_VIEWER_PORT = 8790   # board-dev 8787 회피. 웹 화면도 이 값을 �
 ACTIVE_ADAPTERS = ("likes",)
 SKELETON_ADAPTERS = ("feed", "reactions", "mail", "kakao")
 BLOCKED_ADAPTERS = ("linkedin_moves",)
+MAX_SESSION_WRAP_FOLDERS = 20   # 세션 정리 폴더 수 상한
 
 _ACCOUNT_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 # 키 공간 ID — 요청엔 안 들어가고 Keychain 항목 이름에만 쓴다. 서버 표시 형식이 미정이라 안전 문자만 본다
@@ -110,6 +111,11 @@ def default_config() -> dict:
             "timeout_sec": 300,
             "daily_attempts": 10,
             "file_glob_suffix": ".md",
+        },
+        # 세션 정리(2026-11-04) — 사람이 지정한 세션 정리 폴더(그 바로 아래 YYYY-MM-DD.md)만. 모델 없음. 폴더 목록은 이 PC 설정에만 둔다
+        "session_wrap": {
+            "enabled": False,
+            "folders": [],                   # 절대 경로 목록
         },
     }
 
@@ -211,6 +217,14 @@ def validate_config(cfg: dict) -> dict:
     for a in likes.get("axes") or []:
         if a not in axes:
             raise ConfigError("likes.axes not in allowed_axes")
+    sw = cfg.get("session_wrap")
+    if sw is not None:
+        if not isinstance(sw, dict) or set(sw) - {"enabled", "folders"} or not isinstance(sw.get("enabled", False), bool):
+            raise ConfigError("session_wrap")
+        folders = sw.get("folders", [])
+        if (not isinstance(folders, list) or len(folders) > MAX_SESSION_WRAP_FOLDERS
+                or not all(isinstance(x, str) and os.path.isabs(x) for x in folders) or len(set(folders)) != len(folders)):
+            raise ConfigError("session_wrap.folders")   # 경로 값은 메시지에 넣지 않는다
     return cfg
 
 

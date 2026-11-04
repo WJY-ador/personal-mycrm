@@ -140,6 +140,10 @@
       "required": false
     },
     {
+      "path": "agent/sessionwrap.py",
+      "required": false
+    },
+    {
       "path": "agent/stack.py",
       "required": false
     },
@@ -245,6 +249,10 @@
     },
     {
       "path": "agent/tests/test_serve.py",
+      "required": false
+    },
+    {
+      "path": "agent/tests/test_sessionwrap.py",
       "required": false
     },
     {

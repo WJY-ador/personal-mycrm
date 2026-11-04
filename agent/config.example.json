@@ -10,5 +10,9 @@
       "include_seed": true,
       "axes": []
     }
+  },
+  "session_wrap": {
+    "enabled": false,
+    "folders": ["/absolute/path/to/session-wrap-folder"]
   }
 }

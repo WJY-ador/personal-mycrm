@@ -15,6 +15,7 @@
   "agent/osutil.py",
   "agent/runner.py",
   "agent/schedule.py",
+  "agent/sessionwrap.py",
   "agent/stack.py",
   "agent/store.py",
   "agent/summary.py",

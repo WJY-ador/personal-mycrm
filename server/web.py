@@ -615,7 +615,8 @@ ADMIN_LABELS = {"bootstrap": "첫 지정", "recover": "복구(CLI)", "role_grant
                 "device_rotate": "장치 토큰 교체"}
 # 연결 장치 허용 규칙의 변환 이름 — 화면 표시용(키 = imports.TRANSFORMS). 모르는 키는 키 그대로 보인다
 POLICY_MAX_BYTES = 4 * 1024   # 장치 허용 규칙(policy) JSON 상한 — WRITE_LIMITS 밖이라 웹이 write_gate 전에 직접 센다
-TRANSFORM_LABELS = {"board-likes/1": "좋아요 활동(바로 저장)", "self-text/1": "내 글(승인 대기)", "self-summary/1": "AI 요약(승인 대기)"}
+TRANSFORM_LABELS = {"board-likes/1": "좋아요 활동(바로 저장)", "self-text/1": "내 글(승인 대기)", "self-summary/1": "AI 요약(승인 대기)",
+                    "session-wrap/1": "세션 정리(승인 대기)"}
 _ADMIN_CSS = """body{font-family:system-ui,sans-serif;margin:0;color:#2B2824;background:#FBF8F4;line-height:1.5;font-size:14px}
 .wrap{max-width:1180px;margin:0 auto;padding:24px 16px 48px}
 h1{font-size:20px;margin:0 0 4px}h2{font-size:16px;margin:28px 0 8px}
@@ -737,7 +738,8 @@ CORE_ONLY = {"users": frozenset({"display_name", "status", "nav_accepted_at", "c
 CORE_LABEL = {"questions": "질문", "records": "기록", "candidates": "후보", "tickets": "문의", "items": "항목"}   # 코어 이름 정본(service_schema 표시명이 이것과 같다 — 시험)
 # 표준 구조에 보이지 않는 열 — 운영자 전용(문의 내부 메모 admin_note · 개인정보 의심 표식 hint). 소유자 열 user_id 는 모든 오브젝트에서 뺀다.
 CORE_HIDDEN = {"tickets": frozenset({"admin_note", "hint"}),
-               "activities": frozenset({"stream_id"})}   # board 이전: 입력원(장치·이전)은 오브젝트가 아니다 — 열과 그 FK 관계를 함께 뺀다
+               "activities": frozenset({"stream_id"}),
+               "records": frozenset({"decision_owner"})}   # 세션 정리 A안(2026-11-04): 「내 결정」 표시는 화면 어디에도 보이지 않는다(원작자)   # board 이전: 입력원(장치·이전)은 오브젝트가 아니다 — 열과 그 FK 관계를 함께 뺀다
 # 부모 쪽에 보일 자식(이력) 관계 — 자식 테이블의 열 단위 REFERENCES 를 schema.sql 에서 읽는다.
 CORE_CHILD_LINKS = {"tickets": ("ticket_history",)}
 _REF_RE = re.compile(r"^([a-z_][a-z0-9_]*)\s+\w+.*\bREFERENCES\s+(\w+)\s*\([^)]*\)(.*)$", re.I)
@@ -2147,7 +2149,7 @@ class Web:
 
     # ── board 이전 (2026-10-20, 구현계획 §2-11 D7 · r3 T2·T3) — 연결 장치(#_devices) · 승인 대기(#_inbox) · 「나」 집계·활동/사람/출처/축 상세 ──
     # 쓰기 = _core_write(세션 401 → Origin 403 → JSON 모양 400 → db.write_gate(표시 이름 관문 · 전역 크기) → imports). 페이로드 상한은 main.BodyLimit(/api/*).
-    # 읽기 = 세션 → 서버 함수(본인 uid 만) → no-store. 승인·제외는 웹에서만(MCP 는 읽기만). 대상 사용자 = 세션 uid 뿐.
+    # 읽기 = 세션 → 서버 함수(본인 uid 만) → no-store. 승인·제외는 이 웹 경로와 MCP inbox_decide(facade, 같은 imports 함수). 대상 사용자 = 세션 uid 뿐.
     # 장치 토큰 원문은 device_connect·device_reissue 응답에서 한 번만(no-store) — 화면도 그 자리에서만 그리고 저장하지 않는다.
     async def _core_read(self, request, call):
         """call(uid) → JSON(no-store). CrmError = NOT-FOUND 404 · NAME-REQUIRED 403 · 그 밖 400(_crm_err)."""

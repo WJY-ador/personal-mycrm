@@ -50,8 +50,10 @@
       "examples": [{"record_id": "r_example01", "expected_revision": 1, "old": "입력 담당부터", "new": "입력 담당을 먼저"}]},
     "record_title_set": {"family": "record", "tier": "write", "direct": false, "keywords": ["제목", "제목 바꾸기", "이름 바꾸기", "제목 고치기"],
       "examples": [{"record_id": "r_example01", "title": "도입 회의 메모", "expected_revision": 1}]},
-    "record_provenance_set": {"family": "record", "tier": "decide", "keywords": ["출처 정정", "작성자", "남이 쓴 글", "가공", "판정 고치기"],
-      "examples": [{"record_id": "r_example01", "author_kind": "self", "text_process": "verbatim", "reason": "제가 직접 쓴 글이에요"}]},
+    "record_provenance_set": {"family": "record", "tier": "decide", "keywords": ["출처 정정", "작성자", "남이 쓴 글", "가공", "판정 고치기", "내 결정"],
+      "examples": [{"record_id": "r_example01", "author_kind": "self", "text_process": "verbatim", "reason": "제가 직접 쓴 글이에요"},
+                   {"record_id": "r_example02", "author_kind": "self", "text_process": "structured", "decision_owner": "self",
+                    "reason": "이 정리에 나온 결정은 제가 했어요"}]},
 
     "candidates_propose": {"family": "candidate", "tier": "write", "keywords": ["후보", "후보 뽑기", "판단 후보", "정리"],
       "examples": [{"record_id": "r_example01", "question_id": "", "candidates": [{"text": "입력 담당부터 정한다", "quote": "입력 담당부터 정했다"}]}]},
@@ -117,6 +119,8 @@
       "examples": [{"state": "pending"}]},
     "inbox_get": {"family": "inbox", "tier": "read", "keywords": ["승인 대기", "받은 글"],
       "examples": [{"import_id": "ie_example01"}]},
+    "inbox_decide": {"family": "inbox", "tier": "decide", "direct": false, "keywords": ["승인", "제외", "승인 대기", "저장 승인", "받은 글 저장", "빼줘"],
+      "examples": [{"import_id": "ie_example01", "action": "approve"}]},
 
     "trash_list": {"family": "trash", "tier": "read", "keywords": ["휴지통", "지운 것", "삭제 목록"],
       "examples": [{"kind": ""}]},

@@ -208,6 +208,44 @@
    "expect": "valid"
   },
   {
+   "name": "session_wrap_valid",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "self_text",
+    "execution": "unattended",
+    "transform_version": "session-wrap/1",
+    "policy_revision": 1,
+    "title": "합성 세션 정리 제목",
+    "body": "합성 세션 정리 문단입니다. 내가 범위를 줄이기로 정했다.\n정본 후보: 합성 한 줄 — 새 결정",
+    "source_date": "2026-10-19"
+   },
+   "expect": "valid"
+  },
+  {
+   "name": "session_wrap_masked_path_valid",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "self_text",
+    "execution": "unattended",
+    "transform_version": "session-wrap/1",
+    "policy_revision": 1,
+    "title": "합성 세션 정리 ‹경로› 제목",
+    "body": "합성 정리 문단입니다. ‹경로› 에 남긴 계획을 보고 범위를 줄이기로 정했다.\n비교 표는 (‹경로›) 에 있다.",
+    "source_date": "2026-10-19"
+   },
+   "expect": "valid"
+  },
+  {
    "name": "self_summary_valid",
    "request": {
     "contract": "canon-inbox/1",
@@ -734,6 +772,38 @@
     "kind": "activity",
     "execution": "unattended",
     "transform_version": "self-text/1",
+    "policy_revision": 1,
+    "action": "like",
+    "state": "active",
+    "occurred_on": null,
+    "observed_on": "2026-10-20",
+    "provider": "sns",
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "people": [
+     {
+      "hmac": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+      "role": "author"
+     }
+    ],
+    "axes": []
+   },
+   "expect": {
+    "field": "transform_version",
+    "rule": "kind_mismatch"
+   }
+  },
+  {
+   "name": "session_wrap_kind_mismatch",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "activity",
+    "execution": "unattended",
+    "transform_version": "session-wrap/1",
     "policy_revision": 1,
     "action": "like",
     "state": "active",
