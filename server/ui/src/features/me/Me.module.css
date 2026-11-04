@@ -48,8 +48,8 @@
 .list :global(.htools) .count { font-family: var(--mono); font-size: .74rem; color: var(--muted); }
 .cd { font-family: var(--mono); font-size: .76rem; font-weight: 600; color: var(--muted); }
 .list .axdot { margin-right: .35rem; vertical-align: .05em; }
-.list :global(ul.hrows) li.grph { display: flex; gap: .4rem; padding: .7rem .55rem .25rem; font-size: .74rem; font-weight: 600; color: var(--muted); }
-.list :global(ul.hrows) li.grph + li { border-top: none; }
+.tools { display: inline-flex; align-items: center; gap: .5rem; min-width: 0; }
+.tools select { min-width: 8rem; }   /* 좁은 화면 16px 글자에서 끝 글자가 화살표에 잘리지 않게 */
 .groups { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: .8rem; }
 .gh { font-size: .82rem; margin: 0 0 .5rem; }
 .grp + .grp { margin-top: .8rem; }
