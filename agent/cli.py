@@ -1,5 +1,5 @@
 """CLI — connect · validate · run-once · status · schedule install/remove · serve(원문 뷰어·--jobs 작업 실행) · disconnect
-· migrate(실자료 이관 업로더).
+· migrate(실자료 이관 업로더) · chat(웹 「대화」 PC 연결 — PR 1 은 --fake 만).
 
 사용: python3 -m agent [--home 경로] <명령> ...
 출력엔 토큰·HMAC 키·원문·실명·URL 을 쓰지 않는다.
@@ -24,7 +24,7 @@ class Ctx:
     def __init__(self, home, *, ks_factory=None, getpass_fn=None, uploader_factory=None,
                  schedule_runner=None, launch_agents_dir=None, exec_runner=None, out=None, stdin=None,
                  jobs_adapter_factory=None, jobs_client_factory=None, jobs_serve_kw=None,
-                 browser_open=None, login_timeout=None):
+                 browser_open=None, login_timeout=None, chat_kw=None):
         self.paths = _config.Paths(home)
         self.ks_factory = ks_factory or keystore.for_platform
         self.getpass_fn = getpass_fn or getpass.getpass
@@ -37,6 +37,7 @@ class Ctx:
         self.jobs_serve_kw = dict(jobs_serve_kw or {})      # 시험용 serve_jobs 인자(유예 등)
         self.browser_open = browser_open                    # 시스템 브라우저 열기 — 시험은 가짜
         self.login_timeout = login_timeout                  # 브라우저 로그인 기다림(초) — 기본 uploader.LOGIN_TIMEOUT
+        self.chat_kw = dict(chat_kw or {})                  # 시험용 chat.ChatAgent 인자(connect·stopping·provider 등)
         self.out = out or sys.stdout
         self.stdin = stdin or sys.stdin
 
@@ -92,6 +93,9 @@ def _parser() -> argparse.ArgumentParser:
     d.add_argument("--local-only", action="store_true", help="서버 폐기를 건너뛰고 로컬만 지운다")
     d.add_argument("--forget-hmac-key", action="store_true",
                    help="이 키 공간의 HMAC 키도 지운다(같은 사람 연결이 끊긴다)")
+
+    ch = sub.add_parser("chat", help="웹 「대화」 — 서버에 WebSocket 으로 붙어 받은 턴을 이 PC 에서 실행(상주, 종료 = Ctrl+C)")
+    ch.add_argument("--fake", action="store_true", help="모델 대신 정해진 가짜 대본으로 답한다(시험·측정용)")
 
     m = sub.add_parser("migrate", help="실자료 이관(board-migration/2) — login·logout·stage·status·cancel·receipt")
     ms = m.add_subparsers(dest="mcmd")
@@ -763,6 +767,66 @@ def cmd_serve_jobs(ctx: Ctx, a) -> int:
     return EXIT_ERR
 
 
+def cmd_chat(ctx: Ctx, a) -> int:
+    """웹 「대화」 상주. 장치 토큰(connect 로 넣은 것) → WebSocket → 턴 실행. 출력 = 코드만 담은 JSON 줄(본문·토큰·주소 없음).
+    PR 1 은 --fake(FakeProvider)만 — 실 CLI(ClaudeProvider)는 PR 2. exit: 신호로 멈춤 0 · 설정·키 저장소 1 · 쓰는 법 2 · 인증 거절 3."""
+    import signal
+    import threading
+    from . import chat
+
+    def log(rec: dict) -> None:
+        keep = {k: v for k, v in rec.items() if k in ("event", "ok", "error", "status", "why", "end", "stopped")
+                and (v is None or isinstance(v, (bool, int)) or (isinstance(v, str) and re.match(r"^[A-Za-z0-9_.-]{1,40}$", v)))}
+        ctx.say(json.dumps(keep, sort_keys=True))
+        flush = getattr(ctx.out, "flush", None)
+        if flush:
+            flush()
+
+    if not a.fake and "provider" not in ctx.chat_kw:
+        ctx.say("실 CLI 공급자는 아직 없어요 — 지금은 --fake 로만 켤 수 있어요.")
+        return EXIT_USAGE
+    try:
+        cfg = _config.load(ctx.paths)
+    except _config.ConfigError:
+        log({"event": "start", "stopped": "config"})
+        return EXIT_ERR
+    sid, server = cfg.get("source_instance_id"), cfg.get("server_url")
+    if not sid or not server:
+        log({"event": "start", "stopped": "not-connected"})
+        return EXIT_ERR
+    try:
+        token = ctx.keystore(cfg).get(_config.token_account(sid))
+    except keystore.KeyStoreError:
+        log({"event": "start", "stopped": "keystore"})
+        return EXIT_ERR
+    if not token:
+        log({"event": "start", "stopped": "auth"})
+        return EXIT_HALT
+    kw = dict(ctx.chat_kw)
+    provider = kw.pop("provider", None) or chat.FakeProvider()
+    stopping = kw.pop("stopping", None) or threading.Event()
+    old = {}
+    if threading.current_thread() is threading.main_thread():
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            old[sig] = signal.signal(sig, lambda *_: stopping.set())
+    try:
+        ks = ctx.keystore(cfg)
+
+        def token_now():   # 매번 다시 읽는다 — run-once 의 rotate·웹 재발급 뒤에도 상주가 새 토큰으로 이어 간다
+            try:
+                return ks.get(_config.token_account(sid))
+            except keystore.KeyStoreError:
+                return None
+
+        agent = chat.ChatAgent(chat.ws_url(server), token_now, provider, agent_version=AGENT_VERSION, stopping=stopping, log=log, **kw)
+        why = agent.run()
+    finally:
+        for sig, h in old.items():
+            signal.signal(sig, h)
+    log({"event": "stop", "stopped": why})
+    return EXIT_HALT if why == "auth" else EXIT_OK
+
+
 def cmd_disconnect(ctx: Ctx, a) -> int:
     """서버 토큰 폐기(POST /api/imports/device/revoke)와 로컬 자격 증명 제거를 나눠 결과를 보인다.
     서버 폐기가 네트워크·서버 오류로 실패하면 로컬 토큰을 남기고 멈춘다(다시 시도 가능). --local-only 는 서버를 건너뛴다."""
@@ -828,7 +892,7 @@ def cmd_migrate(ctx: Ctx, a) -> int:
 
 COMMANDS = {"connect": cmd_connect, "validate": cmd_validate, "run-once": cmd_run_once, "status": cmd_status,
             "schedule": cmd_schedule, "serve": cmd_serve, "disconnect": cmd_disconnect,
-            "configure-cli": cmd_configure_cli, "migrate": cmd_migrate}
+            "configure-cli": cmd_configure_cli, "migrate": cmd_migrate, "chat": cmd_chat}
 
 
 def _utf8_stdio():

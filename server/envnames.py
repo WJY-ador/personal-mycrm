@@ -22,7 +22,8 @@ SWITCHES = ("IMPORTS_ENABLED",                       # /api/imports 수신 전�
             "BOARD_MIGRATION_ENABLED",               # board 이전 CLI 적용
             "CONVERSE_ENABLED", "ROUTINE_ENABLED",   # PR ②-a 작업 전달 — 대화(+원문 던지기)·루틴 작업. 읽기 자료(READING)는 ②-d 에서
             "TRASH_ENABLED",                         # 휴지통 PR-1 — 새 [삭제]·휴지통 화면·MCP 휴지통 쓰기. 꺼져도 일반 이용 차단·원천 차단·물리 정리는 돈다
-            "MIGRATION_MCP_ENABLED")                 # 이관 MCP(가안 X) — 대화 이관 op 8개(읽기 포함). 기존 BOARD_MIGRATION_ENABLED·allowlist 위에 겹친다
+            "MIGRATION_MCP_ENABLED",                 # 이관 MCP(가안 X) — 대화 이관 op 8개(읽기 포함). 기존 BOARD_MIGRATION_ENABLED·allowlist 위에 겹친다
+            "WEBCHAT_ENABLED")                       # 웹 「대화」(구독 AI 채팅, 2026-11-04) — 꺼짐 = /api/chat/*·장치 WS·SSE 전부 503 SWITCH-OFF, 화면 숨김
 
 
 def switch_on(name: str) -> bool:

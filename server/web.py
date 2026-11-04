@@ -39,7 +39,7 @@ import service_schema
 import stack_service
 import structure_svg
 import token_grants
-from envnames import env
+from envnames import env, switch_on
 
 SESSION_COOKIE = "crm_session"
 FLOW_COOKIE = "crm_login"
@@ -1787,7 +1787,8 @@ class Web:
         st["user"] = {"email": me["email"], "struct_names": flags["struct_names"], "desk_hidden": flags["desk_hidden"],   # /app 계정 메뉴용 — MCP state_get 에는 넣지 않는다
                       "display_name": home["display_name"], "nav": home["nav"]}   # PR B: 표시 이름(null = 이름 입력 화면) · nav = 항상 "new"(옛 탐색 삭제, 화면은 읽지 않는다)
         st["switches"] = {"converse": db.job_switch_on("converse"),   # PR ②-b — 「대화」 버튼 표시(켜짐일 때만). /app 전용, MCP state_get 에는 넣지 않는다
-                          "trash": db.trash_on()}                     # 휴지통 PR-1 — 새 [삭제]·Setup 휴지통 표시(켜짐일 때만). 꺼짐 = 기존 버튼 그대로
+                          "trash": db.trash_on(),                     # 휴지통 PR-1 — 새 [삭제]·Setup 휴지통 표시(켜짐일 때만). 꺼짐 = 기존 버튼 그대로
+                          "webchat": switch_on("WEBCHAT_ENABLED")}     # 웹 「대화」(2026-11-04) — 켜짐일 때만 새 채팅 화면을 띄운다
         st["stack_session"] = await run_in_threadpool(db.stack_session_current, uid)   # ②-b 새로 고침 복원·두 탭 공유 — {id, expires_at} | null
         st["devices_status"] = devst   # ③-0.2 장치 상태 {state: none|recent|offline, last_seen_at, threshold_seconds} — 본인만, /app 전용(활동 부분과 독립)
         st["me"] = {"counts": home["counts"]}   # PR B 「나」 홈 개수(판단·기준·결정·사람·출처·요약/반응) — 본인만, /app 전용

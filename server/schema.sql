@@ -971,3 +971,58 @@ CREATE TABLE IF NOT EXISTS token_grants (
 );
 CREATE INDEX IF NOT EXISTS ix_token_grants_inst ON token_grants (user_id, installation_id, state);
 CREATE INDEX IF NOT EXISTS ix_token_grants_created ON token_grants (user_id, created_at);
+
+-- 웹 「대화」(2026-11-04 PR 1, notes 구현계획 §2) — 내 PC 의 구독 CLI 가 답하고 서버는 중계·보관만 한다(모델 호출 없음).
+-- 세션 = 사용자·장치 하나(사용자당 active 1). 턴 = 사용자 입력 하나(세션당 running 1). 이벤트 = PC 가 낸 출력 조각(턴 안 seq 1부터).
+-- 메시지 = 사용자 입력·턴 끝에 합친 답. 보관 = created_at + 30일(webchat.purge — main.purge_once 회차, 활동으로 연장 없음).
+-- 계정 삭제 = chat_sessions(db.DELETE_TABLES) → 자식 표는 cascade. device_id 는 import_streams.id — FK 없음(jobs.device_id 와 같은 이유).
+CREATE TABLE IF NOT EXISTS chat_sessions (
+  id               text PRIMARY KEY CHECK (id ~ '^cs_[0-9a-f]{24}$'),
+  user_id          text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  device_id        text NOT NULL,
+  provider         text CHECK (provider IS NULL OR char_length(provider) BETWEEN 1 AND 40),   -- 첫 턴을 보낼 때 PC hello 의 providers[0]
+  cli_session_ref  text CHECK (cli_session_ref IS NULL OR char_length(cli_session_ref) BETWEEN 1 AND 200),   -- PC 가 보낸 CLI 세션 ID(재개용)
+  status           text NOT NULL DEFAULT 'active' CHECK (status IN ('active','closed')),
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  last_at          timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_chat_sessions_active ON chat_sessions (user_id) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS ix_chat_sessions_user ON chat_sessions (user_id, created_at);
+
+CREATE TABLE IF NOT EXISTS chat_turns (
+  id               text PRIMARY KEY CHECK (id ~ '^ct_[0-9a-f]{24}$'),
+  session_id       text NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  client_turn_id   text NOT NULL CHECK (char_length(client_turn_id) BETWEEN 1 AND 64),
+  status           text NOT NULL DEFAULT 'running' CHECK (status IN ('running','done','failed','stopped')),
+  n_events         integer NOT NULL DEFAULT 0 CHECK (n_events >= 0),   -- 저장한 이벤트 수(턴 한도·재생 상한 — 매번 세지 않는다)
+  n_bytes          bigint NOT NULL DEFAULT 0 CHECK (n_bytes >= 0),     -- 이벤트 data 의 압축 JSON UTF-8 바이트 합(webchat._jbytes 기준)
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  ended_at         timestamptz,
+  UNIQUE (session_id, client_turn_id),
+  CHECK ((status = 'running') = (ended_at IS NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_chat_turns_running ON chat_turns (session_id) WHERE status = 'running';
+CREATE INDEX IF NOT EXISTS ix_chat_turns_session ON chat_turns (session_id, created_at, id);
+CREATE INDEX IF NOT EXISTS ix_chat_turns_created ON chat_turns (created_at);
+
+CREATE TABLE IF NOT EXISTS chat_events (
+  turn_id          text NOT NULL REFERENCES chat_turns(id) ON DELETE CASCADE,
+  seq              integer NOT NULL CHECK (seq > 0),
+  kind             text NOT NULL CHECK (kind IN ('delta','tool_call','tool_result','done','error')),
+  data             jsonb NOT NULL CHECK (jsonb_typeof(data) = 'object'),
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (turn_id, seq)
+);
+CREATE INDEX IF NOT EXISTS ix_chat_events_created ON chat_events (created_at);
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id               text PRIMARY KEY CHECK (id ~ '^cm_[0-9a-f]{24}$'),
+  session_id       text NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  turn_id          text NOT NULL REFERENCES chat_turns(id) ON DELETE CASCADE,
+  role             text NOT NULL CHECK (role IN ('user','assistant')),
+  body             text NOT NULL,
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (turn_id, role)
+);
+CREATE INDEX IF NOT EXISTS ix_chat_messages_session ON chat_messages (session_id, created_at);
+CREATE INDEX IF NOT EXISTS ix_chat_messages_created ON chat_messages (created_at);
