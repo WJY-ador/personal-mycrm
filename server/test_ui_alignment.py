@@ -85,9 +85,9 @@ class UIAlignmentTest(unittest.TestCase):
 
     def test_legend_and_list_use_two_categories(self):
         self.assertEqual(structure_svg.legend_origins(), ("standard", "template"))
-        # 자료 종류 색인은 React(features/objects, R4-2) — 묶음 이름 표준 🔒 · 카드 칩 = 서버 origin_labels(shared/origin.tsx, 손 사본 없음 R5b-1)
+        # 자료 종류 색인은 React(features/objects, R4-2) — 묶음 이름 표준 + 자물쇠 아이콘 · 카드 칩 = 서버 origin_labels(shared/origin.tsx, 손 사본 없음 R5b-1)
         index = (UI / "features" / "objects" / "Index.tsx").read_text(encoding="utf-8")
-        self.assertIn('title="표준 🔒"', index)
+        self.assertIn('<Lock label="표준 정의 보호" />', index)
         self.assertNotIn("기본 🔒", index)
         self.assertIn("originChip(S, c.oc)", index)
 
