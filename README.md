@@ -1,63 +1,47 @@
-# My CRM (가칭) · v0.1.0
+# My CRM
 
-내 기록을 내 질문·내 화면으로 다시 쓰게 하는 로컬 키트. Windows·macOS 목표, Python 표준 라이브러리만 씁니다.
-**받았으면 [START.md](START.md) 부터.**
+**내 글에서 판단을 뽑아 원문과 대조하고, 내가 남긴 판단만 쌓는 「내 판단 대시보드」.**
 
-> 상태: 2026-10-18 구조 전환 중 — 로컬 설치형에서 **호스팅 + MCP**(ChatGPT·Claude 구독으로 연결, 데이터는 서버)로 옮깁니다. 아래는 전환 전 로컬 판 설명입니다. 결정 요지는 [DECISIONS-PENDING.md](DECISIONS-PENDING.md).
-> 가격·라이선스·지원 정책은 미정입니다 — [DECISIONS-PENDING.md](DECISIONS-PENDING.md).
+[웹](https://personal-mycrm.onrender.com/) &nbsp;·&nbsp; ChatGPT·Claude 구독으로 연결 &nbsp;·&nbsp; 서버는 모델을 부르지 않음
 
-## 무엇을 하나
+<p align="center">
+  <img src="docs/screenshots/start.jpg" alt="시작 화면: 흩어진 나를, 한곳에" />
+</p>
 
-```
-내가 고른 기록 1편 ──record──▶ 일지(원문 보존)
-                    ──digest──▶ 판단 후보 (대기 · AI 제안/내 메모 구분, 근거 인용 검사)
-                    ──confirm─▶ 질문별 한 장 (내가 확인한 판단만 "내 판단")
-                    ──serve───▶ 내 말로 이름 붙인 탭에서 다시 보기 (읽기 전용)
-```
+대화에서 겪은 일을 말하면 AI 가 그 말을 그대로 「내 글」로 남깁니다. AI 는 글에서 판단이 될 만한 문장을 「검토할 판단」으로 뽑고, 근거 구절을 원문에서 글자 그대로 가져옵니다. 남길지는 웹에서 원문과 나란히 놓고 내가 정합니다. 남긴 문장만 「확정한 판단」이 되고, 판단은 질문 밑에 쌓입니다.
 
-깨지면 `doctor` → 다음 조치 1개 → `restore` → 같은 화면 재조회.
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/review.jpg" alt="원문과 대조하기: 검토할 판단과 근거 구절 형광펜" /></td>
+    <td width="50%"><img src="docs/screenshots/question.jpg" alt="질문 한 장: 확정한 판단과 아직 안 정한 문장" /></td>
+  </tr>
+  <tr>
+    <td><b>원문과 대조하기</b><br/><sub>검토할 판단과 근거 원문을 나란히 놓고 남길지 정합니다</sub></td>
+    <td><b>질문 한 장</b><br/><sub>확정한 판단 · 아직 안 정한 문장 · 연결된 글</sub></td>
+  </tr>
+</table>
 
-대시보드는 왼쪽에 질문(기록형 탭이면 기록) 목록, 오른쪽에 고른 질문의 내 판단을 두는 2단 화면입니다. 아직 안 정한 문장은 「원문과 대조하기」에서 근거 원문과 나란히 한 장씩 봅니다. 이 버전의 대조 화면은 보기만 하고, 남기기·빼기는 `candidate` 명령으로 합니다.
+<sub>스크린샷은 모두 가짜 샘플 데이터입니다.</sub>
 
-## 구조 — 제품과 내 데이터는 따로
+## 설치
 
-| 제품 폴더 (업데이트 때 바뀜) | 데이터 폴더 (내 것, 제품 밖) |
-|---|---|
-| `crm.py` 명령 | `profile.json` 확인/추정/미입력/꺼 둠 |
-| `crmkit/` 코어 | `questions.json`·`sources.json`·`tabs.json` |
-| `web/` 대시보드 화면 | `journal/*.md` 원문 기록 |
-| `templates/` 양식 | `candidates.json` 판단 후보 |
-| `guides/` 가이드 8개 | `sheets/*.md` 질문별 한 장 |
-| `.claude/skills/` 스킬 4개 | `issue-log.md` |
-| `sample-data/` 가짜 샘플 | `.crm/` 백업·실행 상태 (정본 아님) |
-| `agent/` 로컬 에이전트(호스팅 판 연결 장치, 선택) | 에이전트 홈 — 원문·대응표·전송 대기(제품 밖, [agent/README.md](agent/README.md)) |
-| `manifest.json` 파일 목록·지원표 | |
+| 어디서 | 주소 |
+| --- | --- |
+| 데스크톱 앱 | <https://personal-mycrm.onrender.com/download> |
+| MCP 커넥터 | `https://personal-mycrm.onrender.com/mcp` |
 
-## 경계 (코드로 지키는 것)
+Claude Code 는 `claude mcp add --transport http my-crm https://personal-mycrm.onrender.com/mcp` 뒤 `/mcp` 에서 로그인합니다. 처음 로그인하면 계정이 생기고, 같은 이메일이면 대화와 웹이 한 계정입니다. 연결과 첫 하루는 [09. 호스팅 판](guides/09-hosted-start.md), 화면의 말 뜻은 [10. 말 뜻](guides/10-words.md).
 
-- 쓰기는 `crm.py` 명령만. 대시보드는 GET 만 받고, `127.0.0.1` 에만 붙고, 파일을 쓰지 않고, 모델을 부르지 않습니다.
-- 모든 쓰기: 잠금(`O_EXCL` 파일) → 임시 파일 → 스키마 검사 → `os.replace`. 검사 실패 시 기존 파일 유지.
-- 모델 호출은 `digest` 한 곳, 구독 `claude -p` 로만. API 키 입력 칸 없음. 보내는 것은 기록 1편 + 질문 문장.
-- AI 후보의 근거 인용은 원문에 글자 그대로 있어야 저장. 같은 후보 중복 생성 안 함.
-- 파일 읽기는 `consent --read` 로 동의한 경로 안만. 모델 전송 동의는 따로.
-- 표시 이름(탭 label)과 내부 ID(`t-001`) 분리 — 이름을 바꿔도 링크 유지.
-- `restore` 는 지금 상태를 먼저 백업하고, 백업 이후 새 기록은 지우지 않습니다.
+## 원칙
 
-## 시험
+- **글은 말한 그대로.** 내 글은 다듬거나 요약하지 않고 저장합니다. 내가 고치라고 한 구절만 바뀌고, 고친 흔적이 남습니다.
+- **근거는 원문 글자 그대로.** 검토할 판단의 근거 구절이 원문에 그대로 없으면 서버가 거절합니다. 남이 한 말은 판단으로 뽑지 않습니다.
+- **확정은 나만.** AI 는 뽑기만 합니다. 남길지는 내가 원문과 대조해 정하고, 남긴 판단 문장은 덮어쓰지 않습니다.
+- **API 키 없음.** 서버는 모델을 부르지 않습니다. 모델 비용은 내가 연결한 ChatGPT·Claude 구독에서 나갑니다.
+- **사람은 별칭 하나.** 연락처·소속·그 사람의 말은 받지 않습니다. 표시 이름은 다른 사람과 운영자 화면에 보이지 않습니다.
 
-```bash
-python3 tests/test_flow.py                   # 흐름 시험 (모델은 가짜 CLI 로)
-python3 crm.py check                        # 패키지 검사: manifest·원작자 값·문서 속 명령
-python3 -m unittest discover -s agent/tests  # 로컬 에이전트 시험 (Keychain·launchd 는 모의 실행기)
-```
+처리하는 정보와 보관 기간은 [11. 개인정보 처리방침](guides/11-privacy.md).
 
-## 로컬 에이전트 (호스팅 판, 선택)
+## 라이선스
 
-`agent/` 는 호스팅 판 계정에 내 PC 를 「연결 장치」로 붙이는 프로그램입니다. 수집기 산출물(첫 입력원은 좋아요 `likes.jsonl`)을 활동으로 바꿔 보내고, 다른 사람의 원문은 PC 에 둡니다. macOS 는 1시간 예약(launchd)과 Keychain 을 씁니다. 표준 라이브러리만 씁니다. 쓰는 법은 [agent/README.md](agent/README.md).
-
-루틴(예약 실행)의 `claude -p` 요약·정리는 사람 없이 돕니다. 조건: ① 루틴 승인을 받은 범위만 실행 ② 판단 확정은 사람이 확인 1번으로만 — 무인 확정 없음 ③ 무인으로 쓴 값은 「루틴이 썼음」 출처 표시 · [삭제]로 되돌릴 수 있음 · 판단 근거로 인용 불가 ④ 내용 제한(타인 식별 정보 제거)은 생성 단계부터 ⑤ PC 실행 시도 10회/일 ⑥ 스위치 기본 꺼짐. 2026-10-22 결정.
-(출시 전 확인: 구독 CLI 무인 실행 약관)
-
-## 이 버전에 없는 것
-
-로컬 판의 자동 수집·계정 연결(로컬 에이전트는 호스팅 판 전용), 로컬 판 예약 실행·알림, 대시보드 안 채팅·쓰기, 결제, 클라우드·팀 기능.
+미정. 정해지기 전까지 [DECISIONS-PENDING.md](DECISIONS-PENDING.md) 「판매·정책」에 둡니다.
