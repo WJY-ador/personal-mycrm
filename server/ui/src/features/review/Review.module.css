@@ -28,7 +28,9 @@
 .nav { display: flex; gap: .4rem; justify-content: center; margin: 1rem 0 .4rem; flex-wrap: wrap; }
 .nav :global(.hint) { flex-basis: 100%; text-align: center; margin: 0; }
 .done { text-align: center; padding: 2.4rem 1rem; }
+.scopeDone { font-weight: 600; }
 .row { display: flex; gap: .5rem; justify-content: center; flex-wrap: wrap; margin-top: .9rem; }
+.row > .link { align-self: center; display: inline-flex; align-items: center; min-height: 44px; padding: .5rem .3rem; }
 @media (min-width: 1000px) {
   .review { display: grid; grid-template-columns: minmax(0, 1fr) 420px; column-gap: 1rem;
     grid-template-areas: "head head" "card src" "act src" "nav src"; grid-template-rows: auto auto auto 1fr; }

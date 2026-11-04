@@ -37,6 +37,38 @@ test("요약 = 레이아웃 regions.summary 순서 · 레지스트리 밖 블록
   expect(posts()).toEqual([]);
 });
 
+test("기록을 성공적으로 모두 읽어 0건일 때만 첫 기록 안내와 실제 도움말 링크를 보인다", async () => {
+  const empty = { ...meState(), journal: [], journal_next_before: null };
+  let el = await showMe("#_me/summary", empty);
+  const intro = el.querySelector("#first-record-intro");
+  expect(intro).toBeTruthy();
+  expect(intro!.textContent).toContain("ChatGPT·Claude");
+  expect(intro!.querySelector("p")!.textContent).toContain("ChatGPT·Claude에 MyCRM을 연결한 대화");
+  expect(intro!.querySelector("p")!.textContent).not.toContain("PC 연결");
+  expect(intro!.querySelectorAll("p")[1].textContent).toContain("웹의 「대화」는 본인 PC 연결");
+  const help = intro!.querySelector("a");
+  expect(help?.tagName).toBe("A");
+  expect(help?.getAttribute("href")).toBe("/help");
+  expect(help?.hasAttribute("target")).toBe(false);
+  expect(posts()).toEqual([]);
+
+  hideMe();
+  el = await showMe("#_me/summary", meState());
+  expect(el.querySelector("#first-record-intro")).toBeNull();
+  hideMe();
+  el = await showMe("#_me/summary", { ...empty, read: { journal: { ok: false, error: { code: "EXC", msg: "" } } } });
+  expect(el.querySelector("#first-record-intro")).toBeNull();
+  hideMe();
+  el = await showMe("#_me/summary", { ...empty, journal_next_before: "opaque-cursor" });
+  expect(el.querySelector("#first-record-intro")).toBeNull();
+  hideMe();
+  el = await showMe("#_me/summary", { ...empty, journal: undefined });
+  expect(el.querySelector("#first-record-intro")).toBeNull();
+  hideMe();
+  el = await showMe("#_me/summary", { ...empty, journal_next_before: undefined });
+  expect(el.querySelector("#first-record-intro")).toBeNull();
+});
+
 test("레이아웃 못 받음 = 기본 배치(server/layout_registry.json default) · 통계 못 받음 = 새로 고침 안내", async () => {
   LAYOUT = null; STATS_R = null;
   const el = await showMe("#_me/summary", meState());

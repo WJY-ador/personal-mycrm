@@ -1,4 +1,5 @@
 // 구조 카드(옛 itemCard·assetCard·selectChips·decisionChip) — 항목 카드(누르면 서랍) · 판단 문장 카드(아직 안 정함 = 대조, 정한 문장 = 근거 원문).
+import { useRef } from "react";
 import { AiWording } from "../../shared/CandChips";
 import { Caution } from "../../shared/Glyph";
 import { qNo, reviewHref } from "../../shared/clip";
@@ -7,6 +8,24 @@ import { press } from "../../shared/press";
 import { rich } from "../../shared/rich";
 import type { AppState, Cand, Def, Item } from "../../shared/state";
 import { dataSummary, eventLabel, incomingCounts, linkCount, promoOf, STCHIP, TAB, viewOf } from "./model";
+import css from "./Cards.module.css";
+
+let dialogOpener: HTMLElement | null = null;
+function restoreDialogFocus(event: Event) {
+  if (!(event.target instanceof Element) || !event.target.matches("dialog.recdlg")) return;
+  const opener = dialogOpener;
+  dialogOpener = null;
+  document.removeEventListener("close", restoreDialogFocus, true);
+  const fallback = document.querySelector<HTMLElement>('nav[aria-label="결정 고르기"] a.on')
+    || document.querySelector<HTMLElement>('nav[aria-label="구조 고르기"] a.on');
+  (opener?.isConnected ? opener : fallback)?.focus();
+}
+
+function rememberDialogOpener(element: HTMLElement) {
+  dialogOpener = element;
+  element.focus();
+  document.addEventListener("close", restoreDialogFocus, true);
+}
 
 
 export function SelectChips({ it, d }: { it: Item; d: Def | undefined }) {
@@ -38,18 +57,29 @@ export function ItemCard({ S, it, d, on }: { S: AppState; it: Item; d: Def; on: 
 }
 
 export function AssetCard({ S, c, open }: { S: AppState; c: Cand; open: (id: string, quote?: string) => void }) {
+  const recordAction = useRef<HTMLButtonElement>(null);
   const st = STCHIP[c.status] || STCHIP.pending, r = (S.journal || []).find(j => j.id === c.record_id);
   const title = !r ? "찾을 수 없는 글" : r.broken ? "읽지 못한 글" : r.title;
-  // 아직 안 정한 문장은 대조 화면으로, 정한 문장은 근거 원문으로
-  const go = c.status === "pending" ? () => { location.hash = reviewHref(TAB, c); } : () => open(c.record_id, c.quote);
+  // 카드 본문 클릭은 유지하고, 목적지는 별도 조작의 이름으로도 알린다.
+  const pending = c.status === "pending";
+  const showRecord = (element: HTMLElement) => { rememberDialogOpener(element); open(c.record_id, c.quote); };
+  const go = pending ? () => { location.hash = reviewHref(TAB, c); } : () => {
+    if (recordAction.current) showRecord(recordAction.current);
+    else open(c.record_id, c.quote);
+  };
   return (
-    <article className="asset-card" {...press(go)}>
+    <article className="asset-card" onClick={go}>
       <div className="top"><span className="chip">{qNo(S, c.question_id)}</span><span className={`chip ${st[0]}`}>{st[1]}</span>
         <span className={`chip${c.origin === "ai" ? " o-ai" : ""}`}>{c.origin === "ai" ? "AI가 쓴 문장" : "내가 쓴 메모"}</span>
         {c.edited_by_user ? <span className="chip st-mine">내가 고침</span> : null}{c.status === "pending" && c.origin === "ai" ? <span className="chip flag"><Caution />AI 미확정</span> : null}
         <AiWording c={c} /></div>
       <h3>{c.text}</h3>
       <p className="summary"><mark>{rich(c.quote)}</mark></p>
-      <div className="meta"><span>{md(c.created)}</span><a {...press(() => open(c.record_id, c.quote))} onClick={e => { e.stopPropagation(); open(c.record_id, c.quote); }}>{title}</a></div></article>
+      <div className="meta"><span>{md(c.created)}</span><button ref={recordAction} type="button" className={css.destination}
+        onClick={e => { e.stopPropagation(); showRecord(e.currentTarget); }}>원문 보기 · {title}</button></div>
+      {pending
+        ? <button type="button" className={css.destination} onClick={e => { e.stopPropagation(); location.hash = reviewHref(TAB, c); }}>대조하기</button>
+        : null}
+    </article>
   );
 }
