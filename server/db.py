@@ -121,7 +121,7 @@ OPTIONAL_VERSIONS = {"struct_names": STRUCT_NAMES_VERSION}
 # ── 일일 한도 (α2) ─────────────────────────────────────
 # 계정 하나가 하루(KST 0시 기준, _KST_TODAY)에 쓸 수 있는 양. 각 쓰기 함수의 기존 트랜잭션 안 맨 앞에서 users 행을 잠그고 센다.
 # 관리자도 같다(QUOTA-GLOBAL 만 관리자 예외).
-DAILY_LIMITS = {"records": 50, "candidates": 150, "decisions": 300, "proposals": 100, "questions": 50,
+DAILY_LIMITS = {"records": 200, "candidates": 150, "decisions": 300, "proposals": 100, "questions": 50,
                 "people": 50, "reflections": 50,   # PR B 메인 확정 ⓔ — 사람·출처 요약/반응은 기록과 같은 급(생성만 센다)
                 "migration": 200}   # 이관 경로(2026-11-02) — board 이전 전용(새 이관 경로·합성 시험용 CLI 공통). 일반 집계에서는 이관 행을 뺀다
 _DAILY_NAMES = {"records": "기록은", "candidates": "후보는", "decisions": "결정은", "proposals": "제안은", "questions": "질문은",

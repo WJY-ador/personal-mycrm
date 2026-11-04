@@ -436,7 +436,7 @@ def section_c(uid, m0):
             pending("C5b 충돌 코드 이름", "서버가 TARGET-CONFLICT 를 낸다 — 메인 판정은 TARGET-REVISION-CONFLICT")
         ok("C5 실제 서버: 웹에서 항목을 바꾼 뒤 새 개정 → 대상 충돌로 멈춤")
 
-        # 한도(2026-11-02 메인 결정 2): 이관 반영은 전용 한도(db.DAILY_LIMITS["migration"], 대응표의 오늘 적용 행)만 센다 — 일반 기록 50 과 분리.
+        # 한도(2026-11-02 메인 결정 2): 이관 반영은 전용 한도(db.DAILY_LIMITS["migration"], 대응표의 오늘 적용 행)만 센다 — 일반 기록 200 과 분리.
         # 상한을 「오늘 이미 적용한 행 + 47」로 두고 같은 꼴을 본다: 새 기록 48행 → 47 적용 뒤 RATE-LIMIT → 같은 날 resume partial → 다음 구간 나머지
         used = q("SELECT count(*) AS n FROM import_entries WHERE user_id=%s AND kind IN ('migration_item','migration_record') "
                  f"AND state='applied' AND received_at >= {db._KST_TODAY}", uid)[0]["n"]

@@ -64,9 +64,9 @@ BODY_MAX_CP, BODY_MAX_BYTES = 8000, 32 * 1024
 TITLE_MAX_CP = 200
 # 한도 (scope, period, bucket) → (건수, 바이트 또는 None). 같은 요청 재전송은 0, 실패·중복도 요청 속도엔 센다
 LIMITS = {("device", "minute", "request"): (10, None), ("user", "minute", "request"): (30, None),
-          ("device", "day", "self"): (10, 128 * 1024), ("user", "day", "self"): (20, 256 * 1024),
+          ("device", "day", "self"): (100, 1024 * 1024), ("user", "day", "self"): (200, 2 * 1024 * 1024),
           ("device", "day", "activity"): (500, 1024 * 1024), ("user", "day", "activity"): (1000, 2 * 1024 * 1024)}
-PENDING_MAX, PENDING_MAX_BYTES = 100, 1024 * 1024
+PENDING_MAX, PENDING_MAX_BYTES = 300, 3 * 1024 * 1024
 BUCKETS = ("request", "self", "activity")
 # PR ②-a 작업 전달(2026-10-22, 구현계획 §5 · r2 R1) — 폴링은 별도 버킷(업무 요청·쓰기 버킷과 분리). 장치 /result·/fail 은 위 request 버킷.
 POLL_LIMITS = {("device", "minute"): 4, ("user", "minute"): 12}   # GET /api/device/jobs(장치·사용자) · GET /api/jobs/<id>(사용자)
@@ -1089,7 +1089,7 @@ def _approve_check(e: dict):
 
 
 def inbox_approve(uid: str, import_id: str) -> dict:
-    """승인(웹 [승인] · MCP inbox_decide approve) — 스위치 INBOX_APPROVALS 필요. 최신 대기 개정만. 기록 한도(기록 50) 사용. 한 트랜잭션:
+    """승인(웹 [승인] · MCP inbox_decide approve) — 스위치 INBOX_APPROVALS 필요. 최신 대기 개정만. 기록 한도(기록 200) 사용. 한 트랜잭션:
     self_text → records(self/verbatim, ingest_kind=inbox) · self_summary → records(unknown/generated, generation_kind=ai, generation_meta)
     · self_text 중 session-wrap/1 → records(self/structured, generation_kind=mixed, decision_owner=self, 출처 「세션 정리」)
     · activity_ref 있으면 activity_links(활동 → 기록, relation=reaction) · 접수 행 applied·현재 판 이동·payload 삭제.
@@ -1293,7 +1293,7 @@ def migration_apply_row(uid: str, stream_id: str, row: dict, *, batch_id: str, m
     """정제 명세 한 행(board-migration/1 — CLI 가 object_ref 를 object_id 로 해석하고 previous_revision 을 대응표로 정한 것) 적용.
     결과 {"import_id", "state": applied|noop, "target_kind": item|record, "target_id", "duplicate": bool}. 한 트랜잭션 — 실패하면
     업무 쓰기·대응표·관계·한도·감사 전부 롤백. 오류 = MIGRATION-OFF · MIGRATION-WINDOW-CLOSED · SOURCE-REVISION-CONFLICT ·
-    IDEMPOTENCY-CONFLICT · KIND-CHANGED · TARGET-REVISION-CONFLICT · REF-NOT-FOUND · RATE-LIMIT(기록 50·제안 100·결정 300) · ARG-INVALID·LINK-INVALID."""
+    IDEMPOTENCY-CONFLICT · KIND-CHANGED · TARGET-REVISION-CONFLICT · REF-NOT-FOUND · RATE-LIMIT(기록 200·제안 100·결정 300) · ARG-INVALID·LINK-INVALID."""
     if not switch_on("BOARD_MIGRATION_ENABLED"):
         raise _off("MIGRATION-OFF", "board 이전")
     if not isinstance(row, dict):

@@ -413,7 +413,7 @@ def test_stale_limits(A):
     finally:
         db.DAILY_LIMITS["migration"] = old
     M.plan_apply(A, s3["plan_id"], s3["plan_hash"])
-    # 5) 일반 한도 분리 — 이관 행은 일반 기록 50 에 들어가지 않는다
+    # 5) 일반 한도 분리 — 이관 행은 일반 기록 200 에 들어가지 않는다
     oldr = db.DAILY_LIMITS["records"]
     db.DAILY_LIMITS["records"] = 1
     try:
