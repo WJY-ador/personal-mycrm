@@ -40,15 +40,17 @@ beforeEach(() => {
 });
 afterEach(() => { hideScreen(); vi.unstubAllGlobals(); });
 
-test("색인 — 표준 🔒(코어 + 표준 정의)·커스텀(칩 = 커스텀) · 개수 = 상태 그대로 · 카드 = 그 화면 주소 · 문의 카드는 대화창이 있을 때만", async () => {
+test("색인 — 표준 자물쇠(코어 + 표준 정의)·커스텀(칩 = 커스텀) · 개수 = 상태 그대로 · 카드 = 그 화면 주소 · 문의 카드는 대화창이 있을 때만", async () => {
   const el = await show("#_setup/objects", ["", "", ""]);
-  expect([...el.querySelectorAll("section > h3")].map(h => h.firstChild!.textContent)).toEqual(["표준 🔒", "커스텀"]);
+  expect([...el.querySelectorAll("section > h3")].map(h => h.firstChild!.textContent)).toEqual(["표준 ", "커스텀"]);
+  expect(el.querySelector("section > h3 svg")!.getAttribute("aria-label")).toBe("표준 정의 보호");
   const cards = [...el.querySelectorAll(".asset-card")].map(c => [c.querySelector("h3")!.textContent, c.querySelector(".meta")!.textContent]);
-  expect(cards).toContainEqual(["내 글", "records3"]);
-  expect(cards).toContainEqual(["활동", "activities최근 30일 5"]);
-  expect(cards).toContainEqual(["축", "axes항목 0"]);
+  expect(cards).toContainEqual(["내 글", "3"]);
+  expect(cards).toContainEqual(["활동", "최근 30일 5"]);
+  expect(cards).toContainEqual(["축", "항목 0"]);
   expect(cards.map(c => c[0])).not.toContain("문의");
   expect(el.querySelector(".asset-card .chip.o-tpl")!.textContent).toBe("커스텀");
+  expect(el.textContent).not.toMatch(/records|candidates|source_reflections|activities|questions/);   // 영문 DB 이름은 화면에 안 나온다
   await click(byText(el, ".asset-card h3", "사람")[0].closest("article"));
   expect(location.hash).toBe("#_obj/person");
   expect(calls).toEqual([]);   // 읽기 = 상태뿐

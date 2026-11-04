@@ -28,8 +28,10 @@ test("요약 = 레이아웃 regions.summary 순서 · 레지스트리 밖 블록
   LAYOUT = layout(["decision", ...TABS.filter(t => t !== "decision")], ["recent", "kinds", "nope", "heatmap"]);
   const el = await showMe("#_me/summary", meState());
   expect(text(el, "#me-summary h3")).toEqual(["최근 변경", "종류별 건수", "13주 글·활동"]);
-  expect(text(el, "nav a").map(t => t!.replace(/[🔒\d]/g, ""))).toEqual(["결정", "요약", "기준", "축", "커스텀", "사람", "출처"]);
-  expect(el.querySelector("#me-summary")!.textContent).toContain("기준 🔒2");
+  expect(text(el, "nav a").map(t => t!.replace(/\d/g, ""))).toEqual(["결정", "요약", "기준", "축", "커스텀", "사람", "출처"]);
+  expect(el.querySelector("#me-summary")!.textContent).toContain("기준 2");
+  expect(el.querySelectorAll("nav a svg[role=img][aria-label=표준]").length).toBe(5);   // 자물쇠 = 접근성 이름 「표준」(결정·기준·축·사람·출처)
+  expect(el.querySelectorAll("#me-summary svg[aria-label=표준]").length).toBe(5);
   expect(el.querySelectorAll("#me-summary button").length).toBe(0);
   expect(el.querySelector("svg[aria-label^='13주']")!.getAttribute("aria-label")).toContain("합 2");
   expect(posts()).toEqual([]);

@@ -1,5 +1,6 @@
 // 탭의 목록 — 행 = (축 색 점) · 코드 · 제목 + 메타 · 연결 수. 커스텀은 머리 오른쪽 선택 상자로 정의(묶음) 하나만 보인다. 행은 링크(이동은 주소, 돌아올 자리만 적어 둔다)
 import { useState } from "react";
+import { Lock } from "../../shared/Glyph";
 import { rowN } from "./links";
 import { axColor, axes, type TabRow, type World } from "./model";
 import { ME_EMPTY, ME_LOCKED, ME_TAB_LABEL, type MeTab } from "./text";
@@ -19,7 +20,7 @@ export function MeList({ W, tab, rows, sel }: { W: World; tab: MeTab; rows: TabR
   const shown = groups ? rows.filter(r => r.grp === cur) : rows;
   return (
     <section className={`hlist ${css.list}`} id="home-list" aria-labelledby="me-list-h">
-      <div className="htools"><h3 id="me-list-h">{ME_TAB_LABEL[tab]}{ME_LOCKED.has(tab) && <> <span className="lk" aria-label="표준">🔒</span></>}</h3><span className={css.tools}>
+      <div className="htools"><h3 id="me-list-h">{ME_TAB_LABEL[tab]}{ME_LOCKED.has(tab) && <> <Lock /></>}</h3><span className={css.tools}>
         {groups && groups.size > 1 && <select aria-label="묶음 고르기" value={cur} onChange={e => setPick(e.target.value)}>{[...groups].map(([id, g]) => <option key={id} value={id}>{g.label} {g.n}</option>)}</select>}
         <span className="count">{rows.length}</span></span></div>
       {!rows.length ? <div className="empty">{ME_EMPTY}</div> : (

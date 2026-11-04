@@ -1,5 +1,6 @@
 // 구조 카드(옛 itemCard·assetCard·selectChips·decisionChip) — 항목 카드(누르면 서랍) · 판단 문장 카드(아직 안 정함 = 대조, 정한 문장 = 근거 원문).
 import { AiWording } from "../../shared/CandChips";
+import { Caution } from "../../shared/Glyph";
 import { qNo, reviewHref } from "../../shared/clip";
 import { md } from "../../shared/date";
 import { press } from "../../shared/press";
@@ -45,7 +46,7 @@ export function AssetCard({ S, c, open }: { S: AppState; c: Cand; open: (id: str
     <article className="asset-card" {...press(go)}>
       <div className="top"><span className="chip">{qNo(S, c.question_id)}</span><span className={`chip ${st[0]}`}>{st[1]}</span>
         <span className={`chip${c.origin === "ai" ? " o-ai" : ""}`}>{c.origin === "ai" ? "AI가 쓴 문장" : "내가 쓴 메모"}</span>
-        {c.edited_by_user ? <span className="chip st-mine">내가 고침</span> : null}{c.status === "pending" && c.origin === "ai" ? <span className="chip flag">⚠️AI 미확정</span> : null}
+        {c.edited_by_user ? <span className="chip st-mine">내가 고침</span> : null}{c.status === "pending" && c.origin === "ai" ? <span className="chip flag"><Caution />AI 미확정</span> : null}
         <AiWording c={c} /></div>
       <h3>{c.text}</h3>
       <p className="summary"><mark>{rich(c.quote)}</mark></p>
