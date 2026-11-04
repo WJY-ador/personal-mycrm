@@ -1,4 +1,4 @@
-// Setup 「페이지 레이아웃」(옛 test_web_home.py S4 정적 절을 옮김) — 레지스트리 이름·🔒 · v2 그대로 PUT(version = 마지막 응답) · 한 번에 하나(보내는 중이면
+// Setup 「페이지 레이아웃」(옛 test_web_home.py S4 정적 절을 옮김) — 레지스트리 이름·자물쇠 · v2 그대로 PUT(version = 마지막 응답) · 한 번에 하나(보내는 중이면
 // 마지막 배치만 줄 세움) · 실패 = 마지막 저장 배치로 복원 · STALE = 서버 배치 다시 받기 · 기본으로 되돌리기 = DELETE · 못 읽음 = 기본 배치 + 안내 ·
 // 저장 응답 = 「나」와 같은 캐시(QK.layout) · 끌어 놓기(마우스)·Alt + 화살표.
 import { act } from "react";
@@ -40,11 +40,11 @@ beforeEach(() => {
 });
 afterEach(() => { hideScreen(); vi.unstubAllGlobals(); });
 
-test("서버 배치 그대로 · 탭 이름·🔒(기본 종류) · 블록 이름 = 레지스트리 · 기본과 다르면 [기본으로 되돌리기] 켜짐", async () => {
+test("서버 배치 그대로 · 탭 이름·자물쇠(기본 종류) · 블록 이름 = 레지스트리 · 기본과 다르면 [기본으로 되돌리기] 켜짐", async () => {
   const el = await show();
   expect(text(el, "h2")).toEqual(["페이지 레이아웃 — 「나」"]);
   expect(keys(el, 0)).toEqual(SWAP);
-  expect(lis(el, 0).map(li => li.textContent)).toEqual(["⠿기준 🔒", "⠿요약", "⠿결정 🔒", "⠿축 🔒", "⠿커스텀", "⠿사람 🔒", "⠿출처 🔒"]);
+  expect(lis(el, 0).map(li => li.textContent)).toEqual(["⠿기준 ", "⠿요약", "⠿결정 ", "⠿축 ", "⠿커스텀", "⠿사람 ", "⠿출처 "]);
   expect(lis(el, 0)[0].getAttribute("aria-label")).toBe("기준 — 1번째");
   expect(lis(el, 1).map(li => li.textContent!.slice(1))).toEqual(DEF.regions.summary.map(s => reg.components[s.c as keyof typeof reg.components].label));
   expect(resetBtn(el).disabled).toBe(false);

@@ -2,6 +2,7 @@
 // 서버 계약 v2(server/layout_registry.json)를 그대로 쓴다 — 블록 이름·기본 배치는 레지스트리(layout/registry.ts 가 props 로 넘긴다).
 // 쓰기 = PUT·DELETE /api/me/layout 만(useLay — 한 번에 하나 · 실패 = 마지막 저장 배치 · STALE = 서버 배치).
 import type { ScreenProps } from "../../../shared/ctx";
+import { Lock } from "../../../shared/Glyph";
 import type { MePage } from "../meApi";
 import { LOADING, ME_LOCKED, ME_TAB_LABEL, isTab } from "../text";
 import { DndList } from "./DndList";
@@ -19,7 +20,7 @@ export function LayoutScreen({ def, blockLabel }: Props) {
   const msg = L.msg.text || (L.api ? "" : LAY_TEXT.noApi);
   const tabLabel = (t: string) => {
     const text = isTab(t) ? ME_TAB_LABEL[t] : t;
-    return { text, node: <>{text}{ME_LOCKED.has(t) && <> <span className="lk" aria-hidden="true">🔒</span></>}</> };
+    return { text, node: <>{text}{ME_LOCKED.has(t) && <> <Lock hidden /></>}</> };
   };
   const blockText = (b: string) => { const text = blockLabel[b] || b; return { text, node: text }; };
   return (

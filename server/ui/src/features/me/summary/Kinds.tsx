@@ -1,4 +1,5 @@
 // 종류별 건수 — 주색 한 색 막대(범례 없음 — 제목이 이름). 숫자는 글자로, 막대는 꾸밈(aria-hidden). 종류 이름은 그 탭 링크
+import { Lock } from "../../../shared/Glyph";
 import { Wait } from "./Wait";
 import { Blk } from "./Blk";
 import type { BlockProps } from "./block";
@@ -16,7 +17,7 @@ export function Kinds({ W, statsFail }: BlockProps) {
   return (
     <Blk title={TITLE}>
       <ul className={css.kinds}>{KINDS.map(([key, label, href]) => {
-        const n = k[key] || 0, lab = <>{label}{LOCK.has(key) && <> <span className="lk" aria-label="표준">🔒</span></>}</>;
+        const n = k[key] || 0, lab = <>{label}{LOCK.has(key) && <> <Lock /></>}</>;
         return (
           <li key={key} className={n ? "" : css.zero}>
             {href ? <a href={href}>{lab}</a> : <span>{lab}</span>}

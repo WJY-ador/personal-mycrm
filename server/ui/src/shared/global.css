@@ -20,9 +20,9 @@ button.primary:hover, .btn.primary:hover { background: color-mix(in srgb, var(--
 button.secondary { background: var(--card); color: var(--ink); border: 1px solid var(--line); }
 button.small, button.tertiary { background: transparent; border-color: transparent; color: var(--accent); }
 button.small:hover, button.tertiary:hover { background: var(--accent-soft); border-color: transparent; }
-button:disabled, button:disabled:hover { cursor: default; opacity: .45; background: var(--card); color: var(--ink); border-color: var(--line); }
-button.primary:disabled { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
-button.tertiary:disabled, button.tertiary:disabled:hover { background: transparent; border-color: transparent; color: var(--accent); }
+/* 비활성 — 투명도 말고 모양으로 구분: 바탕 종이색·점선 테두리·muted 글자(종이 위 4.5:1 이상)·금지 커서 */
+button:disabled, button:disabled:hover, button.primary:disabled, button.primary:disabled:hover { cursor: not-allowed; opacity: 1; background: var(--paper); color: var(--muted); border: 1px dashed color-mix(in srgb, var(--muted) 60%, transparent); }
+button.tertiary:disabled, button.tertiary:disabled:hover { background: transparent; border-color: transparent; color: var(--muted); }
 a.link { color: var(--accent); font-size: .82rem; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
 
 /* 마스트 — 세리프 날짜 · 한 줄 설명 · 오늘 스펙트럼 · 질문 레전드 */
@@ -32,23 +32,23 @@ a.link { color: var(--accent); font-size: .82rem; font-weight: 600; text-decorat
 .mast .sub { color: var(--muted); font-size: .8rem; }
 .axiswrap { flex: 1; min-width: 320px; display: flex; flex-direction: column; gap: .3rem; align-self: center; }
 .axistop { display: flex; align-items: center; gap: .6rem; }
-.speclabel { font-family: var(--mono); font-size: .68rem; color: var(--muted); font-weight: 500; }
+.speclabel { font-family: var(--mono); font-size: .7rem; color: var(--muted); font-weight: 500; }
 .spectrum { flex: 1; min-width: 200px; display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--line); }
 .spectrum div { height: 100%; }
 .axistop { align-items: flex-start; }
 .axistop > .speclabel { line-height: 10px; }
 .specbox { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: .25rem; }
 .specbox .spectrum { flex: none; min-width: 0; }
-.speckey { display: flex; flex-wrap: wrap; gap: .1rem .8rem; font-size: .68rem; color: var(--muted); }
+.speckey { display: flex; flex-wrap: wrap; gap: .1rem .8rem; font-size: .7rem; color: var(--muted); }
 .speckey span { display: inline-flex; align-items: center; gap: .28rem; white-space: nowrap; }
 .speckey i { width: 7px; height: 7px; border-radius: 2px; display: inline-block; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--muted) 35%, transparent); }
-.axislegend { display: flex; flex-wrap: wrap; gap: .15rem .9rem; font-size: .68rem; color: var(--muted); }
+.axislegend { display: flex; flex-wrap: wrap; gap: .15rem .9rem; font-size: .7rem; color: var(--muted); }
 .axislegend .ax { display: inline-flex; align-items: center; gap: .28rem; white-space: nowrap; max-width: 100%; }
 .axislegend .ax > span { overflow: hidden; text-overflow: ellipsis; }
-.axislegend b { color: var(--ink); font-weight: 600; font-family: var(--mono); font-size: .66rem; }
+.axislegend b { color: var(--ink); font-weight: 600; font-family: var(--mono); font-size: .7rem; }
 .axislegend em { font-style: normal; font-family: var(--mono); }
 .axislegend em.on { color: var(--warn); }
-button.axpage { margin-left: .2rem; font-size: .62rem; padding: 0 .35rem; min-height: 0; line-height: 1.4; border: 1px solid var(--line);
+button.axpage { margin-left: .2rem; font-size: .7rem; padding: 0 .35rem; min-height: 0; line-height: 1.4; border: 1px solid var(--line);
   border-radius: .3rem; background: var(--card); color: var(--accent); font-weight: 500; }
 button.axpage:hover { background: var(--accent-soft); }
 .who { display: flex; align-items: center; gap: .4rem; align-self: center; font-size: .72rem; color: var(--muted); }
@@ -70,7 +70,7 @@ a.setup-gear:hover { border-color: var(--accent); color: var(--accent); }
 #who { display: block; min-width: 0; max-width: 9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (min-width: 1240px) { #who { max-width: 16rem; } }   /* 1100px 에서 날짜·설명·오늘 줄과 한 줄을 지키는 폭 */
 @media (max-width: 700px) { #who { max-width: 18rem; } }   /* 좁은 화면은 .who 가 제 줄 — 남는 폭까지 */
-.acct .caret { flex: none; font-size: .62rem; }
+.acct .caret { flex: none; font-size: .7rem; }
 .acct-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; width: max-content; min-width: 13rem; max-width: calc(100vw - 2rem);
   display: flex; flex-direction: column; gap: .1rem; padding: .3rem; background: var(--card); border: 1px solid var(--line); border-radius: 8px;
   box-shadow: 0 6px 20px color-mix(in srgb, var(--ink) 14%, transparent); }
@@ -101,7 +101,7 @@ nav.tabs .wrap { display: flex; gap: .2rem; padding-top: .5rem; }
   margin-bottom: -1px; border-bottom: 1px solid transparent; }
 .tab:hover { color: var(--ink); }
 .tab.on { background: var(--card); color: var(--ink); font-weight: 600; border-bottom-color: var(--card); }
-.tab .n { font-family: var(--mono); font-size: .68rem; font-weight: 600; color: var(--muted); }
+.tab .n { font-family: var(--mono); font-size: .7rem; font-weight: 600; color: var(--muted); }
 .tab.on .n { color: var(--accent); }
 .tab.maplink { margin-left: auto; }
 nav.subtabs .wrap { display: flex; gap: .3rem; flex-wrap: wrap; padding-top: .9rem; }
@@ -109,7 +109,7 @@ nav.subtabs a { border: 1px solid var(--line); background: transparent; color: v
   border-radius: 999px; text-decoration: none; display: inline-flex; align-items: center; gap: .35rem; max-width: 100%; }
 nav.subtabs a:hover { color: var(--ink); }
 nav.subtabs a.on { background: var(--card); color: var(--ink); font-weight: 600; border-color: var(--ink); }
-nav.subtabs a .n { font-family: var(--mono); font-size: .68rem; color: var(--warn); }
+nav.subtabs a .n { font-family: var(--mono); font-size: .7rem; color: var(--warn); }
 nav.subtabs a .n.m { color: var(--muted); }
 
 /* 띠 — 화면 전체에 걸리는 것만 */
@@ -162,7 +162,7 @@ section.sec:first-child { margin-top: 0; }
 .b-off::before { display: none; }
 .b-warn { color: var(--warn); background: var(--warn-bg); }
 .b-fail { color: var(--fail); background: var(--fail-bg); }
-.chip { font-family: var(--mono); font-size: .66rem; letter-spacing: .04em; border: 1px solid color-mix(in srgb, var(--muted) 40%, transparent);
+.chip { font-size: .72rem; border: 1px solid color-mix(in srgb, var(--muted) 40%, transparent);
   border-radius: 3px; padding: .05rem .35rem; color: var(--muted); white-space: nowrap; line-height: 1.5; }
 .chip.flag { border-color: color-mix(in srgb, var(--warn) 50%, transparent); color: var(--warn); background: var(--warn-bg); }
 .chip.st-mine { border-color: color-mix(in srgb, var(--mine) 45%, transparent); color: var(--mine); background: var(--mine-bg); }
@@ -188,7 +188,7 @@ section.sec:first-child { margin-top: 0; }
 .recs a { display: grid; grid-template-columns: 40px 1fr; gap: .7rem; align-items: start; padding: .55rem .2rem; color: var(--ink); text-decoration: none; cursor: pointer; border-radius: 6px; }
 .recs a:hover { background: var(--paper); }
 .recs .d { font-family: var(--serif); font-size: 1.3rem; font-weight: 500; line-height: 1.1; }
-.recs .d small { display: block; font-family: var(--mono); font-size: .62rem; color: var(--soft); font-weight: 500; letter-spacing: .04em; }
+.recs .d small { display: block; font-family: var(--mono); font-size: .7rem; color: var(--soft); font-weight: 500; }
 .recs .t { font-size: .86rem; font-weight: 600; line-height: 1.45; }
 .recs .s { font-size: .74rem; color: var(--muted); }
 .recs a.on .t { color: var(--accent); }
@@ -276,7 +276,7 @@ mark { background: var(--mark); color: var(--mark-ink); padding: 1px 3px; border
 .pills { display: flex; gap: .3rem; flex-wrap: wrap; margin: 0 0 .9rem; }
 .pills a { border: 1px solid var(--line); color: var(--muted); font-size: .74rem; padding: .15rem .6rem; border-radius: 999px; text-decoration: none; }
 .pills a.on { color: var(--ink); border-color: var(--ink); font-weight: 600; background: var(--card); }
-.pills a .n { font-family: var(--mono); font-size: .66rem; margin-left: .25rem; }
+.pills a .n { font-family: var(--mono); font-size: .7rem; margin-left: .25rem; }
 @media (max-width: 900px) { .struct { grid-template-columns: minmax(0, 1fr); } #panel { position: static; max-height: none; } }
 
 /* 지도 — 칸반 */
@@ -284,18 +284,18 @@ mark { background: var(--mark); color: var(--mark-ink); padding: 1px 3px; border
 .kcol { flex: 1; min-width: 240px; background: color-mix(in srgb, var(--ink) 3.5%, transparent); border-radius: 12px; padding: .75rem .7rem; }
 .kcol h2 { font-family: var(--serif); font-size: .98rem; font-weight: 600; margin: 0 .2rem .1rem; }
 .kcol h2 .count { font-family: var(--mono); font-size: .72rem; }
-.kcol .khint { font-size: .68rem; color: var(--soft); margin: 0 .2rem .6rem; line-height: 1.5; }
+.kcol .khint { font-size: .7rem; color: var(--soft); margin: 0 .2rem .6rem; line-height: 1.5; }
 .kcard { background: var(--card); border: 1px solid var(--line); border-radius: 9px; padding: .6rem .7rem; margin-bottom: .5rem; }
 .kcard:hover { border-color: var(--ink); }
 .kcard.hot { border-left: 3px solid var(--warn); }
 .kcard.mine { border-left: 3px solid var(--mine); }
 .kcard .kname { font-size: .82rem; font-weight: 600; line-height: 1.45; }
-.kcard .kmeta { font-size: .68rem; color: var(--soft); margin-top: .2rem; display: flex; gap: .6rem; flex-wrap: wrap; }
+.kcard .kmeta { font-size: .7rem; color: var(--soft); margin-top: .2rem; display: flex; gap: .6rem; flex-wrap: wrap; }
 .kcard .kflags { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .35rem; }
-.kcard .kflag { font-size: .66rem; border-radius: 4px; padding: .1rem .4rem; color: var(--ai); background: var(--ai-bg); }
+.kcard .kflag { font-size: .7rem; border-radius: 4px; padding: .1rem .4rem; color: var(--ai); background: var(--ai-bg); }
 .kcard .kflag.memo { color: var(--memo); background: var(--memo-bg); }
 .kcard .kacts { display: flex; gap: .3rem; margin-top: .45rem; }
-.kcard .kacts button, .kcard .kacts .btn { font-size: .68rem; min-height: 0; border: 1px solid var(--line); background: var(--paper); border-radius: 6px; padding: .2rem .5rem; color: var(--muted); }
+.kcard .kacts button, .kcard .kacts .btn { font-size: .7rem; min-height: 0; border: 1px solid var(--line); background: var(--paper); border-radius: 6px; padding: .2rem .5rem; color: var(--muted); }
 .kcard .kacts button:hover, .kcard .kacts .btn:hover { color: var(--accent); border-color: var(--accent); }
 .kempty { font-size: .74rem; color: var(--soft); padding: .3rem .2rem; }
 /* 결정 버튼 격자 — 판단 검토(React)·대화창 공통. 판단 검토 화면 규칙은 server/ui/src/features/review/Review.module.css(R3) */
@@ -493,7 +493,7 @@ ul.rows .inrow b { font-size: .88rem; }
 @media (max-width: 700px) {
   .bars li { grid-template-columns: minmax(0, 8rem) minmax(2rem, 1fr) auto; }
 }
-.lk { font-size: .72em; opacity: .75; }
+.lk { width: .85em; height: .85em; margin-left: .2em; vertical-align: -.1em; flex: none; }   /* Glyph.tsx 선 아이콘 — 글자색을 따른다 */
 button.mmore { margin-top: .3rem; padding-left: .4rem; padding-right: .4rem; }
 /* 탭 줄 고정 자리 — 탭(껍데기)과 「대화」 버튼(React 대화 서랍, server/ui/src/features/chat)이 같은 줄 흐름에 낀다 */
 .navslot { display: contents; }
