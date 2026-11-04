@@ -1,7 +1,7 @@
 """시험 도우미 — 가짜 WebSocket 서버(127.0.0.1, 표준 라이브러리만). 연결마다 handler(conn) 를 스레드에서 부른다.
 
 conn.recv() = 클라이언트 텍스트 메시지(마스킹 확인) · conn.send(obj|str) · conn.frame(op, payload, fin) = 손으로 프레임 · conn.close(code).
-deny=(status, code) 면 핸드셰이크를 그 HTTP 상태 + {"code"} JSON 으로 거절한다. headers = 받은 요청 헤더(소문자 키).
+deny=(status, code) 면 핸드셰이크를 그 HTTP 상태 + {"code"} JSON 으로 거절한다(함수면 headers → (status, code)|None). headers = 받은 요청 헤더(소문자 키).
 """
 from __future__ import annotations
 
@@ -122,8 +122,9 @@ class FakeWsServer:
         lines = head.decode("latin-1").split("\r\n")
         hdr = {k.strip().lower(): v.strip() for k, v in (ln.split(":", 1) for ln in lines[1:] if ":" in ln)}
         self.requests.append({"line": lines[0], "headers": hdr})
-        if self.deny:
-            st, code = self.deny
+        deny = self.deny(hdr) if callable(self.deny) else self.deny   # 함수면 요청 헤더로 판정(토큰별 거절 시험)
+        if deny:
+            st, code = deny
             body = json.dumps({"code": code}).encode()
             s.sendall(f"HTTP/1.1 {st} X\r\nContent-Type: application/json\r\nContent-Length: {len(body)}\r\n\r\n".encode() + body)
             s.close()

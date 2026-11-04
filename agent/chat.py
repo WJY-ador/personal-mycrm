@@ -10,6 +10,10 @@
 - 턴 자동 재실행 금지 — 연결이 끊겨도 실행 중 턴은 계속 돌고, 출력만 재전송한다.
 - 공급자 어댑터: start_turn(text, cli_session_ref) → (kind, data) 이터레이터 · stop(). kind "session_ref" 는 이벤트가 아니라
   session_ref 메시지로 보낸다(CLI 세션 ID 는 PC 가 보유 — 재개용으로만 서버에 둔다).
+- 메시지 하나 ≤ WS_MESSAGE_MAX(64KB): delta 는 쪼개 보내고, 그 밖 이벤트는 짧은 값만 남긴 data + truncated:true 로 줄인다.
+- SILENCE_MAX(서버 ping 2번) 동안 아무것도 못 받으면 반쯤 열린 연결로 보고 닫고 다시 붙는다.
+- 토큰: 공급 함수(키 저장소를 다시 읽는다). 핸드셰이크 401·403 이나 close 4001 이면 한 번 다시 읽어 바뀌었으면 새 토큰으로,
+  같으면 멈춘다(rotate·재발급 뒤 상주가 죽지 않게).
 - 로그 = 코드만(본문·토큰·주소 없음).
 PR 1 은 FakeProvider(정해진 대본)만. ClaudeProvider(실 CLI)는 PR 2.
 """
@@ -27,6 +31,9 @@ from . import wsclient
 WS_PATH = "/api/device/chat/ws"
 COALESCE_SEC = 0.5
 BUFFER_MAX = 256 * 1024
+WS_MESSAGE_MAX = 64 * 1024     # 서버 server/webchat.py WS_MESSAGE_MAX 와 같은 값 — 넘는 메시지는 서버가 1009 로 닫는다(재전송 무한 반복)
+PING_SECONDS = 25              # 서버 server/webchat.py PING_SECONDS 와 같은 값
+SILENCE_MAX = 2 * PING_SECONDS # 이만큼 아무것도 못 받으면 반쯤 열린 연결로 보고 닫은 뒤 다시 붙는다
 RECV_TICK = 1.0
 SEEN_MAX = 1000
 KINDS = ("delta", "tool_call", "tool_result", "done", "error")
@@ -44,6 +51,28 @@ def ws_url(server_url: str) -> str:
 
 def _dumps(obj) -> str:
     return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+
+
+def _size(turn_id: str, kind: str, data: dict) -> int:
+    return len(_dumps({"type": "event", "turn_id": turn_id, "seq": 999999999, "kind": kind, "data": data}).encode("utf-8"))
+
+
+def fit_event(turn_id: str, kind: str, data: dict, limit: int = WS_MESSAGE_MAX) -> list:
+    """메시지 하나가 limit 바이트를 넘지 않게 — delta 는 글을 쪼갠 data 목록, 그 밖은 줄인 data 하나(truncated:true)."""
+    if _size(turn_id, kind, data) <= limit:
+        return [data]
+    if kind == "delta":
+        text = data.get("text") if isinstance(data.get("text"), str) else ""
+        n = max(1, (limit - 512) // 6)   # 글자 하나 최악 6바이트(JSON \uXXXX) — 조각마다 상한 안
+        return [{"text": text[i:i + n]} for i in range(0, len(text), n)] or [{"text": ""}]
+    small = {}
+    for k, v in data.items():
+        if v is None or isinstance(v, (bool, int, float)):
+            small[k] = v
+        elif isinstance(v, str):
+            small[k] = v[:2000]
+    small["truncated"] = True
+    return [small] if _size(turn_id, kind, small) <= limit else [{"truncated": True}]
 
 
 class FakeProvider:
@@ -125,10 +154,14 @@ class TurnBuffer:
 class ChatAgent:
     """연결 관리 · 턴 실행. run() 은 stopping 이 설 때까지(또는 인증 거절) 돈다. 반환 = 멈춘 이유(signal·auth·switch-off 아님 — 재시도)."""
 
-    def __init__(self, url: str, token: str, provider, *, agent_version: str = "", connect=wsclient.connect,
+    def __init__(self, url: str, token, provider, *, agent_version: str = "", connect=wsclient.connect,
                  backoff: wsclient.Backoff | None = None, stopping: threading.Event | None = None, log=None,
-                 coalesce: float = COALESCE_SEC, buffer_max: int = BUFFER_MAX, recv_tick: float = RECV_TICK):
-        self.url, self.token, self.provider = url, token, provider
+                 coalesce: float = COALESCE_SEC, buffer_max: int = BUFFER_MAX, recv_tick: float = RECV_TICK,
+                 ws_max: int = WS_MESSAGE_MAX, silence_max: float = SILENCE_MAX):
+        """token = 글자 또는 공급 함수(호출할 때마다 키 저장소를 다시 읽는다)."""
+        self.url, self.provider = url, provider
+        self.token_fn = token if callable(token) else (lambda: token)
+        self.ws_max, self.silence_max = ws_max, silence_max
         self.agent_version = agent_version
         self.connect = connect
         self.backoff = backoff or wsclient.Backoff()
@@ -137,6 +170,9 @@ class ChatAgent:
         self.coalesce, self.buffer_max, self.recv_tick = coalesce, buffer_max, recv_tick
         self.ws = None
         self.ws_lock = threading.Lock()
+        # 내보내기 순서 잠금 — 턴 스레드의 「버퍼에 넣고 보내기」와 재연결의 「hello → 미확인 재전송」을 직렬화한다.
+        # 없으면 재연결 순간 새 seq 가 재전송보다 먼저 나가 서버가 빈 칸으로 버리고, 다음 재연결까지 그 seq 가 묶인다.
+        self.out_lock = threading.RLock()
         self.buffers: OrderedDict = OrderedDict()   # turn_id → TurnBuffer
         self.current: str | None = None             # 실행 중 turn_id(공급자 하나 = 턴 하나)
         self.seen: OrderedDict = OrderedDict()      # 받은 turn_id(최근 SEEN_MAX) — 버퍼를 비운 뒤에도 같은 턴을 다시 실행하지 않는다
@@ -184,19 +220,24 @@ class ChatAgent:
         over = False
 
         def emit(kind, data, force=False):
+            for part in fit_event(turn_id, kind, data, self.ws_max):   # 메시지 하나 ≤ ws_max(서버 1009 방지)
+                one(kind, part, force)
+
+        def one(kind, data, force=False):
             nonlocal over
             if over and not force:
                 return
             if kind in TERMINAL:   # 끝 이벤트를 보내기 전에 비운다 — 서버가 받자마자 다음 turn.start 를 보낼 수 있다
                 self.current = None
-            msg = buf.add(kind, data, force=force)
-            if msg is None:   # 버퍼 상한 — 공급자를 멈추고 끝 이벤트로 닫는다
-                over = True
-                self.provider.stop()
-                self.current = None
-                msg = buf.add("error", {"code": "BUFFER-LIMIT"}, force=True)
-                self.log({"event": "turn", "error": "BUFFER-LIMIT"})
-            self._send(msg)
+            with self.out_lock:
+                msg = buf.add(kind, data, force=force)
+                if msg is None:   # 버퍼 상한 — 공급자를 멈추고 끝 이벤트로 닫는다
+                    over = True
+                    self.provider.stop()
+                    self.current = None
+                    msg = buf.add("error", {"code": "BUFFER-LIMIT"}, force=True)
+                    self.log({"event": "turn", "error": "BUFFER-LIMIT"})
+                self._send(msg)
 
         def flush():
             nonlocal pend, first
@@ -275,15 +316,18 @@ class ChatAgent:
     # ── 연결 ──
     def _session(self, ws) -> str:
         """연결 하나 — hello → 미확인 재전송 → 받기. 끝난 이유."""
-        with self.ws_lock:
-            self.ws = ws
-        self._send(_dumps({"type": "hello", "agent_version": self.agent_version, "providers": [self.provider.name]}))
-        self._resend()
+        with self.out_lock:   # hello·재전송이 끝날 때까지 턴 스레드의 새 이벤트를 붙든다(seq 순서 보장)
+            with self.ws_lock:
+                self.ws = ws
+            self._send(_dumps({"type": "hello", "agent_version": self.agent_version, "providers": [self.provider.name]}))
+            self._resend()
         try:
             while not self.stopping.is_set():
                 try:
                     raw = ws.recv(timeout=self.recv_tick)
                 except socket.timeout:
+                    if time.monotonic() - getattr(ws, "last_rx", time.monotonic()) > self.silence_max:
+                        return "silent"   # 서버 ping 이 끊겼다 — 반쯤 열린 연결로 보고 다시 붙는다
                     continue
                 try:
                     m = json.loads(raw)
@@ -293,18 +337,32 @@ class ChatAgent:
                     self._on(m)
             return "signal"
         except wsclient.WsError as e:
+            if e.kind == "closed" and e.code == 4001:
+                return "auth-closed"
             return "closed" if e.kind == "closed" else "network"
         finally:
             with self.ws_lock:
                 self.ws = None
             ws.close()
 
+    def _fresh_token(self, used: str) -> bool:
+        """인증 거절 뒤 — 키 저장소를 다시 읽어 토큰이 바뀌었으면 True(새 토큰으로 다시), 같거나 없으면 False(멈춤)."""
+        try:
+            new = self.token_fn()
+        except Exception:
+            new = None
+        return bool(new) and new != used
+
     def run(self) -> str:
         while not self.stopping.is_set():
+            token = self.token_fn() or ""
             try:
-                ws = self.connect(self.url, {"Authorization": "Bearer " + self.token})
+                ws = self.connect(self.url, {"Authorization": "Bearer " + token})
             except wsclient.WsError as e:
                 if e.status in (401, 403):
+                    if self._fresh_token(token):
+                        self.log({"event": "connect", "error": "auth", "status": e.status, "why": "token-changed"})
+                        continue
                     self.log({"event": "connect", "error": "auth", "status": e.status})
                     return "auth"
                 self.log({"event": "connect", "error": e.kind, "status": e.status})
@@ -315,7 +373,9 @@ class ChatAgent:
             self.log({"event": "connect", "ok": True})
             why = self._session(ws)
             self.log({"event": "disconnect", "why": why})
-            if why != "signal":
+            if why == "auth-closed" and not self._fresh_token(token):
+                return "auth"
+            if why not in ("signal", "auth-closed"):
                 self.stopping.wait(self.backoff.next())
         if self.current:
             self.provider.stop()

@@ -16,6 +16,7 @@ export function Panel({ s, inRef }: { s: WebchatStore; inRef: RefObject<HTMLText
         <span className={`${css.pc}${s.connected ? ` ${css.up}` : ""}`} role="status">{s.sid ? (s.connected ? PC_ON : PC_OFF) : ""}</span>
         <button type="button" className="tertiary" onClick={() => void s.toggle(false)}>닫기</button></header>
       <div className={css.body}>
+        {s.trimmed && <p className={css.empty}>{s.trimmed}</p>}
         {s.turns.length ? s.turns.map(t => <TurnView key={t.id} t={t} />) : <p className={css.empty}>{EMPTY}</p>}
         <div ref={end} />
       </div>

@@ -10,7 +10,8 @@
   POST /api/chat/sessions/{id}/turns {text, client_turn_id} → {turn_id, status, created} · 409 TURN-BUSY · 같은 client_turn_id = 같은 턴
   POST /api/chat/sessions/{id}/stop                 → {turn_id, status} (실행 중 턴 없으면 turn_id null)
   GET  /api/chat/sessions/{id}/stream               → SSE. id = "<turn_id>:<seq>"(seq 0 = 턴 시작). Last-Event-ID(또는 ?last_event_id=)
-                                                      뒤부터 DB 재생 → 실시간. 사용자당 활성 1(새 연결이 옛 연결을 닫음). heartbeat 15초
+                                                      뒤부터 DB 재생 → 실시간. 사용자당 활성 1(새 연결이 옛 연결을 닫음 — 옛 쪽에 event: replaced).
+                                                      heartbeat 15초. 재생 상한 = 최근 REPLAY_TURNS 턴·REPLAY_BYTES(넘으면 맨 앞 event: trimmed)
 장치(Authorization: Bearer 장치 토큰): WS /api/device/chat/ws
   서버→PC turn.start{session_id, turn_id, text, cli_session_ref?} · turn.stop{turn_id} · ack{turn_id, seq} · ping
   PC→서버 hello{agent_version, providers[]} · event{turn_id, seq, kind, data} · session_ref{session_id, cli_session_ref} · pong
@@ -51,12 +52,15 @@ LIVE_BUFFER_BYTES = 256 * 1024      # SSE 구독 하나의 서버 메모리 대�
 WS_MESSAGE_MAX = 64 * 1024          # 장치 WS 메시지 하나(바이트)
 KEEP_DAYS = 30                      # 보관 — 메시지 생성일 기준, 활동으로 연장 없음
 HEARTBEAT_SECONDS = 15              # SSE 주석
+REPLAY_TURNS = 20                   # SSE 재생 상한 — 최근 턴 수(앞부분은 messages API 합본으로)
+REPLAY_BYTES = 2 * 1024 * 1024      # SSE 재생 상한 — 이벤트 바이트(n_bytes) 합. 최근 턴 1개는 늘 재생한다
 SSE_MAX_SECONDS = 300               # SSE 연결 하나의 최대 수명 — 끝나면 브라우저가 Last-Event-ID 로 다시 붙는다(재배포 때 옛 프로세스가 열린 SSE 를 무한히 기다리지 않게)
 PING_SECONDS = 25                   # 장치 WS ping + 토큰 재확인(철회·만료·차단 = 닫음)
 TURN_IDLE_SECONDS = 600             # 이벤트 없는 running 턴 → 다음 입력 때 failed(TURN-TIMEOUT)
 CLIENT_TURN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 CLI_REF_RE = re.compile(r"^[A-Za-z0-9._:-]{1,200}$")
 PROVIDER_RE = re.compile(r"^[a-z0-9_-]{1,40}$")
+_CODE = re.compile(r"^[A-Z][A-Z0-9]*$")
 KINDS = ("delta", "tool_call", "tool_result", "done", "error")
 TERMINAL_STATUS = {"done": "done", "error": "failed"}
 
@@ -111,11 +115,11 @@ def session_open(uid: str, device_id: str | None) -> dict:
         devs = _active_devices(c, uid)
         if device_id is not None and device_id not in devs:
             raise CrmError("NOT-FOUND", "그 장치를 찾을 수 없어요.", "웹의 「연결 장치」에서 확인하세요.")
-        cur = _one(c, "SELECT * FROM chat_sessions WHERE user_id=%s AND status='active' FOR UPDATE", (uid,))
+        cur = _one(c, "SELECT * FROM chat_sessions WHERE user_id=%s AND status='active' FOR NO KEY UPDATE", (uid,))
         if cur and cur["device_id"] in devs and (device_id is None or device_id == cur["device_id"]):
             return _session_out(cur)
         if cur:
-            c.execute("UPDATE chat_sessions SET status='closed' WHERE id=%s", (cur["id"],))
+            _close_session(c, cur["id"])
         if device_id is None:
             if not devs:
                 raise CrmError("NO-DEVICE", "연결된 PC 가 없어요.", "PC 에서 my-crm 에이전트를 연결하세요.")
@@ -131,8 +135,10 @@ def sessions_list(uid: str) -> list:
         return [_session_out(s) for s in _all(c, "SELECT * FROM chat_sessions WHERE user_id=%s ORDER BY created_at DESC, id LIMIT 50", (uid,))]
 
 
+# 잠금 순서(모든 경로 같음): users(_user_lock) → chat_sessions(FOR NO KEY UPDATE) → chat_turns(FOR UPDATE).
+# 세션 잠금은 NO KEY UPDATE — 자식 INSERT 의 FK 검사(KEY SHARE)와 충돌하지 않는다(턴을 잡은 채 메시지를 넣어도 세션 대기 없음).
 def _session_get(c, uid, sid, lock=False):
-    s = _one(c, "SELECT * FROM chat_sessions WHERE id=%s AND user_id=%s" + (" FOR UPDATE" if lock else ""), (sid, uid))
+    s = _one(c, "SELECT * FROM chat_sessions WHERE id=%s AND user_id=%s" + (" FOR NO KEY UPDATE" if lock else ""), (sid, uid))
     if not s:
         raise CrmError("NOT-FOUND", "그 대화를 찾을 수 없어요.")
     return s
@@ -154,6 +160,7 @@ def _finish(c, t, status, code=None):
         seq = _last_seq(c, t["id"]) + 1
         r = _one(c, "INSERT INTO chat_events (turn_id,seq,kind,data) VALUES (%s,%s,'error',%s) RETURNING created_at",
                  (t["id"], seq, json.dumps({"code": code})))
+        c.execute("UPDATE chat_turns SET n_events=n_events+1, n_bytes=n_bytes+%s WHERE id=%s", (_jbytes({"code": code}), t["id"]))
         ev = {"turn_id": t["id"], "seq": seq, "kind": "error", "data": {"code": code}, "created_at": _iso(r["created_at"])}
     c.execute("UPDATE chat_turns SET status=%s, ended_at=now() WHERE id=%s", (status, t["id"]))
     body = _one(c, "SELECT COALESCE(string_agg(data->>'text', '' ORDER BY seq), '') AS b FROM chat_events "
@@ -161,6 +168,19 @@ def _finish(c, t, status, code=None):
     c.execute("INSERT INTO chat_messages (id,session_id,turn_id,role,body) VALUES (%s,%s,%s,'assistant',%s) ON CONFLICT (turn_id, role) DO NOTHING",
               (_id("cm"), t["session_id"], t["id"], body))
     return ev
+
+
+def _close_session(c, sid, code="SESSION-CLOSED"):
+    """세션 닫기 — 실행 중 턴도 끝낸다(세션을 이미 잠근 뒤 부른다). 넣은 이벤트 목록."""
+    c.execute("UPDATE chat_sessions SET status='closed' WHERE id=%s", (sid,))
+    return [_finish(c, t, "failed", code) for t in _all(c, "SELECT * FROM chat_turns WHERE session_id=%s AND status='running' FOR UPDATE", (sid,))]
+
+
+def sweep(uid: str, sid: str) -> list:
+    """유휴 턴 정리만(SSE 연결·세션 목록 때) — 화면은 실행 중이면 보내기를 막으니 다음 입력을 기다리지 않는다. 넣은 이벤트 목록."""
+    with tx() as c:
+        s = _session_get(c, uid, sid, lock=True)
+        return [e for e in _sweep_idle(c, s["id"]) if e]
 
 
 def _sweep_idle(c, sid):
@@ -195,7 +215,7 @@ def _turn_create(uid, sid, text, client_turn_id, connected):
         if s["status"] != "active":
             raise CrmError("SESSION-CLOSED", "끝난 대화예요.", "새 대화를 시작하세요.")
         if s["device_id"] not in _active_devices(c, uid):   # 닫기는 커밋하고(트랜잭션을 정상으로 끝낸 뒤) 거절한다
-            c.execute("UPDATE chat_sessions SET status='closed' WHERE id=%s", (sid,))
+            _close_session(c, sid, "DEVICE-GONE")
             return None
         evs = [e for e in _sweep_idle(c, sid) if e]
         if _one(c, "SELECT 1 FROM chat_turns WHERE session_id=%s AND status='running'", (sid,)):
@@ -215,10 +235,20 @@ def _turn_create(uid, sid, text, client_turn_id, connected):
 def turn_fail(tid: str, code: str):
     """서버가 턴을 끝낸다(보내기 실패 등). running 이 아니면 None."""
     with tx() as c:
-        t = _one(c, "SELECT * FROM chat_turns WHERE id=%s FOR UPDATE", (tid,))
+        t = _lock_turn(c, tid)
         if not t or t["status"] != "running":
             return None
         return _finish(c, t, "failed", code)
+
+
+def _lock_turn(c, tid):
+    """턴 잠금 — 세션 먼저(NO KEY UPDATE), 그다음 턴(FOR UPDATE). 두 문장으로 나눠 잠금 순서를 모든 경로와 맞춘다."""
+    sid = _one(c, "SELECT session_id FROM chat_turns WHERE id=%s", (tid,))
+    if not sid:
+        return None
+    s = _one(c, "SELECT user_id, device_id FROM chat_sessions WHERE id=%s FOR NO KEY UPDATE", (sid["session_id"],))
+    t = _one(c, "SELECT * FROM chat_turns WHERE id=%s FOR UPDATE", (tid,))
+    return {**t, "user_id": s["user_id"], "device_id": s["device_id"]} if t and s else None
 
 
 def turn_stop(uid: str, sid: str):
@@ -258,24 +288,36 @@ def parse_cursor(raw: str | None):
 
 
 def replay(uid: str, sid: str, cursor) -> list:
-    """SSE 재생 — 커서 뒤의 SSE 항목 목록 [(id, event, data)]. 턴 시작 = seq 0(사용자 글), 그 뒤 이벤트 seq 순."""
+    """SSE 재생 — 커서 뒤의 SSE 항목 목록 [(id, event, data)]. 턴 시작 = seq 0(사용자 글), 그 뒤 이벤트 seq 순.
+    상한: 최근 REPLAY_TURNS 턴·REPLAY_BYTES(n_bytes 합) — 넘으면 앞을 자르고 맨 앞에 trimmed(id 없음, 앞부분은 messages API).
+    이벤트는 한 쿼리로 읽는다."""
     with tx() as c:
         _session_get(c, uid, sid)
-        turns = _all(c, "SELECT t.id, t.client_turn_id, t.status, t.created_at, m.body FROM chat_turns t "
+        turns = _all(c, "SELECT t.id, t.client_turn_id, t.created_at, t.n_bytes, m.body FROM chat_turns t "
                         "LEFT JOIN chat_messages m ON m.turn_id=t.id AND m.role='user' WHERE t.session_id=%s ORDER BY t.created_at, t.id", (sid,))
-        start = 0
-        if cursor:
-            idx = next((i for i, t in enumerate(turns) if t["id"] == cursor[0]), None)
-            start = idx if idx is not None else 0
-            if idx is None:
-                cursor = None
+        idx = next((i for i, t in enumerate(turns) if cursor and t["id"] == cursor[0]), None)
+        cand = turns[idx:] if idx is not None else turns
+        pick, size = [], 0
+        for t in reversed(cand):
+            if pick and (len(pick) >= REPLAY_TURNS or size + t["n_bytes"] > REPLAY_BYTES):
+                break
+            pick.append(t)
+            size += t["n_bytes"]
+        pick.reverse()
+        cur = cursor if idx is not None and pick and pick[0]["id"] == cursor[0] else None
         out = []
-        for i, t in enumerate(turns[start:], start):
-            after = cursor[1] if cursor and i == start else -1
-            if after < 0:
+        if len(pick) < len(cand):
+            out.append((None, "trimmed", {"first_turn_id": pick[0]["id"]}))
+        evs = {}
+        if pick:
+            for e in _all(c, "SELECT turn_id, seq, kind, data, created_at FROM chat_events WHERE turn_id = ANY(%s) AND (turn_id <> %s OR seq > %s) "
+                             "ORDER BY turn_id, seq", ([t["id"] for t in pick], cur[0] if cur else "", cur[1] if cur else 0)):
+                evs.setdefault(e["turn_id"], []).append(e)
+        for t in pick:
+            if not (cur and t["id"] == cur[0]):
                 out.append((f"{t['id']}:0", "turn", {"turn_id": t["id"], "client_turn_id": t["client_turn_id"], "text": t["body"] or "",
                                                      "created_at": _iso(t["created_at"])}))
-            for e in _all(c, "SELECT seq, kind, data, created_at FROM chat_events WHERE turn_id=%s AND seq > %s ORDER BY seq", (t["id"], max(after, 0))):
+            for e in evs.get(t["id"], []):
                 out.append((f"{t['id']}:{e['seq']}", e["kind"], {"turn_id": t["id"], "seq": e["seq"], "data": e["data"],
                                                                "created_at": _iso(e["created_at"])}))
     return out
@@ -288,8 +330,7 @@ def ingest(dev: dict, turn_id, seq, kind, data) -> dict:
             or not isinstance(data, dict):
         raise CrmError("ARG-INVALID", "event 모양이 틀렸어요.")
     with tx() as c:
-        t = _one(c, "SELECT t.*, s.user_id, s.device_id FROM chat_turns t JOIN chat_sessions s ON s.id=t.session_id WHERE t.id=%s FOR UPDATE OF t",
-                 (turn_id,))
+        t = _lock_turn(c, turn_id)
         if not t or t["user_id"] != dev["user_id"] or t["device_id"] != dev["id"]:
             return {"state": "foreign"}
         last = _last_seq(c, turn_id)
@@ -300,14 +341,15 @@ def ingest(dev: dict, turn_id, seq, kind, data) -> dict:
             return {**base, "state": "dup", "ack": last}
         if seq != last + 1:
             return {**base, "state": "gap", "ack": last}
-        st = _one(c, "SELECT count(*) AS n, COALESCE(sum(octet_length(data::text)), 0) AS b FROM chat_events WHERE turn_id=%s", (turn_id,))
-        if st["n"] + 1 > EVENTS_PER_TURN or st["b"] + _jbytes(data) > TURN_BYTES_MAX:
+        nb = _jbytes(data)
+        if t["n_events"] + 1 > EVENTS_PER_TURN or t["n_bytes"] + nb > TURN_BYTES_MAX:   # 누계 열 — O(1)
             ev = _finish(c, t, "failed", "TURN-LIMIT")
             return {**base, "state": "stored", "ack": seq, "event": ev, "stop": True}
         r = _one(c, "INSERT INTO chat_events (turn_id,seq,kind,data) VALUES (%s,%s,%s,%s) ON CONFLICT (turn_id, seq) DO NOTHING RETURNING created_at",
                  (turn_id, seq, kind, json.dumps(data, ensure_ascii=False)))
         if not r:
             return {**base, "state": "dup", "ack": seq}
+        c.execute("UPDATE chat_turns SET n_events=n_events+1, n_bytes=n_bytes+%s WHERE id=%s", (nb, turn_id))
         if kind in TERMINAL_STATUS:
             status = "stopped" if kind == "error" and data.get("code") == "STOPPED" else TERMINAL_STATUS[kind]
             _finish(c, t, status)
@@ -326,8 +368,13 @@ def session_ref_set(dev: dict, sid, ref) -> bool:
 
 
 def purge() -> int:
-    """보관 30일(생성일 기준) 지난 대화 기록 삭제 — main.purge_once 회차. 실행 중 턴은 남긴다. 지운 행 수 합."""
+    """보관 30일(생성일 기준) 지난 대화 기록 삭제 — main.purge_once 회차. 30일 넘은 running 턴은 먼저 failed 로 끝낸 뒤 지운다. 지운 행 수 합."""
     n = 0
+    with tx() as c:   # 30일 넘게 running(유휴 정리를 못 만난 턴) — 먼저 failed 로 끝낸다(잠금 순서 = 세션 → 턴)
+        for r in _all(c, "SELECT id FROM chat_turns WHERE status='running' AND created_at < now() - make_interval(days => %s)", (KEEP_DAYS,)):
+            t = _lock_turn(c, r["id"])
+            if t and t["status"] == "running":
+                _finish(c, t, "failed", "TURN-TIMEOUT")
     with tx() as c:
         for sql in ("DELETE FROM chat_turns WHERE status <> 'running' AND created_at < now() - make_interval(days => %s)",
                     "DELETE FROM chat_messages WHERE created_at < now() - make_interval(days => %s)",
@@ -341,8 +388,8 @@ def purge() -> int:
 # ── 허브(프로세스 메모리 — Render 1 인스턴스) ─────────────────────────
 
 class _Sub:
-    def __init__(self, uid, sid):
-        self.uid, self.sid = uid, sid
+    def __init__(self, uid, sid, device_id=None):
+        self.uid, self.sid, self.device_id = uid, sid, device_id
         self.q: asyncio.Queue = asyncio.Queue()
         self.bytes = 0
         self.closed = asyncio.Event()
@@ -355,10 +402,11 @@ class _Sub:
         self.bytes += size
         self.q.put_nowait((item, size))
 
-    def close(self):
+    def close(self, reason=None):
+        """reason = "replaced"(다른 탭이 새로 붙음 — 스트림이 event: replaced 를 보내고 끝난다) · None(그 밖)."""
         if not self.closed.is_set():
             self.closed.set()
-            self.q.put_nowait(None)   # 기다리는 스트림을 깨운다
+            self.q.put_nowait(("close", reason))   # 기다리는 스트림을 깨운다
 
 
 class _Dev:
@@ -367,6 +415,7 @@ class _Dev:
         self.lock = asyncio.Lock()
         self.providers: list = []
         self.closed = False
+        self.stop_sent: set = set()   # 이 연결에서 turn.stop 을 보낸 turn_id(끝난 턴 이벤트가 오면 한 번만 다시 알린다)
 
     async def send(self, obj) -> bool:
         if self.closed:
@@ -412,11 +461,11 @@ class Hub:
             del self.devs[key]
             self.notify_pc(d.dev["user_id"], d.dev["id"])
 
-    def subscribe(self, uid, sid) -> _Sub:
+    def subscribe(self, uid, sid, device_id=None) -> _Sub:
         old = self.subs.get(uid)
-        if old:   # 사용자당 활성 SSE 1 — 새 연결이 옛 연결을 닫는다
-            old.close()
-        s = self.subs[uid] = _Sub(uid, sid)
+        if old:   # 사용자당 활성 SSE 1 — 새 연결이 옛 연결을 닫는다(옛 쪽은 event: replaced 를 받고 다시 붙지 않는다)
+            old.close("replaced")
+        s = self.subs[uid] = _Sub(uid, sid, device_id)
         return s
 
     def unsubscribe(self, s: _Sub):
@@ -436,7 +485,7 @@ class Hub:
 
     def notify_pc(self, uid, did):
         s = self.subs.get(uid)
-        if s:
+        if s and s.device_id == did:   # 그 세션의 장치만 — 다른 PC 가 붙거나 끊겨도 표시가 뒤집히지 않는다
             frame = _sse(None, "pc", {"device_id": did, "connected": self.connected(uid, did)})
             s.put((None, frame), len(frame))
 
@@ -512,6 +561,9 @@ class Routes:
             rows = await run_in_threadpool(sessions_list, uid)
             for r in rows:
                 r["connected"] = r["status"] == "active" and hub.connected(uid, r["device_id"])
+                if r["status"] == "active":   # 유휴 턴 정리 — 화면은 실행 중이면 보내기를 막으니 다음 입력을 기다리지 않는다
+                    for ev in await run_in_threadpool(sweep, uid, r["session_id"]):
+                        hub.publish_event(uid, r["session_id"], ev)
             return JSONResponse({"sessions": rows}, headers={"cache-control": "no-store"})
         except CrmError as e:
             return _err(e)
@@ -579,10 +631,12 @@ class Routes:
         sid = request.path_params["sid"]
         try:
             s = await run_in_threadpool(session_get, uid, sid)
+            if s["status"] == "active":
+                await run_in_threadpool(sweep, uid, sid)   # 유휴 턴 정리 — 결과 이벤트는 아래 재생에 들어간다
         except CrmError as e:
             return _err(e)
         cursor = parse_cursor(request.headers.get("last-event-id") or request.query_params.get("last_event_id"))
-        sub = hub.subscribe(uid, sid)   # 재생 전에 구독 — 재생 중 들어온 실시간 항목은 큐에 쌓이고, 재생한 id 는 건너뛴다
+        sub = hub.subscribe(uid, sid, s["device_id"])   # 재생 전에 구독 — 재생 중 들어온 실시간 항목은 큐에 쌓이고, 재생한 id 는 건너뛴다
         try:
             items = await run_in_threadpool(replay, uid, sid, cursor)
         except Exception:
@@ -590,8 +644,9 @@ class Routes:
             raise
         seen = {}
         for sse_id, _, _ in items:
-            tid, seq = sse_id.split(":")
-            seen[tid] = max(seen.get(tid, -1), int(seq))
+            if sse_id:
+                tid, seq = sse_id.split(":")
+                seen[tid] = max(seen.get(tid, -1), int(seq))
 
         async def gen():
             try:
@@ -606,7 +661,9 @@ class Routes:
                     except asyncio.TimeoutError:
                         yield b": hb\n\n"
                         continue
-                    if item is None:   # 닫힘(새 연결·느린 구독)
+                    if item[0] == "close":   # 닫힘 — 다른 탭이 새로 붙었으면 알리고 끝(클라이언트는 다시 붙지 않는다)
+                        if item[1] == "replaced":
+                            yield _sse(None, "replaced", {})
                         break
                     (sse_id, frame), size = item
                     sub.bytes -= size
@@ -716,13 +773,21 @@ class Routes:
                     r = await run_in_threadpool(ingest, dev, m.get("turn_id"), m.get("seq"), m.get("kind"), m.get("data"))
                 except CrmError:
                     continue
+                except Exception as e:   # DB 일시 장애·교착 등 — 연결은 살린다(ack 없음 = PC 가 재전송). 코드만 집계
+                    db.usage_count(None, "api:chat_ws_event", type(e).__name__[:30].upper() if _CODE.match(type(e).__name__[:30].upper()) else "EXC")
+                    continue
                 if r["state"] == "foreign":
                     continue
                 await d.send({"type": "ack", "turn_id": m["turn_id"], "seq": r["ack"]})
                 if r.get("event"):
                     hub.publish_event(r["user_id"], r["session_id"], r["event"])
-                if r.get("stop"):
+                # 서버가 끝낸 턴(한도) · 이미 끝난 턴의 이벤트(중지 때 PC 가 끊겨 turn.stop 을 못 받았을 수 있다) — 연결당 한 번 알린다
+                if (r.get("stop") or r["state"] == "dropped") and m["turn_id"] not in d.stop_sent:
+                    d.stop_sent.add(m["turn_id"])
                     await d.send({"type": "turn.stop", "turn_id": m["turn_id"]})
             elif typ == "session_ref":
-                await run_in_threadpool(session_ref_set, dev, m.get("session_id"), m.get("cli_session_ref"))
+                try:
+                    await run_in_threadpool(session_ref_set, dev, m.get("session_id"), m.get("cli_session_ref"))
+                except Exception:
+                    db.usage_count(None, "api:chat_ws_ref", "EXC")
             # pong·모르는 type = 무시

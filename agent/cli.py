@@ -810,7 +810,15 @@ def cmd_chat(ctx: Ctx, a) -> int:
         for sig in (signal.SIGINT, signal.SIGTERM):
             old[sig] = signal.signal(sig, lambda *_: stopping.set())
     try:
-        agent = chat.ChatAgent(chat.ws_url(server), token, provider, agent_version=AGENT_VERSION, stopping=stopping, log=log, **kw)
+        ks = ctx.keystore(cfg)
+
+        def token_now():   # 매번 다시 읽는다 — run-once 의 rotate·웹 재발급 뒤에도 상주가 새 토큰으로 이어 간다
+            try:
+                return ks.get(_config.token_account(sid))
+            except keystore.KeyStoreError:
+                return None
+
+        agent = chat.ChatAgent(chat.ws_url(server), token_now, provider, agent_version=AGENT_VERSION, stopping=stopping, log=log, **kw)
         why = agent.run()
     finally:
         for sig, h in old.items():

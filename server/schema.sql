@@ -994,6 +994,8 @@ CREATE TABLE IF NOT EXISTS chat_turns (
   session_id       text NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
   client_turn_id   text NOT NULL CHECK (char_length(client_turn_id) BETWEEN 1 AND 64),
   status           text NOT NULL DEFAULT 'running' CHECK (status IN ('running','done','failed','stopped')),
+  n_events         integer NOT NULL DEFAULT 0 CHECK (n_events >= 0),   -- 저장한 이벤트 수(턴 한도·재생 상한 — 매번 세지 않는다)
+  n_bytes          bigint NOT NULL DEFAULT 0 CHECK (n_bytes >= 0),     -- 이벤트 data 의 압축 JSON UTF-8 바이트 합(webchat._jbytes 기준)
   created_at       timestamptz NOT NULL DEFAULT now(),
   ended_at         timestamptz,
   UNIQUE (session_id, client_turn_id),

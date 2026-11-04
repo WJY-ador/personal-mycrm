@@ -78,9 +78,9 @@ class Script:
                     return got
 
 
-def run_agent(srv, provider, **kw):
+def run_agent(srv, provider, token="TOK", **kw):
     stopping = threading.Event()
-    a = chat.ChatAgent(srv.url, "TOK", provider, agent_version="t", stopping=stopping, **{**FAST, **kw})
+    a = chat.ChatAgent(srv.url, token, provider, agent_version="t", stopping=stopping, **{**FAST, **kw})
     res = {}
     th = threading.Thread(target=lambda: res.setdefault("why", a.run()), daemon=True)
     th.start()
@@ -210,6 +210,106 @@ class AgentTest(unittest.TestCase):
         th.join(5)
         srv.close()
         self.assertEqual(res["why"], "signal")
+
+
+class ReviewTest(unittest.TestCase):
+    """PR #45 리뷰 — 반쯤 열린 연결 감지 · 메시지 크기 상한 · 토큰 교체 뒤 이어 가기."""
+
+    def test_fit_event(self):
+        big = "가" * 100000
+        parts = chat.fit_event("ct_1", "delta", {"text": big})
+        self.assertGreater(len(parts), 1)
+        self.assertEqual("".join(p["text"] for p in parts), big)
+        self.assertTrue(all(chat._size("ct_1", "delta", p) <= chat.WS_MESSAGE_MAX for p in parts))
+        esc = "\x01" * 40000   # JSON 이스케이프(\u0001 = 6바이트) 최악
+        self.assertTrue(all(chat._size("ct_1", "delta", p) <= chat.WS_MESSAGE_MAX for p in chat.fit_event("ct_1", "delta", {"text": esc})))
+        t = chat.fit_event("ct_1", "tool_call", {"name": "find", "input": {"q": "x" * 100000}, "ok": True})
+        self.assertEqual(t, [{"name": "find", "ok": True, "truncated": True}])
+        t = chat.fit_event("ct_1", "tool_result", {"name": "find", "summary": "y" * 100000})
+        self.assertEqual((len(t), t[0]["truncated"], len(t[0]["summary"])), (1, True, 2000))
+        self.assertEqual(chat.fit_event("ct_1", "done", {}), [{}], "작으면 그대로")
+
+    def test_big_events_stay_under_limit(self):
+        got = {}
+
+        def conn1(c, s):
+            c.recv()
+            c.send({"type": "turn.start", "session_id": "cs_1", "turn_id": "ct_big", "text": "x"})
+            got["ev"] = s.events(c, "done")
+            c.recv()
+
+        script = lambda text: [("delta", {"text": "나" * 60000}), ("tool_call", {"name": "n", "input": {"p": "z" * 90000}}), ("done", {})]
+        srv = FakeWsServer(Script(conn1))
+        a, stopping, th, _ = run_agent(srv, chat.FakeProvider(step=0, script=script), coalesce=0.0, buffer_max=10 ** 7)
+        try:
+            deadline = time.time() + 5
+            while "ev" not in got and time.time() < deadline:
+                time.sleep(0.05)
+            ev = got["ev"]
+            self.assertTrue(all(len(json.dumps(m, ensure_ascii=False, separators=(",", ":")).encode()) <= chat.WS_MESSAGE_MAX for m in ev))
+            self.assertEqual("".join(m["data"]["text"] for m in ev if m["kind"] == "delta"), "나" * 60000)
+            self.assertEqual([m["data"] for m in ev if m["kind"] == "tool_call"], [{"name": "n", "truncated": True}])
+            self.assertEqual([m["seq"] for m in ev], list(range(1, len(ev) + 1)))
+        finally:
+            stopping.set()
+            th.join(5)
+            srv.close()
+
+    def test_half_open_reconnects(self):
+        got = {"n": 0}
+
+        def hold(c, s):   # hello 만 받고 아무것도 보내지 않은 채 소켓을 붙든다(FIN 없음)
+            c.recv()
+            got["n"] += 1
+            time.sleep(3)
+
+        srv = FakeWsServer(Script(hold, hold, hold))
+        logs = []
+        a, stopping, th, _ = run_agent(srv, chat.FakeProvider(), silence_max=0.3, log=logs.append)
+        try:
+            deadline = time.time() + 5
+            while a.connects < 2 and time.time() < deadline:
+                time.sleep(0.05)
+            self.assertGreaterEqual(a.connects, 2, "조용한 연결을 닫고 다시 붙는다")
+            self.assertIn({"event": "disconnect", "why": "silent"}, logs)
+        finally:
+            stopping.set()
+            th.join(5)
+            srv.close()
+
+    def test_token_reread_on_401_and_4001(self):
+        reads = []
+
+        def keystore_now():   # 첫 읽기 = 옛 토큰, 그 뒤 = run-once 의 rotate 가 바꾼 새 토큰
+            reads.append(1)
+            return "OLD" if len(reads) == 1 else "NEW"
+
+        srv = FakeWsServer(lambda c: (c.recv(), c.recv()), deny=lambda h: (401, "TOKEN-REVOKED") if h.get("authorization") != "Bearer NEW" else None)
+        logs = []
+        a, stopping, th, res = run_agent(srv, chat.FakeProvider(), token=keystore_now, log=logs.append)
+        try:
+            deadline = time.time() + 5
+            while a.connects < 1 and time.time() < deadline:
+                time.sleep(0.05)
+            self.assertGreaterEqual(a.connects, 1, "새 토큰으로 이어 간다")
+            self.assertEqual([r["headers"]["authorization"] for r in srv.requests[:2]], ["Bearer OLD", "Bearer NEW"])
+            self.assertNotIn("why", res, "멈추지 않았다")
+        finally:
+            stopping.set()
+            th.join(5)
+            srv.close()
+
+        def close4001(c, s):
+            c.recv()
+            c.close(4001)
+
+        srv2 = FakeWsServer(Script(close4001, close4001))
+        a2, stopping2, th2, res2 = run_agent(srv2, chat.FakeProvider(), log=logs.append)   # 토큰 그대로 = 멈춤
+        th2.join(5)
+        srv2.close()
+        self.assertEqual(res2.get("why"), "auth")
+        self.assertEqual(a2.connects, 1)
+        self.assertIn({"event": "disconnect", "why": "auth-closed"}, logs)
 
 
 class CliTest(unittest.TestCase):

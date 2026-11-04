@@ -3,7 +3,7 @@ import { expect, test, vi } from "vitest";
 import { ApiFail } from "../../shared/api";
 import type { Es } from "./api";
 import { WebchatStore } from "./store";
-import { END, ERR, TEXT_MAX } from "./text";
+import { END, ERR, REPLACED, TEXT_MAX, TRIMMED } from "./text";
 
 class FakeEs implements Es {
   onmessage = null; onerror = null; closed = false;
@@ -76,4 +76,23 @@ test("보내기 — client_turn_id 를 싣고 성공하면 입력 비움 · 중�
   expect(s.line).toBe(ERR["NO-DEVICE"]);
   s.close();
   expect(es.closed).toBe(true);
+});
+
+test("다른 탭에서 열림 = SSE 닫고 다시 붙지 않음 · 다시 열면 이어 받기 · 생략 안내 · 다른 PC 의 pc 이벤트 무시", async () => {
+  const { s, es } = mk();
+  await s.toggle(true);
+  es.fire("trimmed", { first_turn_id: "ct_9" });
+  expect(s.trimmed).toBe(TRIMMED);
+  es.fire("pc", { device_id: "is_other", connected: false });
+  expect(s.connected).toBe(true);   // 이 대화의 PC(is_1)가 아님
+  es.fire("pc", { device_id: "is_1", connected: false });
+  expect(s.connected).toBe(false);
+  es.fire("pc", { device_id: "is_1", connected: true });
+  s.input = "x";
+  es.fire("replaced", {});
+  expect([es.closed, s.replaced, s.line, s.canSend()]).toEqual([true, true, REPLACED, false]);
+  await s.toggle(false);
+  await s.toggle(true);
+  expect(s.api.stream).toHaveBeenCalledTimes(2);
+  expect([s.replaced, s.line, s.trimmed]).toEqual([false, "", ""]);
 });

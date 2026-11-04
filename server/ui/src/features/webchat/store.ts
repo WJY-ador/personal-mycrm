@@ -2,7 +2,7 @@
 // 턴 = 사용자 글 + 답(delta 합) + 도구 호출 목록 + 끝 상태. 같은 SSE id 는 두 번 그리지 않는다. 브라우저 저장소에는 아무것도 쓰지 않는다.
 import { apiErr } from "../../shared/api";
 import { webchatApi, type Es, type WebchatApi } from "./api";
-import { TEXT_MAX, endText, errText } from "./text";
+import { REPLACED, TEXT_MAX, TRIMMED, endText, errText } from "./text";
 
 export type Tool = { name: string; input?: unknown; ok?: boolean; summary?: string };
 export type Turn = { id: string; user: string; answer: string; tools: Tool[]; end: "" | "done" | "error"; endNote: string; last: number };
@@ -13,7 +13,8 @@ const str = (v: unknown) => (typeof v === "string" ? v : "");
 
 export class WebchatStore {
   api: WebchatApi = { ...webchatApi };
-  open = false; sid = ""; connected = false; turns: Turn[] = []; input = ""; line = ""; bad = false; sending = false;
+  open = false; sid = ""; device = ""; connected = false; turns: Turn[] = []; input = ""; line = ""; bad = false; sending = false;
+  replaced = false; trimmed = "";   // replaced = 다른 탭이 이 대화를 열어 이 탭의 SSE 가 끝남(다시 붙지 않는다) · trimmed = 재생에서 생략된 앞부분 안내
   private es: Es | null = null;
   private v = 0;
   private subs = new Set<() => void>();
@@ -22,19 +23,20 @@ export class WebchatStore {
   emit() { this.v++; this.subs.forEach(f => f()); }
 
   running() { const t = this.turns[this.turns.length - 1]; return !!t && !t.end; }
-  canSend() { const n = [...this.input].length; return !!this.sid && this.connected && !this.sending && !this.running() && !!this.input.trim() && n <= TEXT_MAX; }
+  canSend() { const n = [...this.input].length; return !!this.sid && !this.replaced && this.connected && !this.sending && !this.running() && !!this.input.trim() && n <= TEXT_MAX; }
   say(text: string, bad = false) { this.line = text; this.bad = bad; this.emit(); }
 
   async toggle(on = !this.open) {
     this.open = on;
     this.emit();
     if (on && !this.sid) await this.start();
+    else if (on && this.replaced) { this.line = ""; this.listen(); }   // 다른 탭에서 열렸던 대화 — 이 탭에서 다시 열면 이 탭이 이어 받는다
   }
 
   async start() {
     try {
       const s = await this.api.open();
-      this.sid = s.session_id; this.connected = !!s.connected; this.turns = []; this.line = "";
+      this.sid = s.session_id; this.device = s.device_id; this.connected = !!s.connected; this.turns = []; this.line = "";
       this.listen();
     } catch (e) { this.say(errText(apiErr(e)), true); }
     this.emit();
@@ -43,9 +45,12 @@ export class WebchatStore {
   listen() {
     this.es?.close();
     const es = this.es = this.api.stream(this.sid);
+    this.replaced = false; this.trimmed = ""; this.turns = [];   // 재생이 처음부터(또는 최근 N턴) 다시 그린다
     const on = (t: string, f: (d: Ev & Record<string, unknown>) => void) =>
       es.addEventListener(t, (m: MessageEvent) => { try { f(JSON.parse(String(m.data))); } catch { return; } this.emit(); });
-    on("pc", d => { this.connected = d.connected === true; });
+    on("pc", d => { if (!d.device_id || d.device_id === this.device) this.connected = d.connected === true; });   // 이 대화의 PC 만
+    on("replaced", () => { es.close(); if (this.es === es) this.es = null; this.replaced = true; this.say(REPLACED); });
+    on("trimmed", () => { this.trimmed = TRIMMED; });
     on("turn", d => {
       if (!this.turns.some(t => t.id === d.turn_id)) this.turns.push({ id: d.turn_id, user: str(d.text), answer: "", tools: [], end: "", endNote: "", last: 0 });
     });

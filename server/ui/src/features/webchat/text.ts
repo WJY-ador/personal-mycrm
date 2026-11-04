@@ -6,6 +6,8 @@ export const PC_ON = "PC 연결됨";
 export const PC_OFF = "PC 꺼짐 — PC 에서 my-crm 에이전트 대화를 켜세요";
 export const WAITING = "답을 기다리는 중…";
 export const KEEP = "대화 기록은 서버에 30일 보관돼요.";
+export const REPLACED = "다른 탭에서 이 대화를 열었어요. 여기서 이어 하려면 닫았다가 다시 여세요.";
+export const TRIMMED = "앞의 대화는 생략했어요(최근 대화만 보여요).";
 export const END: Record<string, string> = {
   STOPPED: "중지했어요.", "TURN-LIMIT": "답이 너무 길어 멈췄어요.", "TURN-TIMEOUT": "PC 응답이 없어 끝냈어요.",
   "DEVICE-OFFLINE": "PC 연결이 끊겨 보내지 못했어요.", "BUFFER-LIMIT": "PC 가 보낼 출력이 너무 많아 멈췄어요.", "PC-BUSY": "PC 가 다른 답을 만드는 중이에요.",

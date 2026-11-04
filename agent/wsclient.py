@@ -16,6 +16,7 @@ import socket
 import ssl
 import struct
 import threading
+import time
 from urllib.parse import urlsplit
 
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -80,7 +81,7 @@ class WebSocket:
         self.send_lock = threading.Lock()
         self.closed = False
         self.close_code = None
-
+        self.last_rx = time.monotonic()   # 마지막으로 바이트를 받은 단조 시각 — 반쯤 열린 연결(half-open) 감지용
     # ── 연결 ──
     @classmethod
     def connect(cls, url: str, headers: dict | None = None, timeout: float = 10.0, ssl_context=None,
@@ -211,6 +212,7 @@ class WebSocket:
             if not chunk:
                 self.closed = True
                 raise WsError("network")
+            self.last_rx = time.monotonic()
             self.buf += chunk
 
     def _frame(self):

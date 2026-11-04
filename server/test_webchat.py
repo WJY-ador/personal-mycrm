@@ -43,7 +43,7 @@ import main  # noqa: E402
 import webchat  # noqa: E402
 from agent import wsclient  # noqa: E402
 
-EMAILS = ("wc-a@example.com", "wc-b@example.com", "wc-rate@example.com", "wc-del@example.com")
+EMAILS = ("wc-a@example.com", "wc-b@example.com", "wc-rate@example.com", "wc-del@example.com", "wc-rev@example.com")
 N = 0
 
 
@@ -232,7 +232,7 @@ def test_static():
     sub.put(("a:1", b"x"), webchat.LIVE_BUFFER_BYTES - 10)
     assert not sub.closed.is_set()
     sub.put(("a:2", b"y"), 11)
-    assert sub.closed.is_set() and sub.q.qsize() == 2 and sub.q.get_nowait()[0] == ("a:1", b"x") and sub.q.get_nowait() is None, "넘치면 닫고 깨움"
+    assert sub.closed.is_set() and sub.q.qsize() == 2 and sub.q.get_nowait()[0] == ("a:1", b"x") and sub.q.get_nowait() == ("close", None), "넘치면 닫고 깨움"
     h = webchat.Hub()
     h.subs["u1"] = webchat._Sub("u1", "cs_1")
     h.publish("u1", "cs_other", "ct_x:1", "delta", {})
@@ -354,6 +354,8 @@ def test_turns(srv, ua, tok_a, sid):
         e, last = sse.until("done")
         assert [x["id"] for x in e if "id" in x] == [f"{tid}:3", f"{tid}:4"], e
         sse2 = SSE(srv, ua, sid)   # 사용자당 1 — 새 연결이 옛 연결을 닫는다
+        e = sse.next(3)
+        assert e and e["event"] == "replaced", ("옛 SSE 에 replaced 를 알린다", e)
         assert sse.next(3) is None, "옛 SSE 닫힘"
         e, _ = sse2.until("done")
         assert [x["event"] for x in e] == ["pc", "turn", "delta", "tool_call", "delta", "done"], [x["event"] for x in e]
@@ -366,7 +368,7 @@ def test_turns(srv, ua, tok_a, sid):
             sse3.close()
         finally:
             webchat.SSE_MAX_SECONDS, webchat.HEARTBEAT_SECONDS = old_max, old_hb
-        ok("SSE: Last-Event-ID 뒤부터 재생 · 처음 연결 = 전체 재생 · 사용자당 1(옛 연결 닫힘) · 최대 수명 뒤 끝")
+        ok("SSE: Last-Event-ID 뒤부터 재생 · 처음 연결 = 전체 재생 · 사용자당 1(옛 연결에 replaced 뒤 닫힘) · 최대 수명 뒤 끝")
 
         t = rows("SELECT status, ended_at FROM chat_turns WHERE id=%s", (tid,))[0]
         assert t["status"] == "done" and t["ended_at"]
@@ -388,11 +390,14 @@ def test_turns(srv, ua, tok_a, sid):
         assert pc.wait(lambda m: m["type"] == "turn.stop" and m["turn_id"] == tid2)
         pc.event(tid2, 1, "delta", {"text": "멈춘 뒤"})
         assert pc.ack(tid2) == 1
+        assert pc.wait(lambda m: m["type"] == "turn.stop" and m["turn_id"] == tid2), "끝난 턴 이벤트 = turn.stop 다시(중지 때 PC 가 끊겼을 수 있다)"
+        pc.event(tid2, 2, "delta", {"text": "또"})
+        assert pc.ack(tid2) == 2 and pc.wait(lambda m: m["type"] == "turn.stop" and m["turn_id"] == tid2, 0.5) is None, "연결당 한 번"
         ev = rows("SELECT seq, kind, data FROM chat_events WHERE turn_id=%s ORDER BY seq", (tid2,))
         assert [(e["kind"], e["data"]) for e in ev] == [("error", {"code": "STOPPED"})], ev
         assert rows("SELECT status FROM chat_turns WHERE id=%s", (tid2,))[0]["status"] == "stopped"
         assert h.post(f"/api/chat/sessions/{sid}/stop").json() == {"turn_id": None, "status": None}
-        ok("중지: 서버에서 바로 stopped + error STOPPED · PC 에 turn.stop · 뒤늦은 이벤트 버림(ack) · 실행 중 없음 = null")
+        ok("중지: 서버에서 바로 stopped + error STOPPED · PC 에 turn.stop · 뒤늦은 이벤트 버림(ack) + turn.stop 한 번 더 · 실행 중 없음 = null")
 
         old = webchat.EVENTS_PER_TURN
         webchat.EVENTS_PER_TURN = 2
@@ -447,6 +452,145 @@ def test_foreign(srv, ub, tok_b1, sid_a, tid_a):
     assert sse.status == 404, "남의 세션 SSE = 404"
     sse.close()
     ok("남의 턴·세션: 다른 사용자 장치 이벤트 저장·ack 없음 · session_ref 거절 · 남의 SSE 404")
+
+
+def test_review(srv):
+    """PR #45 리뷰 반영 — 재생 상한·누계 열·pc 거름·세션 닫기 = 턴 끝·GET 유휴 정리·동시 중지+수신·수신 예외에도 연결 유지."""
+    old_rate = webchat.TURNS_PER_MINUTE
+    webchat.TURNS_PER_MINUTE = 1000   # 이 절은 턴을 많이 만든다 — 분당 한도는 test_rate 가 본다
+    try:
+        _review(srv)
+    finally:
+        webchat.TURNS_PER_MINUTE = old_rate
+
+
+def _review(srv):
+    u = db.user_by_email("wc-rev@example.com")["id"]
+    d1, d2 = imports.device_connect(u, "rev pc1"), imports.device_connect(u, "rev pc2")
+    pc = PC(srv, d1["token"])
+    time.sleep(0.2)
+    with web(srv, u) as h:
+        sid = h.post("/api/chat/sessions", json={"device_id": d1["device"]["id"]}).json()["session_id"]
+        tids = []
+        for i in range(4):
+            tid = h.post(f"/api/chat/sessions/{sid}/turns", json={"text": f"q{i}", "client_turn_id": f"rv-{i}"}).json()["turn_id"]
+            pc.wait(lambda m: m["type"] == "turn.start")
+            pc.event(tid, 1, "delta", {"text": "가나"})
+            pc.event(tid, 2, "done", {})
+            assert pc.ack(tid) == 1 and pc.ack(tid) == 2
+            tids.append(tid)
+        t = rows("SELECT n_events, n_bytes FROM chat_turns WHERE id=%s", (tids[0],))[0]
+        assert (t["n_events"], t["n_bytes"]) == (2, webchat._jbytes({"text": "가나"}) + webchat._jbytes({})), t
+        ok("누계 열: n_events·n_bytes = 저장한 이벤트 수·압축 JSON 바이트(_jbytes) — 매번 세지 않는다")
+
+        old = webchat.REPLAY_TURNS
+        webchat.REPLAY_TURNS = 2
+        try:
+            sse = SSE(srv, u, sid)
+            e, _ = sse.until("done")
+            e2, _ = sse.until("done")
+            evs = [x for x in e + e2 if x["event"] != "pc"]
+            assert evs[0]["event"] == "trimmed" and evs[0]["data"]["first_turn_id"] == tids[2] and "id" not in evs[0], evs[0]
+            assert [x["data"]["turn_id"] for x in evs if x["event"] == "turn"] == tids[2:], "최근 2턴만"
+            sse.close()
+            sse = SSE(srv, u, sid, last_id=f"{tids[0]}:2")   # 커서가 상한 밖 — 최근 N턴만(앞은 messages API)
+            e, _ = sse.until("trimmed")
+            assert e[-1]["data"]["first_turn_id"] == tids[2]
+            sse.close()
+        finally:
+            webchat.REPLAY_TURNS = old
+        ok("재생 상한: 최근 REPLAY_TURNS 턴(커서가 상한 밖이어도) · 앞부분 생략 = trimmed(id 없음) · 이벤트 한 쿼리")
+
+        sse = SSE(srv, u, sid)
+        assert sse.next()["event"] == "pc"
+        pc2 = PC(srv, d2["token"])   # 다른 장치가 붙고 끊김 — 이 세션 SSE 엔 pc 가 오지 않는다
+        time.sleep(0.2)
+        pc2.close()
+        time.sleep(0.3)
+        got = []
+        while True:
+            x = sse.next(0.5)
+            if x in (None, "timeout"):
+                break
+            got.append(x)
+        assert not [x for x in got if x["event"] == "pc"], got
+        sse.close()
+        ok("pc 이벤트: 그 세션 장치(device_id)만 — 다른 PC 연결·끊김은 거른다")
+
+        old = webchat.TURN_IDLE_SECONDS
+        webchat.TURN_IDLE_SECONDS = 1
+        try:
+            tid = h.post(f"/api/chat/sessions/{sid}/turns", json={"text": "조용", "client_turn_id": "rv-idle"}).json()["turn_id"]
+            pc.wait(lambda m: m["type"] == "turn.start")
+            time.sleep(1.6)
+            assert h.get("/api/chat/sessions").status_code == 200
+            assert rows("SELECT status FROM chat_turns WHERE id=%s", (tid,))[0]["status"] == "failed", "세션 목록 조회 때 유휴 정리"
+            tid = h.post(f"/api/chat/sessions/{sid}/turns", json={"text": "조용2", "client_turn_id": "rv-idle2"}).json()["turn_id"]
+            pc.wait(lambda m: m["type"] == "turn.start")
+            time.sleep(1.6)
+            sse = SSE(srv, u, sid, last_id=f"{tid}:0")
+            e, last = sse.until("error")
+            assert last["data"]["data"] == {"code": "TURN-TIMEOUT"}, "SSE 연결 때 유휴 정리 — 재생에 들어간다"
+            sse.close()
+        finally:
+            webchat.TURN_IDLE_SECONDS = old
+        ok("유휴 정리: 세션 목록·SSE 연결 때도 돈다(화면은 실행 중이면 보내기를 막는다)")
+
+        orig = webchat.ingest
+        calls = {"n": 0}
+
+        def boom(*a, **k):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("일시 장애")
+            return orig(*a, **k)
+
+        webchat.ingest = boom
+        try:
+            tid = h.post(f"/api/chat/sessions/{sid}/turns", json={"text": "예외", "client_turn_id": "rv-exc"}).json()["turn_id"]
+            pc.wait(lambda m: m["type"] == "turn.start")
+            pc.event(tid, 1, "delta", {"text": "a"})
+            assert pc.ack(tid, 1.0) is None, "예외 = ack 없음"
+            pc.event(tid, 1, "delta", {"text": "a"})   # PC 재전송
+            assert pc.ack(tid) == 1 and pc.closed is None, "연결 유지"
+            pc.event(tid, 2, "done", {})
+            assert pc.ack(tid) == 2
+        finally:
+            webchat.ingest = orig
+        ok("수신 예외(DB 일시 장애 등): 연결 유지 · ack 없음 → PC 재전송으로 회복")
+
+        errs = []
+        for i in range(6):   # 답 나오는 중 중지 — 잠금 순서(세션 → 턴)가 같아 교착·500 없음
+            tid = h.post(f"/api/chat/sessions/{sid}/turns", json={"text": "중지 경합", "client_turn_id": f"rv-race-{i}"}).json()["turn_id"]
+            pc.wait(lambda m: m["type"] == "turn.start")
+            go = threading.Event()
+
+            def flood():
+                go.wait()
+                for k in range(1, 30):
+                    pc.event(tid, k, "delta", {"text": "x"})
+
+            th = threading.Thread(target=flood)
+            th.start()
+            go.set()
+            time.sleep(0.01 * i)
+            r = h.post(f"/api/chat/sessions/{sid}/stop")
+            th.join()
+            if r.status_code != 200:
+                errs.append(r.status_code)
+            time.sleep(0.2)
+            assert rows("SELECT status FROM chat_turns WHERE id=%s", (tid,))[0]["status"] == "stopped"
+        assert errs == [] and pc.closed is None, (errs, pc.closed)
+        ok("동시 중지 + 수신 6회: 중지 200 · 턴 stopped · WS 유지(교착 없음)")
+
+        tid = h.post(f"/api/chat/sessions/{sid}/turns", json={"text": "닫힘", "client_turn_id": "rv-close"}).json()["turn_id"]
+        pc.wait(lambda m: m["type"] == "turn.start")
+        s2 = h.post("/api/chat/sessions", json={"device_id": d2["device"]["id"]}).json()["session_id"]
+        assert s2 != sid and rows("SELECT status FROM chat_sessions WHERE id=%s", (sid,))[0]["status"] == "closed"
+        assert rows("SELECT status FROM chat_turns WHERE id=%s", (tid,))[0]["status"] == "failed"
+        assert rows("SELECT data FROM chat_events WHERE turn_id=%s ORDER BY seq DESC LIMIT 1", (tid,))[0]["data"] == {"code": "SESSION-CLOSED"}
+        ok("세션 닫기(다른 장치 선택) = 실행 중 턴 failed(SESSION-CLOSED)")
+    pc.close()
 
 
 def test_rate(srv):
@@ -535,14 +679,14 @@ def test_purge(ua_del):
     n = webchat.purge()
     left = rows("SELECT t.status, (t.created_at > now() - interval '30 days') AS young FROM chat_turns t JOIN chat_sessions s ON s.id=t.session_id "
                 "WHERE s.user_id=%s ORDER BY t.created_at", (u,))
-    assert [(r["status"], r["young"]) for r in left] == [("running", False), ("done", True)], left
+    assert [(r["status"], r["young"]) for r in left] == [("done", True)], ("30일 넘은 running 도 failed 로 끝낸 뒤 삭제", left)
     assert rows("SELECT id FROM chat_sessions WHERE user_id=%s", (u,)) == [{"id": sid_new}], "빈 30일+ 세션 삭제, 새 세션 유지"
     assert rows("SELECT count(*) AS n FROM chat_messages m JOIN chat_sessions s ON s.id=m.session_id WHERE s.user_id=%s", (u,))[0]["n"] == 1
-    assert n >= 5, n
+    assert n >= 4, n   # 턴 3(cascade 로 메시지·이벤트) + 빈 세션 1
     src = (HERE / "main.py").read_text(encoding="utf-8")
     body = src[src.index("async def purge_once"):src.index("async def trash_purge_round")]
     assert "webchat.purge" in body, "purge_once 회차에 얹었다"
-    ok("30일 삭제: 생성일 30일 지난 턴·메시지·이벤트·빈 세션 삭제 · 새 것·실행 중 턴 유지 · purge_once 경로")
+    ok("30일 삭제: 생성일 30일 지난 턴·메시지·이벤트·빈 세션 삭제 · 30일 넘은 running = failed 뒤 삭제 · 새 것 유지 · purge_once 경로")
     db.user_delete(u)
     assert rows("SELECT count(*) AS n FROM chat_sessions WHERE id=ANY(%s)", ([sid_old, sid_new],))[0]["n"] == 0
     assert rows("SELECT count(*) AS n FROM chat_messages WHERE session_id=ANY(%s)", ([sid_old, sid_new],))[0]["n"] == 0
@@ -570,6 +714,7 @@ def main_():
         sid_a, sid_b = test_sessions(srv, ua, ub, b2["device"]["id"])
         tid_a = test_turns(srv, ua, tok_a, sid_a)
         test_foreign(srv, ub, b1["token"], sid_a, tid_a)
+        test_review(srv)
         test_rate(srv)
         test_switch_runtime(srv, ub, b2["token"], sid_b)
         test_revoke(srv, ua, tok_a, dev_a, sid_a)
