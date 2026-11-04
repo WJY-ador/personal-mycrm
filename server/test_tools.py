@@ -2219,30 +2219,30 @@ async def test_daily_limits():
     """일일 한도 — 종류마다 전용 사용자(앞 시험이 쌓은 행과 섞이지 않게). 경계 = 상한까지 통과, 하나 더면 RATE-LIMIT."""
     site = main.site
     U = {k: db.user_by_email(LIM_EMAIL[k])["id"] for k in LIM_KINDS}
-    assert db.DAILY_LIMITS == {"records": 50, "candidates": 150, "decisions": 300, "proposals": 100, "questions": 50,
+    assert db.DAILY_LIMITS == {"records": 200, "candidates": 150, "decisions": 300, "proposals": 100, "questions": 50,
                                "people": 50, "reflections": 50,   # PR B ⓔ — 사람·출처 요약/반응은 24절이 본다
                                "migration": 200}   # 이관 경로(2026-11-02) 전용 — test_migration_path·25f·CLI C6 이 본다
     try:
-        # 기록 50 — 관리자도 같다
+        # 기록 200(2026-11-04 원작자 상향, 전 50) — 관리자도 같다
         u = U["records"]
         _set_role(u, "admin")
-        for i in range(49):
+        for i in range(199):
             db.record_add(u, f"한도 {i}", f"기록 {i}")
-        r50 = db.record_add(u, "한도 50", "50번째 기록")
-        e = expect("RATE-LIMIT", db.record_add, u, "한도 51", "51번째 기록")
-        assert e.message == "오늘 기록은 50개까지예요." and "KST" in e.action, (e.message, e.action)
+        r50 = db.record_add(u, "한도 200", "200번째 기록")
+        e = expect("RATE-LIMIT", db.record_add, u, "한도 201", "201번째 기록")
+        assert e.message == "오늘 기록은 200개까지예요." and "KST" in e.action, (e.message, e.action)
         _as_user(site, LIM_EMAIL["records"])
         async with Client(main.mcp) as c:   # MCP 도 같은 판정(관리자 uid)
-            r = await c.call_tool("record_add", {"text": "MCP 51번째"})
-            assert r.is_error and "[RATE-LIMIT] 오늘 기록은 50개까지예요." in r.content[0].text, r.content[0].text
-        assert len(db.records(u, limit=1000)) == 50
+            r = await c.call_tool("record_add", {"text": "MCP 201번째"})
+            assert r.is_error and "[RATE-LIMIT] 오늘 기록은 200개까지예요." in r.content[0].text, r.content[0].text
+        assert len(db.records(u, limit=1000)) == 200
         # 날짜 경계(_KST_TODAY): 하나를 어제로 옮기면 오늘 카운트에서 빠진다. board 이전부터 한도는 COALESCE(received_at, created) —
         # created 만 과거로 옮기면 그대로 센다(이전한 기록의 과거 created 로 한도 우회 금지, r3 T2)
         _bulk("UPDATE records SET created = created - interval '1 day' WHERE user_id=%s AND id=%s", (u, r50["id"]))
         expect("RATE-LIMIT", db.record_add, u, "created 만 과거", "받은 시각은 오늘")
         _bulk("UPDATE records SET received_at = received_at - interval '1 day' WHERE user_id=%s AND id=%s", (u, r50["id"]))
-        db.record_add(u, "어제로 옮긴 뒤", "다시 50번째")
-        expect("RATE-LIMIT", db.record_add, u, "다시 51", "다시 51번째")
+        db.record_add(u, "어제로 옮긴 뒤", "다시 200번째")
+        expect("RATE-LIMIT", db.record_add, u, "다시 201", "다시 201번째")
         _set_role(u, "user")
 
         # 질문 50
@@ -2336,7 +2336,7 @@ async def test_daily_limits():
         _set_role(U["records"], "user")
         site.dev, site.dev_user = True, TESTER
         os.environ["CRM_DEV_USER"] = TESTER
-    print("OK — α2 일일 한도(기록 50·질문 50·후보 148+3/147+3·결정 300·edit_confirm 2줄 299 거절/298 통과·제안 100·관리자 같음·KST 날짜 경계·합산) 통과")
+    print("OK — α2 일일 한도(기록 200·질문 50·후보 148+3/147+3·결정 300·edit_confirm 2줄 299 거절/298 통과·제안 100·관리자 같음·KST 날짜 경계·합산) 통과")
 
 
 def _usage_row(day, uid, name, code):
@@ -7616,6 +7616,33 @@ async def test_bi_imports():
         _sql("INSERT INTO import_counters (user_id,scope_key,period,period_start,bucket,n) VALUES (%s,'user','minute',now() - interval '2 hours','request',1)", (A,))
         assert imports.counters_purge() >= 1
         assert _bi_count(A, "import_counters", "AND period='minute' AND period_start < now() - interval '1 hour'") == 0
+        # ── 내 글/요약 하루 접수 새 값(2026-11-04 원작자 상향) — 장치 100건·1MiB · 사용자 200건·2MiB · 대기 300건·3MiB ──
+        # 분당 요청 한도는 _bi_fast 가 덮어쓰므로 여기서 보지 않는다(25c 끝에서 본다). LIMITS 를 바꾸지 않고 카운터만 경계에 둔다
+        assert imports.LIMITS[("device", "day", "self")] == (100, 1024 * 1024)
+        assert imports.LIMITS[("user", "day", "self")] == (200, 2 * 1024 * 1024)
+        assert (imports.PENDING_MAX, imports.PENDING_MAX_BYTES) == (300, 3 * 1024 * 1024)
+        _cq = ("UPDATE import_counters SET n=%s, bytes=0 WHERE user_id=%s AND scope_key=%s AND period='day' AND bucket='self' "
+               f"AND period_start = {imports._PERIOD_START['day']}")
+
+        def _self_n(key):
+            with db.tx() as c:
+                return c.execute("SELECT n FROM import_counters WHERE user_id=%s AND scope_key=%s AND period='day' AND bucket='self' "
+                                 f"AND period_start = {imports._PERIOD_START['day']}", (A, key)).fetchone()["n"]
+        assert (await _bi_post(tok, _bi_text(DEV, policy_revision=2))).status_code == 201   # 오늘 카운터 행 보장
+        used_dev, used_user = _self_n(DEV), _self_n("user")
+        try:
+            for key, scope_lim, other in ((DEV, 100, "user"), ("user", 200, DEV)):
+                _sql(_cq, (scope_lim - 1, A, key))
+                _sql(_cq, (0, A, other))
+                n_pend = imports.inbox_count(A)
+                r = await _bi_post(tok, _bi_text(DEV, policy_revision=2))
+                assert r.status_code == 201 and r.json()["state"] == "pending", (key, r.text)   # 100번째(장치)·200번째(사용자) 접수
+                r = await _bi_post(tok, _bi_text(DEV, policy_revision=2))
+                assert r.status_code == 429 and r.json()["code"] == "IMPORT-QUOTA", (key, r.text)   # 하나 더
+                assert imports.inbox_count(A) == n_pend + 1 and _self_n(key) == scope_lim, "넘은 접수는 대기·카운터 모두 되돌린다"
+        finally:
+            _sql(_cq, (used_dev, A, DEV))
+            _sql(_cq, (used_user, A, "user"))
         # ── 한도: 승인 대기 가득 · 하루 접수 · 요청 속도 · 사람 하루 50(트랜잭션 전체 취소) ──
         saved = (imports.PENDING_MAX, dict(imports.LIMITS))
         try:
@@ -7942,7 +7969,7 @@ def test_bi_migration():
         expect("LINK-INVALID", apply, row(O["late"], _bi_v(), target_kind="item", unit_kind="principle_wd", object_id=rules, title="합성",
                                           references=[{"field_key": "axes", "target": {"item_id": "i_nothere"}}]))
         assert counts() == before
-        # 한도(2026-11-02 메인 결정 2) — 이관은 전용 한도(db.DAILY_LIMITS["migration"])만 센다. 일반 기록 50 이 차 있어도 그 한도와 무관하고,
+        # 한도(2026-11-02 메인 결정 2) — 이관은 전용 한도(db.DAILY_LIMITS["migration"])만 센다. 일반 기록 200 이 차 있어도 그 한도와 무관하고,
         # 전용 한도를 「오늘 이미 적용한 행 수」로 낮추면 다음 적용 행이 RATE-LIMIT 이다
         _bulk("INSERT INTO records (id,user_id,title,body) SELECT 'r_bimig' || g, %s, 't', 'b' FROM generate_series(1, 50) AS g", (M,))
         used = _bi_count(M, "import_entries", "AND kind IN ('migration_item','migration_record') AND state='applied' "
