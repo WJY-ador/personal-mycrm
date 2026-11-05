@@ -1,6 +1,6 @@
 // 끌어 놓는 순서 줄 하나(옛 app.html 끌기·Alt + 화살표 그대로) — 포인터(마우스·터치·펜) 하나로 끄는 동안은 줄 안에서 자리만 바꾸고, 놓을 때 한 번 저장.
 // 터치·펜은 손잡이(⠿)에서만 — 나머지는 화면 스크롤. 키보드 = 항목에서 Alt + 화살표. 항목은 key 로 그려 다시 그려도 포커스가 그 항목에 남는다.
-import { useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import css from "./Layout.module.css";
 
 type Props = { keys: string[]; horiz?: boolean; label: (k: string) => { text: string; node: ReactNode }; onMove: (key: string, to: number) => boolean };
@@ -8,11 +8,25 @@ const STEP: Record<string, number> = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1
 
 export function DndList({ keys, horiz, label, onMove }: Props) {
   const [drag, setDrag] = useState<{ key: string; order: string[] } | null>(null);
+  const [focusMove, setFocusMove] = useState<{ key: string; direction: "up" | "down"; order: string[] } | null>(null);
   const start = useRef(-1), ol = useRef<HTMLOListElement>(null);
   const order = drag ? drag.order : keys;
 
+  useLayoutEffect(() => {
+    if (!focusMove) return;
+    if (order.join("\n") !== focusMove.order.join("\n")) { setFocusMove(null); return; }
+    const i = order.indexOf(focusMove.key);
+    const direction = focusMove.direction === "up" && i === 0 || focusMove.direction === "down" && i === order.length - 1
+      ? focusMove.direction === "up" ? "down" : "up"
+      : focusMove.direction;
+    const row = [...(ol.current?.children || [])].find(x => (x as HTMLElement).dataset.layKey === focusMove.key);
+    row?.querySelector<HTMLButtonElement>(`[data-move="${direction}"]`)?.focus();
+    setFocusMove(null);
+  }, [order, focusMove]);
+
   function down(e: PointerEvent<HTMLLIElement>, k: string) {
     if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest("button")) return;
     if (e.pointerType !== "mouse" && !(e.target as HTMLElement).closest(`.${css.grip}`)) return;
     e.currentTarget.setPointerCapture?.(e.pointerId);
     start.current = keys.indexOf(k);
@@ -44,6 +58,12 @@ export function DndList({ keys, horiz, label, onMove }: Props) {
     e.preventDefault();
     onMove(k, i + d);
   }
+  function move(k: string, i: number, direction: "up" | "down") {
+    const delta = direction === "up" ? -1 : 1;
+    const next = order.slice();
+    next.splice(i + delta, 0, next.splice(i, 1)[0]);
+    if (onMove(k, i + delta)) setFocusMove({ key: k, direction, order: next });
+  }
 
   return (
     <ol ref={ol} className={`${css.dnd} ${horiz ? css.h : css.v}`}>
@@ -52,7 +72,11 @@ export function DndList({ keys, horiz, label, onMove }: Props) {
         return (
           <li key={k} tabIndex={0} data-lay-key={k} className={drag?.key === k ? css.dragging : undefined} aria-label={`${l.text} — ${i + 1}번째`} aria-describedby="lay-help"
             onPointerDown={e => down(e, k)} onPointerMove={moveTo} onPointerUp={() => drop(false)} onPointerCancel={() => drop(true)} onKeyDown={e => key(e, k, i)}>
-            <span className={css.grip} aria-hidden="true">⠿</span><span>{l.node}</span>
+            <span className={css.grip} aria-hidden="true">⠿</span><span className={css.label}>{l.node}</span>
+            <span className={css.moves}>
+              <button className={css.move} type="button" data-move="up" aria-label={`${l.text} 위로 이동`} title={`${l.text} 위로 이동`} disabled={i === 0} onClick={() => move(k, i, "up")}>↑</button>
+              <button className={css.move} type="button" data-move="down" aria-label={`${l.text} 아래로 이동`} title={`${l.text} 아래로 이동`} disabled={i === order.length - 1} onClick={() => move(k, i, "down")}>↓</button>
+            </span>
           </li>
         );
       })}

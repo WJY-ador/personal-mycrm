@@ -44,9 +44,9 @@ test("서버 배치 그대로 · 탭 이름·자물쇠(기본 종류) · 블록 
   const el = await show();
   expect(text(el, "h2")).toEqual(["페이지 레이아웃 — 「나」"]);
   expect(keys(el, 0)).toEqual(SWAP);
-  expect(lis(el, 0).map(li => li.textContent)).toEqual(["⠿기준 ", "⠿요약", "⠿결정 ", "⠿축 ", "⠿커스텀", "⠿사람 ", "⠿출처 "]);
+  expect(lis(el, 0).map(li => li.children[0].textContent + li.children[1].textContent)).toEqual(["⠿기준 ", "⠿요약", "⠿결정 ", "⠿축 ", "⠿커스텀", "⠿사람 ", "⠿출처 "]);
   expect(lis(el, 0)[0].getAttribute("aria-label")).toBe("기준 — 1번째");
-  expect(lis(el, 1).map(li => li.textContent!.slice(1))).toEqual(DEF.regions.summary.map(s => reg.components[s.c as keyof typeof reg.components].label));
+  expect(lis(el, 1).map(li => li.children[1].textContent)).toEqual(DEF.regions.summary.map(s => reg.components[s.c as keyof typeof reg.components].label));
   expect(resetBtn(el).disabled).toBe(false);
 });
 
@@ -83,11 +83,10 @@ test("보내는 중이면 마지막 배치만 줄 세움 — PUT 2번(둘째 = �
   const gate = new Promise<void>(r => { release = r; });
   put = async body => { await gate; return json(200, { layout: body.layout, version: body.version + 1 }); };
   const el = await show();
-  await alt(lis(el, 0)[0], "ArrowRight");   // 보내는 중
+  await click(el.querySelector('li[data-lay-key="principle"] button[aria-label="기준 아래로 이동"]'));   // 보내는 중
   expect(msg(el)).toBe(LAY_TEXT.saving);
-  await alt(lis(el, 0)[2], "ArrowLeft");    // 줄 세움
-  await alt(lis(el, 0)[3], "ArrowLeft");    // 줄 세운 것을 바꿈
-  const want = ["summary", "decision", "axis", "principle", ...DEF.tabs.slice(4)];
+  await click(el.querySelector('li[data-lay-key="principle"] button[aria-label="기준 아래로 이동"]'));
+  const want = ["summary", "decision", "principle", "axis", ...DEF.tabs.slice(4)];
   expect(keys(el, 0)).toEqual(want);
   put = body => json(200, { layout: body.layout, version: body.version + 1 });
   await act(async () => { release(); });
@@ -102,7 +101,7 @@ test("보내는 중이면 마지막 배치만 줄 세움 — PUT 2번(둘째 = �
 test("실패 = 마지막 저장 배치로 복원 + 한 줄(연결 실패·그 밖) · STALE = 서버 배치를 다시 받아 그대로", async () => {
   const el = await show();
   put = () => json(500, { code: "BOOM" });
-  await alt(lis(el, 0)[0], "ArrowRight");
+  await click(el.querySelector('li[data-lay-key="principle"] button[aria-label="기준 아래로 이동"]'));
   expect(keys(el, 0)).toEqual(SWAP);
   expect(msg(el)).toBe(LAY_TEXT.fail);
   expect(el.querySelector("#lay-msg")!.className).toBe("ferr");
@@ -127,6 +126,69 @@ test("기본으로 되돌리기 = DELETE 1 · 기본 배치 · 문구", async ()
   expect(keys(el, 0)).toEqual(DEF.tabs);
   expect(msg(el)).toBe(LAY_TEXT.reset);
   expect(resetBtn(el).disabled).toBe(true);
+});
+
+test("위·아래 버튼으로 탭과 요약 순서를 바꾸고 기존 저장 경로를 쓴다", async () => {
+  const el = await show();
+  const tabDown = el.querySelector<HTMLButtonElement>('button[aria-label="기준 아래로 이동"]')!;
+  tabDown.focus();
+  await click(tabDown);
+  expect(keys(el, 0).slice(0, 3)).toEqual(["summary", "principle", "decision"]);
+  expect(document.activeElement).toBe(el.querySelector('li[data-lay-key="principle"] button[aria-label="기준 아래로 이동"]'));
+  expect((writes()[0].body as typeof server).layout.pages.me.tabs.slice(0, 3)).toEqual(["summary", "principle", "decision"]);
+  expect(msg(el)).toBe(LAY_TEXT.saved);
+
+  await click(el.querySelector('button[aria-label="13주 글·활동 아래로 이동"]'));
+  expect(keys(el, 1)).toEqual(["kinds", "heatmap", "waiting", "recent"]);
+  expect((writes()[1].body as typeof server).layout.pages.me.regions.summary.map(s => s.c)).toEqual(["kinds", "heatmap", "waiting", "recent"]);
+  expect(msg(el)).toBe(LAY_TEXT.saved);
+});
+
+test("목록 끝의 이동 버튼은 비활성화되어 저장하지 않는다", async () => {
+  const el = await show();
+  expect(el.querySelector<HTMLButtonElement>('button[aria-label="기준 위로 이동"]')!.disabled).toBe(true);
+  expect(el.querySelector<HTMLButtonElement>('button[aria-label="출처 아래로 이동"]')!.disabled).toBe(true);
+  expect(el.querySelector<HTMLButtonElement>('button[aria-label="13주 글·활동 위로 이동"]')!.disabled).toBe(true);
+  expect(el.querySelector<HTMLButtonElement>('button[aria-label="최근 변경 아래로 이동"]')!.disabled).toBe(true);
+  await click(el.querySelector('button[aria-label="기준 위로 이동"]'));
+  expect(writes()).toHaveLength(0);
+});
+
+test("이동 후 사용한 버튼이 경계에서 비활성화되면 같은 항목의 반대 버튼에 초점을 둔다", async () => {
+  const el = await show();
+  await click(el.querySelector('li[data-lay-key="waiting"] button[aria-label="기다리는 결정 아래로 이동"]'));
+  const row = el.querySelector('li[data-lay-key="waiting"]')!;
+  expect(keys(el, 1)).toEqual(["heatmap", "kinds", "recent", "waiting"]);
+  expect((row.querySelector('button[aria-label="기다리는 결정 아래로 이동"]') as HTMLButtonElement).disabled).toBe(true);
+  expect(document.activeElement).toBe(row.querySelector('button[aria-label="기다리는 결정 위로 이동"]'));
+});
+
+test("네이티브 버튼이 Enter와 Space의 기본 활성화를 막지 않고 클릭과 같은 동작을 한다", async () => {
+  const el = await show();
+  const button = el.querySelector<HTMLButtonElement>('button[aria-label="기준 아래로 이동"]')!;
+  expect(button.tagName).toBe("BUTTON");
+  expect(button.type).toBe("button");
+  button.focus();
+  for (const key of ["Enter", " "]) {
+    const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+    button.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    await click(button); // JSDOM에서는 네이티브 키 활성화가 생성되지 않아 실제 click을 대리한다.
+  }
+  expect(keys(el, 0).slice(0, 3)).toEqual(["summary", "decision", "principle"]);
+  expect(writes()).toHaveLength(2);
+});
+
+test("이동 버튼의 마우스 pointerdown은 행 드래그를 시작하지 않는다", async () => {
+  const el = await show();
+  const row = el.querySelector('li[data-lay-key="principle"]')!;
+  const button = row.querySelector('button[aria-label="기준 아래로 이동"]')!;
+  await act(async () => {
+    button.dispatchEvent(Object.assign(new MouseEvent("pointerdown", { bubbles: true, button: 0 }), { pointerType: "mouse", pointerId: 1 }));
+  });
+  expect(row.classList.contains("dragging")).toBe(false);
+  expect(keys(el, 0).slice(0, 2)).toEqual(["principle", "summary"]);
+  expect(writes()).toHaveLength(0);
 });
 
 test("끌어 놓기(마우스) — 끄는 동안 자리만 바꾸고 놓을 때 PUT 1 · 취소 = 요청 0 · 터치는 손잡이에서만", async () => {
