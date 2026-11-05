@@ -6,6 +6,12 @@
 .v { flex-direction: column; max-width: 28rem; }
 .dnd > li { display: flex; align-items: center; gap: .45rem; min-height: 40px; padding: .35rem .75rem .35rem .4rem; border: 1px solid var(--line); border-radius: 6px;
   background: var(--card); font-size: .86rem; cursor: grab; user-select: none; }
+.label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.moves { display: flex; flex: none; gap: .25rem; margin-left: auto; }
+.move { display: inline-grid; place-items: center; width: 32px; min-width: 32px; height: 32px; padding: 0; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); color: var(--ink); font: inherit; line-height: 1; cursor: pointer; }
+.move:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.move:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.move:disabled { color: var(--muted); cursor: not-allowed; opacity: .65; }
 .dnd > li:hover { border-color: var(--accent); }
 .dnd > li:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .dnd > li.dragging { cursor: grabbing; border-color: var(--accent); box-shadow: 0 2px 8px color-mix(in srgb, var(--ink) 18%, transparent); opacity: .9; }
