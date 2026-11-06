@@ -18,5 +18,8 @@
 .grip { color: var(--muted); font-size: 1rem; padding: .2rem .25rem; touch-action: none; cursor: grab; }
 .setbar { display: flex; align-items: center; justify-content: space-between; gap: .8rem; margin-top: 1.2rem; padding-top: .8rem; border-top: 1px solid var(--line); }
 .setbar p { margin: 0; }
+/* 자리 알림 보이는 문구 = 옮긴 행의 이름 바로 아래 한 줄(흐름 안 — 고정·붙는 상자 없음 = 다른 행 버튼을 덮지 않는다).
+   정적 문구(전환 효과 없음 = 움직임 줄이기 설정에도 그대로). 화면 읽기는 #lay-pos(.sr) 가 맡고 이 문구는 aria-hidden. */
+.rowpos { display: block; margin-top: .15rem; color: var(--ink); font-size: .78rem; line-height: 1.35; }
 .setbar button { margin-left: auto; }
 @media (max-width: 767px) { .h { flex-direction: column; } .grip { padding: .4rem .5rem; } }

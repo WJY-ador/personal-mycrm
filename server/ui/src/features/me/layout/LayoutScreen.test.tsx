@@ -163,6 +163,180 @@ test("이동 후 사용한 버튼이 경계에서 비활성화되면 같은 항�
   expect(document.activeElement).toBe(row.querySelector('button[aria-label="기다리는 결정 위로 이동"]'));
 });
 
+// 자리 알림 — 옮길 때마다 항목 이름 + 새 자리(1부터)를 한 번. 읽기 = 늘 있는 #lay-pos(.sr) · 보이는 문구 = 옮긴 행 이름 바로 아래(aria-hidden).
+// 저장 상태는 #lay-msg 가 따로.
+const pos = (el: Element) => el.querySelector<HTMLElement>("#lay-pos")!;
+const rowPos = (el: Element) => [...el.querySelectorAll<HTMLElement>("[data-lay-pos]")];
+const row = (el: Element, k: string) => el.querySelector<HTMLElement>(`li[data-lay-key="${k}"]`)!;
+
+test("위·아래 버튼으로 옮기면 옮긴 행 이름 아래에 이름과 새 자리(1부터)가 보이고 한 번 알린다 · 다른 행엔 없음 · 저장 상태는 따로 · 초점 그대로", async () => {
+  const el = await show();
+  const p = pos(el);
+  expect(p.getAttribute("role")).toBe("status");
+  expect(p.getAttribute("aria-live")).toBe("polite");
+  expect(p.getAttribute("aria-atomic")).toBe("true");
+  expect(p.classList.contains("sr")).toBe(true);   // 읽기 전용 — 보이는 문구는 행 안
+  expect(p.parentElement!.classList.contains("paper")).toBe(true);   // .paper 직계 자식
+  expect(p.previousElementSibling).toBe(el.querySelector("#lay-help"));   // 안내 문구 바로 다음
+  expect(p.compareDocumentPosition(p.parentElement!.querySelector(":scope > section")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();   // 첫 목록 위
+  expect(p.textContent).toBe("");
+  expect(rowPos(el)).toHaveLength(0);
+  const button = el.querySelector<HTMLButtonElement>('li[data-lay-key="principle"] button[aria-label="기준 아래로 이동"]')!;
+  button.focus();
+  await click(button);
+  expect(p.textContent).toBe("기준 2번째로 옮겼어요.");
+  expect(p.children).toHaveLength(1);
+  expect(msg(el)).toBe(LAY_TEXT.saved);
+  expect(document.activeElement).toBe(el.querySelector('li[data-lay-key="principle"] button[aria-label="기준 아래로 이동"]'));
+  expect(el.querySelectorAll('[role="status"]')).toHaveLength(2);   // 자리 알림 1 + 저장 줄 1
+  // 보이는 문구 = 옮긴 행(기준)의 이름 바로 아래 하나 · aria-hidden(중복 읽기 없음) · 다른 행엔 없음 · 행 이름(aria-label·버튼)은 그대로
+  const inl = rowPos(el);
+  expect(inl).toHaveLength(1);
+  expect(inl[0].textContent).toBe("기준 2번째로 옮겼어요.");
+  expect(inl[0].getAttribute("aria-hidden")).toBe("true");
+  expect(inl[0].closest("li")).toBe(row(el, "principle"));
+  expect(inl[0].parentElement!.textContent!.startsWith("기준")).toBe(true);   // 이름 span 안, 이름 뒤
+  expect(inl[0].parentElement!.lastElementChild).toBe(inl[0]);
+  expect(inl[0].closest("[role],[aria-live]")).toBeNull();
+  expect(row(el, "principle").getAttribute("aria-label")).toBe("기준 — 2번째");
+  for (const k of SWAP.filter(k => k !== "principle")) expect(row(el, k).querySelector("[data-lay-pos]")).toBeNull();
+  for (const li of lis(el, 1)) expect(li.querySelector("[data-lay-pos]")).toBeNull();
+
+  await click(el.querySelector('button[aria-label="13주 글·활동 아래로 이동"]'));
+  expect(p.textContent).toBe("13주 글·활동 2번째로 옮겼어요.");
+  // 다른 목록 행으로 옮기면 문구도 그 행으로 — 앞 행(기준)에선 사라진다
+  expect(rowPos(el)).toHaveLength(1);
+  expect(rowPos(el)[0].closest("li")).toBe(row(el, "heatmap"));
+  expect(rowPos(el)[0].textContent).toBe("13주 글·활동 2번째로 옮겼어요.");
+  expect(row(el, "principle").querySelector("[data-lay-pos]")).toBeNull();
+});
+
+test("저장이 늦게 끝나도 자리 알림은 다시 그리지 않는다(중복 알림 없음) · 줄 세운 이동은 마지막 자리", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>(r => { release = r; });
+  put = async body => { await gate; return json(200, { layout: body.layout, version: body.version + 1 }); };
+  const el = await show();
+  await click(el.querySelector('li[data-lay-key="principle"] button[aria-label="기준 아래로 이동"]'));
+  expect(pos(el).textContent).toBe("기준 2번째로 옮겼어요.");
+  expect(msg(el)).toBe(LAY_TEXT.saving);
+  await click(el.querySelector('li[data-lay-key="principle"] button[aria-label="기준 아래로 이동"]'));
+  expect(pos(el).textContent).toBe("기준 3번째로 옮겼어요.");
+  const node = pos(el).firstElementChild;
+  put = body => json(200, { layout: body.layout, version: body.version + 1 });
+  await act(async () => { release(); });
+  await flush(); await flush();
+  expect(msg(el)).toBe(LAY_TEXT.saved);
+  expect(pos(el).firstElementChild).toBe(node);
+  expect(pos(el).textContent).toBe("기준 3번째로 옮겼어요.");
+  expect(rowPos(el).map(s => [s.closest("li")!.dataset.layKey, s.textContent])).toEqual([["principle", "기준 3번째로 옮겼어요."]]);   // 저장 성공 = 행 안 문구 유지
+});
+
+test("저장 실패·연결 실패·STALE 로 되돌리면 자리 알림을 지우고 저장 줄만 실패를 알린다", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>(r => { release = r; });
+  put = async () => { await gate; return json(500, { code: "BOOM" }); };
+  const el = await show();
+  await click(el.querySelector('li[data-lay-key="principle"] button[aria-label="기준 아래로 이동"]'));
+  expect(pos(el).textContent).toBe("기준 2번째로 옮겼어요.");
+  await act(async () => { release(); });
+  await flush(); await flush();
+  expect(keys(el, 0)).toEqual(SWAP);
+  expect(pos(el).textContent).toBe("");
+  expect(rowPos(el)).toHaveLength(0);
+  expect(msg(el)).toBe(LAY_TEXT.fail);
+
+  put = () => { throw new TypeError("offline"); };
+  await alt(lis(el, 0)[0], "ArrowRight");
+  expect(pos(el).textContent).toBe("");
+  expect(msg(el)).toBe(LAY_TEXT.offline);
+
+  server = lay(DEF.tabs, DEF.regions.summary, 7);
+  put = () => json(409, { code: "LAYOUT-STALE", msg: "x" });
+  await alt(lis(el, 0)[0], "ArrowRight");
+  expect(keys(el, 0)).toEqual(DEF.tabs);
+  expect(pos(el).textContent).toBe("");
+  expect(rowPos(el)).toHaveLength(0);
+  expect(msg(el)).toBe(LAY_TEXT.stale);
+
+  put = body => json(200, { layout: body.layout, version: body.version + 1 });
+  await alt(lis(el, 0)[0], "ArrowRight");
+  expect(pos(el).textContent).toBe("요약 2번째로 옮겼어요.");
+  expect(rowPos(el).map(s => s.closest("li")!.dataset.layKey)).toEqual(["summary"]);
+  expect(msg(el)).toBe(LAY_TEXT.saved);
+});
+
+test("기본으로 되돌리기는 자리 알림을 지운다", async () => {
+  const el = await show();
+  await click(el.querySelector('button[aria-label="13주 글·활동 아래로 이동"]'));   // 탭은 SWAP 그대로 = 기본과 달라 되돌리기 켜짐
+  expect(pos(el).textContent).toBe("13주 글·활동 2번째로 옮겼어요.");
+  expect(resetBtn(el).disabled).toBe(false);
+  expect(rowPos(el)).toHaveLength(1);
+  await click(resetBtn(el));
+  expect(pos(el).textContent).toBe("");
+  expect(rowPos(el)).toHaveLength(0);
+  expect(msg(el)).toBe(LAY_TEXT.reset);
+});
+
+test("경계로 옮기면 마지막 자리를 알리고 반대 버튼에 초점 · 같은 문구도 새 노드로 다시 알린다 · 비활성 버튼은 알리지 않는다", async () => {
+  const el = await show();
+  const p = pos(el);
+  await click(el.querySelector('li[data-lay-key="waiting"] button[aria-label="기다리는 결정 아래로 이동"]'));
+  expect(p.textContent).toBe("기다리는 결정 4번째로 옮겼어요.");
+  expect(document.activeElement).toBe(el.querySelector('li[data-lay-key="waiting"] button[aria-label="기다리는 결정 위로 이동"]'));
+  const first = p.firstElementChild;
+  await click(el.querySelector('li[data-lay-key="waiting"] button[aria-label="기다리는 결정 위로 이동"]'));
+  expect(p.textContent).toBe("기다리는 결정 3번째로 옮겼어요.");
+  await click(el.querySelector('li[data-lay-key="waiting"] button[aria-label="기다리는 결정 아래로 이동"]'));
+  expect(p.textContent).toBe("기다리는 결정 4번째로 옮겼어요.");
+  expect(p.firstElementChild).not.toBe(first);   // 같은 문구도 새 노드 = 다시 읽힌다
+  const before = p.firstElementChild;
+  await click(el.querySelector('li[data-lay-key="waiting"] button[aria-label="기다리는 결정 아래로 이동"]'));   // 비활성
+  expect(p.firstElementChild).toBe(before);
+  expect(writes()).toHaveLength(3);
+  await click(el.querySelector('li[data-lay-key="heatmap"] button[aria-label="13주 글·활동 위로 이동"]'));   // 첫 자리 비활성
+  expect(p.firstElementChild).toBe(before);
+  expect(writes()).toHaveLength(3);
+});
+
+test("Alt + 화살표로 옮기면 같은 자리 알림 · 경계에서 더 못 가면 알리지 않는다", async () => {
+  const el = await show();
+  await alt(lis(el, 0)[0], "ArrowUp");   // 맨 앞에서 앞으로 = 바뀐 것 없음
+  expect(pos(el).textContent).toBe("");
+  expect(writes()).toHaveLength(0);
+  await alt(lis(el, 0)[0], "ArrowRight");
+  expect(keys(el, 0).slice(0, 2)).toEqual(["summary", "principle"]);
+  expect(pos(el).textContent).toBe("기준 2번째로 옮겼어요.");
+  expect(msg(el)).toBe(LAY_TEXT.saved);
+  const last = lis(el, 1)[3];
+  await alt(last, "ArrowDown");   // 맨 끝에서 뒤로 = 그대로
+  expect(pos(el).textContent).toBe("기준 2번째로 옮겼어요.");
+  await alt(last, "ArrowUp");
+  expect(pos(el).textContent).toBe("최근 변경 3번째로 옮겼어요.");
+  expect(rowPos(el).map(s => [s.closest("li")!.dataset.layKey, s.textContent])).toEqual([["recent", "최근 변경 3번째로 옮겼어요."]]);
+});
+
+test("끌어 놓기(마우스)로 놓으면 자리 알림 · 끄는 중·취소는 알리지 않는다", async () => {
+  const el = await show();
+  const rows = lis(el, 1);
+  rows.forEach((li, i) => { li.getBoundingClientRect = () => ({ top: i * 50, bottom: i * 50 + 40, left: 0, right: 200, width: 200, height: 40 }) as DOMRect; });
+  const ev = (li: Element, type: string, y: number) =>
+    act(async () => { li.dispatchEvent(Object.assign(new MouseEvent(type, { bubbles: true, clientY: y, button: 0 }), { pointerType: "mouse", pointerId: 1 })); });
+  await ev(rows[0], "pointerdown", 5);
+  await ev(rows[0], "pointermove", 125);
+  expect(pos(el).textContent).toBe("");
+  await ev(rows[0], "pointercancel", 125);
+  expect(pos(el).textContent).toBe("");
+  expect(rowPos(el)).toHaveLength(0);
+  await ev(rows[0], "pointerdown", 5);
+  await ev(rows[0], "pointermove", 125);
+  await ev(rows[0], "pointerup", 125);
+  await flush();
+  expect(keys(el, 1)).toEqual(["kinds", "waiting", "heatmap", "recent"]);
+  expect(pos(el).textContent).toBe("13주 글·활동 3번째로 옮겼어요.");
+  expect(rowPos(el).map(s => [s.closest("li")!.dataset.layKey, s.textContent])).toEqual([["heatmap", "13주 글·활동 3번째로 옮겼어요."]]);
+  expect(msg(el)).toBe(LAY_TEXT.saved);
+});
+
 test("네이티브 버튼이 Enter와 Space의 기본 활성화를 막지 않고 클릭과 같은 동작을 한다", async () => {
   const el = await show();
   const button = el.querySelector<HTMLButtonElement>('button[aria-label="기준 아래로 이동"]')!;
