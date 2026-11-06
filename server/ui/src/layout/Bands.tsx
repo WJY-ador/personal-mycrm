@@ -4,7 +4,7 @@ import { FIXHINT, Tech } from "../shared/Tech";
 import type { AppState } from "../shared/state";
 
 export function OfflineBand({ loadedAt }: { loadedAt: string }) {
-  return <div className="band fail" role="alert"><b>서버에 연결하지 못했어요.</b> 잠시 뒤 새로 고침해 주세요.
+  return <div className="band fail" role="alert"><b>서버 상태를 불러오지 못했어요.</b> 잠시 뒤 새로 고침해 주세요.
     {loadedAt ? ` 아래 화면은 ${loadedAt}에 불러온 내용이에요.` : ""}</div>;
 }
 

@@ -18,7 +18,7 @@ import { LeaveDialog } from "./LeaveDialog";
 import { SCREENS } from "./registry";
 import { SetupNav } from "./SetupNav";
 import { Tabs } from "./Tabs";
-import { reload, useAppState } from "./useAppState";
+import { reload, reloadState, useAppState } from "./useAppState";
 import { useHash } from "./useHash";
 import { useHeader } from "./useHeader";
 
@@ -57,7 +57,7 @@ export function App() {
   const [nameReq, setNameReq] = useState(0), [desk, setDesk] = useState({ where: "", n: 0 });
   const openName = useCallback(() => setNameReq(n => n + 1), []);
   const openDesk = useCallback((where: string) => { if (document.getElementById("ui-desk")) setDesk(d => ({ where, n: d.n + 1 })); }, []);
-  useHeader({ S, reload, openName, openDesk, dirty });
+  useHeader({ S, reload: reloadState, openName, openDesk, dirty });
   const sRef = useRef(S);
   sRef.current = S;
   const nameCtx = useMemo<UiCtx>(() => ({ reload, done, state: sRef.current || undefined, args: nameReq ? ["open"] : [] }), [nameReq, done]);
