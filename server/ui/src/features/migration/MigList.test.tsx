@@ -1,7 +1,8 @@
 // 이관 첫 화면(옛 test_migration_screen.py B1·B4 목록 절을 옮김) — 꺼짐·허용 목록 밖 안내 · 토큰 목록·[폐기] · 발급(확인·한 번만·떠나면 지움·캐시 0) · plan 목록
+import { act } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { queryClient } from "../../shared/queries";
-import { calls, click, installFetch, json, serve, text } from "../../test/fakeServer";
+import { calls, click, flush, installFetch, json, serve, text } from "../../test/fakeServer";
 import { PID, PLANS, TOKENS } from "../../test/migFixture";
 import { byText, cacheText, hideScreen, reload, showScreen } from "../../test/showScreen";
 
@@ -90,4 +91,23 @@ test("[폐기] — 확인 안 함 = 요청 0 · 확인 = revoke 1", async () => 
   await click(byText(el, "button", "폐기")[0]);
   expect(calls.filter(c => c.method === "POST")).toEqual([{ url: "/api/migration-tokens/mt_a/revoke", method: "POST", body: {} }]);
   expect(el.textContent).toContain("이관 토큰을 폐기했어요.");
+});
+
+test("다시 받기 실패 — 받아 둔 토큰·plan 목록은 그대로 + 실패한 조각만 오류 알림(exact 키 무효화)", async () => {
+  for (const [key, url, what] of [[["mig", "tokens"], "/api/migration-tokens", "이관 토큰을"], [["mig", "plans"], "/api/migrations", "이관 plan 목록을"]] as const) {
+    const el = await list();
+    expect(el.querySelector(".partfail")).toBeNull();   // 처음엔 불러오기 오류 없음(폼의 빈 role=alert 칸은 세지 않는다)
+    serve((u, m) => u === url && m === "GET" ? json(500, { code: "SERVER-ERROR", msg: "가짜 실패" })
+      : u === "/api/migration-tokens" ? json(200, tok) : u === "/api/migrations" ? json(200, plans) : json(404, { code: "NOT-FOUND" }));
+    calls.length = 0;
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: [...key], exact: true }); });
+    await flush();
+    expect(calls.map(c => c.url)).toEqual([url]);   // exact = 그 키 하나만 다시 받는다
+    const t = el.textContent!;
+    for (const w of ["이관 업로더", "옛 업로더", "오늘 반영 7 / 200행", "pc-test-1", "확인 대기", "영수증 보기"]) expect(t).toContain(w);
+    expect(text(el, ".partfail b")).toEqual([`${what} 불러오지 못했어요 · 나머지는 정상`]);
+    expect(text(el, ".partfail code")).toEqual(["SERVER-ERROR"]);
+    hideScreen(); queryClient.clear();
+    serve((u, m) => m === "POST" ? post(u) : u === "/api/migration-tokens" ? json(200, tok) : u === "/api/migrations" ? json(200, plans) : json(404, { code: "NOT-FOUND" }));
+  }
 });

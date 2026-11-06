@@ -25,7 +25,7 @@ export function InboxOne({ ctx, id, say }: Props) {
   const S = ctx.state!;
   const q = useQuery({ queryKey: ["inbox", "one", id], queryFn: () => todayApi.one(id) });
   const [busy, setBusy] = useState(false), [err, setErr] = useState("");
-  if (q.isError) return <LoadFail err={apiErr(q.error)} what="저장 승인 대기 글" />;
+  if (q.isError && !q.data) return <LoadFail err={apiErr(q.error)} what="저장 승인 대기 글" />;
   if (!q.data) return <p className="hint">{LOADING}</p>;
   const e = q.data, g = e.generation;
   const to = "#_today";
@@ -50,6 +50,7 @@ export function InboxOne({ ctx, id, say }: Props) {
   const why = e.is_latest === false ? "더 새 개정이 들어와서 이 개정은 승인할 수 없어요. 최신 개정을 열어 승인하세요." : "지금은 승인할 수 없어요(만료됐거나 이미 처리됐어요).";
   return (
     <div className={css.one}>
+      {q.isError ? <LoadFail err={apiErr(q.error)} what="저장 승인 대기 글" /> : null}
       <div className="labels"><span className={`chip${e.kind === "self_summary" ? " o-ai" : ""}`}>{INBOX_KIND[e.kind] || e.kind}</span><span className="chip">{INBOX_STATE[e.state] || e.state}</span></div>
       <h2 className="title">{inboxTitle(S, e)}</h2>
       <dl className="kv"><dt>보낸 장치</dt><dd>{e.device ? e.device.label : "—"}</dd><dt>받은 때</dt><dd>{mdhm(e.received_at)}</dd>

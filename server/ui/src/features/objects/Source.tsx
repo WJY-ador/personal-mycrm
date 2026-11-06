@@ -28,11 +28,12 @@ function Recs({ S, sid }: { S: AppState; sid: string }) {
 
 function Acts({ S, sid }: { S: AppState; sid: string }) {
   const q = useQuery({ queryKey: ["objects", "source", sid], queryFn: () => objApi.source(sid) });
-  if (q.isError) return <LoadFail err={apiErr(q.error)} what="이 출처의 활동" />;
+  if (q.isError && !q.data) return <LoadFail err={apiErr(q.error)} what="이 출처의 활동" />;
   if (!q.data) return <p className="hint">{LOADING}</p>;
   const j = q.data, xs = j.activities || [];
   return (
-    <><div className="sechead"><h3>이 출처의 활동 <span className="speclabel">{j.activity_count}</span></h3></div>
+    <>{q.isError ? <LoadFail err={apiErr(q.error)} what="이 출처의 활동" /> : null}
+      <div className="sechead"><h3>이 출처의 활동 <span className="speclabel">{j.activity_count}</span></h3></div>
       {!j.activity_count ? <div className="empty">이 출처의 활동이 없어요.</div> : <>
         <Bars rows={(j.by_action || []).map(x => ({ label: x.label || S.activity_ui?.actions?.[x.action] || x.action, n: x.n }))} empty="" />
         <ActRows xs={xs} actions={S.activity_ui?.actions} />

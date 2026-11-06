@@ -1026,3 +1026,133 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 );
 CREATE INDEX IF NOT EXISTS ix_chat_messages_session ON chat_messages (session_id, created_at);
 CREATE INDEX IF NOT EXISTS ix_chat_messages_created ON chat_messages (created_at);
+
+-- 사용자별 저장 데이터 변경 revision — 주기 polling의 가벼운 확인용.
+-- 고정 대상 표: /api/state 및 그 UI 보조 GET이 읽는 지속 자료. last_used_at은 heartbeat라 전용 예외로 뺀다.
+-- generated·recent/offline 임계값·lease 만료처럼 시계 경과만으로 바뀌는 표시는 DB 변경이 없으므로 revision 대상이 아니다.
+CREATE TABLE IF NOT EXISTS user_change_markers (
+  user_id   text PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  revision  bigint NOT NULL DEFAULT 0 CHECK (revision >= 0)
+);
+INSERT INTO user_change_markers(user_id, revision)
+SELECT id, 0 FROM users ON CONFLICT (user_id) DO NOTHING;
+
+-- 문장별 영향 uid를 트랜잭션당 한 행으로 모은다. commit-time trigger가 uid 정렬 순으로 marker를 잠가
+-- 여러 문장·다중 사용자 작업의 중간 marker 잠금 역전을 피한다.
+CREATE TABLE IF NOT EXISTS user_change_pending (
+  txid    bigint NOT NULL,
+  user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  PRIMARY KEY (txid, user_id)
+);
+
+CREATE OR REPLACE FUNCTION crm_apply_user_change_pending() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+  affected_uid text;
+BEGIN
+  IF EXISTS (SELECT 1 FROM user_change_pending WHERE txid=NEW.txid) THEN
+    FOR affected_uid IN
+      SELECT user_id FROM user_change_pending WHERE txid=NEW.txid ORDER BY user_id
+    LOOP
+      UPDATE user_change_markers SET revision=revision+1 WHERE user_id=affected_uid;
+    END LOOP;
+    DELETE FROM user_change_pending WHERE txid=NEW.txid;
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION crm_track_user_change_statement() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+  affected_uid text;
+  owner_column text := TG_ARGV[0];
+  affected_query text;
+BEGIN
+  IF TG_TABLE_NAME='users' AND TG_OP='INSERT' THEN
+    INSERT INTO user_change_markers(user_id, revision)
+      SELECT id, 0 FROM new_rows ON CONFLICT (user_id) DO NOTHING;
+    RETURN NULL;
+  END IF;
+  -- 계정 삭제는 인증 불가가 된다. marker와 pending은 FK cascade로 같이 없어지고, 조회할 주체도 없다.
+  IF TG_TABLE_NAME='users' AND TG_OP='DELETE' THEN
+    RETURN NULL;
+  END IF;
+
+  IF TG_OP='INSERT' THEN
+    affected_query := format('SELECT DISTINCT %I::text AS uid FROM new_rows WHERE %I IS NOT NULL ORDER BY uid', owner_column, owner_column);
+  ELSIF TG_OP='DELETE' THEN
+    affected_query := format('SELECT DISTINCT %I::text AS uid FROM old_rows WHERE %I IS NOT NULL ORDER BY uid', owner_column, owner_column);
+  ELSIF TG_TABLE_NAME='import_streams' THEN
+    -- last_used_at은 폴 heartbeat. 그 값만 바뀐 UPDATE는 marker에 넣지 않는다.
+    affected_query := 'SELECT DISTINCT row_data->>''user_id'' AS uid FROM ('
+      '((SELECT to_jsonb(n) - ''last_used_at'' AS row_data FROM new_rows n) EXCEPT '
+      '(SELECT to_jsonb(o) - ''last_used_at'' AS row_data FROM old_rows o)) '
+      'UNION ALL '
+      '((SELECT to_jsonb(o) - ''last_used_at'' AS row_data FROM old_rows o) EXCEPT '
+      '(SELECT to_jsonb(n) - ''last_used_at'' AS row_data FROM new_rows n))'
+      ') changed WHERE row_data->>''user_id'' IS NOT NULL ORDER BY uid';
+  ELSE
+    affected_query := format(
+      'SELECT DISTINCT row_data->>%L AS uid FROM ('
+      '((SELECT to_jsonb(n) AS row_data FROM new_rows n) EXCEPT (SELECT to_jsonb(o) AS row_data FROM old_rows o)) '
+      'UNION ALL '
+      '((SELECT to_jsonb(o) AS row_data FROM old_rows o) EXCEPT (SELECT to_jsonb(n) AS row_data FROM new_rows n))'
+      ') changed WHERE row_data->>%L IS NOT NULL ORDER BY uid', owner_column, owner_column);
+  END IF;
+
+  FOR affected_uid IN EXECUTE affected_query LOOP
+    -- Cascaded child DELETE after users DELETE must not recreate pending rows for a missing owner.
+    IF EXISTS (SELECT 1 FROM users WHERE id=affected_uid) THEN
+      INSERT INTO user_change_pending(txid, user_id) VALUES (txid_current(), affected_uid)
+      ON CONFLICT (txid, user_id) DO NOTHING;
+    END IF;
+  END LOOP;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_user_change_pending_commit ON user_change_pending;
+CREATE CONSTRAINT TRIGGER trg_user_change_pending_commit
+AFTER INSERT ON user_change_pending DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION crm_apply_user_change_pending();
+
+DO $$
+DECLARE
+  tbl text;
+  ev text;
+  owner_col text;
+  trig text;
+  tracked text[] := ARRAY[
+    'users','profile','questions','tabs','candidates','candidate_history','records','record_history',
+    'sources','people','source_reflections','object_defs','field_defs','items','item_links','item_versions',
+    'item_history','item_stage','confirm_events','activities','activity_links','import_entries','import_streams',
+    'jobs','stack_sessions','std_marks','std_choices','optional_consents','page_layouts'
+  ];
+BEGIN
+  FOREACH tbl IN ARRAY tracked LOOP
+    owner_col := CASE WHEN tbl='users' THEN 'id' ELSE 'user_id' END;
+    IF to_regclass(tbl) IS NULL OR NOT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema=current_schema() AND table_name=tbl AND column_name=owner_col
+    ) THEN
+      RAISE EXCEPTION 'user change marker target or owner column missing: %.%', tbl, owner_col;
+    END IF;
+    FOREACH ev IN ARRAY ARRAY['INSERT','UPDATE','DELETE'] LOOP
+      trig := 'trg_user_change_' || tbl || '_' || lower(ev);
+      IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass(tbl) AND tgname=trig AND NOT tgisinternal) THEN
+        IF ev='INSERT' THEN
+          EXECUTE format('CREATE TRIGGER %I AFTER INSERT ON %I REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT '
+                         'EXECUTE FUNCTION crm_track_user_change_statement(%L)', trig, tbl, owner_col);
+        ELSIF ev='DELETE' THEN
+          EXECUTE format('CREATE TRIGGER %I AFTER DELETE ON %I REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT '
+                         'EXECUTE FUNCTION crm_track_user_change_statement(%L)', trig, tbl, owner_col);
+        ELSE
+          EXECUTE format('CREATE TRIGGER %I AFTER UPDATE ON %I REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT '
+                         'EXECUTE FUNCTION crm_track_user_change_statement(%L)', trig, tbl, owner_col);
+        END IF;
+      END IF;
+    END LOOP;
+  END LOOP;
+END;
+$$;

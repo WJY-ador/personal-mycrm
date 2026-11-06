@@ -1,9 +1,10 @@
 // 「오늘」·저장 승인 대기(옛 test_web_home.py S5 절·test_web_import.py 승인 대기 정적 절 + 화면 동작을 옮김, R4-2) —
 // 줄 = 대기 + 승인해 저장된 내 글(ingest_kind=inbox) + 활동 · 들어온 날(KST) 머리글 · 활동 5줄 + 「더 N」 · [삭제] 0 ·
 // 대기 하나 = 서버 승인 문구 그대로 · 생성 정보 = 사람 말(모르는 값 = 「기타」 + 원값) · 승인·제외(확인창) → 오늘 · 지난 승인 대기 목록(상태 알약·더 보기)
+import { act } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { queryClient } from "../../shared/queries";
-import { calls, click, installFetch, json, serve, text } from "../../test/fakeServer";
+import { calls, click, flush, installFetch, json, serve, text } from "../../test/fakeServer";
 import { installMedia } from "../../test/meFixture";
 import { byText, hideScreen, reload, showScreen } from "../../test/showScreen";
 import sample from "./today.sample.json";
@@ -121,4 +122,14 @@ test("지난 승인 대기 — 위치(오늘 › 저장 승인 대기) · 상태
   await click(byText(el, "button", "더 보기")[0]);
   expect(calls.at(-1)!.url).toBe("/api/inbox?state=all&cursor=c2");
   expect(text(el, "li.inrow b")).toHaveLength(3);
+});
+
+test("저장 승인 대기 백그라운드 재조회 실패 = 기존 목록 유지 + 오류 안내", async () => {
+  const el = await show("#_inbox/all", ["inbox", "all"]);
+  expect(text(el, "li.inrow b")).toHaveLength(2);
+  serve((url) => url.startsWith("/api/inbox?") ? json(503, { code: "OFFLINE", msg: "" }) : json(404, {}));
+  await act(async () => { await queryClient.invalidateQueries({ queryKey: ["inbox", "list"] }); });
+  await flush();
+  expect(text(el, "li.inrow b")).toHaveLength(2);
+  expect(el.querySelector('[role="alert"]')?.textContent).toContain("저장 승인 대기를 불러오지 못했어요");
 });

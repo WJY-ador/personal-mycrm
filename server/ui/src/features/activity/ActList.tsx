@@ -51,10 +51,11 @@ export function ActList({ S, qs, fold, setFold }: { S: AppState; qs: string; fol
         <label>날짜 <select name="dated" value={p.get("dated") || ""} onChange={e => go("dated", e.target.value)}>{opt("", "전부")}{opt("yes", "날짜 있음")}{opt("no", "날짜 미확인")}</select></label>
         {by ? <span className="hint">{by}로 거른 목록 · <a href="#_obj/activity">거르기 풀기</a></span> : null}
       </form>
-      <div>{list.isError && !list.isFetchNextPageError ? <LoadFail err={apiErr(list.error)} what="활동 목록" />
+      <div>{list.isError && !list.isFetchNextPageError && !rows ? <LoadFail err={apiErr(list.error)} what="활동 목록" />
         : !rows ? <p className="hint">{LOADING}</p>
         : !rows.length ? <div className="empty">아직 활동이 없어요.</div>
-        : <><ul className="rows">{rows.map(a => <ActRow key={a.id} a={a} actions={S.activity_ui?.actions} />)}</ul>
+        : <>{list.isError && !list.isFetchNextPageError ? <LoadFail err={apiErr(list.error)} what="활동 목록" /> : null}
+          <ul className="rows">{rows.map(a => <ActRow key={a.id} a={a} actions={S.activity_ui?.actions} />)}</ul>
           {list.hasNextPage ? <button type="button" className="secondary more" disabled={list.isFetchingNextPage} onClick={more}>더 보기</button> : null}
           {moreErr ? <p className="ferr" role="alert">{moreErr}</p> : null}</>}</div>
     </>

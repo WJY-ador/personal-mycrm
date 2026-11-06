@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { act } from "react";
 import { queryClient } from "../../shared/queries";
-import { calls, click, installFetch, json, serve, text } from "../../test/fakeServer";
+import { calls, click, flush, installFetch, json, serve, text } from "../../test/fakeServer";
 import { byText, hideScreen, reload, showScreen } from "../../test/showScreen";
 import { ITEM, structState } from "../../test/structFixture";
 
@@ -132,4 +132,22 @@ test("원문 모달을 연 카드가 목록에서 사라지면 닫을 때 현재
   await click(el.querySelector("dialog [data-close]"));
   await act(async () => { dialog.dispatchEvent(new Event("close")); });
   expect(document.activeElement).toBe(filter);
+});
+
+test("서랍 다시 받기 실패 = 받아 둔 제안 그대로 + 못 읽음 안내(가짜 서버만)", async () => {
+  GET_ITEM = NEW;
+  const el = await show("od_p", "n1");
+  const p = el.querySelector("#panel")!;
+  expect(p.querySelector("h4")!.textContent).toBe("새 기준 제안");
+  expect(p.querySelector(".partfail")).toBeNull();
+  const before = calls.filter(c => c.url === "/api/item?id=n1").length;
+  serve((url, m) => (m === "GET" && url.startsWith("/api/item") ? json(503, { code: "OFFLINE", msg: "" }) : json(404, {})));
+  await act(async () => { await queryClient.invalidateQueries({ queryKey: ["item", "n1"], exact: true }); });
+  await flush();
+  expect(calls.filter(c => c.url === "/api/item?id=n1").length).toBe(before + 1);
+  expect(queryClient.getQueryState(["item", "n1"])?.status).toBe("error");
+  expect(p.querySelector(".eyebrow")!.textContent).toBe("기준 · 새 제안");
+  expect(p.querySelector("h4")!.textContent).toBe("새 기준 제안");
+  expect(p.querySelector(".partfail b")!.textContent).toBe("이 항목을 읽지 못했어요 · 나머지는 정상");
+  expect(p.querySelector(".partfail")!.textContent).toContain("서버에 연결하지 못했어요.");
 });

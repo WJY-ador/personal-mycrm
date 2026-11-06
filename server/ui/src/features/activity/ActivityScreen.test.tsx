@@ -3,7 +3,7 @@
 import { act } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { queryClient } from "../../shared/queries";
-import { calls, click, installFetch, json, serve, text } from "../../test/fakeServer";
+import { calls, click, flush, installFetch, json, serve, text } from "../../test/fakeServer";
 import { byText, hideScreen, reload, showScreen } from "../../test/showScreen";
 import sample from "./activity.sample.json";
 import { ME_NOTICE, RAW_PORT_KEY } from "./text";
@@ -43,6 +43,17 @@ test("목록 — 줄(행동·날짜·출처·사람·축) · [더 보기] = 커�
   const sel = el.querySelector('select[name="dated"]') as HTMLSelectElement;
   await act(async () => { sel.value = "no"; sel.dispatchEvent(new Event("change", { bubbles: true })); });
   expect(location.hash).toBe("#_obj/activity/list/person=p_p1&action=like&dated=no");
+});
+
+test("백그라운드 재조회 실패 = 기존 활동 목록 유지 + 오류 안내", async () => {
+  const el = await show("#_obj/activity/list", ["activity", "list", ""]);
+  expect(text(el, "li.actrow .chip")).toEqual(["좋아요"]);
+  serve(() => json(503, { code: "OFFLINE", msg: "" }));
+  calls.length = 0;
+  await act(async () => { await queryClient.invalidateQueries({ queryKey: ["activity", "list"] }); });
+  await flush();
+  expect(text(el, "li.actrow .chip")).toEqual(["좋아요"]);
+  expect(el.querySelector('[role="alert"]')?.textContent).toContain("활동 목록을 불러오지 못했어요");
 });
 
 test("현황 접힘 — 설명 문장(서버 notice) · 30일 = 상태 그대로(요청 0) · 7일 = 그 기간을 받음 · 막대·「?」 도움말", async () => {

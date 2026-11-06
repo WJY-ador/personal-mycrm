@@ -12,12 +12,13 @@ import { LOADING } from "./text";
 
 export function PersonCtx({ S, id }: { S: AppState; id: string }) {
   const q = useQuery({ queryKey: ["objects", "person", id], queryFn: () => objApi.person(id) });
-  if (q.isError) return <LoadFail err={apiErr(q.error)} what="연결된 활동·글" />;
+  if (q.isError && !q.data) return <LoadFail err={apiErr(q.error)} what="연결된 활동·글" />;
   if (!q.data) return <p className="hint">{LOADING}</p>;
   const j = q.data, xs = j.activities || [], recs = j.records || [], its = j.items || [];
   const def = (oid: string) => (S.definitions || []).find(d => d.id === oid);
   return (
     <>
+      {q.isError ? <LoadFail err={apiErr(q.error)} what="연결된 활동·글" /> : null}
       <h2 className="sh">연결된 활동 <span className="speclabel">{j.activity_count}</span></h2><ActRows xs={xs} actions={S.activity_ui?.actions} empty="연결된 활동이 없어요." />
       {j.old_revision_links && !trashOn(S) ? <p className="hint">옛 판 활동 연결 {j.old_revision_links} — 이 연결 때문에 지울 수 없어요.</p> : null}
       {j.activity_count > xs.length ? <p className="hint">{`최근 ${xs.length}건만 보여요. `}<a href={`#_obj/activity/list/person=${encodeURIComponent(id)}`}>모두 보기</a></p> : null}

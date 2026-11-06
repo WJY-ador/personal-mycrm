@@ -22,7 +22,7 @@ export function Drawer({ ctx, S, id, open, gone }: Props) {
   const [st, setSt] = useState(""), [er, setEr] = useState("");
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => { if (q.data && window.matchMedia?.("(max-width: 900px)").matches) box.current?.scrollIntoView?.({ block: "start" }); }, [q.data?.id]);
-  if (q.isError) return <PartFail err={apiErr(q.error)} what="이 항목" />;
+  if (q.isError && !q.data) return <PartFail err={apiErr(q.error)} what="이 항목" />;
   if (!q.data) return <p className="empty">불러오는 중이에요…</p>;
   const it: ItemFull = q.data, d = it.object, cur = viewOf(it), back = `#${TAB}/${d.id}`;
   const plain = it.fields.filter(f => f.value_type !== "reference").map(f => [f.label, fieldVal(f, (cur.data || {})[f.key])]).filter(x => x[1]);
@@ -45,6 +45,7 @@ export function Drawer({ ctx, S, id, open, gone }: Props) {
   }
   return (
     <div ref={box}>
+      {q.isError ? <PartFail err={apiErr(q.error)} what="이 항목" /> : null}
       <div className="eyebrow">{d.label || "항목"} · 새 제안</div>
       <div className="labels" style={{ marginTop: ".4rem" }}>{cur.code ? <span className="chip code">{cur.code}</span> : null}<SelectChips it={cur} d={defById(S, d.id)} /></div>
       <h4>{cur.title || "(제목 없음)"}</h4>{cur.body ? <div className="pbody">{rich(cur.body)}</div> : null}

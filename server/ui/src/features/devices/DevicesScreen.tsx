@@ -45,12 +45,13 @@ export function DevicesScreen({ ctx }: ScreenProps) {
     await done(DONE.connect);
   }
   let body;
-  if (q.isError) body = <LoadFail err={apiErr(q.error)} what="연결 장치" />;
+  if (q.isError && !q.data) body = <LoadFail err={apiErr(q.error)} what="연결 장치" />;
   else if (!q.data) body = <p className="hint">{LOADING}</p>;
   else {
     const j = q.data, ch = j.choices, ds = j.devices || [], full = j.active >= j.max;
     body = (
       <>
+        {q.isError ? <LoadFail err={apiErr(q.error)} what="연결 장치" /> : null}
         {tok ? <TokenBox title={`「${tok.label}」 토큰`} region="새 토큰" inputLabel="토큰" token={tok.token} paste="로컬 에이전트의 연결 단계에 붙여 넣으세요."
           copied="복사했어요. 로컬 에이전트에 붙여 넣으세요." lost="잃어버리면 재발급" onDone={() => setTok(null)} /> : null}
         {j.switches?.imports ? null : <p className={`fnote ${css.off}`}>지금은 서버가 장치에서 보내는 자료를 받지 않아요(준비 중). 연결은 미리 해 둘 수 있어요.</p>}

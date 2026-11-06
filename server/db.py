@@ -443,6 +443,11 @@ def close():
         _pool = None
 
 
+# Schema bootstrap also installs statement triggers. Serialize concurrent server startups so two replicas cannot race
+# the catalog check + CREATE TRIGGER sequence in schema.sql.
+USER_CHANGE_SCHEMA_LOCK = 0x4D5943524D534348
+
+
 def init_schema(conn=None):
     """스키마를 최종형으로 맞춘다. 몇 번 돌려도 된다. 서버 시작(main.lifespan) 때 운영에도 자동으로 돈다.
     conn 을 주면 그 연결에서(시험: 임시 스키마), 없으면 풀에서. 전체가 한 트랜잭션 — 중간 실패는 전부 롤백.
@@ -466,6 +471,8 @@ def init_schema(conn=None):
 
 def _init_schema(c):
     with c.transaction():
+        # 여러 서버 replica가 동시에 시작해 schema.sql의 marker trigger 존재 검사/설치를 경쟁하지 않게 한다.
+        c.execute("SELECT pg_advisory_xact_lock(%s)", (USER_CHANGE_SCHEMA_LOCK,))
         _migrate_pr1(c)
         c.execute(SCHEMA_PATH.read_text(encoding="utf-8"))
         col = lambda t, n: c.execute(
@@ -3581,7 +3588,8 @@ DELETE_TABLES = ("chat_sessions", "record_history", "token_grants", "desktop_ins
                  "import_streams", "migration_plan_items", "migration_plans", "migration_tokens", "item_stage", "item_versions", "confirm_events", "item_history", "items", "user_roles", "field_defs",
                  "object_defs", "std_choices", "std_marks",
                  "candidate_history", "candidates", "source_reflections", "records", "sources", "questions", "profile", "tabs",
-                 "people", "agreements", "optional_consent_log", "optional_consents", "usage_daily", "tickets")
+                 "people", "agreements", "optional_consent_log", "optional_consents", "usage_daily",
+                 "user_change_pending", "user_change_markers", "tickets")
 DELETE_KEEP_TABLES = ("deletion_contacts",)
 
 
@@ -4775,6 +4783,16 @@ def state(uid):
         "item_proposals": item_proposals(uid),
         "record_links": record_links(uid),
     }
+
+
+def user_change_revision(uid, conn=None):
+    """인증 사용자 한 명의 저장 데이터 변경 revision. conn 은 합성 schema 시험용이다."""
+    if conn is not None:
+        row = _one(conn, "SELECT revision FROM user_change_markers WHERE user_id=%s", (uid,))
+        return int(row["revision"]) if row else None
+    with tx() as c:
+        row = _one(c, "SELECT revision FROM user_change_markers WHERE user_id=%s", (uid,))
+    return int(row["revision"]) if row else None
 
 
 

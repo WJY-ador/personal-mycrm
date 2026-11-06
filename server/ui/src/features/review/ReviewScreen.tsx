@@ -1,16 +1,36 @@
 // 판단 검토(원문과 대조하기) — 라우트 #<탭>/review/<질문ID | r:기록ID>/<후보ID | end>. 아직 안 정한 판단을 한 장씩, 여기서 결정을 저장한다.
 // 껍데기가 넘기는 args = [탭 id, 목록 키, 후보 자리, 돌아갈 주소, 돌아가기 문구](돌아갈 곳은 껍데기 라우터가 기억). 옛 숫자 idx·이미 정한 후보는
 // 그 자리의 후보로 주소를 바꿔 끼운다(replace). 저장 = 호출 하나(confirm · exclude · edit_confirm) → 상태를 다시 받아 다음 판단으로.
-// 서버 msg 는 그대로 보인다(CONFLICT 는 서버 문구 + 고치던 문장). 응답을 못 받으면 상태를 다시 읽어 그 판단이 바뀌었는지 본다.
-import { useEffect, useRef, useState } from "react";
-import { apiErr, getJSON } from "../../shared/api";
-import type { ScreenProps } from "../../shared/ctx";
+// 서버 msg 는 그대로 보인다(CONFLICT 는 서버 문구 + 고치던 문장). 응답 유실은 상태 변화만으로 해당 요청의 저장 여부를 증명할 수 없어 불확실로 남긴다.
+// 미저장 보호 = 고친 카드의 등록부(후보 id → 고치기 시작한 주소). 하나라도 남으면 그 주소를 ctx.setDirty, 모두 깨끗할 때만 null.
+// 고친 문장을 저장한 것은 edit_confirm 성공뿐 — 남기기·반영 안 함은 등록을 풀지 않는다(다시 받기에 성공하면 카드가 사라지며 풀린다).
+import { useCallback, useEffect, useRef, useState } from "react";
+import { apiErr } from "../../shared/api";
+import type { ScreenProps, UiCtx } from "../../shared/ctx";
 import { candidateDecide } from "../../shared/journal";
 import { readOk, type AppState, type Cand } from "../../shared/state";
 import { Card } from "./Card";
 import { PartFail } from "../../shared/PartFail";
-import { CHECKING, CONFLICT_TEXT, NO_QUESTION, SAVE_FAIL, SAVING, UNKNOWN, unsavedEdit, WORDS as w } from "./text";
+import { CONFLICT_TEXT, NO_QUESTION, SAVE_FAIL, SAVING, UNKNOWN, unsavedEdit, WORDS as w } from "./text";
 import css from "./Review.module.css";
+
+// 등록부 — mark(id, true) = 그 카드 등록(처음 고친 때의 주소), mark(id, false) = 그 카드만 해제. 없는 카드 해제는 아무것도 안 한다
+// (다른 카드의 등록을 지우지 않게). 화면이 사라지면 등록부를 비우고 해제한다.
+export function useDirtyCards(ctx: UiCtx) {
+  const ctxRef = useRef(ctx), at = useRef(new Map<string, string>());
+  ctxRef.current = ctx;
+  const mark = useCallback((id: string, dirty: boolean) => {
+    const m = at.current;
+    if (dirty === m.has(id)) return;
+    if (dirty) m.set(id, location.hash); else m.delete(id);
+    ctxRef.current.setDirty?.(m.size ? m.values().next().value! : null);
+  }, []);
+  useEffect(() => () => {
+    if (!at.current.size) return;
+    at.current.clear(); ctxRef.current.setDirty?.(null);
+  }, []);
+  return mark;
+}
 
 type Say = { text: string; err?: string; pin: string | null; focus?: boolean };   // pin = 이 문구를 보일 화면(null = 다음에 그리는 화면에 한 번)
 
@@ -18,6 +38,7 @@ export function ReviewScreen({ ctx }: ScreenProps) {
   const S = ctx.state!, [tabId = "", qid = "", key = "", back = "#", backText = ""] = ctx.args || [];
   const [say, setSay] = useState<Say>({ text: "", pin: null });
   const [lockS, setLockS] = useState<AppState | null>(null);   // 저장 중 = 잠근 때의 상태 — 새 상태가 오면 저절로 풀린다
+  const mark = useDirtyCards(ctx);
   const after = useRef<{ qid: string; nextId: string } | null>(null), flash = useRef<string | null>(null), title = useRef<HTMLHeadingElement>(null);
 
   const byRec = qid.startsWith("r:");
@@ -78,22 +99,23 @@ export function ReviewScreen({ ctx }: ScreenProps) {
   }
   const c = wait[idx], nextId = wait[idx + 1]?.id || "";
 
-  async function decide(c: Cand, action: string, text?: string) {
+  // saved = 카드에 저장 성공 알림(기준 바꾸기) · baseRev = 카드 기준 문장의 revision(고친 문장 저장만 이것으로 충돌 검사, 남기기·반영 안 함은 보이는 최신 revision)
+  async function decide(c: Cand, action: string, text: string | undefined, saved: () => void, baseRev: number) {
+    const rev = action === "edit_confirm" ? baseRev : c.revision;
+    const ack = () => { if (action === "edit_confirm") { saved(); mark(c.id, false); } };   // 고친 문장 저장만 — 다시 받기(주소 바꾸기) 전에 푼다
     const pin = drawn, done = async (msg: string) => {   // 저장됨(또는 충돌) — 상태를 다시 받아 그린다. 못 받으면 문구만 이 자리에
       after.current = { qid, nextId }; flash.current = msg;
       if (!(await ctx.reload())) { after.current = null; flash.current = null; setSay({ text: msg, pin }); setLockS(null); }
     };
     setSay({ text: SAVING, pin }); setLockS(S);
-    const body = { candidate_id: c.id, action, ...(Number.isInteger(c.revision) ? { expected_revision: c.revision } : {}), ...(action === "edit_confirm" ? { text } : {}) };
+    const body = { candidate_id: c.id, action, ...(Number.isInteger(rev) ? { expected_revision: rev } : {}), ...(action === "edit_confirm" ? { text } : {}) };
     try {
       await candidateDecide(body, typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(15000) : undefined);
     } catch (e) {
       const er = apiErr(e);
       if (er.code === "UNAUTHORIZED") return;
-      if (er.code === "OFFLINE") {   // 응답을 받지 못했다 — 상태를 다시 읽어 이 판단의 결정이 바뀌었는지 본다
-        setSay({ text: CHECKING, pin });
-        const now = await getJSON<AppState>("/api/state").then(n => (n.candidates || []).find(x => x.id === c.id), () => undefined);
-        if (now && now.status !== c.status) return done(w.saved(action));
+      if (er.code === "OFFLINE") {
+        // 응답 유실 뒤 상태 변화만으로 이 요청의 저장 여부를 증명할 수 없다. 다른 기기의 같은 결정일 수도 있다.
         setSay({ text: "", err: UNKNOWN, pin }); setLockS(null);
         return;
       }
@@ -101,11 +123,12 @@ export function ReviewScreen({ ctx }: ScreenProps) {
       setSay({ text: "", err: er.msg || SAVE_FAIL, pin }); setLockS(null);
       return;
     }
+    ack();   // 저장됨 — edit_confirm 이면 카드 기준을 바꾸고 등록을 푼다
     await done(w.saved(action));
   }
   return (
     <Card key={c.id} S={S} c={c} head={head(wait.length, true)} qText={qText} byRec={byRec} w={w}
       prev={idx > 0 ? base + wait[idx - 1].id : ""} next={base + (nextId || "end")} locked={lockS === S} status={status} err={err}
-      onDecide={(a, t) => void decide(c, a, t)} />
+      onDecide={(a, t, s, r) => void decide(c, a, t, s, r)} onDirty={d => mark(c.id, d)} />
   );
 }

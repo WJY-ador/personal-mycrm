@@ -1,8 +1,9 @@
 // plan 하나(옛 test_migration_screen.py B2·B3·B4 를 옮김) — 확인 화면(표·항목·사유·체크 상자) · 체크 = seqs 하나 · 확인창 숫자 · 반영 = plan_hash ·
 // 취소 · seal 전/만료 · 꺼짐 · 오류 문구 · 본문 펼침(하나씩·글자 그대로) · 영수증(해시 일치/다름/휴지통)
+import { act } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { queryClient } from "../../shared/queries";
-import { calls, click, installFetch, json, serve, text } from "../../test/fakeServer";
+import { calls, click, flush, installFetch, json, serve, text } from "../../test/fakeServer";
 import { DETAIL, PID, PLANS, RECEIPT, TOKENS } from "../../test/migFixture";
 import { byText, cacheText, hideScreen, reload, showScreen } from "../../test/showScreen";
 
@@ -144,4 +145,48 @@ test("영수증 — 결과별 개수 · 항목별 결과·대상 id · 해시 �
     expect(t).toContain(w);
   expect(text(el, ".chip.st-mine")).toContain("일치");
   expect(text(el, ".chip.flag")).toEqual(["다름"]);
+});
+
+const FAIL = { code: "SERVER-ERROR", msg: "가짜 실패" };
+let bad = new Set<string>();   // 이 url 의 GET 만 500
+async function refetchFail(key: readonly unknown[], url: string) {
+  bad.add(url);
+  calls.length = 0;
+  await act(async () => { await queryClient.invalidateQueries({ queryKey: [...key], exact: true }); });
+  await flush();
+  expect(calls.map(c => c.url)).toEqual([url]);   // exact = 그 키 하나만 다시 받는다
+}
+function serveWithBad() {
+  serve((url, m) => {
+    if (m === "GET" && bad.has(url)) return json(500, FAIL);
+    if (m === "POST") return post(url);
+    if (url.endsWith("/receipt")) return json(200, RECEIPT);
+    if (url === "/api/migrations") return json(200, plans);
+    return json(200, detail);
+  });
+}
+
+test("다시 받기 실패(sealed) — 받아 둔 확인 화면 그대로 + 이관 plan 오류 알림", async () => {
+  bad = new Set(); serveWithBad();
+  const el = await show();
+  expect(el.querySelector(".partfail")).toBeNull();   // 처음엔 불러오기 오류 없음(#mig-err 같은 폼 알림 칸은 세지 않는다)
+  await refetchFail(["mig", "plan", PID], `/api/migrations/${PID}`);
+  const t = el.textContent!;
+  for (const w of ["자료군별 개수", "첫 기록", "항목 8개 · 기준 체크 1 / 3", "오늘 남은 이관 한도 193행"]) expect(t).toContain(w);
+  expect(el.querySelectorAll('input[type="checkbox"]').length).toBe(3);
+  expect(text(el, '.partfail b')).toEqual(["이관 plan를 불러오지 못했어요 · 나머지는 정상"]);
+  expect(text(el, '.partfail code')).toEqual(["SERVER-ERROR"]);
+});
+
+test("다시 받기 실패(applied) — 영수증 실패 = 영수증 그대로 + 영수증 알림 · plan 도 실패 = 알림 둘", async () => {
+  detail = { ...DETAIL, state: "applied" }; bad = new Set(); serveWithBad();
+  const el = await show();
+  expect(el.textContent).toContain("이관 영수증");
+  expect(el.querySelector(".partfail")).toBeNull();   // 처음엔 불러오기 오류 없음(#mig-err 같은 폼 알림 칸은 세지 않는다)
+  await refetchFail(["mig", "receipt", PID], `/api/migrations/${PID}/receipt`);
+  for (const w of ["이관 영수증", "receipt_hash", "1 / 3 일치", "r_1", "o_4"]) expect(el.textContent).toContain(w);
+  expect(text(el, '.partfail b')).toEqual(["영수증을 불러오지 못했어요 · 나머지는 정상"]);
+  await refetchFail(["mig", "plan", PID], `/api/migrations/${PID}`);
+  for (const w of ["이관 영수증", "receipt_hash", "r_1"]) expect(el.textContent).toContain(w);
+  expect(text(el, '.partfail b')).toEqual(["이관 plan를 불러오지 못했어요 · 나머지는 정상", "영수증을 불러오지 못했어요 · 나머지는 정상"]);
 });
