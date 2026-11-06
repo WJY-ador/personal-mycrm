@@ -10,12 +10,13 @@ import { LOADING } from "./text";
 
 export function AxisView({ S, id }: { S: AppState; id: string }) {
   const q = useQuery({ queryKey: ["activity", "axis", id], queryFn: () => actApi.axis(id) });
-  if (q.isError) return <LoadFail err={apiErr(q.error)} what="축" />;
+  if (q.isError && !q.data) return <LoadFail err={apiErr(q.error)} what="축" />;
   if (!q.data) return <p className="hint">{LOADING}</p>;
   const j = q.data, xs = j.activities || [], recs = j.records || [], its = j.items || [];
   const def = (oid: string) => (S.definitions || []).find(d => d.id === oid);
   return (
     <>
+      {q.isError ? <LoadFail err={apiErr(q.error)} what="축" /> : null}
       <div className="eyebrow">축</div><h2 className="title">{j.axis?.title || "(제목 없음)"}</h2>
       <h2 className="sh">활동 <span className="speclabel">{j.activity_count}</span></h2><ActRows xs={xs} actions={S.activity_ui?.actions} empty="이 축의 활동이 없어요." />
       {j.activity_count > xs.length ? <p className="hint">{`최근 ${xs.length}건만 보여요. `}<a href={`#_obj/activity/list/axis=${encodeURIComponent(id)}`}>모두 보기</a></p> : null}

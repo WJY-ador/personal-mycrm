@@ -1,8 +1,9 @@
 // 질문·기록 탭(옛 test_web_home 정적 절의 기록 화면 재검토 표시·축 칩 + 화면 동작, R5b-1) — 질문 고르기 · 한 장(확정·미정·반영 안 함·연결된 글) ·
 // [원문과 대조하기] 경로 · 다음 할 일 · 첫 화면 · 기록 탭 출처 필터·원문·축 칩·재검토 · 원문 대화창(인용 mark).
+import { act } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { queryClient } from "../../shared/queries";
-import { calls, click, installFetch, json, serve, text } from "../../test/fakeServer";
+import { calls, click, flush, installFetch, json, serve, text } from "../../test/fakeServer";
 import { byText, hideScreen, showScreen } from "../../test/showScreen";
 import { JOURNAL, structState } from "../../test/structFixture";
 
@@ -62,4 +63,25 @@ test("기록 탭 — 출처 필터(전체 개수) · 원문 · 축 칩 · 재검
   expect(el.querySelector("h2.title")!.textContent).toBe("회고");
   expect(el.querySelector("nav.srcf a.on")!.getAttribute("aria-pressed")).toBe("true");
   expect(el.querySelector(".rside")).toBeNull();
+});
+
+test("기록 탭 원문 다시 받기 실패 = 받아 둔 원문 그대로 + 못 읽음 안내(가짜 서버만)", async () => {
+  const el = await showScreen("sheet", "#journal", ["journal", "record", "journal", ""], structState());
+  // 출처 필터는 모듈 변수(remembered)로 테스트 사이에 남는다 — [전부]로 되돌려 r1 이 고른 글(활성 쿼리 ["journal","r1"])이 되게 한다
+  await click(byText(el, "nav.srcf a", "전부2")[0]);
+  expect(el.querySelector("h2.title")!.textContent).toBe("도입 메모");
+  expect(queryClient.getQueryCache().find({ queryKey: ["journal", "r1"], exact: true })!.getObserversCount()).toBe(1);
+  const box = el.querySelector("#recbody")!;
+  expect(box.querySelector(".doc p")!.textContent).toBe("도입 회의에서 입력 담당을 먼저 정했다.");
+  expect(box.querySelector(".partfail")).toBeNull();
+  const before = calls.filter(c => c.url === "/api/journal?id=r1").length;
+  serve(url => (url.startsWith("/api/journal") ? json(503, { code: "OFFLINE", msg: "" }) : json(404, {})));
+  await act(async () => { await queryClient.invalidateQueries({ queryKey: ["journal", "r1"], exact: true }); });
+  await flush();
+  expect(calls.filter(c => c.url === "/api/journal?id=r1").length).toBe(before + 1);
+  expect(queryClient.getQueryState(["journal", "r1"])?.status).toBe("error");
+  expect(box.querySelector(".recmeta")).not.toBeNull();
+  expect(box.querySelector(".doc p")!.textContent).toBe("도입 회의에서 입력 담당을 먼저 정했다.");
+  expect(box.querySelector(".partfail b")!.textContent).toBe("이 글을 읽지 못했어요 · 나머지는 정상");
+  expect(box.querySelector(".partfail")!.textContent).toContain("서버에 연결하지 못했어요.");
 });

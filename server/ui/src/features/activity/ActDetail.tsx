@@ -19,7 +19,7 @@ export function ActDetail({ ctx, id, say }: Props) {
   const q = useQuery({ queryKey: ["activity", "one", id], queryFn: () => actApi.one(id) });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  if (q.isError) return <LoadFail err={apiErr(q.error)} what="활동" />;
+  if (q.isError && !q.data) return <LoadFail err={apiErr(q.error)} what="활동" />;
   if (!q.data) return <p className="hint">{LOADING}</p>;
   const a = q.data, acts = S.activity_ui?.actions, prov = S.activity_ui?.providers || {};
   async function del() {
@@ -39,6 +39,7 @@ export function ActDetail({ ctx, id, say }: Props) {
   }
   return (
     <>
+      {q.isError ? <LoadFail err={apiErr(q.error)} what="활동" /> : null}
       <div className="eyebrow">활동{a.state === "retracted" ? " · 철회됨" : ""}</div><h2 className="title">{actLabel(acts, a.action)}</h2>
       {a.current ? null : <p className="fnote">이 판은 옛 판이에요. {a.current_id ? <a href={`#_obj/activity/${a.current_id}`}>현재 판 보기</a> : "지금 쓰는 판이 없어요."}</p>}
       {S.switches?.trash ? <><div className="hacts" role="group" aria-label="동작"><button className="secondary" type="button" disabled={busy} onClick={del}>삭제</button></div>

@@ -128,6 +128,46 @@ test("상세 = 겹친 대화창(보낸 글·답변·공개 이력 글자로) · 
   expect(el.querySelector("[aria-labelledby=desk-tk-title]")!.textContent).toContain("문의를 찾을 수 없어요.");
 });
 
+test("상세 다시 받기 실패(합성) — 받아 둔 글은 그대로 + role=alert 안내 · 첫 받기 실패 = 안내만(글·alert 없음)", async () => {
+  let detailGets = 0;
+  serve((url, m) => {
+    if (m === "POST") return post();
+    if (url === "/api/feedback") return list();
+    if (m === "GET" && url === "/api/feedback/tk_sample1") {
+      detailGets += 1;
+      return detailGets === 1 ? json(200, sample.one) : json(500, { code: "SERVER", msg: "잠시 뒤 다시 해 주세요." });
+    }
+    return json(404, {});
+  });
+  await show("desk", ["mine"]);
+  await click(el.querySelector("tbody button"));
+  const tk = () => el.querySelector("[aria-labelledby=desk-tk-title]") as HTMLDialogElement;
+  expect(detailGets).toBe(1);
+  expect(tk().textContent).toContain("견본 문의");
+  expect(tk().querySelector('[role="alert"]')).toBeNull();
+  expect(queryClient.getQueryData(["desk", "one", "tk_sample1"])).toEqual(sample.one);
+  await act(async () => { await queryClient.invalidateQueries({ queryKey: ["desk", "one", "tk_sample1"], exact: true }); });
+  await flush(); await flush();
+  expect(detailGets).toBe(2);
+  expect(calls.filter(c => c.method === "GET" && c.url === "/api/feedback/tk_sample1").length).toBe(2);
+  expect(el.querySelector("#desk-tk-title")!.textContent).toBe("내 문의 · 버그");
+  expect(tk().querySelector("p")!.textContent).toBe("잠시 뒤 다시 해 주세요.");
+  expect(tk().querySelector('[role="alert"]')!.textContent).toBe("잠시 뒤 다시 해 주세요.");
+  expect(text(tk(), "h3")).toEqual(["보낸 글", "운영자 답변", "처리 이력"]);
+  expect(tk().textContent).toContain("견본 문의");
+  expect(tk().textContent).toContain("견본 답변");
+  expect(text(tk(), "li")[0]).toMatch(/ · 상태 접수 → 처리중$/);
+  await click([...tk().querySelectorAll("button")].find(b => b.textContent === "닫기"));
+  expect(tk()).toBeNull();
+  serve((url, m) => (m === "GET" && url === "/api/feedback" ? list() : json(500, {})));
+  await click(el.querySelector("tbody button"));
+  expect(calls.at(-1)!.url).toBe("/api/feedback/tk_sample1");
+  expect(tk().querySelector(".db")!.textContent).toBe(DESK.oneFail);
+  expect(tk().querySelector('[role="alert"]')).toBeNull();
+  expect(tk().querySelector("h3")).toBeNull();
+  expect(el.querySelector("#desk-tk-title")!.textContent).toBe("내 문의");
+});
+
 test("공개 이력 한 줄 — 상태 바뀜 · 답변 바뀜 · 삭제 완료", () => {
   expect([{ kind: "status", from_val: "open", to_val: "done" }, { kind: "reply", from_val: null, to_val: null }, { kind: "deleted", from_val: null, to_val: null }]
     .map(h => histText({ ...h, at: "" }))).toEqual(["상태 접수 → 완료", "운영자 답변이 바뀌었어요", "삭제 완료"]);

@@ -25,10 +25,12 @@ export function MigPlan({ pid, done }: Props) {
   const [err, setErr] = useState<ApiError | null>(null);
   const [open, setOpen] = useState<Set<number>>(new Set());
   const [bodies, setBodies] = useState<Record<number, BodyState>>({});
-  if (d.isError) return <LoadFail err={apiErr(d.error)} what="이관 plan" />;
+  if (d.isError && !d.data) return <LoadFail err={apiErr(d.error)} what="이관 plan" />;
   if (!d.data || (!l.data && !l.isError)) return <p className="hint">{LOADING}</p>;
   const pl = d.data;
-  if (applied) return r.isError ? <LoadFail err={apiErr(r.error)} what="영수증" /> : r.data ? <MigReceipt pl={pl} r={r.data} /> : <p className="hint">{LOADING}</p>;
+  const stale = d.isError ? <LoadFail err={apiErr(d.error)} what="이관 plan" /> : null;   // 다시 받기 실패 = 받아 둔 plan 은 그대로 그린다
+  if (applied) return r.isError && !r.data ? <LoadFail err={apiErr(r.error)} what="영수증" />
+    : r.data ? <>{stale}{r.isError ? <LoadFail err={apiErr(r.error)} what="영수증" /> : null}<MigReceipt pl={pl} r={r.data} /></> : <p className="hint">{LOADING}</p>;
   const on = !!(l.data && l.data.enabled && l.data.allowed), L = l.data?.limits || null;
 
   async function fail(e: ApiError) {
@@ -72,5 +74,5 @@ export function MigPlan({ pid, done }: Props) {
     setBusy(false);
     await done(DONE.cancel, { at: "#_setup/migration" });
   }
-  return <MigSealed pl={pl} L={L} on={on} busy={busy} err={err} open={open} bodies={bodies} onCheck={check} onBody={body} onApply={apply} onCancel={cancel} />;
+  return <>{stale}<MigSealed pl={pl} L={L} on={on} busy={busy} err={err} open={open} bodies={bodies} onCheck={check} onBody={body} onApply={apply} onCancel={cancel} /></>;
 }

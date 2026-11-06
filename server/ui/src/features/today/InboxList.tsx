@@ -41,10 +41,11 @@ export function InboxList({ S, cur, flash }: { S: AppState; cur: string; flash: 
         <a key={k} href={`#_inbox${k === "pending" ? "" : "/" + k}`} className={k === st ? "on" : ""} aria-current={k === st ? "true" : undefined}>
           {l}{k === "pending" && S.inbox ? <span className="n">{S.inbox.pending}</span> : null}</a>
       ))}</nav>
-      <div>{list.isError && !list.isFetchNextPageError ? <LoadFail err={apiErr(list.error)} what="저장 승인 대기" />
+      <div>{list.isError && !list.isFetchNextPageError && !rows ? <LoadFail err={apiErr(list.error)} what="저장 승인 대기" />
         : !rows ? <p className="hint">{LOADING}</p>
         : !rows.length ? <div className="empty">{st === "pending" ? "승인할 글이 없어요." : "없어요."}</div>
-        : <><ul className="rows">{rows.map(e => <Row key={e.id} S={S} e={e} />)}</ul>
+        : <>{list.isError && !list.isFetchNextPageError ? <LoadFail err={apiErr(list.error)} what="저장 승인 대기" /> : null}
+          <ul className="rows">{rows.map(e => <Row key={e.id} S={S} e={e} />)}</ul>
           {list.hasNextPage ? <button type="button" className="secondary more" disabled={list.isFetchingNextPage} onClick={more}>더 보기</button> : null}
           {moreErr ? <p className="ferr" role="alert">{moreErr}</p> : null}</>}</div>
     </div>

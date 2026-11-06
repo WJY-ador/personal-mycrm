@@ -40,11 +40,12 @@ export function TrashScreen({ ctx }: ScreenProps) {
 
   const rows = q.data?.pages.flatMap(p => p.items);
   let body;
-  if (q.isError && !q.isFetchNextPageError) body = <div className="empty">{loadErrText(apiErr(q.error))}</div>;
+  if (q.isError && !q.isFetchNextPageError && !rows) body = <div className="empty">{loadErrText(apiErr(q.error))}</div>;
   else if (!rows) body = <p className="hint">{LOADING}</p>;
-  else if (!rows.length) body = <div className="empty">{TRASH_EMPTY}</div>;
+  else if (!rows.length) body = <>{q.isError && !q.isFetchNextPageError ? <p className="ferr" role="alert">{loadErrText(apiErr(q.error))}</p> : null}<div className="empty">{TRASH_EMPTY}</div></>;
   else body = (
     <>
+      {q.isError && !q.isFetchNextPageError ? <p className="ferr" role="alert">{loadErrText(apiErr(q.error))}</p> : null}
       <ul className={css.list}>{rows.map(x => <TrashRow key={`${x.kind}:${x.id}`} x={x} busy={busy} onAct={act} />)}</ul>
       {q.hasNextPage && (
         <button className="secondary more" type="button" disabled={q.isFetchingNextPage} onClick={more}>

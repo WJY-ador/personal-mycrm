@@ -4,6 +4,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { SCREENS } from "../../test/screens";
+import { Card } from "./Card";
+import { useDirtyCards } from "./ReviewScreen";
+import { WORDS } from "./text";
 import { queryClient } from "../../shared/queries";
 import type { AppState } from "../../shared/state";
 import { calls, click, flush, installFetch, json, serve } from "../../test/fakeServer";
@@ -20,11 +23,12 @@ const state = (cands: object[], x: object = {}) => ({
 
 let el: HTMLDivElement, root: Root, S: AppState, args: string[];
 const reload = vi.fn(async () => true);
+const setDirty = vi.fn();
 async function show(st: AppState, key: string, qid = "q1") {
   S = st; args = ["q", qid, key, "#q/q1", "질문으로 돌아가기"];
   history.replaceState(null, "", `#q/review/${qid}/${key}`);
   const R = SCREENS.review;
-  await act(async () => root.render(<QueryClientProvider client={queryClient}><R ctx={{ reload, state: S, args }} /></QueryClientProvider>));
+  await act(async () => root.render(<QueryClientProvider client={queryClient}><R ctx={{ reload, setDirty, state: S, args }} /></QueryClientProvider>));
   await flush(); await flush();
 }
 // 껍데기 흉내 — 주소가 바뀌면(replace·링크) 그 조각으로 다시 그린다. jsdom 의 주소 바꾸기는 다음 작업에서 끝나 바뀔 때까지 기다린다
@@ -40,7 +44,7 @@ const posts = () => calls.filter(c => c.method === "POST");
 
 let POST: () => Response | Promise<Response> = () => json(200, {});
 beforeEach(() => {
-  installFetch(); queryClient.clear(); reload.mockReset(); reload.mockResolvedValue(true);
+  installFetch(); queryClient.clear(); reload.mockReset(); reload.mockResolvedValue(true); setDirty.mockReset();
   POST = () => json(200, {});
   serve((url, m) => (m === "POST" ? POST() : url.startsWith("/api/journal") ? json(200, J) : json(404, {})));
   el = document.createElement("div"); document.body.append(el); root = createRoot(el);
@@ -129,7 +133,7 @@ test("남기기 — 호출 하나(expected_revision) · 저장 중 잠금 · 새
   expect(el.querySelector("#save-status")!.textContent).toBe("");
 });
 
-test("고쳐서 남기기 · 충돌 = 서버 문구 + 고치던 문장 · 실패 = 서버 msg 그대로(잠금 풀림) · 응답 유실 = 상태 다시 읽어 판정", async () => {
+test("고쳐서 남기기 · 충돌 = 서버 문구 + 고치던 문장 · 실패 = 서버 msg 그대로(잠금 풀림) · 응답 유실 = 성공 여부 불명", async () => {
   await show(state([cand("c_1")]), "c_1");
   await click(btn("고쳐서 남기기"));
   const ta = el.querySelector("textarea")!;
@@ -144,13 +148,16 @@ test("고쳐서 남기기 · 충돌 = 서버 문구 + 고치던 문장 · 실패
   await click(btn("반영 안 함"));
   expect(el.querySelector("#save-error")!.textContent).toBe("근거가 바뀌었어요.");
   expect(btn("반영 안 함").disabled).toBe(false);
-  // 응답 유실 — 상태의 그 판단이 바뀌었으면 저장된 것
+  // 응답 유실 — 다른 기기에서 같은 상태로 바뀌었더라도 이 요청의 저장 근거가 아니다
   POST = () => Promise.reject(new TypeError("network"));
   serve((url, m) => (m === "POST" ? POST() : url === "/api/state" ? json(200, state([cand("c_1", { status: "excluded" })])) : json(200, J)));
-  reload.mockImplementation(async () => { S = state([]); return true; });
+  reload.mockResolvedValue(true);
+  reload.mockClear();
   await click(btn("반영 안 함")); await redraw();
-  expect(el.textContent).toContain("아직 안 정한 문장이 없어요.");
-  expect(el.querySelector("#save-status")!.textContent).toBe("반영 안 함으로 표시했어요.");
+  expect(el.querySelector("[data-candidate-id]")).not.toBeNull();
+  expect(el.querySelector("#save-error")!.textContent).toBe("저장 여부를 확인하지 못했어요. 새로 고침해 확인해 주세요.");
+  expect(reload).not.toHaveBeenCalled();
+  expect(calls.some(c => c.method === "GET" && c.url === "/api/state")).toBe(false);
   serve((url, m) => (m === "POST" ? POST() : url === "/api/state" ? json(200, state([cand("c_1")])) : json(200, J)));
   await show(state([cand("c_1")]), "c_1");
   await click(btn("반영 안 함"));
@@ -262,3 +269,193 @@ test("기록 목록 읽기에 실패하면 기록 부재나 완료로 추정하�
   expect(el.textContent).not.toContain("검토가 끝났어요");
 });
 
+
+// 미저장 보호 — 고친 문장이 원래 문장과 다르고 저장 전이면 이 주소를 껍데기에 알린다(setDirty). 취소·저장 성공·화면을 떠날 때 푼다
+const typeIn = (ta: HTMLTextAreaElement, v: string) => act(async () => {
+  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(ta, v); ta.dispatchEvent(new Event("input", { bubbles: true })); });
+
+test("미저장 보호 — 고치면 주소 등록 · 원래 문장으로 되돌리거나 취소하면 해제 · 화면을 떠나면 해제", async () => {
+  await show(state([cand("c_1")]), "c_1");
+  await click(btn("고쳐서 남기기"));
+  expect(setDirty).not.toHaveBeenCalledWith("#q/review/q1/c_1");   // 열기만 = 고친 것 아님
+  const ta = el.querySelector("textarea")!;
+  await typeIn(ta, "고친 문장");
+  expect(setDirty).toHaveBeenLastCalledWith("#q/review/q1/c_1");
+  await typeIn(ta, "담당을 먼저 정한다 c_1");   // 원래 문장 그대로
+  expect(setDirty).toHaveBeenLastCalledWith(null);
+  await typeIn(ta, "다시 고침");
+  expect(setDirty).toHaveBeenLastCalledWith("#q/review/q1/c_1");
+  await click(btn("취소"));
+  expect(setDirty).toHaveBeenLastCalledWith(null);
+  await click(btn("고쳐서 남기기"));
+  await typeIn(el.querySelector("textarea")!, "떠나기 전");
+  expect(setDirty).toHaveBeenLastCalledWith("#q/review/q1/c_1");
+  act(() => root.unmount());
+  expect(setDirty).toHaveBeenLastCalledWith(null);
+  root = createRoot(el);
+});
+
+test("미저장 보호 — 저장 실패면 그대로 · 저장 성공이면 다시 받기 전에 해제(다시 받기 실패로 카드가 남아도)", async () => {
+  await show(state([cand("c_1")]), "c_1");
+  await click(btn("고쳐서 남기기"));
+  await typeIn(el.querySelector("textarea")!, "고친 문장");
+  POST = () => json(400, { code: "CANDIDATE-REVIEW", msg: "근거가 바뀌었어요." });
+  await click(btn("고친 문장으로 남기기"));
+  expect(setDirty).toHaveBeenLastCalledWith("#q/review/q1/c_1");
+  POST = () => json(200, {});
+  reload.mockResolvedValue(false);   // 상태를 다시 받지 못함 — 카드는 그대로 남는다
+  await click(btn("고친 문장으로 남기기"));
+  expect(el.querySelector("[data-candidate-id]")).not.toBeNull();
+  expect(setDirty).toHaveBeenLastCalledWith(null);
+  const nulls = setDirty.mock.calls.map((a, i) => (a[0] === null ? i : -1)).filter(i => i >= 0);
+  const cleared = setDirty.mock.invocationCallOrder[nulls[nulls.length - 1]];
+  expect(cleared).toBeLessThan(reload.mock.invocationCallOrder.at(-1)!);
+  // 저장한 문장이 새 기준 — 같은 칸에 다시 고치면 다시 등록, 저장한 문장으로 되돌리면 해제
+  await typeIn(el.querySelector("textarea")!, "저장 뒤 또 고침");
+  expect(setDirty).toHaveBeenLastCalledWith("#q/review/q1/c_1");
+  await typeIn(el.querySelector("textarea")!, "고친 문장");
+  expect(setDirty).toHaveBeenLastCalledWith(null);
+});
+
+test("미저장 보호 — 동시에 고친 카드 둘: 하나를 풀어도 다른 카드의 등록은 남는다 · 모두 깨끗할 때만 해제", async () => {
+  const ctx = { reload, setDirty };
+  function Two() {
+    const mark = useDirtyCards(ctx);
+    const one = (id: string) => (
+      <div id={"box-" + id}><Card S={state([])} c={cand(id) as never} head={null} qText="도입 순서는?" byRec={false} w={WORDS} prev="" next="" locked={false}
+        status="" err="" onDecide={() => {}} onDirty={d => mark(id, d)} /></div>);
+    return <>{one("c_1")}{one("c_2")}</>;
+  }
+  await act(async () => root.render(<QueryClientProvider client={queryClient}><Two /></QueryClientProvider>));
+  await flush(); await flush();
+  const box = (id: string) => el.querySelector("#box-" + id)!;
+  const inBox = (id: string, t: string) => [...box(id).querySelectorAll("button")].find(b => b.textContent === t) as HTMLButtonElement;
+  history.replaceState(null, "", "#q/review/q1/c_1");
+  await click(inBox("c_1", "고쳐서 남기기")); await typeIn(box("c_1").querySelector("textarea")!, "하나");
+  expect(setDirty).toHaveBeenLastCalledWith("#q/review/q1/c_1");
+  history.replaceState(null, "", "#q/review/q1/c_2");
+  await click(inBox("c_2", "고쳐서 남기기")); await typeIn(box("c_2").querySelector("textarea")!, "둘");
+  await click(inBox("c_1", "취소"));
+  expect(setDirty).toHaveBeenLastCalledWith("#q/review/q1/c_2");   // c_1 을 풀어도 c_2 는 남는다
+  expect(setDirty).not.toHaveBeenLastCalledWith(null);
+  await click(inBox("c_2", "취소"));
+  expect(setDirty).toHaveBeenLastCalledWith(null);
+});
+
+test("미저장 보호 — 편집 칸을 연 채 남기기·반영 안 함은 고친 문장을 저장한 게 아니다: 다시 받기에 실패해도 등록은 취소·떠날 때까지 남는다", async () => {
+  await show(state([cand("c_1")]), "c_1");
+  await click(btn("고쳐서 남기기"));
+  await typeIn(el.querySelector("textarea")!, "고친 문장");
+  expect(setDirty).toHaveBeenLastCalledWith("#q/review/q1/c_1");
+  expect(btn("남기기").disabled).toBe(false);   // 편집 칸이 열려 있어도 결정 버튼은 켜져 있다
+  reload.mockResolvedValue(false);   // 결정은 저장됐지만 상태를 다시 받지 못함 — 카드·편집 칸이 그대로 남는다
+  await click(btn("남기기"));
+  expect(posts().at(-1)!.body).toMatchObject({ action: "confirm" });
+  expect(el.querySelector("[data-candidate-id]")).not.toBeNull();
+  expect(el.querySelector("textarea")!.value).toBe("고친 문장");
+  expect(setDirty).toHaveBeenLastCalledWith("#q/review/q1/c_1");
+  expect(setDirty).not.toHaveBeenCalledWith(null);
+  await click(btn("취소"));   // 기준은 원래 문장 그대로 — 취소하면 원래 문장으로 돌아가고 해제
+  expect(setDirty).toHaveBeenLastCalledWith(null);
+  await click(btn("고쳐서 남기기"));
+  expect(el.querySelector("textarea")!.value).toBe("담당을 먼저 정한다 c_1");
+  await typeIn(el.querySelector("textarea")!, "또 고친 문장");
+  setDirty.mockClear();
+  await click(btn("반영 안 함"));
+  expect(posts().at(-1)!.body).toMatchObject({ action: "exclude" });
+  expect(setDirty).not.toHaveBeenCalledWith(null);
+  expect(el.querySelector("textarea")!.value).toBe("또 고친 문장");
+  act(() => root.unmount());   // 화면을 떠나면 해제
+  expect(setDirty).toHaveBeenLastCalledWith(null);
+  root = createRoot(el);
+});
+
+test("고친 문장 저장 응답 유실 — 다시 읽은 상태가 바뀌었고 같은 문장이어도 이 요청의 저장 증거가 아니다: 저장 알림·해제·다시 받기·이동 없이 고치던 문장과 불확실 문구를 남긴다", async () => {
+  await show(state([cand("c_1")]), "c_1");
+  await click(btn("고쳐서 남기기"));
+  await typeIn(el.querySelector("textarea")!, "고친 문장");
+  expect(setDirty).toHaveBeenLastCalledWith("#q/review/q1/c_1");
+  POST = () => Promise.reject(new TypeError("network"));
+  // 다른 기기에서 같은 문장으로 확정했을 수도 있다 — 상태·문장·revision 이 맞아도 이 요청과 이어 줄 근거가 없다
+  serve((url, m) => (m === "POST" ? POST() : url === "/api/state" ? json(200, state([cand("c_1", { status: "confirmed", text: "고친 문장", revision: 3 })])) : json(200, J)));
+  setDirty.mockClear();
+  await click(btn("고친 문장으로 남기기")); await flush();
+  expect(posts().at(-1)!.body).toMatchObject({ action: "edit_confirm", text: "고친 문장" });
+  expect(reload).not.toHaveBeenCalled();
+  expect(calls.some(c => c.method === "GET" && c.url === "/api/state")).toBe(false);
+  expect(location.hash).toBe("#q/review/q1/c_1");
+  expect(setDirty).not.toHaveBeenCalledWith(null);
+  expect(el.querySelector("[data-candidate-id]")!.getAttribute("data-candidate-id")).toBe("c_1");
+  expect(el.querySelector("textarea")!.value).toBe("고친 문장");
+  expect(el.querySelector("#save-status")!.textContent).not.toContain("남겼어요");
+  expect(el.querySelector("#save-error")!.textContent).toBe("저장 여부를 확인하지 못했어요. 새로 고침해 확인해 주세요.");
+  expect(btn("고친 문장으로 남기기").disabled).toBe(false);   // 잠금은 풀린다
+  // 기준은 원래 문장 그대로 — 원래 문장으로 되돌리면 해제, 다시 고치면 등록
+  await typeIn(el.querySelector("textarea")!, "담당을 먼저 정한다 c_1");
+  expect(setDirty).toHaveBeenLastCalledWith(null);
+  await typeIn(el.querySelector("textarea")!, "고친 문장");
+  expect(setDirty).toHaveBeenLastCalledWith("#q/review/q1/c_1");
+  act(() => root.unmount());   // 떠날 때만 해제
+  expect(setDirty).toHaveBeenLastCalledWith(null);
+  root = createRoot(el);
+});
+
+test("더티 편집 중 같은 후보의 원격 갱신은 초안을 보존하고 편집 시작 revision으로 충돌 검사를 한다", async () => {
+  await show(state([cand("c_1", { revision: 2 })]), "c_1");
+  await click(btn("고쳐서 남기기"));
+  await typeIn(el.querySelector("textarea")!, "내 초안");
+
+  await show(state([cand("c_1", { text: "서버 최신 문장", revision: 3 })]), "c_1");
+  expect(el.querySelector("textarea")!.value).toBe("내 초안");
+  expect(el.querySelector("[data-candidate-id]")!.textContent).toContain("서버 최신 문장");
+
+  await click(btn("고친 문장으로 남기기"));
+  expect(posts().at(-1)!.body).toEqual({ candidate_id: "c_1", action: "edit_confirm", expected_revision: 2, text: "내 초안" });
+});
+
+test("깨끗한 편집 화면은 같은 후보의 원격 문장과 revision을 받아들인 뒤 그 revision으로 저장한다", async () => {
+  await show(state([cand("c_1", { revision: 2 })]), "c_1");
+  await show(state([cand("c_1", { text: "서버 최신 문장", revision: 3 })]), "c_1");
+  expect(el.querySelector("textarea")!.value).toBe("서버 최신 문장");
+
+  await click(btn("고쳐서 남기기"));
+  await typeIn(el.querySelector("textarea")!, "최신 문장에서 시작한 초안");
+  await click(btn("고친 문장으로 남기기"));
+  expect(posts().at(-1)!.body).toEqual({ candidate_id: "c_1", action: "edit_confirm", expected_revision: 3, text: "최신 문장에서 시작한 초안" });
+});
+
+test("원격 변경 뒤 초안을 기준 문장으로 되돌리면 최신 원격 문장과 revision으로 동기화한다", async () => {
+  await show(state([cand("c_1", { revision: 2 })]), "c_1");
+  await click(btn("고쳐서 남기기"));
+  await typeIn(el.querySelector("textarea")!, "내 초안");
+
+  await show(state([cand("c_1", { text: "서버 최신 문장", revision: 3 })]), "c_1");
+  await typeIn(el.querySelector("textarea")!, "담당을 먼저 정한다 c_1");
+  expect(el.querySelector("textarea")!.value).toBe("서버 최신 문장");
+
+  await typeIn(el.querySelector("textarea")!, "최신 문장에서 시작한 초안");
+  await click(btn("고친 문장으로 남기기"));
+  expect(posts().at(-1)!.body).toEqual({ candidate_id: "c_1", action: "edit_confirm", expected_revision: 3, text: "최신 문장에서 시작한 초안" });
+});
+
+test.each([
+  ["confirm", "excluded", "남기기"],
+  ["confirm", "confirmed", "남기기"],
+  ["exclude", "confirmed", "반영 안 함"],
+  ["exclude", "excluded", "반영 안 함"],
+] as const)("OFFLINE %s 요청에서 원격 상태가 %s이면 저장 성공으로 단정하지 않는다", async (action, remoteStatus, button) => {
+  await show(state([cand("c_1")]), "c_1");
+  POST = () => Promise.reject(new TypeError("network"));
+  serve((url, m) => m === "POST" ? POST()
+    : url === "/api/state" ? json(200, state([cand("c_1", { status: remoteStatus })]))
+      : url.startsWith("/api/journal") ? json(200, J) : json(404, {}));
+
+  await click(btn(button));
+
+  expect(posts().at(-1)!.body).toMatchObject({ candidate_id: "c_1", action });
+  expect(reload).not.toHaveBeenCalled();
+  expect(calls.some(c => c.method === "GET" && c.url === "/api/state")).toBe(false);
+  expect(el.querySelector("[data-candidate-id]")).not.toBeNull();
+  expect(el.querySelector("#save-error")!.textContent).toBe("저장 여부를 확인하지 못했어요. 새로 고침해 확인해 주세요.");
+  expect(el.querySelector("#save-status")!.textContent).not.toContain("남겼어요");
+});

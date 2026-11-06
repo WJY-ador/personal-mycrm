@@ -18,7 +18,7 @@ import { LeaveDialog } from "./LeaveDialog";
 import { SCREENS } from "./registry";
 import { SetupNav } from "./SetupNav";
 import { Tabs } from "./Tabs";
-import { reload, reloadState, useAppState } from "./useAppState";
+import { reload, reloadState, useAppState, useAutoRefresh } from "./useAppState";
 import { useHash } from "./useHash";
 import { useHeader } from "./useHeader";
 
@@ -28,7 +28,7 @@ type Shown = Exclude<View, { replace: string }>;
 const isShown = (v: View | null): v is Shown => !!v && "tab" in v;
 
 export function App() {
-  const { S, failed } = useAppState();
+  const { S, failed, revision } = useAppState();
   // 미저장 보호 — 옮긴 화면이 ctx.setDirty 로 알린 「고치던 글이 있는 주소」. 다른 주소로 가면 그 자리로 되돌리고 묻는다
   const dirty = useRef<string | null>(null), leaveTo = useRef("");
   const [leave, setLeave] = useState(false);
@@ -41,7 +41,11 @@ export function App() {
     return true;
   }, []);
   const hash = useHash(guard);
-  const setDirty = useCallback((h: string | null) => { dirty.current = h; }, []);
+  const autoRefreshDirtyChanged = useAutoRefresh(!!S, dirty, revision);
+  const setDirty = useCallback((h: string | null) => {
+    dirty.current = h;
+    autoRefreshDirtyChanged(h !== null);
+  }, [autoRefreshDirtyChanged]);
 
   // 결과 한 줄 — done(문구, 주소?) 뒤 상태를 다시 받고, 그 주소의 화면에 한 번(ctx.flash). 다른 주소로 가면 사라진다
   const [flash, setFlash] = useState<{ text: string; at: string } | null>(null);
@@ -103,7 +107,7 @@ export function App() {
       {at("ui-desk", <DeskDialog ctx={deskCtx} />)}
       <LeaveDialog open={leave}
         stay={() => { setLeave(false); document.getElementById("hedit-input")?.focus(); }}
-        go={() => { setLeave(false); dirty.current = null; const to = leaveTo.current; leaveTo.current = ""; location.hash = to || "#_me"; }} />
+        go={() => { setLeave(false); setDirty(null); const to = leaveTo.current; leaveTo.current = ""; location.hash = to || "#_me"; }} />
     </>
   );
 }

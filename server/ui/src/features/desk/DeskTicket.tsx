@@ -18,10 +18,10 @@ export function DeskTicket({ id, onClose }: { id: string; onClose: () => void })
   const j = q.data;
   const title = j ? `내 문의 · ${TICKET_KIND[j.kind] || j.kind}` : "내 문의";
   let body;
-  if (q.isError) body = <p className="blocked">{apiErr(q.error).msg || DESK.oneFail}</p>;
+  if (q.isError && !j) body = <p className="blocked">{apiErr(q.error).msg || DESK.oneFail}</p>;
   else if (!j) body = <p className="hint">불러오는 중이에요…</p>;
   else body = (
-    <div className={css.tk}><h3>보낸 글</h3><p className={css.txt}>{j.text}</p>
+    <div className={css.tk}>{q.isError ? <p className="blocked" role="alert">{apiErr(q.error).msg || DESK.oneFail}</p> : null}<h3>보낸 글</h3><p className={css.txt}>{j.text}</p>
       <h3>운영자 답변</h3><p className={css.txt}>{j.reply || DESK.noReply}</p><p className="hint">{j.reply_at ? mdhm(j.reply_at) + " 답변" : ""}</p>
       <h3>처리 이력</h3><ul>{j.history.map((h, i) => <li key={i}>{mdhm(h.at)} · {histText(h)}</li>)}</ul>
       <p className="hint">{j.history.length ? "" : DESK.noHist}</p></div>

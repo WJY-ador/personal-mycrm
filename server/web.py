@@ -1772,9 +1772,12 @@ class Web:
         uid, err = await self._need(request)
         if err:
             return err
+        # Baseline은 state helper들보다 먼저 읽는다. 도중 바뀐 revision은 다음 poll에서 다시 감지해 보수적으로 한 번 더 읽는다.
+        revision = await run_in_threadpool(db.user_change_revision, uid)
         st, me, flags, std, srcs, cnt, home, people, refl, devst = await run_in_threadpool(lambda: (
             db.state(uid), db.user_get(uid), db.app_user_flags(uid), db.std_status(uid), db.sources(uid), db.source_counts(uid),
             db.me_home(uid), db.people_all(uid), db.reflections_all(uid), db.devices_status(uid)))
+        st["revision"] = revision
         # PR① 홈 「더 보기」 — journal(기본 50편) 마지막 행 커서. 50편 미만이면 null(정확히 50 이면 커서 — 다음 호출이 0편+null 일 수 있음). /app 전용
         st["journal_next_before"] = record_cursor(st["journal"][-1]) if len(st["journal"]) >= JOURNAL_PAGE else None
         st["std"] = std   # PR #20 사용자 표준 상태(contract.std_state 모양) — /app 전용, MCP state_get 에는 넣지 않는다
@@ -1809,6 +1812,17 @@ class Web:
             st.setdefault("read", {})["activity"] = {"ok": False, "error": {"code": code, "msg": ""}}
             st["activity"] = st["inbox"] = st["devices"] = None
         return JSONResponse(st, headers={"cache-control": "no-store"})
+
+    async def api_state_revision(self, request):
+        """주기 polling용 본인 데이터 변경 revision만 반환한다."""
+        uid, err = await self._need(request)
+        if err:
+            return err
+        revision = await run_in_threadpool(db.user_change_revision, uid)
+        if revision is None:  # 세션 확인 뒤 계정이 삭제된 경합
+            return JSONResponse({"code": "UNAUTHORIZED", "msg": "로그인이 필요해요."}, status_code=401,
+                                headers={"cache-control": "no-store"})
+        return JSONResponse({"revision": revision}, headers={"cache-control": "no-store"})
 
     async def api_journal(self, request):
         uid, err = await self._need(request)
@@ -3265,6 +3279,7 @@ class Web:
             Route("/dev/login", self.dev_login, methods=["GET", "POST"]),   # CRM_DEV 만(아니면 404)
             Route("/logout", self.logout, methods=["POST"]),
             Route("/api/state", u("web:state", self.api_state)),
+            Route("/api/state/revision", u("web:state_revision", self.api_state_revision)),
             Route("/api/journal", u("web:journal", self.api_journal)),
             Route("/api/records", u("web:records", self.api_records)),   # PR① 홈 기록 「더 보기」 — 읽기만
             Route("/api/records/{rid}/body", u("web:record_body", self.api_record_body), methods=["POST"]),   # 수기 수정 A0′

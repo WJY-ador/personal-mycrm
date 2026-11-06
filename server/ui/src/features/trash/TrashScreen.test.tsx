@@ -54,6 +54,15 @@ test("행 = 종류 · 제목(글자 그대로) · 삭제 시각 · 복원 가능
   expect(el.textContent).not.toMatch(/처리 중|영구 삭제 예정/);
 });
 
+test("백그라운드 재조회 실패 = 기존 휴지통 목록 유지 + 오류 안내", async () => {
+  await show();
+  serve(() => json(503, { code: "OFFLINE", msg: "" }));
+  await act(async () => { await queryClient.invalidateQueries({ queryKey: ["trash"] }); });
+  await flush();
+  expect(el.querySelectorAll("li")).toHaveLength(2);
+  expect(el.querySelector('[role="alert"]')?.textContent).toBe("서버에 연결하지 못했어요.");
+});
+
 test("[더 보기] = 서버 커서 그대로 · 항목 종류 = object_label · 끝이면 버튼 0", async () => {
   await show();
   await click(btn("더 보기"));

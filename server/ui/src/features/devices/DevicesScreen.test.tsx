@@ -3,7 +3,7 @@
 import { act } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { queryClient } from "../../shared/queries";
-import { calls, click, installFetch, json, serve, text } from "../../test/fakeServer";
+import { calls, click, flush, installFetch, json, serve, text } from "../../test/fakeServer";
 import { byText, cacheText, hideScreen, reload, showScreen } from "../../test/showScreen";
 import { type } from "../../test/showMe";
 import sample from "./devices.sample.json";
@@ -91,4 +91,22 @@ test("실패 — 충돌 = 머리 문구 + 다시 받기 · 그 밖 = 그 자리�
   await type(el.querySelector("#dev-label") as HTMLInputElement, "또 PC");
   await click(byText(el, "button", "연결하기")[0]);
   expect(text(el, "form .ferr")[0]).toBe("장치는 5대까지예요.");
+});
+
+test("다시 받기 실패 = 받아 둔 장치 카드 그대로 + 못 읽음 안내 · 처음부터 실패 = 못 읽음만", async () => {
+  const alert = (el: Element) => el.querySelector('[role="alert"].partfail')?.textContent || "";
+  const el = await show();
+  expect(text(el, "article h3")).toEqual(["집 노트북", "옛 PC"]);
+  expect(alert(el)).toBe("");
+  serve(() => json(503, { code: "OFFLINE", msg: "" }));
+  await act(async () => { await queryClient.invalidateQueries({ queryKey: ["devices"] }); });
+  await flush();
+  expect(queryClient.getQueryState(["devices"])?.status).toBe("error");
+  expect(text(el, "article h3")).toEqual(["집 노트북", "옛 PC"]);
+  expect(el.textContent).toContain("연결 2 / 5");
+  expect(alert(el)).toContain("연결 장치를 불러오지 못했어요");
+  hideScreen(); queryClient.clear();
+  const cold = await show();
+  expect(alert(cold)).toContain("연결 장치를 불러오지 못했어요");
+  expect(cold.querySelector("article h3")).toBeNull();
 });

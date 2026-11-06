@@ -1,8 +1,9 @@
 // 「자료 종류」(옛 test_web_home.py 휴지통 진입점·test_static_moved 절 + 화면 동작을 옮김, R4-2) — 색인 카드 · 사람(별칭만 · 클릭 편집 · [삭제] 켜짐 = 휴지통,
 // 꺼짐 = 즉시 삭제 + 확인창 문구 그대로) · 출처(저장 → 그 출처) · 읽고 든 생각(확인 · 쓰기 · 고치기 · 삭제) · 실패 = 서버 문구(충돌 = 머리 + 다시 받기)
+import { act } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { queryClient } from "../../shared/queries";
-import { calls, click, installFetch, json, serve } from "../../test/fakeServer";
+import { calls, click, flush, installFetch, json, serve } from "../../test/fakeServer";
 import { type } from "../../test/showMe";
 import { byText, hideScreen, reload, showScreen } from "../../test/showScreen";
 import sample from "./objects.sample.json";
@@ -146,4 +147,47 @@ test("읽고 든 생각 — 확인(판단 확정 아님 문구) · 쓰기(유형
   POST = () => json(400, { code: "ARG-INVALID", msg: "본문이 너무 길어요." });
   await submit(d, "고친 내용 저장");
   expect(d.querySelector("form .ferr")!.textContent).toBe("본문이 너무 길어요.");
+});
+
+// 다시 받기 실패(가짜 서버만) — 받아 둔 문맥 그대로 + 못 읽음 안내 · 받아 둔 것이 없으면 = 처음 못 읽음만
+const OFF = () => json(503, { code: "OFFLINE", msg: "" });
+const partfail = (el: Element) => el.querySelector('[role="alert"].partfail')?.textContent || "";
+const failGets = () => serve((url, m) => m === "POST" ? POST(url) : OFF());
+
+test("출처 하나 활동 — 다시 받기 실패 = 받아 둔 활동 그대로 + 못 읽음 안내 · 처음부터 실패 = 못 읽음만", async () => {
+  const el = await show("#_obj/source/s1", ["source", "s1", ""]);
+  const head = () => el.querySelector(".sechead h3")?.textContent;
+  expect(head()).toBe("이 출처의 활동 11");
+  expect(el.querySelector(".bars")).not.toBeNull();
+  expect(partfail(el)).toBe("");
+  failGets();
+  await act(async () => { await queryClient.invalidateQueries({ queryKey: ["objects", "source", "s1"] }); });
+  await flush();
+  expect(queryClient.getQueryState(["objects", "source", "s1"])?.status).toBe("error");
+  expect(head()).toBe("이 출처의 활동 11");
+  expect(el.querySelector(".bars")).not.toBeNull();
+  expect(partfail(el)).toContain("이 출처의 활동을 불러오지 못했어요");
+  hideScreen(); queryClient.clear();
+  const cold = await show("#_obj/source/s1", ["source", "s1", ""]);
+  expect(partfail(cold)).toContain("이 출처의 활동을 불러오지 못했어요");
+  expect(cold.querySelector(".sechead")).toBeNull();
+});
+
+test("사람 하나 문맥 — 다시 받기 실패 = 받아 둔 활동·글·항목 그대로 + 못 읽음 안내 · 처음부터 실패 = 못 읽음만", async () => {
+  const el = await show("#_obj/person/p1", ["person", "p1", ""]);
+  const heads = () => [...el.querySelectorAll("h2.sh")].map(h => h.textContent);
+  expect(heads()).toEqual(["연결된 활동 3", "연결된 글 1", "이 사람을 가리키는 항목 1"]);
+  expect(partfail(el)).toBe("");
+  failGets();
+  await act(async () => { await queryClient.invalidateQueries({ queryKey: ["objects", "person", "p1"] }); });
+  await flush();
+  expect(queryClient.getQueryState(["objects", "person", "p1"])?.status).toBe("error");
+  expect(heads()).toEqual(["연결된 활동 3", "연결된 글 1", "이 사람을 가리키는 항목 1"]);
+  expect(el.querySelector('a[href="#_me/journal/r_sample"]')).not.toBeNull();
+  expect(el.querySelector('a[href="#structure/od_principles/i_sample"]')).not.toBeNull();
+  expect(partfail(el)).toContain("연결된 활동·글을 불러오지 못했어요");
+  hideScreen(); queryClient.clear();
+  const cold = await show("#_obj/person/p1", ["person", "p1", ""]);
+  expect(partfail(cold)).toContain("연결된 활동·글을 불러오지 못했어요");
+  expect(cold.querySelector("h2.sh")).toBeNull();
 });

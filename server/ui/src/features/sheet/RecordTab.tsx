@@ -35,10 +35,10 @@ function AxisChips({ S, rid }: { S: AppState; rid: string }) {
 function Body({ S, j }: { S: AppState; j: Rec }) {
   const q = useQuery({ queryKey: journalKey(j.id), queryFn: () => fetchJournal(j.id) });
   const qText = (id: string) => (S.questions || []).find(x => x.id === id)?.text || null;
-  if (q.isError) return <PartFail err={apiErr(q.error)} what="이 글" />;
+  if (q.isError && !q.data) return <PartFail err={apiErr(q.error)} what="이 글" />;
   if (!q.data) return <div className="doc"><p className="dim">원문을 불러오는 중이에요…</p></div>;
   const r = q.data;
-  return <><div className="recmeta">{mdhm(r.meta.created)} · {srcLine(S.sources, j.source_id, r.meta.source)}</div><Doc title={r.title} body={r.body} qText={qText} /></>;
+  return <>{q.isError ? <PartFail err={apiErr(q.error)} what="이 글" /> : null}<div className="recmeta">{mdhm(r.meta.created)} · {srcLine(S.sources, j.source_id, r.meta.source)}</div><Doc title={r.title} body={r.body} qText={qText} /></>;
 }
 
 export function RecordTab({ S, tabId, bl, sel }: { S: AppState; tabId: string; bl: Set<string>; sel: string }) {
