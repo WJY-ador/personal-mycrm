@@ -1,6 +1,7 @@
 // 껍데기(옛 app.html 라우터·다리 — 옛 test_ui_build.py 다리 실행 시험·test_web_home.py 정적 절을 실행 시험으로).
 // 뼈대 = 실제 server/app.html(서버가 사용자 응답에서 하듯 관리자 구간을 뺀다) · 상태 = 가짜 /api/state.
 import { act } from "react";
+import { onlineManager, useQuery } from "@tanstack/react-query";
 import type { Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import page from "../../../app.html?raw";
@@ -34,18 +35,173 @@ async function go(hash: string) {
 }
 
 beforeEach(() => {
+  onlineManager.setOnline(true);
   installFetch(); installMedia(false); queryClient.clear(); state = ST;
   window.scrollTo = vi.fn();
   HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) { this.open = true; };
   HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) { this.open = false; this.dispatchEvent(new Event("close")); };
   serve(url => (url === "/api/state" ? (state ? json(200, state) : Promise.reject(new TypeError("offline"))) : json(404, { code: "NOT-FOUND", msg: "" })));
 });
-afterEach(() => { if (root) act(() => root!.unmount()); root = null; vi.unstubAllGlobals(); });
+afterEach(() => { if (root) act(() => root!.unmount()); root = null; onlineManager.setOnline(true); vi.unstubAllGlobals(); });
+
+test("오프라인에서 기존 상태를 새로 확인했다고 알리지 않고 온라인에서 재시도한다", async () => {
+  await start("#_setup/help");
+  onlineManager.setOnline(false);
+  await click($("reload"));
+  expect($("reload-status").textContent).toBe("서버 상태를 불러오지 못했어요.");
+  expect(queryClient.getQueryData(["state"])).toEqual(ST);
+  onlineManager.setOnline(true);
+  await click($("reload"));
+  expect($("reload-status").textContent).toBe("서버 상태를 확인했어요.");
+});
 
 test("뼈대 = 인라인 스크립트·스타일 0 · 진입 자리 하나", () => {
   expect(page).not.toMatch(/<script(?![^>]*\bsrc=)[^>]*>/);
   expect(page).not.toMatch(/<style\b/);
   expect(page.match(/<main id="view" class="wrap"><p class="hint" id="boot">불러오는 중이에요…<\/p><\/main>/g)?.length).toBe(1);
+});
+
+test("수동 새로 고침은 HTTP 500에서 기존 화면을 유지하고 실패를 알리며 재시도한다", async () => {
+  await start("#_setup/help");
+  expect($("who").textContent).toBe("hong@example.com");
+  serve(url => url === "/api/state" ? json(500, { code: "ERROR", msg: "실패" }) : json(404, {}));
+  await click($("reload"));
+  expect($("bands").textContent).toContain("서버 상태를 불러오지 못했어요");
+  expect($("who").textContent).toBe("hong@example.com");
+  expect($("view").textContent).toContain("문의 및 개인정보");
+  expect(document.getElementById("reload-status")?.textContent).toContain("서버 상태를 불러오지 못했어요");
+  serve(url => url === "/api/state" ? json(200, ST) : json(404, {}));
+  await click($("reload"));
+  expect($("bands").textContent).toBe("");
+  expect(document.getElementById("reload-status")?.textContent).toContain("서버 상태를 확인했어요");
+});
+
+test("수동 새로 고침 중 중복을 막고 완료를 발표한다", async () => {
+  await start("#_setup/help");
+  let finish!: (r: Response) => void;
+  serve(url => url === "/api/state" ? new Promise<Response>(r => { finish = r; }) : json(404, {}));
+  calls.length = 0;
+  await click($("reload"));
+  expect(($("reload") as HTMLButtonElement).disabled).toBe(true);
+  expect($("reload-status").textContent).toBe("서버 상태를 확인하고 있어요…");
+  await click($("reload"));
+  expect(calls.filter(c => c.url === "/api/state")).toHaveLength(1);
+  await act(async () => { finish(json(200, ST)); });
+  await flush();
+  expect(($("reload") as HTMLButtonElement).disabled).toBe(false);
+  expect($("reload-status").textContent).toBe("서버 상태를 확인했어요.");
+});
+
+test("첫 상태 요청 중 새로 고침은 진행 중 요청이 끝날 때까지 기다린다", async () => {
+  const pending: ((response: Response) => void)[] = [];
+  serve(url => url === "/api/state" ? new Promise<Response>(resolve => pending.push(resolve)) : json(404, {}));
+  await start("#_setup/help");
+  expect(pending).toHaveLength(1);
+  await click($("reload"));
+  expect(($("reload") as HTMLButtonElement).disabled).toBe(true);
+  expect($("reload-status").textContent).toBe("서버 상태를 확인하고 있어요…");
+  await act(async () => pending[0](json(200, ST)));
+  await flush();
+  expect($("reload-status").textContent).toBe("서버 상태를 확인했어요.");
+  expect(($("reload") as HTMLButtonElement).disabled).toBe(false);
+});
+
+test("다른 화면 조회가 끝나지 않아도 상태 새로 고침을 완료하고 재시도할 수 있다", async () => {
+  const real = SCREENS.help;
+  SCREENS.help = () => {
+    useQuery({ queryKey: ["stuck-screen"], queryFn: () => new Promise(() => {}) });
+    return <p>도움</p>;
+  };
+  try {
+    await start("#_setup/help");
+    serve(url => url === "/api/state" ? json(200, ST) : new Promise<Response>(() => {}));
+    calls.length = 0;
+    await click($("reload"));
+    expect(($("reload") as HTMLButtonElement).disabled).toBe(false);
+    expect($("reload-status").textContent).toBe("서버 상태를 확인했어요.");
+    expect(calls.filter(c => c.url === "/api/state")).toHaveLength(1);
+  } finally { SCREENS.help = real; }
+});
+
+test("상태 요청 제한 시간이 지나면 요청을 취소하고 수동 재시도를 연다", async () => {
+  await start("#_setup/help");
+  const timeouts: AbortController[] = [];
+  const finish: ((response: Response) => void)[] = [];
+  const signals: AbortSignal[] = [];
+  vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
+    const timeout = new AbortController();
+    timeouts.push(timeout);
+    return timeout.signal;
+  });
+  vi.stubGlobal("fetch", vi.fn((url: string, init?: RequestInit) => {
+    calls.push({ url, method: init?.method || "GET" });
+    expect(init?.signal?.aborted).toBe(false);
+    signals.push(init!.signal!);
+    return new Promise<Response>(resolve => { finish.push(resolve); });
+  }));
+  await click($("reload"));
+  expect(($("reload") as HTMLButtonElement).disabled).toBe(true);
+  await act(async () => timeouts[0].abort());
+  await flush();
+  expect(signals[0].aborted).toBe(true);
+  expect(($("reload") as HTMLButtonElement).disabled).toBe(false);
+  expect($("reload-status").textContent).toBe("서버 상태를 불러오지 못했어요.");
+  await click($("reload"));
+  expect(finish).toHaveLength(2);
+  await act(async () => finish[1](json(200, ST)));
+  await flush();
+  expect($("reload-status").textContent).toBe("서버 상태를 확인했어요.");
+  await act(async () => finish[0](json(200, { ...ST, user: { ...ST.user, email: "late@example.com" } })));
+  await flush();
+  expect($("who").textContent).toBe("hong@example.com");
+  vi.restoreAllMocks();
+});
+
+test("수동 새로 고침 실패 중 미저장 입력과 마지막 성공 시각을 보존한다", async () => {
+  const real = SCREENS.help;
+  SCREENS.help = () => <textarea aria-label="초안" defaultValue="아직 저장하지 않은 내용" />;
+  try {
+    await start("#_setup/help");
+    const draft = document.querySelector<HTMLTextAreaElement>('[aria-label="초안"]')!;
+    draft.value = "사용자가 고친 내용";
+    serve(url => url === "/api/state" ? json(500, {}) : json(404, {}));
+    await click($("reload"));
+    expect(document.querySelector<HTMLTextAreaElement>('[aria-label="초안"]')?.value).toBe("사용자가 고친 내용");
+    expect($("bands").textContent).toContain("11월 3일 10:05에 불러온 내용이에요.");
+  } finally { SCREENS.help = real; }
+});
+
+test("최초 상태 요청이 HTTP 500이면 오류 응답을 대시보드 상태로 사용하지 않는다", async () => {
+  serve(url => url === "/api/state" ? json(500, { code: "ERROR" }) : json(404, {}));
+  await start("#_setup/help");
+  expect($("bands").textContent).toContain("서버 상태를 불러오지 못했어요.");
+  expect($("nav-tabs").textContent).toBe("");
+  expect(queryClient.getQueryState(["state"])?.status).toBe("error");
+});
+
+test("쓰기 후 내부 상태 갱신은 수동 새로 고침 문구를 표시하지 않는다", async () => {
+  let done: ((text: string) => Promise<unknown>) | undefined;
+  const real = SCREENS.help;
+  SCREENS.help = ({ ctx }: ScreenProps) => { done = ctx.done; return <p>도움</p>; };
+  try {
+    await start("#_setup/help");
+    await act(async () => { await done!("저장했어요."); });
+    expect($("reload-status").textContent).toBe("");
+  } finally { SCREENS.help = real; }
+});
+
+test("새로 고침 중 화면을 종료해도 늦은 응답이 제거된 UI를 건드리지 않는다", async () => {
+  await start("#_setup/help");
+  let finish!: (r: Response) => void;
+  serve(url => url === "/api/state" ? new Promise<Response>(r => { finish = r; }) : json(404, {}));
+  await click($("reload"));
+  expect(($("reload") as HTMLButtonElement).disabled).toBe(true);
+  await act(async () => root!.unmount());
+  root = null;
+  expect(document.getElementById("reload-status")).toBeNull();
+  expect(($("reload") as HTMLButtonElement).disabled).toBe(false);
+  await act(async () => { finish(json(200, ST)); });
+  expect(document.getElementById("reload-status")).toBeNull();
 });
 
 test("상태 한 벌 → 탭 줄·머리글·바닥 · 설정 페이지 줄 · 문의 버튼 = 껍데기 대화창", async () => {
@@ -162,7 +318,7 @@ test("결과 한 줄(done) = 상태를 다시 받고 그 주소 화면에 한 �
     await act(async () => { ok = await rel!(); });
     await flush();
     expect(ok).toBe(false);
-    expect($("bands").textContent).toContain("서버에 연결하지 못했어요.");
+    expect($("bands").textContent).toContain("서버 상태를 불러오지 못했어요.");
     expect($("bands").textContent).toContain("11월 3일 10:05에 불러온 내용이에요.");
     expect($("view").querySelector("p")!.textContent).toBe("도움");
     state = ST;

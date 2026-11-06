@@ -195,7 +195,7 @@ def test_static():
     for w in ("저장하지 않은 변경이 있어요", "계속 편집", "변경 버리기"):
         assert w in leave, w
     app = ui_text("layout", "App.tsx")
-    assert "history.pushState(null, \"\", d);" in app and "useHeader({ S, reload, openName, openDesk, dirty })" in app, "미저장 보호 = 껍데기(주소 되돌림 · 새로 고침 경고)"
+    assert "history.pushState(null, \"\", d);" in app and "useHeader({ S, reload: reloadState, openName, openDesk, dirty })" in app, "미저장 보호 = 껍데기(주소 되돌림 · 새로 고침 경고)"
     mobile = ui_text("shared", "mobile.ts")
     assert "@media (max-width: 767px)" in css and 'export const MOBILE = "(max-width: 767px)";' in mobile, "모바일 분기점 = 768 미만(CSS·React shared/mobile.ts 와 같은 값)"
     assert "export const NAV_TABS = [NAVTAB._me, NAVTAB._today];" in route, "탭 나·오늘 — 설정은 톱니"

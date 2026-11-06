@@ -61,7 +61,28 @@ export function useHeader(p: P) {
     };
     const onEsc = (e: KeyboardEvent) => { if (e.key === "Escape" && acct?.open) { close(); acct.querySelector("summary")?.focus(); } };
     const onUnload = (e: BeforeUnloadEvent) => { if (ref.current.dirty.current) { e.preventDefault(); e.returnValue = ""; } };   // 고치던 글 — 새로 고침·닫기
-    const onReload = () => void ref.current.reload();
+    const status = document.createElement("span");
+    status.id = "reload-status";
+    status.className = "hint";
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    again?.insertAdjacentElement("afterend", status);
+    let refreshing = false, disposed = false;
+    const onReload = async () => {
+      if (refreshing) return;
+      refreshing = true;
+      if (again instanceof HTMLButtonElement) again.disabled = true;
+      status.textContent = "서버 상태를 확인하고 있어요…";
+      try {
+        const ok = await ref.current.reload();
+        if (!disposed) status.textContent = ok ? "서버 상태를 확인했어요." : "서버 상태를 불러오지 못했어요.";
+      } catch {
+        if (!disposed) status.textContent = "서버 상태를 불러오지 못했어요.";
+      } finally {
+        refreshing = false;
+        if (!disposed && again instanceof HTMLButtonElement) again.disabled = false;
+      }
+    };
     const onOut = () => void logout();
     menu?.addEventListener("click", onMenu);
     out?.addEventListener("click", onOut);
@@ -71,6 +92,9 @@ export function useHeader(p: P) {
     document.addEventListener("keydown", onKey);
     window.addEventListener("beforeunload", onUnload);
     return () => {
+      disposed = true;
+      status.remove();
+      if (again instanceof HTMLButtonElement) again.disabled = false;
       menu?.removeEventListener("click", onMenu);
       out?.removeEventListener("click", onOut);
       again?.removeEventListener("click", onReload);
