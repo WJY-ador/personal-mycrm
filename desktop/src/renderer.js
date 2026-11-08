@@ -6,13 +6,21 @@ function state(s){
   $('expiry').textContent=s.connection.expires?'토큰 만료 '+s.connection.expires:'';
   $('allow-cli').checked=s.allowCli;$('auto-start').checked=s.autoStart;
   $('cli-state').textContent=s.connection.cliConfigured?' 실행 파일 지정됨':' 실행 파일을 지정해 주세요';
+  const codexModels=s.connection.codexModels||[];
+  $('codex-state').textContent=s.connection.codexCliConfigured
+    ?(codexModels.length?'Codex CLI 경로와 모델 ID 저장됨':'Codex CLI 경로 저장됨, 모델 ID 설정 필요')
+    :'Codex CLI 경로와 모델 ID 설정 필요';
+  if(document.activeElement!==$('codex-models'))$('codex-models').value=codexModels.join(', ');
+  $('codex-candidates').textContent=s.codexCandidates?.length
+    ?'발견한 실행 파일 후보: '+s.codexCandidates.join(', ')
+    :'PATH와 표준 위치에서 실행 파일을 찾지 못했어요. 파일 선택 창에서 직접 지정할 수 있어요.';
   const running=Object.values(s.processes).some(p=>p.state==='running');
   const problem=Object.values(s.processes).some(p=>['failed','authentication-required'].includes(p.state));
   $('runtime').textContent=problem?'조치 필요':running?'실행 중':'중지됨';
   const labels={running:'실행 중',stopped:'중지됨',failed:'실행 실패', 'authentication-required':'토큰을 다시 연결하세요',starting:'시작 중',stopping:'작업 종료를 기다리는 중', 'retry-wait':'잠시 뒤 재시도'};
   $('process-detail').textContent=Object.entries(s.processes).map(([name,p])=>(name==='jobs'?'대화 정리':'원문 뷰어')+': '+(labels[p.state]||p.state)).join(' · ');
   for(const b of document.querySelectorAll('button'))b.disabled=s.busy;
-  for(const id of ['allow-cli','auto-start'])$(id).disabled=s.busy;
+  for(const id of ['allow-cli','auto-start','codex-models'])$(id).disabled=s.busy;
   if(!s.ready){$('start').disabled=true;$('sync').disabled=true;say('연결 장치 실행 파일이 없습니다. 공식 설치 패키지로 다시 설치해 주세요.');}
   const pc=s.pc||{};
   $('login').hidden=pc.session!=='none';
@@ -30,6 +38,7 @@ $('connect-form').onsubmit=event=>{event.preventDefault();const token=$('token')
 $('allow-cli').onchange=()=>act(()=>window.mycrm.allowCli($('allow-cli').checked),'실행 설정을 저장했어요. 시작을 누르면 적용됩니다.');
 $('auto-start').onchange=()=>act(()=>window.mycrm.autoStart($('auto-start').checked),'로그인 시 앱 실행 설정을 저장했어요.');
 $('choose-cli').onclick=()=>act(()=>window.mycrm.chooseCli(),'Claude 실행 파일 설정을 확인했어요.');
+$('configure-codex').onclick=()=>act(()=>window.mycrm.configureCodex({models:$('codex-models').value}),'Codex CLI 설정을 저장했어요.');
 $('start').onclick=()=>act(()=>window.mycrm.start(),'연결 장치를 시작했어요.');
 $('stop').onclick=()=>act(()=>window.mycrm.stop(),'연결 장치를 중지했어요.');
 $('sync').onclick=()=>act(()=>window.mycrm.sync(),'동기화를 마쳤어요.');

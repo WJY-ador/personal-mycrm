@@ -2200,11 +2200,11 @@ async def test_consent_gate():
         os.environ["CRM_DEV_USER"] = TESTER
     # 정적: 코드·화면에 CONSENT-REQUIRED·/consent 링크 0(옛 주소 302 라우트만 남는다)
     for f in [*HERE.glob("*.py"), *HERE.glob("*.html")]:
-        if f.name in ("test_tools.py", "test_web_home.py", "app.html"):   # 시험 파일 = 단언 문자열 자신 · app.html 은 test_web_home.py B3
+        if f.name.startswith("test_") or f.name == "app.html":   # 시험 파일은 정적 검사 대상이 아님 · app.html 은 test_web_home.py B3
             continue
         t = f.read_text(encoding="utf-8")
         assert "CONSENT-REQUIRED" not in t and "/api/consent" not in t and "consent_grant" not in t, f.name
-        hits = [ln for ln in t.splitlines() if "/consent" in ln]
+        hits = [ln for ln in t.splitlines() if re.search(r'(?<![A-Za-z0-9_])/consent(?=[/?#"\'\s]|$)', ln)]
         assert hits == ([] if f.name != "web.py" else ['            Route("/consent", self.consent),']), (f.name, hits)
     assert not hasattr(db, "require_consent") and not hasattr(db, "consent_grant") and not hasattr(db, "CONSENT_EXEMPT")
     print("OK — 필수 동의 게이트 없음(동의 행 없이 MCP·웹 쓰기·/app 200·/consent→/app·/api/consent 404·사용량 그 uid·로그인 전 ''·정적 0) 통과")

@@ -5,8 +5,10 @@
 
 다루는 것: 스위치 꺼짐 503(API·SSE·WS) · 세션(장치 자동·여러 대·없음) · 턴 멱등·TURN-BUSY·DEVICE-OFFLINE · (turn_id,seq) 중복 무시·빈 칸
 · 누적 ack · SSE 재생·Last-Event-ID 재개·사용자당 1 · WS 인증(무토큰·틀림·철회·다른 사용자 턴 거절) · 중지 · 한도(글자·분당·이벤트·WS 64KB)
-· 유휴 턴 TURN-TIMEOUT · 30일 삭제 · 계정 삭제 cascade · 응답에 남의 데이터 없음.
+· 유휴 턴 TURN-TIMEOUT · 30일 삭제 · 계정 삭제 cascade · 응답에 남의 데이터 없음
+· grant 요청·동의 키·challenge HTTP route(세션 401·Origin 403·Bearer 401·바인딩 409·엄격 JSON·4KB·native 서명 뒤 approved, provider fail-closed).
 """
+import asyncio
 import http.client
 import json
 import os
@@ -15,6 +17,7 @@ import sys
 import threading
 import time
 import urllib.parse
+from unittest.mock import patch
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -31,13 +34,16 @@ os.environ["AUTHKIT_ISSUER"] = "https://fake.authkit.test"
 os.environ["CRM_PUBLIC_URL"] = PUBLIC
 os.environ["CRM_SESSION_SECRET"] = "webchat-test-secret"
 os.environ.pop("CRM_WEBCHAT_ENABLED", None)
+os.environ.pop("CRM_CHAT_MCP_ENABLED", None)
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))
 
 import httpx  # noqa: E402
 import uvicorn  # noqa: E402
+from starlette.datastructures import Headers  # noqa: E402
 
 import db  # noqa: E402
+import facade  # noqa: E402
 import imports  # noqa: E402
 import main  # noqa: E402
 import webchat  # noqa: E402
@@ -111,13 +117,16 @@ def web(srv, uid=None, origin=True):
 class PC:
     """손으로 모는 장치 WS — 받은 메시지를 큐에 모은다(시험이 PC 역할)."""
 
-    def __init__(self, srv, token):
+    def __init__(self, srv, token, v2=True, capabilities=None):
         self.ws = wsclient.connect(srv.ws, {"Authorization": "Bearer " + token}, timeout=5)
         self.inbox, self.closed = [], None
         self.cv = threading.Condition()
         self.th = threading.Thread(target=self._loop, daemon=True)
         self.th.start()
-        self.send({"type": "hello", "agent_version": "test", "providers": ["fake"]})
+        hello = {"type": "hello", "agent_version": "test", "providers": ["fake"]}
+        if v2:
+            hello.update({"capabilities_version": 2, "capabilities": capabilities or [{"provider": "fake", "models": [None, "fake-test"]}]})
+        self.send(hello)
 
     def _loop(self):
         while True:
@@ -220,6 +229,24 @@ def rows(sql, args=()):
         return c.execute(sql, args).fetchall()
 
 
+def test_chat_session_migration(uid, device_id):
+    sid = webchat._id("cs")
+    with db.tx() as c:
+        c.execute("INSERT INTO chat_sessions (id,user_id,device_id,status) VALUES (%s,%s,%s,'closed')", (sid, uid, device_id))
+        c.execute("ALTER TABLE chat_sessions DROP COLUMN model, DROP COLUMN client_session_id, DROP COLUMN binding_version")
+    db.init_schema()
+    db.init_schema()
+    cols = {r["column_name"] for r in rows("SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='chat_sessions'")}
+    assert {"model", "client_session_id", "binding_version"} <= cols, cols
+    row = rows("SELECT user_id,device_id,status,model,client_session_id,binding_version FROM chat_sessions WHERE id=%s", (sid,))[0]
+    assert row == {"user_id": uid, "device_id": device_id, "status": "closed", "model": None, "client_session_id": None, "binding_version": 0}, row
+    idx = {r["indexname"] for r in rows("SELECT indexname FROM pg_indexes WHERE schemaname=current_schema() AND tablename='chat_sessions'")}
+    assert "ux_chat_sessions_client" in idx, idx
+    with db.tx() as c:
+        c.execute("DELETE FROM chat_sessions WHERE id=%s", (sid,))
+    ok("chat_sessions 이전 스키마: 기존 행 보존 + null/0 backfill + partial unique index + init_schema 멱등")
+
+
 # ── 시험 ───────────────────────────────────────────────
 
 def test_static():
@@ -284,15 +311,1333 @@ def test_ws_auth(srv, tok_a, revoked_tok):
     ok("WS 인증: 무토큰·틀린 토큰 401 AUTH-INVALID · 철회 토큰 401 TOKEN-REVOKED · 유효 토큰 101")
 
 
-def test_sessions(srv, ua, ub, dev_b2):
+def test_v2_capabilities(srv, ua, tok_a, dev_a):
+    pc = PC(srv, tok_a)
+    try:
+        time.sleep(0.15)
+        with web(srv, ua) as h:
+            r = h.get("/api/chat/capabilities")
+            assert r.status_code == 200, r.text
+            assert r.headers.get("cache-control") == "no-store"
+            body = r.json()
+            assert body["devices"] == [{"device_id": dev_a, "connected": True, "agent_version": "test",
+                                         "capabilities_version": 2,
+                                         "capabilities": [{"provider": "fake", "models": [None, "fake-test"]}]}], body
+        ok("v2 capability: 인증된 사용자 live 장치만 no-store 로 모델 capability 제공")
+    finally:
+        pc.close()
+    legacy = PC(srv, tok_a, v2=False)
+    try:
+        time.sleep(0.15)
+        with web(srv, ua) as h:
+            assert h.get("/api/chat/capabilities").json() == {"devices": []}, "기존 hello는 v2 capability로 승격하지 않는다"
+            sid = h.post("/api/chat/sessions", json={}).json()["session_id"]
+            r = h.post(f"/api/chat/sessions/{sid}/turns", json={"text": "legacy", "client_turn_id": "legacy-block"})
+            assert r.status_code == 409 and r.json()["code"] == "PROVIDER-UNAVAILABLE", r.text
+            r = h.post("/api/chat/sessions", json={"operation": "new", "device_id": dev_a, "provider": "fake", "model": None, "client_session_id": "invalid-legacy-v2"})
+            assert r.status_code == 409 and r.json()["code"] == "PROVIDER-UNAVAILABLE", r.text
+        ok("구형 hello는 v2 capability 승격 불가 · 구형 세션은 replay 가능하나 새 턴 불가")
+    finally:
+        legacy.close()
+
+
+def test_consent_fail_closed(srv, ua, tok_a, dev_a):
+    caps = [{"provider": "claude", "models": [None, "test-model"]}]
+    pc = PC(srv, tok_a, capabilities=caps)
+    sid = None
+    try:
+        time.sleep(0.15)
+        with web(srv, ua) as h:
+            r = h.post("/api/chat/sessions", json={"operation": "new", "device_id": dev_a, "provider": "claude", "model": "test-model", "client_session_id": "consent-new-denied"})
+            assert r.status_code == 409 and r.json()["code"] == "CONSENT_REQUIRED", r.text
+            assert rows("SELECT count(*) AS n FROM chat_sessions WHERE user_id=%s AND client_session_id='consent-new-denied'", (ua,))[0]["n"] == 0
+            sid = webchat._id("cs")
+            with db.tx() as c:
+                c.execute("UPDATE chat_sessions SET status='closed' WHERE user_id=%s AND status='active'", (ua,))
+                c.execute("INSERT INTO chat_sessions (id,user_id,device_id,provider,model,client_session_id,binding_version) VALUES (%s,%s,%s,'claude','test-model','consent-existing-denied',2)", (sid, ua, dev_a))
+            r = h.post(f"/api/chat/sessions/{sid}/turns", json={"text": "승인 없는 턴", "client_turn_id": "consent-turn-denied"})
+            assert r.status_code == 409 and r.json()["code"] == "CONSENT_REQUIRED", r.text
+            assert rows("SELECT count(*) AS n FROM chat_turns WHERE session_id=%s", (sid,))[0]["n"] == 0
+        ok("v2 Claude: consent proof 미구현 상태에서 세션 생성·턴 실행 모두 CONSENT_REQUIRED")
+    finally:
+        pc.close()
+        if sid:
+            with db.tx() as c:
+                c.execute("DELETE FROM chat_sessions WHERE id=%s", (sid,))
+
+
+def _code(fn):
+    try:
+        fn()
+    except db.CrmError as e:
+        return e.code
+    raise AssertionError("CrmError 가 나야 해요")
+
+
+def _grant_state(uid, rid):
+    return rows("SELECT state FROM chat_provider_grants WHERE user_id=%s AND request_id=%s", (uid, rid))[0]["state"]
+
+
+def _grant_consume(uid, dev, provider, model, rid):
+    with db.tx() as c:
+        return webchat.grant_consume(c, uid, dev, provider, model, rid)
+
+
+def test_grant_fail_closed(ua, ub, dev_a):
+    """PC 명시 승인 grant 기반 — 저장·바인딩·만료·단회 소비. 신뢰할 desktop verifier 가 없으면 승인·소비 모두 CONSENT_REQUIRED."""
+    assert webchat._desktop_verifier is None   # 운영 기본 = 검증 수단 없음
+    try:
+        g, created = webchat.grant_request(ua, dev_a, "claude", "test-model", "grant-r1")
+        assert created and g["state"] == "pending" and g["expires_at"] > g["created_at"], g
+        assert (g["user_id"], g["device_id"], g["provider"], g["model"], g["request_id"]) == (ua, dev_a, "claude", "test-model", "grant-r1"), g
+        g2, created2 = webchat.grant_request(ua, dev_a, "claude", "test-model", "grant-r1")
+        assert not created2 and g2["id"] == g["id"]
+        assert _code(lambda: webchat.grant_request(ua, dev_a, "codex", "test-model", "grant-r1")) == "GRANT-CONFLICT"
+        assert _code(lambda: webchat.grant_request(ua, dev_a, "claude", None, "grant-r1")) == "GRANT-CONFLICT"
+        assert _code(lambda: webchat.grant_request(ua, dev_a, "fake", None, "grant-r-fake")) == "ARG-INVALID"
+        assert _code(lambda: webchat.grant_request(ua, dev_a, "claude", None, "bad id!")) == "ARG-INVALID"
+        assert _code(lambda: webchat.grant_request(ua, "dev_nope", "claude", None, "grant-r-dev")) == "NOT-FOUND"
+        assert _code(lambda: webchat.grant_request(ub, dev_a, "claude", None, "grant-r-ub")) == "NOT-FOUND"   # 남의 장치
+        ok("grant 요청: 사용자·장치·provider·model·request_id 바인딩 저장, 같은 요청 멱등·다른 바인딩 GRANT-CONFLICT")
+
+        # verifier 없음 → 승인 불가. Origin 부재·X-MyCRM-Desktop 표식을 proof 로 넘겨도 증거가 아니다
+        for proof in (None, {}, {"origin": None}, {"X-MyCRM-Desktop": "1"}, {"headers": {"X-MyCRM-Desktop": "1"}}, True):
+            assert _code(lambda: webchat.grant_approve(ua, "grant-r1", proof)) == "CONSENT_REQUIRED", proof
+        assert _grant_state(ua, "grant-r1") == "pending"
+        # 옛 빌드·수동으로 approved 가 된 행도 verifier 없이는 소비하지 않는다
+        with db.tx() as c:
+            c.execute("UPDATE chat_provider_grants SET state='approved', approved_at=now() WHERE user_id=%s AND request_id='grant-r1'", (ua,))
+        assert _code(lambda: _grant_consume(ua, dev_a, "claude", "test-model", "grant-r1")) == "CONSENT_REQUIRED"
+        assert _grant_state(ua, "grant-r1") == "approved"
+        ok("grant: desktop verifier 없으면 승인·소비 모두 CONSENT_REQUIRED(머리글 표식 무시·상태 변화 없음)")
+
+        # 시험 전용 가짜 verifier 는 grant 를 approved 로 표시할 수 있지만, verified Ed25519 challenge 없이는 세션 소비가 안 된다.
+        seen = []
+
+        def fake_verifier(uid, binding, proof):
+            seen.append((uid, binding["request_id"], binding["device_id"], binding["provider"], binding["model"]))
+            return proof == "synthetic-ok"
+
+        webchat._desktop_verifier = fake_verifier
+        assert _code(lambda: _grant_consume(ua, dev_a, "claude", "test-model", "grant-r-none")) == "CONSENT_REQUIRED"
+        webchat.grant_request(ua, dev_a, "claude", "test-model", "grant-r2")
+        assert _code(lambda: _grant_consume(ua, dev_a, "claude", "test-model", "grant-r2")) == "CONSENT_REQUIRED"   # 미승인
+        assert _code(lambda: webchat.grant_approve(ua, "grant-r2", "wrong")) == "CONSENT_REQUIRED"
+        assert _code(lambda: webchat.grant_approve(ua, "grant-r2", "1")) == "CONSENT_REQUIRED"
+        assert _grant_state(ua, "grant-r2") == "pending"
+        assert _code(lambda: webchat.grant_approve(ub, "grant-r2", "synthetic-ok")) == "NOT-FOUND"   # 다른 사용자
+        assert webchat.grant_approve(ua, "grant-r2", "synthetic-ok")["state"] == "approved"
+        assert (ua, "grant-r2", dev_a, "claude", "test-model") in seen
+        assert _code(lambda: webchat.grant_approve(ua, "grant-r2", "synthetic-ok")) == "GRANT-USED"
+        for args, expected in (((ub, dev_a, "claude", "test-model", "grant-r2"), "CONSENT_REQUIRED"),
+                               ((ua, "dev_other", "claude", "test-model", "grant-r2"), "GRANT-INVALID"),
+                               ((ua, dev_a, "codex", "test-model", "grant-r2"), "GRANT-INVALID"),
+                               ((ua, dev_a, "claude", "other-model", "grant-r2"), "GRANT-INVALID"),
+                               ((ua, dev_a, "claude", None, "grant-r2"), "GRANT-INVALID"),
+                               ((ua, dev_a, "claude", "test-model", "grant-r9"), "CONSENT_REQUIRED")):
+            assert _code(lambda: _grant_consume(*args)) == expected, (args, expected)
+        assert _grant_state(ua, "grant-r2") == "approved"
+        try:   # 소비는 호출한 쪽 트랜잭션과 같이 롤백된다
+            with db.tx() as c:
+                assert _code(lambda: webchat.grant_consume(c, ua, dev_a, "claude", "test-model", "grant-r2")) == "CONSENT_REQUIRED"
+                raise RuntimeError("rollback")
+        except RuntimeError:
+            pass
+        assert _grant_state(ua, "grant-r2") == "approved"
+        assert _code(lambda: _grant_consume(ua, dev_a, "claude", "test-model", "grant-r2")) == "CONSENT_REQUIRED"
+        assert _grant_state(ua, "grant-r2") == "approved"
+        ok("generic verifier approval is insufficient: without a verified active-key challenge grant consumption fails closed")
+
+        webchat.grant_request(ua, dev_a, "codex", None, "grant-r3")
+        webchat.grant_approve(ua, "grant-r3", "synthetic-ok")
+        webchat.grant_request(ua, dev_a, "codex", None, "grant-r4")
+        with db.tx() as c:
+            c.execute("UPDATE chat_provider_grants SET created_at=now()-interval '10 minutes', expires_at=now()-interval '5 minutes' "
+                      "WHERE user_id=%s AND request_id IN ('grant-r3','grant-r4')", (ua,))
+        assert _code(lambda: _grant_consume(ua, dev_a, "codex", None, "grant-r3")) == "GRANT-EXPIRED"
+        assert _grant_state(ua, "grant-r3") == "approved"
+        assert _code(lambda: webchat.grant_approve(ua, "grant-r4", "synthetic-ok")) == "GRANT-EXPIRED"
+        assert _grant_state(ua, "grant-r4") == "pending"
+        ok("grant: 만료(서버 now 기준) 뒤 승인·소비 모두 GRANT-EXPIRED")
+    finally:
+        webchat._desktop_verifier = None
+        with db.tx() as c:
+            c.execute("DELETE FROM chat_provider_grants WHERE user_id IN (%s,%s) AND request_id LIKE 'grant-%%'", (ua, ub))
+
+
+def _wait_for_db_lock_wait(table_fragment):
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        waiting = rows("SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() "
+                       "AND wait_event_type='Lock' AND query ILIKE %s", (f"%{table_fragment}%",))
+        if waiting:
+            return
+        time.sleep(0.02)
+    raise AssertionError(f"worker did not block on {table_fragment}")
+
+
+def _wait_until_db_epoch(epoch):
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        expired = rows("SELECT clock_timestamp() >= to_timestamp(%s) AS expired", (epoch,))[0]["expired"]
+        if expired:
+            return
+        time.sleep(0.02)
+    raise AssertionError("synthetic expiry did not pass")
+
+
+def _wait_until_db_time(timestamp):
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        expired = rows("SELECT clock_timestamp() >= %s AS expired", (timestamp,))[0]["expired"]
+        if expired:
+            return
+        time.sleep(0.02)
+    raise AssertionError("synthetic timestamp expiry did not pass")
+
+
+def test_wall_clock_expiry_after_row_lock_wait(ua, dev_a):
+    """grant expiry checks use wall clock after FOR UPDATE wait, not transaction-start now()."""
+    old = webchat._desktop_verifier
+    webchat._desktop_verifier = lambda *_: True
+    try:
+        for rid, operation, expected_state in (
+            ("lock-approve", lambda: webchat.grant_approve(ua, "lock-approve", True), "pending"),
+            ("lock-consume", lambda: _grant_consume(ua, dev_a, "claude", "test-model", "lock-consume"), "approved"),
+        ):
+            webchat.grant_request(ua, dev_a, "claude", "test-model", rid)
+            with db.tx() as c:
+                if rid == "lock-consume":
+                    c.execute("UPDATE chat_provider_grants SET state='approved', approved_at=clock_timestamp() WHERE user_id=%s AND request_id=%s", (ua, rid))
+                exp = c.execute("UPDATE chat_provider_grants SET expires_at=clock_timestamp()+interval '2 seconds' WHERE user_id=%s AND request_id=%s RETURNING expires_at",
+                                (ua, rid)).fetchone()["expires_at"]
+            result, error = {}, threading.Event()
+
+            def worker():
+                try:
+                    operation()
+                    result["ok"] = True
+                except db.CrmError as e:
+                    result["code"] = e.code
+                except BaseException as e:
+                    result["error"] = type(e).__name__
+                finally:
+                    error.set()
+
+            with db.tx() as locker:
+                locker.execute("SELECT id FROM chat_provider_grants WHERE user_id=%s AND request_id=%s FOR UPDATE", (ua, rid))
+                thread = threading.Thread(target=worker, daemon=True)
+                thread.start()
+                _wait_for_db_lock_wait("chat_provider_grants")
+                _wait_until_db_time(exp)
+            thread.join(timeout=3)
+            assert not thread.is_alive() and error.is_set(), rid
+            assert result.get("code") == "GRANT-EXPIRED", (rid, result)
+            assert _grant_state(ua, rid) == expected_state, (rid, _grant_state(ua, rid))
+        ok("grant 승인·소비: FOR UPDATE 대기 중 만료되면 wall clock 기준 GRANT-EXPIRED")
+    finally:
+        webchat._desktop_verifier = old
+        with db.tx() as c:
+            c.execute("DELETE FROM chat_provider_grants WHERE user_id=%s AND request_id IN ('lock-approve','lock-consume')", (ua,))
+
+
+def test_consent_challenge(ua, ub, tok_a, dev_a):
+    """PC 동의 키(PoP·회전·폐기)·challenge(바인딩·1회·만료·폐기) — 합성 키만. 운영 provider verifier 는 None 그대로."""
+    import base64
+    import secrets
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    import consent_signature
+
+    def spki(k):
+        return k.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+
+    def sign(k, claims):
+        return base64.urlsafe_b64encode(k.sign(consent_signature.encode_consent(claims))).rstrip(b"=").decode("ascii")
+
+    def ch_state(nonce):
+        return rows("SELECT state FROM chat_consent_challenges WHERE user_id=%s AND nonce=%s", (ua, nonce))[0]["state"]
+
+    bearer = "Bearer " + tok_a
+    inst, inst_x = "di_" + secrets.token_hex(12), "di_" + secrets.token_hex(12)
+    other = imports.device_connect(ub, "b consent pc")
+    k1, k2, k3 = Ed25519PrivateKey.generate(), Ed25519PrivateKey.generate(), Ed25519PrivateKey.generate()
+    begin = webchat.consent_key_begin
+    activate = webchat.consent_key_activate
+    try:
+        with db.tx() as c:
+            c.execute("INSERT INTO desktop_installations (user_id,id,client_name,os,device_id) VALUES (%s,%s,'consent pc','darwin',%s)", (ua, inst, dev_a))
+            c.execute("INSERT INTO desktop_installations (user_id,id,client_name,os,device_id) VALUES (%s,%s,'consent pc x','darwin',NULL)", (ua, inst_x))
+        # 머리글 표식·빈 값·가짜 토큰은 증거가 아니다
+        for auth in ("", None, "X-MyCRM-Desktop: 1", "Bearer not-a-token"):
+            assert _code(lambda: begin(ua, auth, inst, spki(k1))) in ("AUTH-INVALID", "AUTH-BLOCKED"), auth
+        assert _code(lambda: begin(ub, bearer, inst, spki(k1))) == "CONSENT_REQUIRED"                     # 세션 사용자 ≠ 토큰 사용자
+        assert _code(lambda: begin(ua, "Bearer " + other["token"], inst, spki(k1))) == "CONSENT_REQUIRED"  # 남의 장치 토큰
+        assert _code(lambda: begin(ua, bearer, inst_x, spki(k1))) == "CONSENT_REQUIRED"                   # 이 장치에 묶이지 않은 설치본
+        assert _code(lambda: begin(ua, bearer, "di_bad", spki(k1))) == "ARG-INVALID"
+        assert _code(lambda: begin(ua, bearer, inst, b"\x00" * 44)) == "ARG-INVALID"
+        ok("동의 키: 세션 사용자·장치 Bearer 토큰·설치본 묶음이 모두 맞아야 시작(머리글 표식 무시)")
+
+        b = begin(ua, bearer, inst, spki(k1))
+        assert b["claims"]["provider"] == webchat.KEY_POP_PROVIDER and b["claims"]["device_id"] == dev_a and b["claims"]["session_id"] == b["key_id"]
+        assert _code(lambda: activate(ua, bearer, inst, b["key_id"], sign(k2, b["claims"]))) == "CONSENT_REQUIRED"   # 다른 키 서명
+        assert _code(lambda: activate(ua, bearer, inst, b["key_id"], sign(k1, b["claims"]))) == "CONSENT_REQUIRED"   # 시도는 한 번뿐
+        b = begin(ua, bearer, inst, spki(k1))
+        assert _code(lambda: activate(ub, bearer, inst, b["key_id"], sign(k1, b["claims"]))) == "CONSENT_REQUIRED"   # 다른 세션
+        assert activate(ua, bearer, inst, b["key_id"], sign(k1, b["claims"]))["state"] == "active"
+        b2 = begin(ua, bearer, inst, spki(k2))
+        assert _code(lambda: activate(ua, bearer, inst, b2["key_id"], sign(k2, b2["claims"]))) == "CONSENT_REQUIRED"  # 옛 키 서명 없는 교체
+        b2 = begin(ua, bearer, inst, spki(k2))
+        assert _code(lambda: activate(ua, bearer, inst, b2["key_id"], sign(k2, b2["claims"]), sign(k3, dict(b2["claims"], model="rotate")))) == "CONSENT_REQUIRED"
+        b2 = begin(ua, bearer, inst, spki(k2))
+        out = activate(ua, bearer, inst, b2["key_id"], sign(k2, b2["claims"]), sign(k1, dict(b2["claims"], model="rotate")))
+        assert out["state"] == "active" and out["rotated"], out
+        act = rows("SELECT id FROM desktop_consent_keys WHERE user_id=%s AND installation_id=%s AND state='active'", (ua, inst))
+        assert [r["id"] for r in act] == [b2["key_id"]], act
+        ok("동의 키: 새 키 PoP 필수·1회 시도·회전은 옛 키 서명 필수·active 1개")
+
+        webchat.grant_request(ua, dev_a, "claude", "test-model", "consent-r1")
+        issue = webchat.consent_challenge_issue
+        verify = webchat.consent_challenge_verify
+        webchat.grant_request(ua, dev_a, "claude", "claude/opus+latest", "consent-r-model")
+        model_ch = issue(ua, bearer, inst, "consent-r-model")
+        model_claims = model_ch["claims"]
+        assert model_claims["model"] == "claude/opus+latest"
+        assert verify(ua, bearer, inst, model_claims["nonce"], sign(k2, model_claims))["state"] == "verified"
+        assert _code(lambda: issue(ua, bearer, inst, "consent-none")) == "GRANT-INVALID"
+        assert _code(lambda: issue(ub, bearer, inst, "consent-r1")) == "CONSENT_REQUIRED"
+        assert _code(lambda: issue(ua, bearer, inst_x, "consent-r1")) == "CONSENT_REQUIRED"
+        for field, val in (("provider", "codex"), ("model", "other-model"), ("session_id", "consent-r2"), ("device_id", "is_other"),
+                           ("user_id", ub), ("nonce", "A" * 43), ("expires_at", None)):
+            ch = issue(ua, bearer, inst, "consent-r1")
+            cl = ch["claims"]
+            assert (cl["user_id"], cl["device_id"], cl["session_id"], cl["provider"], cl["model"]) == (ua, dev_a, "consent-r1", "claude", "test-model"), cl
+            bad = dict(cl, **{field: cl["expires_at"] + 1 if val is None else val})
+            assert _code(lambda: verify(ua, bearer, inst, cl["nonce"], sign(k2, bad))) == "CONSENT_REQUIRED", field
+            assert ch_state(cl["nonce"]) == "rejected", field
+        ch = issue(ua, bearer, inst, "consent-r1")
+        cl = ch["claims"]
+        assert _code(lambda: verify(ua, bearer, inst, cl["nonce"], sign(k1, cl))) == "CONSENT_REQUIRED"   # 폐기된 옛 키
+        ch = issue(ua, bearer, inst, "consent-r1")
+        cl = ch["claims"]
+        stale = issue(ua, bearer, inst, "consent-r1")   # 새 challenge 가 옛 것을 폐기
+        assert ch_state(cl["nonce"]) == "revoked"
+        assert _code(lambda: verify(ua, bearer, inst, cl["nonce"], sign(k2, cl))) == "GRANT-USED"
+        cl = stale["claims"]
+        assert _code(lambda: verify(ub, bearer, inst, cl["nonce"], sign(k2, cl))) == "CONSENT_REQUIRED"   # 다른 세션은 상태를 못 바꾼다
+        assert _code(lambda: verify(ua, "Bearer " + other["token"], inst, cl["nonce"], sign(k2, cl))) == "CONSENT_REQUIRED"
+        assert ch_state(cl["nonce"]) == "issued"
+        out = verify(ua, bearer, inst, cl["nonce"], sign(k2, cl))
+        assert out["state"] == "verified", out
+        assert _code(lambda: verify(ua, bearer, inst, cl["nonce"], sign(k2, cl))) == "GRANT-USED"   # 재생
+        assert _grant_state(ua, "consent-r1") == "approved" and webchat._desktop_verifier is None
+        assert _code(lambda: webchat.grant_approve(ua, "consent-r1", out)) == "CONSENT_REQUIRED"   # 대체 verifier 경로는 계속 닫혀 있다
+        ok("동의 challenge: 7필드 바인딩·DB 기준 재구성·1회 시도·재발급 시 옛 것 폐기·재생 GRANT-USED·signed approval")
+
+        webchat.grant_request(ua, dev_a, "claude", "test-model", "consent-expiry")
+        ch = issue(ua, bearer, inst, "consent-expiry")
+        with db.tx() as c:
+            c.execute("UPDATE chat_consent_challenges SET expires_at=floor(extract(epoch from now()))::bigint - 1 WHERE nonce=%s", (ch["claims"]["nonce"],))
+        cl = dict(ch["claims"], expires_at=rows("SELECT expires_at FROM chat_consent_challenges WHERE nonce=%s", (ch["claims"]["nonce"],))[0]["expires_at"])
+        assert _code(lambda: verify(ua, bearer, inst, cl["nonce"], sign(k2, cl))) == "GRANT-EXPIRED"
+        assert ch_state(cl["nonce"]) == "expired"
+
+        # grant 만료가 grant 행 잠금 대기 중 지나면 challenge 를 발급하지 않는다.
+        webchat.grant_request(ua, dev_a, "claude", "test-model", "consent-lock-issue")
+        with db.tx() as c:
+            exp = c.execute("UPDATE chat_provider_grants SET expires_at=clock_timestamp()+interval '2 seconds' "
+                            "WHERE user_id=%s AND request_id='consent-lock-issue' "
+                            "RETURNING floor(extract(epoch from expires_at))::bigint AS exp", (ua,)).fetchone()["exp"]
+        result, finished = {}, threading.Event()
+
+        def issue_worker():
+            try:
+                result["value"] = issue(ua, bearer, inst, "consent-lock-issue")
+            except db.CrmError as e:
+                result["code"] = e.code
+            except BaseException as e:
+                result["error"] = type(e).__name__
+            finally:
+                finished.set()
+
+        with db.tx() as locker:
+            locker.execute("SELECT id FROM chat_provider_grants WHERE user_id=%s AND request_id='consent-lock-issue' FOR UPDATE", (ua,))
+            thread = threading.Thread(target=issue_worker, daemon=True)
+            thread.start()
+            _wait_for_db_lock_wait("chat_provider_grants")
+            _wait_until_db_epoch(exp)
+        thread.join(timeout=3)
+        assert not thread.is_alive() and finished.is_set()
+        assert result.get("code") == "GRANT-EXPIRED", result
+        assert rows("SELECT count(*) AS n FROM chat_consent_challenges WHERE user_id=%s AND session_id='consent-lock-issue'", (ua,))[0]["n"] == 0
+
+        # challenge 검증도 row 잠금 대기 뒤 만료된 서명을 통과시키지 않는다.
+        webchat.grant_request(ua, dev_a, "claude", "test-model", "consent-lock-verify")
+        ch = issue(ua, bearer, inst, "consent-lock-verify")
+        with db.tx() as c:
+            exp = c.execute("UPDATE chat_consent_challenges SET expires_at=floor(extract(epoch from clock_timestamp()))::bigint + 2 "
+                            "WHERE nonce=%s RETURNING expires_at", (ch["claims"]["nonce"],)).fetchone()["expires_at"]
+        cl = dict(ch["claims"], expires_at=exp)
+        signature = sign(k2, cl)
+        result, finished = {}, threading.Event()
+
+        def verify_worker():
+            try:
+                result["value"] = verify(ua, bearer, inst, cl["nonce"], signature)
+            except db.CrmError as e:
+                result["code"] = e.code
+            except BaseException as e:
+                result["error"] = type(e).__name__
+            finally:
+                finished.set()
+
+        with db.tx() as locker:
+            locker.execute("SELECT id FROM chat_consent_challenges WHERE user_id=%s AND nonce=%s FOR UPDATE", (ua, cl["nonce"]))
+            thread = threading.Thread(target=verify_worker, daemon=True)
+            thread.start()
+            _wait_for_db_lock_wait("chat_consent_challenges")
+            _wait_until_db_epoch(exp)
+        thread.join(timeout=3)
+        assert not thread.is_alive() and finished.is_set()
+        assert result.get("code") == "GRANT-EXPIRED", result
+        assert ch_state(cl["nonce"]) == "expired"
+        ok("challenge 발급·검증: FOR UPDATE 대기 중 만료되면 wall clock 기준 fail-closed")
+        webchat.grant_request(ua, dev_a, "claude", "test-model", "consent-revoke")
+        ch = issue(ua, bearer, inst, "consent-revoke")
+        assert webchat.consent_key_revoke(ua, inst) == 1
+        assert ch_state(ch["claims"]["nonce"]) == "revoked"
+        assert _code(lambda: verify(ua, bearer, inst, ch["claims"]["nonce"], sign(k2, ch["claims"]))) == "GRANT-USED"
+        assert _code(lambda: issue(ua, bearer, inst, "consent-revoke")) == "CONSENT_REQUIRED"   # active 키 없음
+        rebound = begin(ua, bearer, inst, spki(k2))
+        rebound_result = activate(ua, bearer, inst, rebound["key_id"], sign(k2, rebound["claims"]))
+        assert rebound_result == {"key_id": rebound["key_id"], "state": "active", "rotated": False}, rebound_result
+        webchat.grant_request(ua, dev_a, "claude", "test-model", "consent-after-lock")
+        fresh = issue(ua, bearer, inst, "consent-after-lock")["claims"]
+        assert verify(ua, bearer, inst, fresh["nonce"], sign(k2, fresh))["state"] == "verified"
+        ok("화면 잠금 뒤 키 폐기: 같은 OS 보호 키를 새 PoP로 재등록하고 새 세션 challenge 승인 가능")
+        ok("동의 challenge: 만료 expired·키 폐기 시 issued challenge 함께 폐기·키 없으면 발급 거절")
+    finally:
+        with db.tx() as c:
+            c.execute("DELETE FROM chat_consent_challenges WHERE user_id=%s", (ua,))
+            c.execute("DELETE FROM desktop_consent_keys WHERE user_id=%s", (ua,))
+            c.execute("DELETE FROM desktop_installations WHERE user_id=%s AND id IN (%s,%s)", (ua, inst, inst_x))
+            c.execute("DELETE FROM chat_provider_grants WHERE user_id=%s AND request_id LIKE 'consent-%%'", (ua,))
+        imports.device_revoke(ub, other["device"]["id"])
+
+
+def test_consent_routes(srv, ua, ub, tok_a, dev_a):
+    """HTTP route: grant 요청·동의 키·challenge. 권한 = 웹 세션 uid 뿐, Origin 은 CSRF 방어뿐(PC 증거 아님), 키·challenge 는 Bearer 필수.
+    합성 키·합성 설치본만. verified 서명 grant 는 session_new 에서 한 번 소비해 세션을 만들며, provider turn 은 계속 fail-closed."""
+    import base64
+    import secrets
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    import consent_signature
+
+    def b64(raw):
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+    def spki(k):
+        return b64(k.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo))
+
+    def sign(k, claims):
+        return b64(k.sign(consent_signature.encode_consent(claims)))
+
+    def ch_state(nonce):
+        return rows("SELECT state FROM chat_consent_challenges WHERE user_id=%s AND nonce=%s", (ua, nonce))[0]["state"]
+
+    def n_keys(state=None):
+        if state:
+            return rows("SELECT count(*) AS n FROM desktop_consent_keys WHERE user_id=%s AND state=%s", (ua, state))[0]["n"]
+        return rows("SELECT count(*) AS n FROM desktop_consent_keys WHERE user_id=%s", (ua,))[0]["n"]
+
+    def n_grants(rid):
+        return rows("SELECT count(*) AS n FROM chat_provider_grants WHERE user_id=%s AND request_id=%s", (ua, rid))[0]["n"]
+
+    def post(h, path, body=None, auth=None, headers=None, raw=None):
+        hd = dict(headers or {})
+        if auth is not None:
+            hd["authorization"] = auth
+        if raw is not None:
+            hd.setdefault("content-type", "application/json")
+            return h.post(path, content=raw, headers=hd)
+        return h.post(path, json=body, headers=hd)
+
+    def code(r, status, c):
+        assert r.status_code == status and r.json()["code"] == c, (status, c, r.status_code, r.text)
+        assert r.headers.get("cache-control") == "no-store"
+
+    GRANT, BEGIN, ACT, REV = "/api/chat/grants", "/api/chat/consent/keys/begin", "/api/chat/consent/keys/activate", "/api/chat/consent/keys/revoke"
+    ISSUE, VERIFY = "/api/chat/consent/challenges/issue", "/api/chat/consent/challenges/verify"
+    bearer = "Bearer " + tok_a
+    inst, inst_x, inst_2 = ("di_" + secrets.token_hex(12) for _ in range(3))
+    gateway_inst = None
+    gateway_device = None
+    mcp_session = None
+    dispatch_turn = None
+    created_session = None
+    previous_id = None
+    other = imports.device_connect(ub, "b consent route pc")
+    a2 = imports.device_connect(ua, "a consent route pc2")
+    foreign, bearer_a2 = "Bearer " + other["token"], "Bearer " + a2["token"]
+    pc = PC(srv, tok_a, capabilities=[{"provider": "fake", "models": [None, "fake-test"]},
+                                     {"provider": "claude", "models": ["test-model"]}])
+    k1, k2 = Ed25519PrivateKey.generate(), Ed25519PrivateKey.generate()
+    grant_body = {"device_id": dev_a, "provider": "claude", "model": "test-model", "request_id": "route-r1"}
+    begin_body = {"installation_id": inst, "spki": spki(k1)}
+    shaped = ((GRANT, grant_body, None), (BEGIN, begin_body, bearer),
+              (ACT, {"installation_id": inst, "key_id": "ck_" + "0" * 24, "pop_signature": "A" * 86}, bearer),
+              (REV, {"installation_id": inst}, bearer), (ISSUE, {"installation_id": inst, "request_id": "route-r1"}, bearer),
+              (VERIFY, {"installation_id": inst, "nonce": "A" * 43, "signature": "A" * 86}, bearer))
+    try:
+        with db.tx() as c:
+            for i, d in ((inst, dev_a), (inst_x, None), (inst_2, a2["device"]["id"])):
+                c.execute("INSERT INTO desktop_installations (user_id,id,client_name,os,device_id) VALUES (%s,%s,'consent route pc','darwin',%s)", (ua, i, d))
+
+        # 세션 없음 401(유효 Bearer·표식이 있어도) · Origin 다름·없음 403(표식은 증거가 아니다)
+        with web(srv) as h:
+            for path, body, auth in shaped:
+                code(post(h, path, body, auth, headers={"x-mycrm-desktop": "1"}), 401, "UNAUTHORIZED")
+        with web(srv, ua, origin=False) as h:
+            for path, body, auth in shaped:
+                code(post(h, path, body, auth, headers={"origin": "https://evil.example"}), 403, "ORIGIN")
+                code(post(h, path, body, auth, headers={"x-mycrm-desktop": "1"}), 403, "ORIGIN")
+        assert n_grants("route-r1") == 0 and n_keys() == 0
+        ok("동의 route: 세션 없음 401 · 다른/없는 Origin 403(X-MyCRM-Desktop 표식 무시) · 상태 변화 없음")
+
+        with web(srv, ua) as h:
+            # Bearer 없음·형식 틀림·여러 개·가짜 = 401 AUTH-INVALID (grant 요청 route 는 Bearer 를 쓰지 않는다)
+            for path, body, _ in shaped[1:]:
+                for auth in (None, "Basic abc", "X-MyCRM-Desktop: 1", "Bearer not-a-token", "Bearer " + "x" * 600):
+                    code(post(h, path, body, auth), 401, "AUTH-INVALID")
+                code(post(h, path, body, headers={"x-mycrm-desktop": "1"}), 401, "AUTH-INVALID")
+                code(h.post(path, json=body, headers=[("authorization", bearer), ("authorization", bearer)]), 401, "AUTH-INVALID")
+            # 남의 토큰·묶이지 않은 설치본·다른 장치 설치본 = 409 CONSENT_REQUIRED. 본문의 user_id·device_id 는 받지 않는다
+            code(post(h, BEGIN, begin_body, foreign), 409, "CONSENT_REQUIRED")
+            code(post(h, BEGIN, begin_body, bearer_a2), 409, "CONSENT_REQUIRED")
+            code(post(h, BEGIN, dict(begin_body, installation_id=inst_x), bearer), 409, "CONSENT_REQUIRED")
+            code(post(h, BEGIN, dict(begin_body, installation_id=inst_2), bearer), 409, "CONSENT_REQUIRED")
+            code(post(h, BEGIN, dict(begin_body, user_id=ub), bearer), 400, "ARG-INVALID")
+            code(post(h, BEGIN, dict(begin_body, device_id=a2["device"]["id"]), bearer), 400, "ARG-INVALID")
+            # 본문 모양·크기
+            for raw in (b"not json", b"[]", b'"x"', b"{}", b"\xff\xfe", b"[" * 1500 + b"]" * 1500,
+                        json.dumps({"installation_id": inst, "spki": begin_body["spki"]}).replace("}", ', "installation_id": "%s"}' % inst).encode(),
+                        ('{"installation_id": NaN, "spki": "%s"}' % begin_body["spki"]).encode()):
+                code(post(h, BEGIN, auth=bearer, raw=raw), 400, "ARG-INVALID")
+            for body in ({"installation_id": inst}, {"installation_id": 1, "spki": begin_body["spki"]}, dict(begin_body, spki=None),
+                         dict(begin_body, spki=begin_body["spki"] + "="), dict(begin_body, spki=b64(b"\x00" * 44)),
+                         dict(begin_body, spki=""), dict(begin_body, installation_id="di_bad")):
+                code(post(h, BEGIN, body, bearer), 400, "ARG-INVALID")
+            code(post(h, BEGIN, auth=bearer, raw=json.dumps(begin_body).encode(), headers={"content-type": "text/plain"}), 400, "ARG-INVALID")
+            code(post(h, BEGIN, auth=bearer, raw=json.dumps(dict(begin_body, pad="x" * 5000)).encode()), 413, "TEXT-LIMIT")
+            assert n_keys() == 0
+            ok("동의 route: Bearer 없음·형식·중복·가짜 401 · 남의 토큰·설치본·장치 불일치 409 · 본문 권한 필드·모양·4KB 초과 거절 · 키 미생성")
+
+            # grant 요청 route — 세션 uid 의 장치만, 멱등·충돌, 상태 필드 못 넣음
+            r = post(h, GRANT, grant_body)
+            assert r.status_code == 201 and r.headers.get("cache-control") == "no-store", r.text
+            g = r.json()
+            assert (g["request_id"], g["device_id"], g["provider"], g["model"], g["state"], g["created"]) == ("route-r1", dev_a, "claude", "test-model", "pending", True), g
+            assert "user_id" not in g
+            notice = pc.wait(lambda m: m.get("type") == "consent.request", timeout=2)
+            assert notice == {"type": "consent.request", "request_id": "route-r1"}, notice
+            r = post(h, GRANT, grant_body)
+            assert r.status_code == 200 and r.json()["created"] is False, r.text
+            code(post(h, GRANT, dict(grant_body, provider="codex")), 409, "GRANT-CONFLICT")
+            code(post(h, GRANT, dict(grant_body, request_id="route-rb", device_id=other["device"]["id"])), 404, "NOT-FOUND")
+            code(post(h, GRANT, dict(grant_body, request_id="route-rf", provider="fake")), 400, "ARG-INVALID")
+            code(post(h, GRANT, dict(grant_body, request_id="route-ru", user_id=ub)), 400, "ARG-INVALID")
+            code(post(h, GRANT, dict(grant_body, request_id="route-rs", state="approved")), 400, "ARG-INVALID")
+            code(post(h, GRANT, {k: v for k, v in grant_body.items() if k != "model"}), 400, "ARG-INVALID")
+            assert _grant_state(ua, "route-r1") == "pending" and n_grants("route-rb") + n_grants("route-ru") + n_grants("route-rs") == 0
+            ok("grant route: 세션 uid 의 활성 장치만 · 201/200 멱등 · GRANT-CONFLICT · 남의 장치 404 · user_id·state 필드 거절 · pending")
+
+            # 키 등록 — 새 키 PoP, 1회 시도, 남의 토큰은 상태를 못 바꾼다
+            r = post(h, BEGIN, begin_body, bearer)
+            assert r.status_code == 200, r.text
+            b = r.json()
+            assert (b["claims"]["user_id"], b["claims"]["device_id"], b["claims"]["session_id"]) == (ua, dev_a, b["key_id"]), b
+            act = {"installation_id": inst, "key_id": b["key_id"], "pop_signature": sign(k2, b["claims"])}
+            code(post(h, ACT, act, bearer), 409, "CONSENT_REQUIRED")                                  # 다른 키 서명
+            code(post(h, ACT, dict(act, pop_signature=sign(k1, b["claims"])), bearer), 409, "CONSENT_REQUIRED")   # 시도는 한 번뿐
+            b = post(h, BEGIN, begin_body, bearer).json()
+            act = {"installation_id": inst, "key_id": b["key_id"], "pop_signature": sign(k1, b["claims"])}
+            code(post(h, ACT, act, foreign), 409, "CONSENT_REQUIRED")
+            code(post(h, ACT, dict(act, device_id=dev_a), bearer), 400, "ARG-INVALID")
+            assert n_keys("pending") == 1
+            r = post(h, ACT, act, bearer)
+            assert r.status_code == 200 and r.json() == {"key_id": b["key_id"], "state": "active", "rotated": False}, r.text
+            ok("동의 키 route: begin→activate PoP · 1회 시도 · 남의 토큰은 pending 키를 못 건드림 · active")
+
+            # challenge 발급 — 남의 토큰·설치본·장치 불일치 거절
+            iss = {"installation_id": inst, "request_id": "route-r1"}
+            for auth, body in ((foreign, iss), (bearer_a2, iss), (bearer, dict(iss, installation_id=inst_x)), (bearer, dict(iss, installation_id=inst_2))):
+                code(post(h, ISSUE, body, auth), 409, "CONSENT_REQUIRED")
+            code(post(h, ISSUE, dict(iss, request_id="route-none"), bearer), 409, "GRANT-INVALID")
+            r = post(h, ISSUE, iss, bearer)
+            assert r.status_code == 200, r.text
+            cl = r.json()["claims"]
+            assert (cl["user_id"], cl["device_id"], cl["session_id"], cl["provider"], cl["model"]) == (ua, dev_a, "route-r1", "claude", "test-model"), cl
+            ver = {"installation_id": inst, "nonce": cl["nonce"], "signature": sign(k1, cl)}
+            code(post(h, VERIFY, ver, foreign), 409, "CONSENT_REQUIRED")
+            code(post(h, VERIFY, dict(ver, user_id=ua), bearer), 400, "ARG-INVALID")
+            assert ch_state(cl["nonce"]) == "issued"
+        with web(srv, ub) as hb:   # 다른 세션 + 이 PC 토큰 = 세션 uid ≠ 토큰 주인
+            code(post(hb, VERIFY, ver, bearer), 409, "CONSENT_REQUIRED")
+            code(post(hb, REV, {"installation_id": inst}, bearer), 409, "CONSENT_REQUIRED")
+        assert ch_state(cl["nonce"]) == "issued" and n_keys("active") == 1
+
+        with web(srv, ua) as h:
+            r = post(h, VERIFY, ver, bearer)
+            assert r.status_code == 200 and r.json()["state"] == "verified", r.text
+            code(post(h, VERIFY, ver, bearer), 409, "GRANT-USED")   # 재생
+            # native 서명 검증은 grant 를 승인하지만 소비·provider 실행은 닫혀 있다
+            assert _grant_state(ua, "route-r1") == "approved" and webchat._desktop_verifier is None
+            assert _code(lambda: webchat.grant_approve(ua, "route-r1", r.json())) == "CONSENT_REQUIRED"
+            # 승인 전후 binding mismatch는 이전 active 세션을 닫지 않는다.
+            previous_id = webchat._id("cs")
+            with db.tx() as c:
+                c.execute("INSERT INTO chat_sessions (id,user_id,device_id,provider,model,client_session_id,binding_version) "
+                          "VALUES (%s,%s,%s,'fake',NULL,'route-keep-active',2)", (previous_id, ua, dev_a))
+            for uid, did, prov, mdl, expected in ((ub, dev_a, "claude", "test-model", "NOT-FOUND"),
+                                                   (ua, a2["device"]["id"], "claude", "test-model", "GRANT-INVALID"),
+                                                   (ua, dev_a, "claude", "other-model", "GRANT-INVALID")):
+                assert _code(lambda: webchat.session_new(uid, did, prov, mdl, "route-r1", capability_ok=True)) == expected
+            assert rows("SELECT status FROM chat_sessions WHERE id=%s", (previous_id,))[0]["status"] == "active"
+            assert _grant_state(ua, "route-r1") == "approved"
+
+            barrier=threading.Barrier(2); created=[]; failures=[]
+            def create_session():
+                try:
+                    barrier.wait(timeout=3)
+                    created.append(webchat.session_new(ua, dev_a, "claude", "test-model", "route-r1", capability_ok=True))
+                except db.CrmError as e:
+                    failures.append(e.code)
+                except BaseException as e:
+                    failures.append(type(e).__name__)
+            threads=[threading.Thread(target=create_session,daemon=True) for _ in range(2)]
+            for t in threads:t.start()
+            for t in threads:t.join(timeout=5)
+            assert all(not t.is_alive() for t in threads) and not failures and len(created)==2, (failures,created)
+            sessions=[x[0] for x in created]
+            assert sessions[0]["session_id"]==sessions[1]["session_id"]
+            assert sorted(x[2] for x in created)==[False,True]
+            assert rows("SELECT status FROM chat_sessions WHERE id=%s", (previous_id,))[0]["status"] == "closed"
+            assert _grant_state(ua, "route-r1") == "consumed"
+            assert _code(lambda: _grant_consume(ua, dev_a, "claude", "test-model", "route-r1")) == "GRANT-USED"
+            created_session=sessions[0]["session_id"]
+            # The HTTP route is still hard-off. Exercise the internal handler
+            # directly with the already authenticated synthetic device and a
+            # consumed grant so DB scope validation + guarded dispatch can be
+            # tested without enabling a provider or external route.
+            mcp_body = {"tool": "read", "op": "state_get", "params": {}}
+            disabled = h.post("/api/chat/mcp", json=mcp_body, headers={"Authorization": bearer})
+            assert disabled.status_code == 503 and bearer.encode() not in disabled.content
+            new_turn = webchat.turn_create(ua, created_session, "synthetic signed turn", "route-turn-valid",
+                                           connected=lambda _d: True, capable=lambda _s: True)
+            assert new_turn["created"] and new_turn["session"]["id"] == created_session
+            valid_turn_id = new_turn["turn"]["id"]
+            webchat.turn_fail(valid_turn_id, "TEST-CLEANUP")
+
+            def denied_turn(client_id):
+                return _code(lambda: webchat.turn_create(ua, created_session, "must be denied", client_id,
+                                                          connected=lambda _d: True, capable=lambda _s: True))
+
+            grant_row = rows("SELECT id,created_at,approved_at,consumed_at,expires_at FROM chat_provider_grants "
+                              "WHERE user_id=%s AND request_id='route-r1'", (ua,))[0]
+            challenge_row = rows("SELECT id,key_id,installation_id,expires_at FROM chat_consent_challenges "
+                                  "WHERE user_id=%s AND grant_id=%s AND state='verified'", (ua, grant_row["id"]))[0]
+            key_row = rows("SELECT state,revoked_at FROM desktop_consent_keys WHERE id=%s", (challenge_row["key_id"],))[0]
+            session_row = rows("SELECT client_session_id,provider,model,created_at,status FROM chat_sessions WHERE id=%s",
+                               (created_session,))[0]
+            # The pending request TTL is not a 5-minute session lifetime; a
+            # grant consumed before expiry remains usable until session expiry.
+            with db.tx() as c:
+                c.execute("UPDATE chat_provider_grants SET created_at=clock_timestamp()-interval '20 minutes', "
+                          "approved_at=clock_timestamp()-interval '19 minutes', "
+                          "consumed_at=clock_timestamp()-interval '5 seconds', "
+                          "expires_at=clock_timestamp()-interval '1 second' WHERE id=%s", (grant_row["id"],))
+            still_consented = webchat.turn_create(ua, created_session, "after pending expiry", "route-turn-after-expiry",
+                                                   connected=lambda _d: True, capable=lambda _s: True)
+            assert still_consented["created"]
+            webchat.turn_fail(still_consented["turn"]["id"], "TEST-CLEANUP")
+            with db.tx() as c:
+                c.execute("UPDATE chat_provider_grants SET created_at=%s,approved_at=%s,consumed_at=%s,expires_at=%s WHERE id=%s",
+                          (grant_row["created_at"], grant_row["approved_at"], grant_row["consumed_at"], grant_row["expires_at"], grant_row["id"]))
+            with db.tx() as c:
+                c.execute("UPDATE chat_provider_grants SET created_at=clock_timestamp()-interval '20 minutes', "
+                          "approved_at=clock_timestamp()-interval '19 minutes', "
+                          "consumed_at=clock_timestamp()-interval '1 second', "
+                          "expires_at=clock_timestamp()-interval '2 seconds' WHERE id=%s", (grant_row["id"],))
+            assert denied_turn("route-turn-expired-before-consume") == "CONSENT_REQUIRED"
+            with db.tx() as c:
+                c.execute("UPDATE chat_provider_grants SET created_at=%s,approved_at=%s,consumed_at=%s,expires_at=%s WHERE id=%s",
+                          (grant_row["created_at"], grant_row["approved_at"], grant_row["consumed_at"], grant_row["expires_at"], grant_row["id"]))
+
+            with db.tx() as c:
+                c.execute("UPDATE chat_provider_grants SET state='approved',consumed_at=NULL WHERE id=%s", (grant_row["id"],))
+            assert denied_turn("route-turn-unconsumed") == "CONSENT_REQUIRED"
+            with db.tx() as c:
+                c.execute("UPDATE chat_provider_grants SET state='consumed',consumed_at=%s WHERE id=%s",
+                          (grant_row["consumed_at"], grant_row["id"]))
+
+            with db.tx() as c:
+                c.execute("UPDATE desktop_consent_keys SET state='revoked',revoked_at=clock_timestamp() WHERE id=%s",
+                          (challenge_row["key_id"],))
+            assert denied_turn("route-turn-key-revoked") == "CONSENT_REQUIRED"
+            with db.tx() as c:
+                c.execute("UPDATE desktop_consent_keys SET state=%s,revoked_at=%s WHERE id=%s",
+                          (key_row["state"], key_row["revoked_at"], challenge_row["key_id"]))
+
+            with db.tx() as c:
+                c.execute("UPDATE desktop_installations SET revoked_at=clock_timestamp() WHERE id=%s", (challenge_row["installation_id"],))
+            assert denied_turn("route-turn-install-revoked") == "CONSENT_REQUIRED"
+            with db.tx() as c:
+                c.execute("UPDATE desktop_installations SET revoked_at=NULL WHERE id=%s", (challenge_row["installation_id"],))
+
+            with db.tx() as c:
+                c.execute("UPDATE chat_sessions SET model='mismatched-model' WHERE id=%s", (created_session,))
+            assert denied_turn("route-turn-model-mismatch") == "CONSENT_REQUIRED"
+            with db.tx() as c:
+                c.execute("UPDATE chat_sessions SET model=%s WHERE id=%s", (session_row["model"], created_session))
+                c.execute("UPDATE chat_sessions SET client_session_id='different-request' WHERE id=%s", (created_session,))
+            assert denied_turn("route-turn-session-mismatch") == "CONSENT_REQUIRED"
+            with db.tx() as c:
+                c.execute("UPDATE chat_sessions SET client_session_id=%s WHERE id=%s",
+                          (session_row["client_session_id"], created_session))
+            with db.tx() as c:
+                c.execute("UPDATE chat_sessions SET created_at=clock_timestamp()-interval '31 days' WHERE id=%s",
+                          (created_session,))
+            assert denied_turn("route-turn-session-expired") == "CONSENT_REQUIRED"
+            with db.tx() as c:
+                c.execute("UPDATE chat_sessions SET created_at=%s WHERE id=%s",
+                          (session_row["created_at"], created_session))
+
+            original_device = rows("SELECT revoked_at,token_revoked_at,token_expires_at FROM import_streams WHERE id=%s", (dev_a,))[0]
+            with db.tx() as c:
+                c.execute("UPDATE import_streams SET token_revoked_at=clock_timestamp() WHERE id=%s", (dev_a,))
+            assert denied_turn("route-turn-device-revoked") == "DEVICE-GONE"
+            with db.tx() as c:
+                c.execute("UPDATE import_streams SET revoked_at=%s,token_revoked_at=%s WHERE id=%s",
+                          (original_device["revoked_at"], original_device["token_revoked_at"], dev_a))
+                c.execute("UPDATE chat_sessions SET status=%s WHERE id=%s", (session_row["status"], created_session))
+            with db.tx() as c:
+                c.execute("UPDATE import_streams SET token_expires_at=clock_timestamp()-interval '1 second' WHERE id=%s", (dev_a,))
+            assert denied_turn("route-turn-token-expired") == "CONSENT_REQUIRED"
+            with db.tx() as c:
+                c.execute("UPDATE import_streams SET token_expires_at=%s WHERE id=%s",
+                          (original_device["token_expires_at"], dev_a))
+
+            # A lock event revokes the installation key under the same user
+            # lock. A turn waiting behind that transaction must re-read the
+            # revoked key and fail instead of creating a turn.
+            lock_held, release_lock = threading.Event(), threading.Event()
+            lock_errors, turn_errors, turn_created = [], [], []
+            def revoke_for_lock():
+                try:
+                    with db.tx() as c:
+                        webchat._user_lock(c, ua)
+                        webchat._consent_revoke(c, ua, challenge_row["installation_id"])
+                        lock_held.set()
+                        if not release_lock.wait(3): raise TimeoutError("lock test gate")
+                except BaseException as exc:
+                    lock_errors.append(exc)
+            def create_during_lock():
+                try:
+                    lock_held.wait(3)
+                    turn_created.append(webchat.turn_create(ua, created_session, "during lock", "route-turn-lock-race",
+                                                            connected=lambda _d: True, capable=lambda _s: True))
+                except db.CrmError as exc:
+                    turn_errors.append(exc.code)
+            revoke_thread = threading.Thread(target=revoke_for_lock, daemon=True)
+            turn_thread = threading.Thread(target=create_during_lock, daemon=True)
+            revoke_thread.start(); assert lock_held.wait(3)
+            turn_thread.start(); time.sleep(0.1)
+            assert not turn_created, "turn passed user lock while lock-revoke transaction was open"
+            release_lock.set(); revoke_thread.join(5); turn_thread.join(5)
+            assert not revoke_thread.is_alive() and not turn_thread.is_alive() and not lock_errors, (lock_errors, turn_errors)
+            assert turn_errors == ["CONSENT_REQUIRED"] and not turn_created, (turn_errors, turn_created)
+            with db.tx() as c:
+                c.execute("UPDATE desktop_consent_keys SET state=%s,revoked_at=%s WHERE id=%s",
+                          (key_row["state"], key_row["revoked_at"], challenge_row["key_id"]))
+            r = h.post("/api/chat/sessions", json={"operation": "new", "device_id": dev_a, "provider": "claude", "model": "test-model",
+                                                   "client_session_id": "route-r1"})
+            assert r.status_code == 200 and r.json()["created"] is False and r.json()["session_id"] == created_session, r.text
+            ok("동의 challenge → 세션 1회 소비 · 서명 동의된 턴 생성 · 미소비/만료/폐기/불일치/lock 경합 거부 · 만료된 요청 TTL 이후 세션은 유지")
+
+            # 만료
+            expiry_iss = {"installation_id": inst, "request_id": "route-expiry"}
+            assert post(h, GRANT, dict(grant_body, request_id="route-expiry")).status_code == 201
+            cl = post(h, ISSUE, expiry_iss, bearer).json()["claims"]
+            with db.tx() as c:
+                c.execute("UPDATE chat_consent_challenges SET expires_at=floor(extract(epoch from now()))::bigint - 1 WHERE nonce=%s", (cl["nonce"],))
+            cl = dict(cl, expires_at=rows("SELECT expires_at FROM chat_consent_challenges WHERE nonce=%s", (cl["nonce"],))[0]["expires_at"])
+            code(post(h, VERIFY, {"installation_id": inst, "nonce": cl["nonce"], "signature": sign(k1, cl)}, bearer), 409, "GRANT-EXPIRED")
+            assert ch_state(cl["nonce"]) == "expired"
+
+            # A verified challenge can expire after the Python check but before the final UPDATE.
+            # Pause the synthetic worker in that exact gap and require the UPDATE to reject it.
+            assert post(h, GRANT, dict(grant_body, request_id="route-proof-expiry-race")).status_code == 201
+            cl = post(h, ISSUE, {"installation_id": inst, "request_id": "route-proof-expiry-race"}, bearer).json()["claims"]
+            with db.tx() as c:
+                exp = c.execute("UPDATE chat_consent_challenges SET expires_at=floor(extract(epoch from clock_timestamp()))::bigint + 2 "
+                                "WHERE nonce=%s RETURNING expires_at", (cl["nonce"],)).fetchone()["expires_at"]
+            cl = dict(cl, expires_at=exp)
+            r = post(h, VERIFY, {"installation_id": inst, "nonce": cl["nonce"], "signature": sign(k1, cl)}, bearer)
+            assert r.status_code == 200 and r.json()["state"] == "verified", r.text
+            race_result, race_finished, checked_proof = {}, threading.Event(), threading.Event()
+            original_db_clock = webchat._db_clock
+            worker_name = "consume-after-proof-expiry"
+
+            def expire_between_check_and_update(c):
+                now = original_db_clock(c)
+                if threading.current_thread().name == worker_name:
+                    calls = getattr(threading.current_thread(), "_consent_clock_calls", 0) + 1
+                    threading.current_thread()._consent_clock_calls = calls
+                    if calls == 2:  # grant clock first, proof clock second
+                        checked_proof.set()
+                        _wait_until_db_epoch(exp)
+                return now
+
+            webchat._db_clock = expire_between_check_and_update
+
+            def consume_after_proof_expiry():
+                try:
+                    race_result["value"] = _grant_consume(ua, dev_a, "claude", "test-model", "route-proof-expiry-race")
+                except db.CrmError as e:
+                    race_result["code"] = e.code
+                except BaseException as e:
+                    race_result["error"] = type(e).__name__
+                finally:
+                    race_finished.set()
+
+            race_thread = threading.Thread(target=consume_after_proof_expiry, name=worker_name, daemon=True)
+            try:
+                race_thread.start()
+                assert checked_proof.wait(timeout=3), "worker did not reach proof-expiry check"
+                race_thread.join(timeout=5)
+            finally:
+                webchat._db_clock = original_db_clock
+            assert not race_thread.is_alive() and race_finished.is_set(), race_result
+            assert race_result.get("code") == "GRANT-EXPIRED", race_result
+            assert _grant_state(ua, "route-proof-expiry-race") == "approved"
+            ok("grant consume: verified proof row lock 대기 중 challenge 만료 시 소비도 원자 거부")
+
+            # 승인 뒤 grant 자체가 만료되면 세션은 만들지 않고 기존 세션을 보존한다.
+            approved_expiry = {"installation_id": inst, "request_id": "route-approved-expiry"}
+            assert post(h, GRANT, dict(grant_body, request_id="route-approved-expiry")).status_code == 201
+            cl = post(h, ISSUE, approved_expiry, bearer).json()["claims"]
+            r = post(h, VERIFY, {"installation_id": inst, "nonce": cl["nonce"], "signature": sign(k1, cl)}, bearer)
+            assert r.status_code == 200 and r.json()["state"] == "verified", r.text
+            with db.tx() as c:
+                c.execute("UPDATE chat_provider_grants SET created_at=clock_timestamp()-interval '10 minutes', "
+                          "expires_at=clock_timestamp()-interval '1 second' WHERE user_id=%s AND request_id='route-approved-expiry'", (ua,))
+            assert _code(lambda: webchat.session_new(ua, dev_a, "claude", "test-model", "route-approved-expiry", capability_ok=True)) == "GRANT-EXPIRED"
+            assert _grant_state(ua, "route-approved-expiry") == "approved"
+            assert rows("SELECT status FROM chat_sessions WHERE id=%s", (created_session,))[0]["status"] == "active"
+
+            # PC 연결을 허용한 뒤 철회하면 승인 grant 도 세션을 만들 수 없다.
+            b2 = post(h, BEGIN, {"installation_id": inst_2, "spki": spki(k2)}, bearer_a2).json()
+            act2 = {"installation_id": inst_2, "key_id": b2["key_id"], "pop_signature": sign(k2, b2["claims"])}
+            assert post(h, ACT, act2, bearer_a2).status_code == 200
+            revoke_body = {"device_id": a2["device"]["id"], "provider": "claude", "model": "test-model", "request_id": "route-revoked-device"}
+            assert post(h, GRANT, revoke_body).status_code == 201
+            revoke_ch = post(h, ISSUE, {"installation_id": inst_2, "request_id": "route-revoked-device"}, bearer_a2).json()["claims"]
+            r = post(h, VERIFY, {"installation_id": inst_2, "nonce": revoke_ch["nonce"], "signature": sign(k2, revoke_ch)}, bearer_a2)
+            assert r.status_code == 200 and r.json()["state"] == "verified", r.text
+            imports.device_revoke(ua, a2["device"]["id"])
+            assert _code(lambda: webchat.session_new(ua, a2["device"]["id"], "claude", "test-model",
+                                                      "route-revoked-device", capability_ok=True)) == "NOT-FOUND"
+            assert _grant_state(ua, "route-revoked-device") == "approved"
+            assert rows("SELECT status FROM chat_sessions WHERE id=%s", (created_session,))[0]["status"] == "active"
+
+            # 폐기 — 남의 토큰·묶이지 않은 설치본은 못 하고, 맞는 묶음이면 키와 issued challenge 를 함께 폐기
+            revoke_iss = {"installation_id": inst, "request_id": "route-revoke"}
+            assert post(h, GRANT, dict(grant_body, request_id="route-revoke")).status_code == 201
+            cl = post(h, ISSUE, revoke_iss, bearer).json()["claims"]
+            code(post(h, REV, {"installation_id": inst}, foreign), 409, "CONSENT_REQUIRED")
+            code(post(h, REV, {"installation_id": inst_x}, bearer), 409, "CONSENT_REQUIRED")
+            code(post(h, REV, {"installation_id": inst}), 401, "AUTH-INVALID")
+            assert n_keys("active") == 2 and ch_state(cl["nonce"]) == "issued"
+            r = post(h, REV, {"installation_id": inst}, bearer)
+            assert r.status_code == 200 and r.json() == {"revoked": 1}, r.text
+            assert ch_state(cl["nonce"]) == "revoked" and n_keys("active") == 1
+            code(post(h, VERIFY, {"installation_id": inst, "nonce": cl["nonce"], "signature": sign(k1, cl)}, bearer), 409, "GRANT-USED")
+            code(post(h, ISSUE, iss, bearer), 409, "CONSENT_REQUIRED")   # active 키 없음
+            assert _grant_state(ua, "route-r1") == "consumed" and webchat._desktop_verifier is None
+            ok("동의 route: 만료 GRANT-EXPIRED · 폐기는 세션+Bearer+설치본 묶음 필요 · 폐기 뒤 challenge revoked·재발급 거절 · 기존 승인 유지")
+
+            # A fresh isolated device tests the HTTP gateway's actual DB locks
+            # without consuming/revoking the device used by the remaining chat tests.
+            gateway_device = imports.device_connect(ua, "chat MCP race pc")
+            gateway_bearer = "Bearer " + gateway_device["token"]
+            gateway_inst = "di_" + secrets.token_hex(12)
+            gateway_key = Ed25519PrivateKey.generate()
+            gateway_spki = gateway_key.public_key().public_bytes(
+                serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+            with db.tx() as c:
+                c.execute("INSERT INTO desktop_installations (user_id,id,client_name,os,device_id) "
+                          "VALUES (%s,%s,'chat MCP race pc','darwin',%s)",
+                          (ua, gateway_inst, gateway_device["device"]["id"]))
+            webchat.grant_request(ua, gateway_device["device"]["id"], "claude", "test-model", "mcp-race")
+            key_begin = webchat.consent_key_begin(ua, gateway_bearer, gateway_inst, gateway_spki)
+            webchat.consent_key_activate(ua, gateway_bearer, gateway_inst, key_begin["key_id"],
+                                         sign(gateway_key, key_begin["claims"]))
+            challenge = webchat.consent_challenge_issue(ua, gateway_bearer, gateway_inst, "mcp-race")
+            claim = challenge["claims"]
+            webchat.consent_challenge_verify(ua, gateway_bearer, gateway_inst, claim["nonce"],
+                                             sign(gateway_key, claim))
+            mcp_session, _, _ = webchat.session_new(ua, gateway_device["device"]["id"], "claude", "test-model",
+                                                     "mcp-race", capability_ok=True)
+            gateway_dev = imports.authenticate(gateway_bearer)
+            launch_turn = "ct_" + secrets.token_hex(12)
+            with db.tx() as c:
+                c.execute("INSERT INTO chat_turns (id,session_id,client_turn_id) VALUES (%s,%s,'launch-auth-test')",
+                          (launch_turn, mcp_session["session_id"]))
+
+            # Exercise the real HTTP handler while readiness is patched only
+            # in this synthetic test process. Production remains hard OFF.
+            class McpRequest:
+                def __init__(self, body, authorization=None):
+                    self.headers = Headers({"authorization": authorization or gateway_bearer,
+                                            "content-type": "application/json"})
+                    self._body = json.dumps(body).encode()
+                async def body(self): return self._body
+
+            def mcp_value(response):
+                value = json.loads(response.body)["result"]
+                if "content" in value and value["content"] and "text" in value["content"][0]:
+                    return json.loads(value["content"][0]["text"])
+                return value
+
+            def bound_mcp(body):
+                return {"session_id": mcp_session["session_id"], "turn_id": dispatch_turn, **body}
+
+            route = webchat.Routes(None, lambda _name, handler: handler)
+            launch_req_body = {"session_id": mcp_session["session_id"], "turn_id": launch_turn}
+            with patch("webchat.PROVIDER_LAUNCH_READY", False):
+                launch_off = asyncio.run(route.launch_authorization(McpRequest(launch_req_body)))
+            assert launch_off.status_code == 503, launch_off.body
+            with patch("webchat.PROVIDER_LAUNCH_READY", True), patch("imports._rate", return_value=None):
+                launch_ok = asyncio.run(route.launch_authorization(McpRequest(launch_req_body)))
+                assert launch_ok.status_code == 200, launch_ok.body
+                launch_value = json.loads(launch_ok.body)
+                assert launch_value["authorized"] is True
+                launch_binding = launch_value["binding"]
+                assert (launch_binding["user_id"], launch_binding["device_id"], launch_binding["session_id"],
+                        launch_binding["turn_id"], launch_binding["provider"], launch_binding["model"]) == (
+                            ua, gateway_device["device"]["id"], mcp_session["session_id"], launch_turn, "claude", "test-model")
+                assert launch_binding["grant_id"] and launch_binding["consent_challenge_id"]
+                assert set(launch_value["tools"].values()) <= {"read", "write", "decide"}
+                assert launch_value["tools"].get("mcp__my-crm__find") == "read"
+                assert "mcp__my-crm__trash_purge" not in launch_value["tools"]
+                assert gateway_bearer not in launch_ok.body.decode()
+                forged = asyncio.run(route.launch_authorization(McpRequest(
+                    {**launch_req_body, "uid": ua, "tools": ["purge"], "executable_sha256": "0" * 64})))
+                assert forged.status_code == 400, forged.body
+                foreign_turn = asyncio.run(route.launch_authorization(McpRequest(
+                    {"session_id": mcp_session["session_id"], "turn_id": "ct_" + secrets.token_hex(12)})))
+                assert foreign_turn.status_code == 409, foreign_turn.body
+                unknown_session = asyncio.run(route.launch_authorization(McpRequest(
+                    {"session_id": "cs_" + secrets.token_hex(12), "turn_id": launch_turn})))
+                assert unknown_session.status_code == 409, unknown_session.body
+                foreign_user = asyncio.run(route.launch_authorization(McpRequest(launch_req_body, authorization=foreign)))
+                assert foreign_user.status_code == 409, foreign_user.body
+                foreign_device = asyncio.run(route.launch_authorization(McpRequest(launch_req_body, authorization=bearer_a2)))
+                assert foreign_device.status_code == 401, foreign_device.body  # revoked device token is rejected at auth
+                session_model = rows("SELECT model FROM chat_sessions WHERE id=%s", (mcp_session["session_id"],))[0]["model"]
+                with db.tx() as c:
+                    c.execute("UPDATE chat_sessions SET model='other-model' WHERE id=%s", (mcp_session["session_id"],))
+                wrong_model = asyncio.run(route.launch_authorization(McpRequest(launch_req_body)))
+                assert wrong_model.status_code == 409, wrong_model.body
+                with db.tx() as c:
+                    c.execute("UPDATE chat_sessions SET model=%s WHERE id=%s", (session_model, mcp_session["session_id"]))
+                challenge_state = rows("SELECT id,settled_at,expires_at FROM chat_consent_challenges WHERE user_id=%s "
+                                        "AND grant_id=(SELECT id FROM chat_provider_grants WHERE user_id=%s AND request_id='mcp-race') "
+                                        "AND state='verified'", (ua, ua))[0]
+                original_launch_grant = rows("SELECT created_at,expires_at FROM chat_provider_grants "
+                                              "WHERE user_id=%s AND request_id='mcp-race'", (ua,))[0]
+                with db.tx() as c:
+                    c.execute("UPDATE chat_provider_grants SET created_at=clock_timestamp()-interval '10 minutes', "
+                              "consumed_at=clock_timestamp()-interval '5 seconds', "
+                              "expires_at=clock_timestamp()-interval '1 second' WHERE user_id=%s AND request_id='mcp-race'", (ua,))
+                expired_launch = asyncio.run(route.launch_authorization(McpRequest(launch_req_body)))
+                assert expired_launch.status_code == 200, expired_launch.body  # request TTL elapsed after consumption does not expire a session
+                with db.tx() as c:
+                    c.execute("UPDATE chat_provider_grants SET created_at=%s,consumed_at=clock_timestamp(),expires_at=%s "
+                              "WHERE user_id=%s AND request_id='mcp-race'",
+                              (original_launch_grant["created_at"], original_launch_grant["expires_at"], ua))
+                with db.tx() as c:
+                    c.execute("UPDATE chat_consent_challenges SET expires_at=(extract(epoch from clock_timestamp())::bigint - 1) "
+                              "WHERE user_id=%s AND grant_id=(SELECT id FROM chat_provider_grants WHERE user_id=%s AND request_id='mcp-race') "
+                              "AND state='verified'", (ua, ua))
+                    c.execute("UPDATE chat_provider_grants SET consumed_at=clock_timestamp()-interval '5 seconds' "
+                              "WHERE user_id=%s AND request_id='mcp-race'", (ua,))
+                expired_challenge = asyncio.run(route.launch_authorization(McpRequest(launch_req_body)))
+                assert expired_challenge.status_code == 200, expired_challenge.body
+                with db.tx() as c:
+                    c.execute("UPDATE chat_consent_challenges SET expires_at=%s WHERE id=%s",
+                              (challenge_state["expires_at"], challenge_state["id"]))
+                    c.execute("UPDATE chat_provider_grants SET consumed_at=clock_timestamp() WHERE user_id=%s AND request_id='mcp-race'", (ua,))
+                with db.tx() as c:
+                    c.execute("UPDATE chat_consent_challenges SET state='revoked',settled_at=now() WHERE id=%s",
+                              (challenge_state["id"],))
+                revoked_challenge = asyncio.run(route.launch_authorization(McpRequest(launch_req_body)))
+                assert revoked_challenge.status_code == 409, revoked_challenge.body
+                with db.tx() as c:
+                    c.execute("UPDATE chat_consent_challenges SET state='verified',settled_at=%s WHERE id=%s",
+                              (challenge_state["settled_at"], challenge_state["id"]))
+                with db.tx() as c:
+                    c.execute("UPDATE desktop_consent_keys SET state='revoked',revoked_at=now() WHERE id=%s",
+                              (rows("SELECT key_id FROM chat_consent_challenges WHERE id=%s", (challenge_state["id"],))[0]["key_id"],))
+                revoked_key = asyncio.run(route.launch_authorization(McpRequest(launch_req_body)))
+                assert revoked_key.status_code == 409, revoked_key.body
+                with db.tx() as c:
+                    c.execute("UPDATE desktop_consent_keys SET state='active',revoked_at=NULL WHERE id=%s",
+                              (rows("SELECT key_id FROM chat_consent_challenges WHERE id=%s", (challenge_state["id"],))[0]["key_id"],))
+                    c.execute("UPDATE desktop_installations SET revoked_at=now() WHERE user_id=%s AND id=%s",
+                              (ua, gateway_inst))
+                revoked_install = asyncio.run(route.launch_authorization(McpRequest(launch_req_body)))
+                assert revoked_install.status_code == 409, revoked_install.body
+                with db.tx() as c:
+                    c.execute("UPDATE desktop_installations SET revoked_at=NULL WHERE user_id=%s AND id=%s",
+                              (ua, gateway_inst))
+                session_created_at = rows("SELECT created_at FROM chat_sessions WHERE id=%s",
+                                           (mcp_session["session_id"],))[0]["created_at"]
+                with db.tx() as c:
+                    c.execute("UPDATE chat_sessions SET created_at=clock_timestamp()-interval '31 days' WHERE id=%s",
+                              (mcp_session["session_id"],))
+                old_session = asyncio.run(route.launch_authorization(McpRequest(launch_req_body)))
+                assert old_session.status_code == 409, old_session.body
+                with db.tx() as c:
+                    c.execute("UPDATE chat_sessions SET created_at=%s WHERE id=%s",
+                              (session_created_at, mcp_session["session_id"]))
+                    c.execute("UPDATE chat_turns SET status='done',ended_at=clock_timestamp() WHERE id=%s", (launch_turn,))
+                completed_turn = asyncio.run(route.launch_authorization(McpRequest(launch_req_body)))
+                assert completed_turn.status_code == 409, completed_turn.body
+            dispatch_turn = "ct_" + secrets.token_hex(12)
+            with db.tx() as c:
+                c.execute("INSERT INTO chat_turns (id,session_id,client_turn_id) VALUES (%s,%s,'dispatch-auth-test')",
+                          (dispatch_turn, mcp_session["session_id"]))
+            gateway_body = {"session_id": mcp_session["session_id"], "turn_id": dispatch_turn,
+                            "tool": "read", "op": "state_get", "params": {}}
+            with patch("chat_mcp_gateway.ATOMIC_DISPATCH_READY", True), \
+                 patch.dict(os.environ, {"CRM_CHAT_MCP_ENABLED": "1", "CRM_WEBCHAT_ENABLED": "1", "CRM_TRASH_ENABLED": "1"}), \
+                 patch("imports._rate", return_value=None):
+                read_response = asyncio.run(route.chat_mcp(McpRequest(gateway_body)))
+                assert read_response.status_code == 200, read_response.body
+                assert gateway_bearer not in read_response.body.decode()
+                missing_binding = asyncio.run(route.chat_mcp(McpRequest(
+                    {"tool": "read", "op": "state_get", "params": {}})))
+                assert missing_binding.status_code == 400, missing_binding.body
+                wrong_session = asyncio.run(route.chat_mcp(McpRequest(
+                    {**gateway_body, "session_id": "cs_" + secrets.token_hex(12)})))
+                assert wrong_session.status_code == 409, wrong_session.body
+                wrong_turn = asyncio.run(route.chat_mcp(McpRequest(
+                    {**gateway_body, "turn_id": "ct_" + secrets.token_hex(12)})))
+                assert wrong_turn.status_code == 409, wrong_turn.body
+                with db.tx() as c:
+                    c.execute("UPDATE chat_sessions SET status='closed' WHERE id=%s",
+                              (mcp_session["session_id"],))
+                closed_session = asyncio.run(route.chat_mcp(McpRequest(gateway_body)))
+                assert closed_session.status_code == 409, closed_session.body
+                with db.tx() as c:
+                    c.execute("UPDATE chat_sessions SET status='active' WHERE id=%s",
+                              (mcp_session["session_id"],))
+                session_created_at = rows("SELECT created_at FROM chat_sessions WHERE id=%s",
+                                           (mcp_session["session_id"],))[0]["created_at"]
+                with db.tx() as c:
+                    c.execute("UPDATE chat_sessions SET created_at=clock_timestamp()-interval '31 days' WHERE id=%s",
+                              (mcp_session["session_id"],))
+                expired_session = asyncio.run(route.chat_mcp(McpRequest(gateway_body)))
+                assert expired_session.status_code == 409, expired_session.body
+                with db.tx() as c:
+                    c.execute("UPDATE chat_sessions SET created_at=%s WHERE id=%s",
+                              (session_created_at, mcp_session["session_id"]))
+                with db.tx() as c:
+                    c.execute("UPDATE chat_turns SET status='done',ended_at=clock_timestamp() WHERE id=%s", (dispatch_turn,))
+                ended_turn = asyncio.run(route.chat_mcp(McpRequest(gateway_body)))
+                assert ended_turn.status_code == 409, ended_turn.body
+                with db.tx() as c:
+                    c.execute("UPDATE chat_turns SET status='running',ended_at=NULL WHERE id=%s", (dispatch_turn,))
+
+                write_params = {"title": "synthetic MCP record", "text": "synthetic route test"}
+                with db.tx() as c:
+                    c.execute("UPDATE users SET display_name='Synthetic MCP' WHERE id=%s", (ua,))
+                write_response = asyncio.run(route.chat_mcp(McpRequest(
+                    bound_mcp({"tool": "write", "op": "record_add", "params": write_params}))))
+                assert write_response.status_code == 200, write_response.body
+                record_id = mcp_value(write_response)["id"]
+                preview_params = {"op": "trash_move", "params": {
+                    "kind": "record", "target_id": record_id, "expected_revision": None}}
+                preview_response = asyncio.run(route.chat_mcp(McpRequest(
+                    bound_mcp({"tool": "read", "op": "decide_preview", "params": preview_params}))))
+                assert preview_response.status_code == 200, preview_response.body
+                bind = mcp_value(preview_response)["bind"]
+                no_bind = asyncio.run(route.chat_mcp(McpRequest(
+                    bound_mcp({"tool": "decide", "op": "trash_move", "params": preview_params["params"]}))))
+                assert no_bind.status_code == 200, no_bind.body
+                first_approval = mcp_value(no_bind)
+                assert first_approval["status"] == "pending_confirmation", first_approval
+                assert _code(lambda: db.trash_get(ua, "record", record_id)) == "NOT-FOUND"
+                confirm = asyncio.run(route.chat_mcp(McpRequest(
+                    bound_mcp({"tool": "decide", "op": "trash_move", "params": preview_params["params"], "bind": bind}))))
+                assert confirm.status_code == 200, confirm.body
+                assert _code(lambda: db.trash_get(ua, "record", record_id)) == "NOT-FOUND"
+                second_approval = mcp_value(confirm)
+                assert second_approval["status"] == "pending_confirmation", second_approval
+                aid = first_approval["approval_id"]
+                assert _code(lambda: webchat.approval_confirm(ub, mcp_session["session_id"], aid)) == "NOT-FOUND"
+                consent_key_id = rows("SELECT key_id FROM chat_consent_challenges WHERE id=%s", (challenge_state["id"],))[0]["key_id"]
+                assert webchat.consent_key_revoke(ua, gateway_inst) == 1
+                assert _code(lambda: webchat.approval_confirm(ua, mcp_session["session_id"], aid)) == "CONSENT_REQUIRED"
+                assert _code(lambda: db.trash_get(ua, "record", record_id)) == "NOT-FOUND"
+                with db.tx() as c:
+                    c.execute("UPDATE desktop_consent_keys SET state='active',revoked_at=NULL WHERE id=%s", (consent_key_id,))
+                assert webchat.approval_confirm(ua, mcp_session["session_id"], aid)["status"] == "confirmed"
+                assert db.trash_get(ua, "record", record_id) is not None
+                assert _code(lambda: webchat.approval_confirm(ua, mcp_session["session_id"], aid)) == "APPROVAL-CLOSED"
+
+                # Confirmation and actual key revocation serialize on the user
+                # lock. Once confirm has the lock, revocation must wait until
+                # its transaction finishes; subsequent confirmations fail.
+                race_record = db.record_add(ua, "synthetic approval race", "synthetic body")
+                race = asyncio.run(route.chat_mcp(McpRequest(bound_mcp({
+                    "tool": "decide", "op": "trash_move", "params": {
+                        "kind": "record", "target_id": race_record["id"], "expected_revision": None}}))))
+                assert race.status_code == 200, race.body
+                race_aid = mcp_value(race)["approval_id"]
+                entered, release, revoke_started, revoke_done = (threading.Event() for _ in range(4))
+                outcomes, errors = [], []
+                original_dispatch = facade.dispatch
+                def paused_confirm_dispatch(*args, **kwargs):
+                    entered.set()
+                    if not release.wait(5):
+                        raise TimeoutError("synthetic confirmation wait")
+                    return original_dispatch(*args, **kwargs)
+                def confirm_race():
+                    try:
+                        outcomes.append(webchat.approval_confirm(ua, mcp_session["session_id"], race_aid)["status"])
+                    except BaseException as e:
+                        errors.append(e)
+                def revoke_race():
+                    revoke_started.set()
+                    try:
+                        outcomes.append(webchat.consent_key_revoke(ua, gateway_inst))
+                    except BaseException as e:
+                        errors.append(e)
+                    finally:
+                        revoke_done.set()
+                with patch.object(facade, "dispatch", side_effect=paused_confirm_dispatch):
+                    confirming = threading.Thread(target=confirm_race)
+                    confirming.start()
+                    assert entered.wait(3)
+                    revoking = threading.Thread(target=revoke_race)
+                    revoking.start()
+                    assert revoke_started.wait(3) and not revoke_done.wait(0.2)
+                    release.set()
+                    confirming.join(5)
+                    revoking.join(5)
+                assert not confirming.is_alive() and not revoking.is_alive() and not errors, errors
+                assert len(outcomes) == 2 and "confirmed" in outcomes and 1 in outcomes, outcomes
+                assert _code(lambda: webchat.approval_confirm(ua, mcp_session["session_id"], second_approval["approval_id"])) == "CONSENT_REQUIRED"
+                with db.tx() as c:
+                    c.execute("UPDATE desktop_consent_keys SET state='active',revoked_at=NULL WHERE id=%s", (consent_key_id,))
+
+                purge_response = asyncio.run(route.chat_mcp(McpRequest(
+                    bound_mcp({"tool": "purge", "op": "trash_purge", "params": {}}))))
+                assert purge_response.status_code == 400, purge_response.body
+                assert gateway_bearer not in purge_response.body.decode()
+
+                with db.tx() as c:
+                    before_count = c.execute("SELECT count(*) AS n FROM records WHERE user_id=%s", (ua,)).fetchone()["n"]
+                real_dispatch = facade.dispatch_trusted
+                def dispatch_then_fail(*args, **kwargs):
+                    real_dispatch(*args, **kwargs)
+                    raise RuntimeError("synthetic rollback after side effect")
+                with patch.object(facade, "dispatch_trusted", side_effect=dispatch_then_fail):
+                    rollback_response = asyncio.run(route.chat_mcp(McpRequest(
+                        bound_mcp({"tool": "write", "op": "record_add", "params": {
+                            "title": "synthetic rollback", "text": "must not persist"}}))))
+                assert rollback_response.status_code == 400, rollback_response.body
+                with db.tx() as c:
+                    after_count = c.execute("SELECT count(*) AS n FROM records WHERE user_id=%s", (ua,)).fetchone()["n"]
+                assert after_count == before_count, (before_count, after_count)
+
+            def assert_gateway_scope_denied(dev=gateway_dev):
+                with patch.object(facade, "dispatch_trusted") as denied_dispatch:
+                    assert _code(lambda: webchat._chat_mcp_execute(dev, gateway_bearer, gateway_body)) == "CONSENT_REQUIRED"
+                    denied_dispatch.assert_not_called()
+
+            assert_gateway_scope_denied({**gateway_dev, "user_id": ub})  # cross-user principal data
+            assert_gateway_scope_denied({**gateway_dev, "id": "is_" + secrets.token_hex(12)})  # cross-device
+            original_grant = rows("SELECT created_at,expires_at,consumed_at FROM chat_provider_grants "
+                                  "WHERE user_id=%s AND request_id='mcp-race'", (ua,))[0]
+            with db.tx() as c:
+                c.execute("UPDATE chat_provider_grants SET created_at=clock_timestamp()-interval '10 minutes', "
+                          "consumed_at=clock_timestamp()-interval '5 seconds', "
+                          "expires_at=clock_timestamp()-interval '1 second' "
+                          "WHERE user_id=%s AND request_id='mcp-race'", (ua,))
+            assert webchat._chat_mcp_execute(gateway_dev, gateway_bearer, gateway_body)
+            with db.tx() as c:
+                c.execute("UPDATE chat_provider_grants SET created_at=%s,consumed_at=%s,expires_at=%s "
+                          "WHERE user_id=%s AND request_id='mcp-race'",
+                          (original_grant["created_at"], original_grant["consumed_at"], original_grant["expires_at"], ua))
+            with db.tx() as c:
+                c.execute("UPDATE chat_sessions SET client_session_id='mcp-other-session' WHERE id=%s", (mcp_session["session_id"],))
+            assert_gateway_scope_denied()  # session no longer matches consumed grant
+            with db.tx() as c:
+                c.execute("UPDATE chat_sessions SET client_session_id='mcp-race' WHERE id=%s", (mcp_session["session_id"],))
+            with db.tx() as c:
+                c.execute("UPDATE desktop_consent_keys SET state='revoked',revoked_at=now() "
+                          "WHERE user_id=%s AND installation_id=%s", (ua, gateway_inst))
+            assert_gateway_scope_denied()  # revoked consent key
+            with db.tx() as c:
+                c.execute("UPDATE desktop_consent_keys SET state='active',revoked_at=NULL "
+                          "WHERE user_id=%s AND installation_id=%s", (ua, gateway_inst))
+            dispatch_entered, dispatch_release = threading.Event(), threading.Event()
+            revoke_started, revoke_done = threading.Event(), threading.Event()
+            dispatch_result, dispatch_error, revoke_error = [], [], []
+            real_dispatch = facade.dispatch_trusted
+
+            def paused_dispatch(*args, **kwargs):
+                dispatch_entered.set()
+                if not dispatch_release.wait(3):
+                    raise TimeoutError("synthetic dispatch gate")
+                return real_dispatch(*args, **kwargs)
+
+            def run_mcp():
+                try:
+                    dispatch_result.append(webchat._chat_mcp_execute(
+                        gateway_dev, gateway_bearer, gateway_body,
+                    ))
+                except BaseException as e:
+                    dispatch_error.append(e)
+
+            def revoke_gateway_device():
+                revoke_started.set()
+                try:
+                    imports.device_revoke(ua, gateway_device["device"]["id"])
+                except BaseException as e:
+                    revoke_error.append(e)
+                finally:
+                    revoke_done.set()
+
+            with patch.object(facade, "dispatch_trusted", side_effect=paused_dispatch):
+                mcp_thread = threading.Thread(target=run_mcp, daemon=True)
+                mcp_thread.start()
+                assert dispatch_entered.wait(3), "gateway did not reach dispatch"
+                revoke_thread = threading.Thread(target=revoke_gateway_device, daemon=True)
+                revoke_thread.start()
+                assert revoke_started.wait(2)
+                assert not revoke_done.wait(0.15), "device revoke passed the held user lock"
+                dispatch_release.set()
+                mcp_thread.join(5)
+                revoke_thread.join(5)
+            assert not mcp_thread.is_alive() and not revoke_thread.is_alive(), "gateway/revoke deadlock"
+            assert not dispatch_error and not revoke_error, (dispatch_error, revoke_error)
+            assert dispatch_result and gateway_bearer not in json.dumps(dispatch_result[0]), "Bearer leaked into tool response"
+            with patch("chat_mcp_gateway.ATOMIC_DISPATCH_READY", True), \
+                 patch.dict(os.environ, {"CRM_CHAT_MCP_ENABLED": "1", "CRM_WEBCHAT_ENABLED": "1"}):
+                revoked_http = asyncio.run(route.chat_mcp(McpRequest(gateway_body)))
+            assert revoked_http.status_code == 401 and gateway_bearer not in revoked_http.body.decode()
+            assert_gateway_scope_denied()  # device revoked after the previous atomic dispatch
+            ok("chat MCP 내부 통합: 실제 DB consumed grant scope · guarded read · 동시 device revoke 는 tx commit 뒤 진행 · 철회 뒤 거절 · Bearer 미노출")
+    finally:
+        with db.tx() as c:
+            if dispatch_turn:
+                c.execute("UPDATE chat_turns SET status='done',ended_at=clock_timestamp() WHERE id=%s AND status='running'",
+                          (dispatch_turn,))
+            if mcp_session:
+                c.execute("DELETE FROM chat_sessions WHERE id=%s", (mcp_session["session_id"],))
+            for session_id in (created_session, previous_id):
+                if session_id:
+                    c.execute("DELETE FROM chat_sessions WHERE id=%s", (session_id,))
+            c.execute("DELETE FROM chat_consent_challenges WHERE user_id=%s", (ua,))
+            c.execute("DELETE FROM desktop_consent_keys WHERE user_id=%s", (ua,))
+            installations = [inst, inst_x, inst_2] + ([gateway_inst] if gateway_inst else [])
+            c.execute("DELETE FROM desktop_installations WHERE user_id=%s AND id = ANY(%s)", (ua, installations))
+            c.execute("DELETE FROM chat_provider_grants WHERE user_id=%s AND (request_id LIKE 'route-%%' OR request_id='mcp-race')", (ua,))
+        imports.device_revoke(ub, other["device"]["id"])
+        imports.device_revoke(ua, a2["device"]["id"])
+        if gateway_device:
+            imports.device_revoke(ua, gateway_device["device"]["id"])
+        pc.close()
+
+
+def test_unapproved_keeps_active(srv, ua, tok_a, dev_a):
+    """회귀: 승인 없는 실제 공급자 새 대화 요청은 기존 active 세션을 닫지 않는다(grant 요청이 있어도)."""
+    sid = webchat._id("cs")
+    pc = PC(srv, tok_a, capabilities=[{"provider": "fake", "models": [None, "fake-test"]},
+                                     {"provider": "claude", "models": ["test-model"]},
+                                     {"provider": "codex", "models": ["test-model"]}])
+    try:
+        with db.tx() as c:
+            c.execute("UPDATE chat_sessions SET status='closed' WHERE user_id=%s AND status='active'", (ua,))
+            c.execute("INSERT INTO chat_sessions (id,user_id,device_id,provider,model,client_session_id,binding_version) "
+                      "VALUES (%s,%s,%s,'fake',NULL,'keep-active',2)", (sid, ua, dev_a))
+        for prov in ("claude", "codex"):
+            assert _code(lambda: webchat.session_new(ua, dev_a, prov, "test-model", f"unapproved-{prov}", capability_ok=True)) == "CONSENT_REQUIRED"
+        webchat.grant_request(ua, dev_a, "claude", "test-model", "grant-keep")   # pending grant 만으로는 열리지 않는다
+        assert _code(lambda: webchat.session_new(ua, dev_a, "claude", "test-model", "unapproved-pending", capability_ok=True)) == "CONSENT_REQUIRED"
+        with web(srv, ua) as h:
+            r = h.post("/api/chat/sessions", json={"operation": "new", "device_id": dev_a, "provider": "claude", "model": "test-model",
+                                                   "client_session_id": "unapproved-http"})
+            assert r.status_code == 409 and r.json()["code"] == "CONSENT_REQUIRED", r.text
+        assert rows("SELECT status FROM chat_sessions WHERE id=%s", (sid,))[0]["status"] == "active"
+        assert rows("SELECT count(*) AS n FROM chat_sessions WHERE user_id=%s AND status='active'", (ua,))[0]["n"] == 1
+        assert rows("SELECT count(*) AS n FROM chat_sessions WHERE user_id=%s AND client_session_id LIKE 'unapproved-%%'", (ua,))[0]["n"] == 0
+        assert _grant_state(ua, "grant-keep") == "pending"
+        ok("회귀: 미승인 claude·codex 새 대화(직접·HTTP·pending grant)는 기존 active 세션을 닫지 않는다")
+    finally:
+        pc.close()
+        with db.tx() as c:
+            c.execute("DELETE FROM chat_provider_grants WHERE user_id=%s AND request_id='grant-keep'", (ua,))
+            c.execute("DELETE FROM chat_sessions WHERE id=%s", (sid,))
+
+
+def test_fake_not_advertised_outside_dev():
+    old = os.environ.get("CRM_DEV")
+    os.environ["CRM_DEV"] = "0"
+    try:
+        assert webchat._normalize_capabilities([{"provider": "fake", "models": [None]}]) == []
+    finally:
+        if old is None:
+            os.environ.pop("CRM_DEV", None)
+        else:
+            os.environ["CRM_DEV"] = old
+    ok("fake capability는 dev 시험 장치에서만 허용")
+
+
+def test_sessions(srv, ua, ub, tok_a, dev_a, dev_b2):
+    cols = {r["column_name"] for r in rows("SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='chat_sessions'")}
+    assert {"model", "client_session_id", "binding_version"} <= cols, cols
+    indexes = {r["indexname"] for r in rows("SELECT indexname FROM pg_indexes WHERE schemaname=current_schema() AND tablename='chat_sessions'")}
+    assert "ux_chat_sessions_client" in indexes, indexes
+    pc = PC(srv, tok_a)
     with web(srv, ua) as h:
-        r = h.post("/api/chat/sessions", json={})
-        assert r.status_code == 200, r.text
+        payload = {"operation": "new", "device_id": dev_a, "provider": "fake", "model": None, "client_session_id": "test-session-a"}
+        r = h.post("/api/chat/sessions", json=payload)
+        assert r.status_code == 201, r.text
         s = r.json()
-        assert s["status"] == "active" and s["connected"] is False and s["session_id"].startswith("cs_")
-        assert h.post("/api/chat/sessions", json={}).json()["session_id"] == s["session_id"], "활성 세션 1 — 같은 세션"
+        assert s["status"] == "active" and s["connected"] is True and s["session_id"].startswith("cs_")
+        assert s["provider"] == "fake" and s["model"] is None and s["binding_version"] == 2
+        assert h.post("/api/chat/sessions", json=payload).json()["session_id"] == s["session_id"], "같은 client_session_id 요청은 멱등"
+        conflict = dict(payload, provider="codex")
+        r = h.post("/api/chat/sessions", json=conflict)
+        assert r.status_code == 409 and r.json()["code"] == "SESSION-CONFLICT", r.text
+        resumed = h.post("/api/chat/sessions", json={"operation": "resume", "session_id": s["session_id"]})
+        assert resumed.status_code == 200 and resumed.json()["session_id"] == s["session_id"] and resumed.json()["binding_version"] == 2
         lst = h.get("/api/chat/sessions").json()["sessions"]
-        assert [x["session_id"] for x in lst] == [s["session_id"]]
+        assert [x["session_id"] for x in lst if x["status"] == "active"] == [s["session_id"]]
+    pc.close()
+    with web(srv, ua) as h:
+        repeated = h.post("/api/chat/sessions", json=payload)
+        assert repeated.status_code == 200 and repeated.json()["session_id"] == s["session_id"], "중복 new는 장치 offline이어도 재실행하지 않는다"
+        unavailable = dict(payload, client_session_id="offline-new-session")
+        r = h.post("/api/chat/sessions", json=unavailable)
+        assert r.status_code == 409 and r.json()["code"] == "PROVIDER-UNAVAILABLE", r.text
     with web(srv, ub) as h:   # 장치 2대 = 골라야 한다 · 고르면 된다
         r = h.post("/api/chat/sessions", json={})
         assert r.status_code == 400 and r.json()["code"] == "DEVICE-REQUIRED", r.text
@@ -315,14 +1660,30 @@ def test_turns(srv, ua, tok_a, sid):
         pc = PC(srv, tok_a)
         time.sleep(0.2)
         assert h.get("/api/chat/sessions").json()["sessions"][0]["connected"] is True
+        did = rows("SELECT device_id FROM chat_sessions WHERE id=%s", (sid,))[0]["device_id"]
+        pc.send({"type": "hello", "agent_version": "test", "providers": ["fake"], "capabilities_version": 2,
+                 "capabilities": [{"provider": "codex", "models": [None]}]})
+        for _ in range(50):
+            d = webchat.hub.dev(ua, did)
+            if d and d.capabilities and d.capabilities[0]["provider"] == "codex":
+                break
+            time.sleep(0.02)
+        r = h.post(f"/api/chat/sessions/{sid}/turns", json={"text": "잘못 고정된 공급자", "client_turn_id": "t-bind-rejected"})
+        assert r.status_code == 409 and r.json()["code"] == "PROVIDER-UNAVAILABLE", r.text
+        assert rows("SELECT count(*) AS n FROM chat_turns WHERE session_id=%s AND client_turn_id='t-bind-rejected'", (sid,))[0]["n"] == 0
+        pc.send({"type": "hello", "agent_version": "test", "providers": ["fake"], "capabilities_version": 2,
+                 "capabilities": [{"provider": "fake", "models": [None, "fake-test"]}]})
+        time.sleep(0.1)
         r = h.post(f"/api/chat/sessions/{sid}/turns", json={"text": "안녕 PC", "client_turn_id": "t-1"})
         assert r.status_code == 201 and r.json()["created"] is True, r.text
         tid = r.json()["turn_id"]
         st = pc.wait(lambda m: m["type"] == "turn.start")
-        assert st and st["turn_id"] == tid and st["text"] == "안녕 PC" and st["session_id"] == sid and "cli_session_ref" not in st
+        assert st and st["turn_id"] == tid and st["text"] == "안녕 PC" and st["session_id"] == sid and st["provider"] == "fake" and st["model"] is None and st["binding_version"] == 2 and "cli_session_ref" not in st
         r2 = h.post(f"/api/chat/sessions/{sid}/turns", json={"text": "안녕 PC", "client_turn_id": "t-1"})
         assert r2.status_code == 200 and r2.json() == {"turn_id": tid, "status": "running", "created": False}, r2.text
         assert pc.wait(lambda m: m["type"] == "turn.start", 0.5) is None, "멱등 — 다시 보내지 않는다"
+        nr = h.post("/api/chat/sessions", json={"operation": "new", "device_id": rows("SELECT device_id FROM chat_sessions WHERE id=%s", (sid,))[0]["device_id"], "provider": "fake", "model": None, "client_session_id": "busy-new-session"})
+        assert nr.status_code == 409 and nr.json()["code"] == "TURN-BUSY", nr.text
         r3 = h.post(f"/api/chat/sessions/{sid}/turns", json={"text": "또", "client_turn_id": "t-2"})
         assert r3.status_code == 409 and r3.json()["code"] == "TURN-BUSY"
         ok("턴: PC 꺼짐 409 DEVICE-OFFLINE · 8,001자 413 · 생성 201 + turn.start · 같은 client_turn_id = 같은 턴(재전송 없음) · 409 TURN-BUSY")
@@ -471,7 +1832,15 @@ def _review(srv):
     pc = PC(srv, d1["token"])
     time.sleep(0.2)
     with web(srv, u) as h:
-        sid = h.post("/api/chat/sessions", json={"device_id": d1["device"]["id"]}).json()["session_id"]
+        for _ in range(100):
+            caps = h.get("/api/chat/capabilities").json()["devices"]
+            if any(d["device_id"] == d1["device"]["id"] and d["capabilities"] for d in caps):
+                break
+            time.sleep(0.05)
+        assert any(d["device_id"] == d1["device"]["id"] for d in caps), caps
+        sr = h.post("/api/chat/sessions", json={"operation": "new", "device_id": d1["device"]["id"], "provider": "fake", "model": None, "client_session_id": "review-session"})
+        assert sr.status_code == 201, sr.text
+        sid = sr.json()["session_id"]
         tids = []
         for i in range(4):
             tid = h.post(f"/api/chat/sessions/{sid}/turns", json={"text": f"q{i}", "client_turn_id": f"rv-{i}"}).json()["turn_id"]
@@ -574,20 +1943,30 @@ def _review(srv):
         assert rows("SELECT data FROM chat_events WHERE turn_id=%s ORDER BY seq DESC LIMIT 1", (tid,))[0]["data"] == {"code": "SESSION-CLOSED"}
         ok("세션 닫기(다른 장치 선택) = 실행 중 턴 failed(SESSION-CLOSED) · 그 끝 이벤트를 보던 SSE 에 보냄")
     pc.close()
+    for _ in range(100):
+        if not webchat.hub.connected(u, d1["device"]["id"]) and not webchat.hub.connected(u, d2["device"]["id"]):
+            break
+        time.sleep(0.05)
+    assert not webchat.hub.connected(u, d1["device"]["id"]) and not webchat.hub.connected(u, d2["device"]["id"]), "이전 WS detach 전 오류 주입 금지"
 
     # 수신 예외 → 서버가 1011 로 닫음 → 실제 PC 에이전트(agent.chat)가 다시 붙어 미확인 이벤트를 재전송 → 턴 done, 출력 손실 없음
     orig = webchat.ingest
     calls = {"n": 0}
+    ingest_trace = []
 
-    def boom(*a, **k):
+    def boom(dev, *a, **k):
+        if dev["id"] != d2["device"]["id"]:   # 이전 장치의 늦은 이벤트가 재연결 시험을 소비하지 않게 한다
+            return orig(dev, *a, **k)
         calls["n"] += 1
+        ingest_trace.append((dev["id"], a[0] if len(a) > 0 else None, a[1] if len(a) > 1 else None, a[2] if len(a) > 2 else None))
         if calls["n"] == 2:
             raise RuntimeError("일시 장애")
-        return orig(*a, **k)
+        return orig(dev, *a, **k)
 
     stopping = threading.Event()
+    agent_log = []
     agent = agent_chat.ChatAgent(srv.ws, d2["token"], agent_chat.FakeProvider(step=0.05), agent_version="t", stopping=stopping,
-                                 backoff=wsclient.Backoff(base=0.1, cap=0.3, jitter=0), recv_tick=0.05, coalesce=0.0)
+                                 backoff=wsclient.Backoff(base=0.1, cap=0.3, jitter=0), recv_tick=0.05, coalesce=0.0, log=agent_log.append)
     th = threading.Thread(target=agent.run, daemon=True)
     th.start()
     webchat.ingest = boom
@@ -597,6 +1976,9 @@ def _review(srv):
                 if h.get("/api/chat/sessions").json()["sessions"][0]["connected"]:
                     break
                 time.sleep(0.1)
+            sr = h.post("/api/chat/sessions", json={"operation": "new", "device_id": d2["device"]["id"], "provider": "fake", "model": None, "client_session_id": "review-agent-session"})
+            assert sr.status_code == 201, sr.text
+            s2 = sr.json()["session_id"]
             tid = h.post(f"/api/chat/sessions/{s2}/turns", json={"text": "안녕", "client_turn_id": "rv-exc"}).json()["turn_id"]
             for _ in range(100):
                 if rows("SELECT status FROM chat_turns WHERE id=%s", (tid,))[0]["status"] != "running":
@@ -606,7 +1988,8 @@ def _review(srv):
             body = [m["body"] for m in h.get(f"/api/chat/sessions/{s2}/messages").json()["messages"] if m["turn_id"] == tid and m["role"] == "assistant"]
             assert body == ["가짜 답이에요. 받은 글은 2자예요. 끝."], body
             seqs = [r["seq"] for r in rows("SELECT seq FROM chat_events WHERE turn_id=%s ORDER BY seq", (tid,))]
-            assert seqs == list(range(1, len(seqs) + 1)) and calls["n"] >= 3 and agent.connects >= 2, (seqs, calls, agent.connects)
+            assert seqs == list(range(1, len(seqs) + 1)) and calls["n"] >= 3 and agent.connects >= 2, (seqs, calls, ingest_trace, agent.connects, agent_log)
+            assert all(record[0] == d2["device"]["id"] for record in ingest_trace), ingest_trace
     finally:
         webchat.ingest = orig
         stopping.set()
@@ -616,11 +1999,12 @@ def _review(srv):
 
 def test_rate(srv):
     u = db.user_by_email("wc-rate@example.com")["id"]
-    tok = imports.device_connect(u, "rate pc")["token"]
+    device = imports.device_connect(u, "rate pc")
+    tok = device["token"]
     pc = PC(srv, tok)
     time.sleep(0.2)
     with web(srv, u) as h:
-        sid = h.post("/api/chat/sessions", json={}).json()["session_id"]
+        sid = h.post("/api/chat/sessions", json={"operation": "new", "device_id": device["device"]["id"], "provider": "fake", "model": None, "client_session_id": "rate-session"}).json()["session_id"]
         for i in range(webchat.TURNS_PER_MINUTE):
             r = h.post(f"/api/chat/sessions/{sid}/turns", json={"text": "r", "client_turn_id": f"r-{i}"})
             assert r.status_code == 201, (i, r.text)
@@ -730,6 +2114,8 @@ def main_():
     ub = db.user_by_email(EMAILS[1])["id"]
     a = imports.device_connect(ua, "a pc")
     tok_a, dev_a = a["token"], a["device"]["id"]
+    test_chat_session_migration(ua, dev_a)
+    test_consent_challenge(ua, ub, tok_a, dev_a)
     r = imports.device_connect(ua, "a old pc")
     imports.device_revoke(ua, r["device"]["id"])
     revoked = r["token"]
@@ -739,7 +2125,14 @@ def main_():
         test_switch_off(srv, ua, tok_a)
         test_gate(srv, ua)
         test_ws_auth(srv, tok_a, revoked)
-        sid_a, sid_b = test_sessions(srv, ua, ub, b2["device"]["id"])
+        test_v2_capabilities(srv, ua, tok_a, dev_a)
+        test_fake_not_advertised_outside_dev()
+        test_consent_fail_closed(srv, ua, tok_a, dev_a)
+        test_grant_fail_closed(ua, ub, dev_a)
+        test_wall_clock_expiry_after_row_lock_wait(ua, dev_a)
+        test_unapproved_keeps_active(srv, ua, tok_a, dev_a)
+        test_consent_routes(srv, ua, ub, tok_a, dev_a)
+        sid_a, sid_b = test_sessions(srv, ua, ub, tok_a, dev_a, b2["device"]["id"])
         tid_a = test_turns(srv, ua, tok_a, sid_a)
         test_foreign(srv, ub, b1["token"], sid_a, tid_a)
         test_review(srv)

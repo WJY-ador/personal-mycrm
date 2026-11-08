@@ -7,9 +7,54 @@ test('single child per role, no shell and CLI consent isolated to intended jobs 
  const {s,calls}=setup();s.start('viewer',['serve']);s.start('viewer',['serve']);assert.equal(calls.length,1);assert.equal(calls[0].args[2].shell,false);assert.equal(calls[0].args[2].env.MYCRM_JOBS_ALLOW_REAL_CLI,undefined);
  s.start('jobs',['serve','--jobs'],{allowCli:true});assert.equal(calls[1].args[2].env.MYCRM_JOBS_ALLOW_REAL_CLI,'1');assert.deepEqual(calls[1].args[1],['--home','/user/data','serve','--jobs']);await s.stopAll();
 });
+test('consent bridge capability is injected only into the supervised chat child',async()=>{
+ const {s,calls}=setup();const token='A'.repeat(43);
+ s.start('chat',['chat','--consent-only'],{env:{MYCRM_CHAT_BRIDGE_SOCKET:'/private/tmp/c.sock',MYCRM_CHAT_BRIDGE_TOKEN:token}});
+ const opts=calls[0].args[2];
+ assert.equal(opts.env.MYCRM_CHAT_BRIDGE_SOCKET,'/private/tmp/c.sock');
+ assert.equal(opts.env.MYCRM_CHAT_BRIDGE_TOKEN,token);
+ assert.equal(opts.shell,false);
+ assert.throws(()=>s.start('bad',['serve'],{env:{SECRET:'line\nfeed'}}),/environment/);
+ await s.stopAll();
+});
 test('manual stop cancels restart backoff and sends graceful control without restarting',async()=>{
  const {s,calls}=setup();s.start('jobs',['serve','--jobs']);calls[0].child.emit('close',null,'SIGABRT');assert.equal(s.snapshot().jobs.state,'retry-wait');await s.stop('jobs');await delay(25);assert.equal(calls.length,1);
  s.start('jobs',['serve','--jobs']);const c=calls.at(-1).child;await s.stop('jobs');assert.equal(c.input,'{"command":"stop"}\n');assert.equal(s.snapshot().jobs.state,'stopped');
+});
+test('forced child kill is not successful until close confirms exit, even while a late native dialog is unresolved',async()=>{
+ const child=new EventEmitter();child.stdout=new EventEmitter();child.stderr=new EventEmitter();child.stdin=new EventEmitter();
+ child.stdin.end=input=>{child.input=input;};let killCalls=0;
+ child.kill=signal=>{killCalls++;child.signal=signal;return true;};
+ const {s,calls}=setup({spawn:()=>{calls.push({child});return child;},stopGrace:5,killConfirmGrace:50});
+ s.start('chat',['chat','--consent-only']);
+ const stop=s.stop('chat');let settled=false;stop.then(()=>{settled=true;},()=>{settled=true;});
+ await delay(10);
+ assert.equal(child.input,'{"command":"stop"}\n');
+ assert.equal(killCalls,1);assert.equal(child.signal,'SIGKILL');
+ assert.equal(settled,false,'forced signal request alone does not prove process exit');
+ assert.equal(s.snapshot().chat.state,'stopping');
+ child.emit('close',null,'SIGKILL');
+ assert.equal(await stop,true);assert.equal(s.snapshot().chat.state,'stopped');
+ assert.equal(calls.length,1,'no PID-based helper or other process was spawned');
+});
+test('failed force-kill without close confirmation rejects stop and keeps child blocked',async()=>{
+ const child=new EventEmitter();child.stdout=new EventEmitter();child.stderr=new EventEmitter();child.stdin=new EventEmitter();
+ child.stdin.end=()=>{};let killCalls=0;child.kill=()=>{killCalls++;return false;};
+ const {s,calls}=setup({spawn:()=>{calls.push({child});return child;},stopGrace:2,killConfirmGrace:5});
+ s.start('chat',['chat','--consent-only']);
+ await assert.rejects(s.stop('chat'),/close confirmation/);
+ assert.equal(killCalls,1);assert.equal(calls.length,1);
+ assert.equal(s.snapshot().chat.state,'stopping');
+});
+test('close racing the graceful timeout wins without sending a late signal',async()=>{
+ const child=new EventEmitter();child.stdout=new EventEmitter();child.stderr=new EventEmitter();child.stdin=new EventEmitter();
+ child.stdin.end=()=>{};let killCalls=0;child.kill=()=>{killCalls++;return true;};
+ const {s,calls}=setup({spawn:()=>{calls.push({child});return child;},stopGrace:30,killConfirmGrace:20});
+ s.start('chat',['chat','--consent-only']);
+ const stop=s.stop('chat');await new Promise(resolve=>setImmediate(resolve));
+ child.emit('close',0,null);
+ assert.equal(await stop,true);await delay(35);
+ assert.equal(killCalls,0);assert.equal(s.snapshot().chat.state,'stopped');
 });
 test('authentication/config errors never enter automatic restart loop',async()=>{
  for(const code of [0,1]){const {s,calls}=setup();s.start('jobs',['serve','--jobs']);calls[0].child.emit('close',code,null);await delay(25);assert.equal(calls.length,1);assert.equal(s.snapshot().jobs.state,code===1?'failed':'stopped');}

@@ -3,15 +3,16 @@ const cp = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 class Supervisor {
-  constructor({binary,home,spawn=cp.spawn,log=()=>{},changed=()=>{},restartDelay=30000,stopGrace=50000,authRestartDelay=2000,authWindow=600000,now=Date.now}) {
-    Object.assign(this,{binary,home,spawn,log,changed,restartDelay,stopGrace,authRestartDelay,authWindow,now}); this.entries=new Map(); this.closing=false;
+  constructor({binary,home,spawn=cp.spawn,log=()=>{},changed=()=>{},restartDelay=30000,stopGrace=50000,killConfirmGrace=5000,authRestartDelay=2000,authWindow=600000,now=Date.now}) {
+    Object.assign(this,{binary,home,spawn,log,changed,restartDelay,stopGrace,killConfirmGrace,authRestartDelay,authWindow,now}); this.entries=new Map(); this.closing=false;
   }
   snapshot() { return Object.fromEntries([...this.entries].map(([k,v])=>[k,{state:v.state,restarts:v.restarts,code:v.code ?? null}])); }
-  start(name,args,{allowCli=false}={}) {
+  start(name,args,{allowCli=false,env={}}={}) {
     if(this.closing) throw new Error('closing');
+    if(!env||typeof env!=='object'||Array.isArray(env)||Object.keys(env).some(k=>!/^[A-Z0-9_]{1,64}$/.test(k)||typeof env[k]!=='string'||/[\r\n\x00]/.test(env[k])))throw new Error('environment');
     const old=this.entries.get(name);
     if(old?.child || old?.timer || old?.state==='stopping') return;
-    const entry={args,allowCli,state:'starting',intent:true,restarts:0,child:null,timer:null};
+    const entry={args,allowCli,env:{...env},state:'starting',intent:true,restarts:0,child:null,timer:null};
     this.entries.set(name,entry); this._launch(name,entry);
   }
   _launch(name,e) {
@@ -19,6 +20,7 @@ class Supervisor {
     const env={...process.env,MYCRM_DESKTOP_CONTROL:'1',PYTHONNOUSERSITE:'1',PYTHONDONTWRITEBYTECODE:'1'};
     delete env.MYCRM_JOBS_ALLOW_REAL_CLI;
     if(e.allowCli) env.MYCRM_JOBS_ALLOW_REAL_CLI='1';
+    Object.assign(env,e.env);
     let child;
     try { child=this.spawn(this.binary,['--home',this.home,...e.args],{env,shell:false,windowsHide:true,stdio:['pipe','pipe','pipe']}); }
     catch { e.state='failed';e.intent=false;this.log(name,'spawn-error');this.changed();return; }
@@ -44,23 +46,35 @@ class Supervisor {
   async stop(name) {
     const e=this.entries.get(name);if(!e)return;
     e.intent=false;if(e.timer){clearTimeout(e.timer);e.timer=null;}
-    const child=e.child;if(!child){e.state='stopped';this.changed();return;}
+    const child=e.child;if(!child){e.state='stopped';this.changed();return true;}
     e.state='stopping';this.changed();
-    await new Promise(resolve=> {
-      let done=false;
-      const finish=()=>{if(done)return;done=true;clearTimeout(timer);resolve();};
-      const timer=setTimeout(()=> {
+    await new Promise((resolve,reject)=> {
+      let done=false,graceTimer,confirmTimer;
+      const finish=()=>{if(done)return;done=true;clearTimeout(graceTimer);clearTimeout(confirmTimer);resolve(true);};
+      const confirmExit=()=> {
+        if(done)return;
         this.log(name,'forced-stop');
-        if(process.platform==='win32' && child.pid) {
-          const killer=cp.spawn('taskkill.exe',['/PID',String(child.pid),'/T','/F'],{shell:false,windowsHide:true,stdio:'ignore'});
-          killer.once('error',()=>{});
-        } else {child.kill('SIGKILL');}
-        finish();
-      },this.stopGrace);
+        // Signal only this ChildProcess object. Never use a PID-based helper or
+        // process-group signal, which could target a reused PID or another app.
+        if(child.exitCode==null&&child.signalCode==null){try{child.kill('SIGKILL');}catch{}}
+        confirmTimer=setTimeout(()=>{
+          if(done)return;
+          done=true;child.removeListener('close',finish);clearTimeout(graceTimer);
+          this.log(name,'stop-unconfirmed');
+          const error=new Error('child close confirmation timeout');
+          error.code='CHILD-CLOSE-UNCONFIRMED';
+          // Keep entry in stopping state and retain child identity. A caller must
+          // not treat a signal request or timeout as proof that the child exited.
+          this.changed();
+          reject(error);
+        },this.killConfirmGrace);
+      };
+      graceTimer=setTimeout(confirmExit,this.stopGrace);
       child.once('close',finish);
-      try {child.stdin?.end('{"command":"stop"}\n');} catch {child.kill('SIGTERM');}
+      try {child.stdin?.end('{"command":"stop"}\n');}
+      catch {if(child.exitCode==null&&child.signalCode==null){try{child.kill('SIGTERM');}catch{}}}
     });
-    e.state='stopped';this.changed();
+    e.state='stopped';this.changed();return true;
   }
   async stopAll({closing=false}={}) {if(closing)this.closing=true;await Promise.all([...this.entries.keys()].map(k=>this.stop(k)));}
 }

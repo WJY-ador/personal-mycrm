@@ -1,0 +1,67 @@
+"""Synthetic tests for the explicit Codex CLI/model setup command."""
+from __future__ import annotations
+
+import os
+import unittest
+
+from agent import config
+from agent.tests.helpers import TempHome, run_cli
+
+
+class ConfigureCodexTest(unittest.TestCase):
+    def setUp(self):
+        self.home = TempHome()
+        self.addCleanup(self.home.cleanup)
+        config.save(self.home.paths, config.default_config())
+        self.cli = os.path.join(self.home.root, "codex-fixture")
+        with open(self.cli, "w", encoding="utf-8") as handle:
+            handle.write("synthetic executable; never invoked")
+        os.chmod(self.cli, 0o700)
+
+    def call(self, *args):
+        return run_cli(["--home", self.home.home, "configure-codex", *args])
+
+    def config_bytes(self):
+        with open(self.home.paths.config, "rb") as handle:
+            return handle.read()
+
+    def test_saves_real_cli_path_and_repeated_explicit_model_ids(self):
+        cfg = config.load(self.home.paths)
+        cfg["device_label"] = "keep synthetic setting"
+        cfg["summary"]["enabled"] = False
+        config.save(self.home.paths, cfg)
+        code, output = self.call("--path", self.cli, "--model", "gpt-6.1-sol", "--model", "codex-team/model_v2")
+        self.assertEqual(code, 0, output)
+        saved = config.load(self.home.paths)
+        self.assertEqual(saved["summary"]["codex_cli_path"], os.path.realpath(self.cli))
+        self.assertEqual(saved["summary"]["codex_models"], ["gpt-6.1-sol", "codex-team/model_v2"])
+        self.assertFalse(saved["summary"]["enabled"])
+        self.assertEqual(saved["device_label"], "keep synthetic setting")
+        self.assertNotIn(self.cli, output)
+
+    def test_rejects_invalid_cli_paths_without_mutating_config(self):
+        before = self.config_bytes()
+        invalid_paths = ("relative/codex", os.path.join(self.home.root, "missing"), self.home.root)
+        for path in invalid_paths:
+            with self.subTest(path=path):
+                code, _output = self.call("--path", path, "--model", "gpt-6.1-sol")
+                self.assertEqual(code, 1)
+                with open(self.home.paths.config, "rb") as handle:
+                    self.assertEqual(handle.read(), before)
+
+    def test_rejects_invalid_or_duplicate_models_without_mutating_config(self):
+        before = self.config_bytes()
+        bad_model_sets = (("bad model",), ("bad\nmodel",), ("same", "same"), tuple(f"m{i}" for i in range(21)))
+        for models in bad_model_sets:
+            with self.subTest(models=models):
+                args = ["--path", self.cli]
+                for model in models:
+                    args.extend(("--model", model))
+                code, _output = self.call(*args)
+                self.assertEqual(code, 1)
+                with open(self.home.paths.config, "rb") as handle:
+                    self.assertEqual(handle.read(), before)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -153,6 +153,35 @@ def test_web_equals_mcp(A, B):
     ok("웹 = MCP: 같은 plan(기준 결정 없음)의 결과·created·개수·저장 해시 같음 · 미리보기 개수 = 결과 · via 는 영수증·item_history·목록에")
 
 
+def test_nested_tx_scope_apply_revert(A):
+    """Migration's own scopes must nest atomically inside the chat route scope."""
+    old_trash = os.environ.get("CRM_TRASH_ENABLED", "") == "1"
+    item = T.rec(361, "중첩 트랜잭션 이관 기록")
+    st = stage(A, [item])
+    pv = X.migration_apply_preview(A, st["plan_id"])
+    with db.tx_scope():
+        applied = X.migration_apply(A, st["plan_id"], pv["plan_hash"], pv["expected_counts"])
+    assert applied["state"] == "applied"
+
+    failed_item = T.rec(362, "중첩 트랜잭션 실패 기록")
+    failed = stage(A, [failed_item])
+    failed_preview = X.migration_apply_preview(A, failed["plan_id"])
+    with db.tx_scope():
+        expect("APPLY-MISMATCH", X.migration_apply, A, failed["plan_id"], "f" * 64,
+               failed_preview["expected_counts"])
+        assert M.plan_status({"user_id": A, "token_id": None}, failed["plan_id"])["state"] == "sealed"
+    assert M.plan_status({"user_id": A, "token_id": None}, failed["plan_id"])["state"] == "sealed"
+
+    trash(True)
+    try:
+        with db.tx_scope():
+            reverted = X.migration_revert(A, st["plan_id"])
+        assert reverted["state"] == "reverted"
+    finally:
+        trash(old_trash)
+    ok("중첩 tx_scope: MCP migration_apply/revert 정상 처리 · 잘못된 해시 savepoint rollback 뒤 outer transaction 사용 가능")
+
+
 # ── MCP 규칙 · 바인딩 ────────────────────────────────────
 
 def test_rules_binding(B):
@@ -315,6 +344,7 @@ def run(A, B):
         trash(False)
         test_switch(A, B)
         test_web_equals_mcp(A, B)
+        test_nested_tx_scope_apply_revert(A)
         test_rules_binding(B)
         trash(True)
         test_keep_confirmed(A)

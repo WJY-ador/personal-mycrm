@@ -111,6 +111,8 @@ def default_config() -> dict:
             "timeout_sec": 300,
             "daily_attempts": 10,
             "file_glob_suffix": ".md",
+            "codex_cli_path": None,          # 사용자가 선택한 Codex CLI 절대 경로
+            "codex_models": [],              # 확인한 구독 모델 ID만. 비면 Codex 대화 비활성
         },
         # 세션 정리(2026-11-04) — 사람이 지정한 세션 정리 폴더(그 바로 아래 YYYY-MM-DD.md)만. 모델 없음. 폴더 목록은 이 PC 설정에만 둔다
         "session_wrap": {
@@ -225,6 +227,19 @@ def validate_config(cfg: dict) -> dict:
         if (not isinstance(folders, list) or len(folders) > MAX_SESSION_WRAP_FOLDERS
                 or not all(isinstance(x, str) and os.path.isabs(x) for x in folders) or len(set(folders)) != len(folders)):
             raise ConfigError("session_wrap.folders")   # 경로 값은 메시지에 넣지 않는다
+    summary = cfg.get("summary") or {}
+    if not isinstance(summary, dict):
+        raise ConfigError("summary")
+    codex_path = summary.get("codex_cli_path")
+    if codex_path is not None and (not isinstance(codex_path, str) or not os.path.isabs(codex_path)
+                                   or "\x00" in codex_path):
+        raise ConfigError("summary.codex_cli_path")
+    codex_models = summary.get("codex_models", [])
+    if (not isinstance(codex_models, list) or len(codex_models) > 20
+            or not all(isinstance(m, str) and re.fullmatch(r"[A-Za-z0-9._:/+-]{1,120}", m)
+                       for m in codex_models)
+            or len(set(codex_models)) != len(codex_models)):
+        raise ConfigError("summary.codex_models")
     return cfg
 
 

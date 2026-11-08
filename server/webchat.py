@@ -12,9 +12,13 @@
   GET  /api/chat/sessions/{id}/stream               → SSE. id = "<turn_id>:<seq>"(seq 0 = 턴 시작). Last-Event-ID(또는 ?last_event_id=)
                                                       뒤부터 DB 재생 → 실시간. 사용자당 활성 1(새 연결이 옛 연결을 닫음 — 옛 쪽에 event: replaced).
                                                       heartbeat 15초. 재생 상한 = 최근 REPLAY_TURNS 턴·REPLAY_BYTES(넘으면 맨 앞 event: trimmed)
+  POST /api/chat/grants {device_id, provider, model|null, request_id} → pending grant(201 새로·200 같은 요청). 서명된 PC 승인 뒤 approved, 소비·공급자 실행은 차단
+웹 세션 + Origin + Authorization: Bearer 장치 토큰(2026-11-07, 엄격 JSON·4KB):
+  POST /api/chat/consent/keys/{begin,activate,revoke} · POST /api/chat/consent/challenges/{issue,verify}
 장치(Authorization: Bearer 장치 토큰): WS /api/device/chat/ws
   서버→PC turn.start{session_id, turn_id, text, cli_session_ref?} · turn.stop{turn_id} · ack{turn_id, seq} · ping
   PC→서버 hello{agent_version, providers[]} · event{turn_id, seq, kind, data} · session_ref{session_id, cli_session_ref} · pong
+  POST /api/chat/launch-authorization {session_id,turn_id} — launch 권한은 매번 DB 재검증, 현재 실행 상태를 반환(기본 OFF)
 
 해석(스펙이 비운 곳 — PR 본문에 적는다):
 - ack = 누적(그 턴에서 연속으로 저장된 마지막 seq). 중복(seq ≤ 마지막) = 무시하고 다시 ack. 빈 칸(seq > 마지막+1) = 저장하지 않음(PC 재전송).
@@ -28,9 +32,14 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+from datetime import datetime, timedelta, timezone
+import hashlib
+import hmac
 import json
 import re
 import secrets
+from psycopg.types.json import Jsonb
 
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse, StreamingResponse
@@ -40,7 +49,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 import db
 import imports
 from db import CrmError, tx, _one, _all, _user_lock
-from envnames import switch_on
+from envnames import env, switch_on
 
 # ── 한도(초기값, 상수 — 구현계획 §2 「한도」). imports.LIMITS·POLL_LIMITS 버킷과 분리(대화는 jobs 큐를 쓰지 않는다) ──
 ACTIVE_SESSIONS_PER_USER = 1        # DB 부분 UNIQUE(ux_chat_sessions_active)가 강제
@@ -57,16 +66,37 @@ REPLAY_BYTES = 2 * 1024 * 1024      # SSE 재생 상한 — 이벤트 바이트(
 SSE_MAX_SECONDS = 300               # SSE 연결 하나의 최대 수명 — 끝나면 브라우저가 Last-Event-ID 로 다시 붙는다(재배포 때 옛 프로세스가 열린 SSE 를 무한히 기다리지 않게)
 PING_SECONDS = 25                   # 장치 WS ping + 토큰 재확인(철회·만료·차단 = 닫음)
 TURN_IDLE_SECONDS = 600             # 이벤트 없는 running 턴 → 다음 입력 때 failed(TURN-TIMEOUT)
+PROVIDER_LAUNCH_READY = False       # stay OFF until provider process isolation and launch integration are cleared
+LAUNCH_AUTHORIZATION_PATH = "/api/chat/launch-authorization"
+LAUNCH_AUTHORIZATION_TTL_SECONDS = 15
 CLIENT_TURN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 CLI_REF_RE = re.compile(r"^[A-Za-z0-9._:-]{1,200}$")
 PROVIDER_RE = re.compile(r"^[a-z0-9_-]{1,40}$")
+MODEL_RE = re.compile(r"^[A-Za-z0-9._:/+-]{1,120}$")
+CLIENT_SESSION_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _CODE = re.compile(r"^[A-Z][A-Z0-9]*$")
 KINDS = ("delta", "tool_call", "tool_result", "done", "error")
 TERMINAL_STATUS = {"done": "done", "error": "failed"}
 
 HTTP = {"SWITCH-OFF": 503, "UNAUTHORIZED": 401, "ORIGIN": 403, "NOT-FOUND": 404, "TURN-BUSY": 409, "DEVICE-OFFLINE": 409,
         "NO-DEVICE": 409, "DEVICE-GONE": 409, "SESSION-CLOSED": 409, "DEVICE-REQUIRED": 400, "ARG-INVALID": 400,
-        "TEXT-LIMIT": 413, "RATE-LIMIT": 429, "AUTH-INVALID": 401, "TOKEN-EXPIRED": 401, "TOKEN-REVOKED": 401, "AUTH-BLOCKED": 403}
+        "SESSION-CONFLICT": 409, "PROVIDER-UNAVAILABLE": 409, "CONSENT_REQUIRED": 409,
+        "GRANT-CONFLICT": 409, "GRANT-INVALID": 409, "GRANT-USED": 409, "GRANT-EXPIRED": 409,
+        "TEXT-LIMIT": 413, "RATE-LIMIT": 429, "AUTH-INVALID": 401, "TOKEN-EXPIRED": 401, "TOKEN-REVOKED": 401,
+        "AUTH-BLOCKED": 403, "MCP-ERROR": 400}
+HTTP.update({"APPROVAL-STALE": 409, "APPROVAL-CLOSED": 409})
+
+# Operations with complete existing HMAC previews only. Sending content to
+# third parties, device authority changes and migration's own bind protocol
+# stay disabled until their separate confirmation contracts are implemented.
+CHAT_APPROVABLE_OPS = frozenset({
+    "record_edit", "record_provenance_set", "candidate_decide",
+    "definition_archive", "definition_restore", "person_delete",
+    "source_reflection_review", "source_reflection_delete", "trash_move", "trash_restore",
+})
+APPROVAL_TTL_SECONDS = 600
+APPROVAL_PENDING_LIMIT = 20
+APPROVAL_SESSION_LIMIT = 100
 
 
 def _id(prefix: str) -> str:
@@ -79,6 +109,199 @@ def _off() -> CrmError:
 
 def enabled() -> bool:
     return switch_on("WEBCHAT_ENABLED")
+
+
+def chat_mcp_enabled() -> bool:
+    """Hard-off until independent review clears atomic tool lifecycle and provider isolation."""
+    from chat_mcp_gateway import route_enabled
+    return route_enabled(enabled(), env("CHAT_MCP_ENABLED", "") == "1")
+
+
+def _chat_mcp_scope(dev, authorization, session_id, turn_id):
+    """Rebuild a one-call scope from current server rows after device auth.
+
+    Scope reads and dispatch share one transaction. The request's exact active
+    session and running turn are locators only; user/device/grant/challenge/key
+    bindings are rebuilt from server rows under the account lock on every call.
+    """
+    from chat_mcp import AuthenticatedPrincipal, ConsentBinding, SessionBinding
+
+    m = imports._TOKEN_RE.fullmatch(authorization or "")
+    if not m:
+        raise _consent_denied()
+    stream_id, token_id, secret = m.groups()
+    if stream_id != dev.get("id"):
+        raise _consent_denied()
+    supplied_hash = hashlib.sha256(secret.encode("ascii")).digest()
+    uid = dev.get("user_id")
+    with tx() as c:
+        _user_lock(c, uid)
+        user = _one(c, "SELECT blocked_at FROM users WHERE id=%s AND status='active'", (uid,))
+        if not user or user["blocked_at"] is not None:
+            raise _consent_denied()
+        device = _one(c, "SELECT id,user_id,channel,token_id,secret_hash,token_expires_at,token_revoked_at,revoked_at "
+                       "FROM import_streams WHERE user_id=%s AND id=%s FOR NO KEY UPDATE", (uid, stream_id))
+        if (not device or device["channel"] != "device" or device["revoked_at"] is not None
+                or device["token_revoked_at"] is not None or device["token_id"] != token_id
+                or device["token_expires_at"] <= _db_clock(c)
+                or not hmac.compare_digest(bytes(device["secret_hash"]), supplied_hash)):
+            raise _consent_denied()
+        row = _one(c, "SELECT s.id AS session_id,s.user_id,s.device_id,s.provider,s.model,s.status,s.binding_version,s.created_at AS session_created_at,"
+                    "s.client_session_id AS grant_session_id,g.state AS grant_state,g.expires_at,g.consumed_at,"
+                    "ch.state AS challenge_state,ch.user_id AS challenge_user_id,ch.device_id AS challenge_device_id,"
+                    "ch.session_id AS challenge_session_id,ch.provider AS challenge_provider,ch.model AS challenge_model,"
+                    "ch.expires_at AS challenge_expires_at,k.state AS key_state,i.revoked_at AS installation_revoked_at,"
+                    "i.device_id AS installation_device_id "
+                    "FROM chat_sessions s JOIN chat_provider_grants g ON g.user_id=s.user_id AND g.request_id=s.client_session_id "
+                    "JOIN chat_consent_challenges ch ON ch.grant_id=g.id AND ch.user_id=g.user_id "
+                    "JOIN desktop_consent_keys k ON k.id=ch.key_id AND k.user_id=ch.user_id "
+                    "JOIN desktop_installations i ON i.user_id=ch.user_id AND i.id=ch.installation_id "
+                    "WHERE s.user_id=%s AND s.device_id=%s AND s.status='active' AND s.binding_version=2 "
+                    "AND s.provider IN ('claude','codex') AND g.state='consumed' AND g.consumed_at IS NOT NULL "
+                    "AND g.device_id=s.device_id AND g.provider=s.provider AND g.model IS NOT DISTINCT FROM s.model "
+                    "AND ch.session_id=g.request_id AND ch.device_id=s.device_id AND ch.provider=s.provider "
+                    "AND ch.model IS NOT DISTINCT FROM s.model AND ch.state='verified' AND k.state='active' "
+                    "AND i.device_id=s.device_id AND i.revoked_at IS NULL "
+                    "AND s.id=%s FOR NO KEY UPDATE OF s", (uid, stream_id, session_id))
+        turn = _one(c, "SELECT id FROM chat_turns WHERE id=%s AND session_id=%s AND status='running' FOR UPDATE",
+                    (turn_id, session_id))
+        now = _db_clock(c)
+        challenge_expiry = datetime.fromtimestamp(row["challenge_expires_at"], timezone.utc) if row else None
+        session_expires_at = row["session_created_at"] + timedelta(days=KEEP_DAYS) if row else None
+        if (not row or not turn or row["user_id"] != uid or row["device_id"] != stream_id
+                or row["grant_state"] != "consumed" or row["consumed_at"] is None
+                or row["consumed_at"] >= row["expires_at"] or challenge_expiry <= row["consumed_at"]
+                or session_expires_at <= now
+                or row["challenge_state"] != "verified" or row["challenge_user_id"] != uid
+                or row["challenge_device_id"] != stream_id or row["challenge_session_id"] != row["grant_session_id"]
+                or row["challenge_provider"] != row["provider"] or row["challenge_model"] != row["model"]
+                or row["key_state"] != "active"
+                or row["installation_revoked_at"] is not None or row["installation_device_id"] != stream_id):
+            raise _consent_denied()
+    principal = AuthenticatedPrincipal(user_id=uid, device_id=stream_id)
+    session = SessionBinding(user_id=uid, device_id=stream_id, session_id=row["session_id"],
+                             provider=row["provider"], model=row["model"], status=row["status"],
+                             grant_session_id=row["grant_session_id"])
+    consent = ConsentBinding(user_id=uid, device_id=stream_id, session_id=row["grant_session_id"],
+                             provider=row["provider"], model=row["model"], consented_at=row["consumed_at"],
+                             expires_at=min(session_expires_at, device["token_expires_at"]), revoked_at=None)
+    return principal, session, consent
+
+
+def _chat_mcp_execute(dev, authorization, body):
+    """One HTTP request → fresh trusted scope and facade operation atomically."""
+    from chat_mcp_gateway import ChatMcpGateway, _mint_trusted_principal
+    import facade
+
+    # tx_scope makes _chat_mcp_scope's user lock and every existing db.tx() in
+    # guard/tool handlers savepoints on this same connection. Revoke, close,
+    # expiry, or write therefore commits before this request or waits until it
+    # commits. Nested tx_scope operations (migration apply/revert) are savepoints.
+    with db.tx_scope():
+        principal, session, consent = _chat_mcp_scope(dev, authorization, body["session_id"], body["turn_id"])
+        trusted = _mint_trusted_principal(
+            user_id=principal.user_id, device_id=principal.device_id, session_id=session.session_id,
+            provider=session.provider, model=session.model, expires_at=consent.expires_at,
+        )
+        gateway = ChatMcpGateway(principal=principal, session=session, consent=consent,
+                                 context=trusted, catalog=facade.load_catalog())
+        tool = body["tool"]
+        if tool == "list":
+            return {"tools": list(gateway.tools(("find", "read", "write", "decide", "purge", "shell")))}
+        if tool == "find":
+            args = body["params"]
+            if any(type(args.get(k, "")) is not str or len(args.get(k, "")) > 1200 for k in ("query", "family", "op")):
+                raise CrmError("ARG-INVALID", "find 인자가 올바르지 않아요.")
+            return gateway.find(query=args.get("query", ""), family=args.get("family", ""), op=args.get("op", ""))
+        if tool == "decide" and body["op"] in CHAT_APPROVABLE_OPS:
+            return approval_prepare(principal.user_id, session.session_id, body["turn_id"],
+                                    body["op"], body["params"])
+        if tool not in gateway.tools((tool,)):
+            raise _consent_denied()
+        result = gateway.call(tool, body["op"], body["params"], body.get("bind", ""))
+        structured = getattr(result, "structured_content", None)
+        if structured is not None:
+            return structured
+        content = getattr(result, "content", None)
+        if content is not None:
+            return {"content": [{k: getattr(block, k) for k in ("type", "text", "mime_type")
+                                 if getattr(block, k, None) is not None} for block in content],
+                    "isError": bool(getattr(result, "isError", False))}
+        return result
+
+
+def _chat_launch_authorization(dev, authorization, session_id, turn_id):
+    """Revalidate the live provider launch binding under the account lock.
+
+    IDs from the request are locators only. Identity, provider/model, consent,
+    and operation policy always come from authenticated server state.
+    """
+    import facade
+    from chat_mcp import allowed_operations
+
+    match = imports._TOKEN_RE.fullmatch(authorization or "")
+    if not match or match.group(1) != dev.get("id"):
+        raise _consent_denied()
+    token_id, secret = match.group(2), match.group(3)
+    token_hash = hashlib.sha256(secret.encode("ascii")).digest()
+    uid, device_id = dev.get("user_id"), dev.get("id")
+    with db.tx_scope() as c:
+        _user_lock(c, uid)
+        user = _one(c, "SELECT blocked_at FROM users WHERE id=%s AND status='active'", (uid,))
+        if not user or user["blocked_at"] is not None:
+            raise _consent_denied()
+        device = _one(c, "SELECT id,user_id,channel,token_id,secret_hash,token_expires_at,token_revoked_at,revoked_at "
+                       "FROM import_streams WHERE user_id=%s AND id=%s FOR NO KEY UPDATE", (uid, device_id))
+        if (not device or device["channel"] != "device" or device["revoked_at"] is not None
+                or device["token_revoked_at"] is not None or device["token_id"] != token_id
+                or device["token_expires_at"] <= _db_clock(c)
+                or not hmac.compare_digest(bytes(device["secret_hash"]), token_hash)):
+            raise _consent_denied()
+        session = _one(c, "SELECT * FROM chat_sessions WHERE id=%s AND user_id=%s AND device_id=%s "
+                        "AND status='active' AND binding_version=2 FOR NO KEY UPDATE",
+                        (session_id, uid, device_id))
+        turn = _one(c, "SELECT * FROM chat_turns WHERE id=%s AND session_id=%s FOR UPDATE", (turn_id, session_id))
+        if (not session or not turn or turn["status"] != "running"
+                or session["provider"] not in GRANT_PROVIDERS or not session["client_session_id"]):
+            raise _consent_denied()
+        grant = _one(c, "SELECT * FROM chat_provider_grants WHERE user_id=%s AND request_id=%s FOR UPDATE",
+                     (uid, session["client_session_id"]))
+        challenge = _one(c, "SELECT * FROM chat_consent_challenges WHERE user_id=%s AND grant_id=%s "
+                         "AND state='verified' ORDER BY created_at DESC LIMIT 1 FOR UPDATE",
+                         (uid, grant["id"] if grant else ""))
+        key = _one(c, "SELECT * FROM desktop_consent_keys WHERE id=%s FOR UPDATE",
+                   (challenge["key_id"] if challenge else "",))
+        installation = _one(c, "SELECT * FROM desktop_installations WHERE user_id=%s AND id=%s FOR UPDATE",
+                            (uid, challenge["installation_id"] if challenge else ""))
+        now = _db_clock(c)
+        session_expires_at = session["created_at"] + timedelta(days=KEEP_DAYS) if session else None
+        challenge_expiry = datetime.fromtimestamp(challenge["expires_at"], timezone.utc) if challenge else None
+        if (not grant or (grant["user_id"], grant["device_id"], grant["provider"], grant["model"], grant["request_id"])
+                != (uid, device_id, session["provider"], session["model"], session["client_session_id"])
+                or grant["state"] != "consumed" or grant["consumed_at"] is None
+                or grant["consumed_at"] >= grant["expires_at"] or session_expires_at <= now
+                or not challenge or challenge["state"] != "verified"
+                or (challenge["user_id"], challenge["device_id"], challenge["session_id"],
+                    challenge["provider"], challenge["model"])
+                != (uid, device_id, session["client_session_id"], session["provider"], session["model"])
+                or challenge_expiry <= grant["consumed_at"]
+                or not key or key["state"] != "active" or key["user_id"] != uid
+                or key["installation_id"] != challenge["installation_id"] or key["device_id"] != device_id
+                or not installation or installation["revoked_at"] is not None
+                or installation["device_id"] != device_id):
+            raise _consent_denied()
+        expires_at = min(now + timedelta(seconds=LAUNCH_AUTHORIZATION_TTL_SECONDS),
+                         device["token_expires_at"], session_expires_at)
+        if expires_at <= now:
+            raise _consent_denied()
+        tools = {f"mcp__my-crm__{op}": tier for tier, op in allowed_operations(facade.load_catalog())}
+        tools["mcp__my-crm__find"] = "read"
+        return {"authorized": True,
+                "binding": {"user_id": uid, "device_id": device_id, "session_id": session["id"],
+                            "turn_id": turn["id"], "provider": session["provider"], "model": session["model"],
+                            "grant_id": grant["id"], "consent_challenge_id": challenge["id"],
+                            "expires_at": expires_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")},
+                "tools": tools}
 
 
 def _cp(s: str) -> int:
@@ -100,8 +323,44 @@ def _active_devices(c, uid):
                                      "AND token_revoked_at IS NULL ORDER BY created_at", (uid,))]
 
 
+def _active_devices_for_user(uid):
+    with tx() as c:
+        return _active_devices(c, uid)
+
+
+def _normalize_capabilities(value):
+    if not isinstance(value, list) or len(value) > 8:
+        return []
+    out, seen = [], set()
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {"provider", "models"}:
+            continue
+        provider, models = item["provider"], item["models"]
+        # FakeProvider is test-only; never show it as an available provider outside CRM_DEV.
+        if provider not in ("claude", "codex", "fake") or (provider == "fake" and env("DEV", "") != "1") or provider in seen or not isinstance(models, list) or not 1 <= len(models) <= 16:
+            continue
+        normalized, valid = [], True
+        for model in models:
+            if model is None and None not in normalized:
+                normalized.append(None)
+            elif isinstance(model, str) and MODEL_RE.fullmatch(model) and model not in normalized:
+                normalized.append(model)
+            else:
+                valid = False
+                break
+        if valid:
+            seen.add(provider)
+            out.append({"provider": provider, "models": normalized})
+    return out
+
+
+def _supports(caps, provider, model):
+    return any(c["provider"] == provider and model in c["models"] for c in caps)
+
+
 def _session_out(s, connected=None):
     out = {"session_id": s["id"], "status": s["status"], "device_id": s["device_id"], "provider": s["provider"],
+           "model": s.get("model"), "binding_version": s.get("binding_version", 0),
            "created_at": _iso(s["created_at"]), "last_at": _iso(s["last_at"])}
     if connected is not None:
         out["connected"] = connected
@@ -130,6 +389,433 @@ def session_open(uid: str, device_id: str | None):
         return _session_out(s), closed
 
 
+def session_new(uid: str, device_id: str, provider: str, model, client_session_id: str, *, capability_ok=False):
+    if not isinstance(client_session_id, str) or not CLIENT_SESSION_RE.fullmatch(client_session_id):
+        raise CrmError("ARG-INVALID", "client_session_id 형식이 올바르지 않아요.")
+    with tx() as c:
+        _user_lock(c, uid)
+        old = _one(c, "SELECT * FROM chat_sessions WHERE user_id=%s AND client_session_id=%s", (uid, client_session_id))
+        if old:
+            if old["device_id"] != device_id or old["provider"] != provider or old["model"] != model:
+                raise CrmError("SESSION-CONFLICT", "같은 새 대화 요청 식별자를 다른 선택에 이미 썼어요.")
+            return _session_out(old), [], False
+        if provider not in ("claude", "codex", "fake") or (model is not None and (not isinstance(model, str) or not MODEL_RE.fullmatch(model))):
+            raise CrmError("ARG-INVALID", "provider 또는 model 값이 올바르지 않아요.")
+        if not capability_ok:
+            raise CrmError("PROVIDER-UNAVAILABLE", "선택한 AI 또는 모델을 이 PC에서 사용할 수 없어요.", "연결 상태와 선택지를 확인하세요.")
+        devs = _active_devices(c, uid)
+        if device_id not in devs:
+            raise CrmError("NOT-FOUND", "그 장치를 찾을 수 없어요.")
+        if _one(c, "SELECT 1 FROM chat_turns t JOIN chat_sessions s ON s.id=t.session_id WHERE s.user_id=%s AND t.status='running'", (uid,)):
+            raise CrmError("TURN-BUSY", "앞 답이 아직 끝나지 않았어요.", "끝나거나 중지한 뒤 새 대화를 시작하세요.")
+        if provider in GRANT_PROVIDERS:
+            # Session ID is also the one-time consent request ID. Consume and create in this
+            # transaction, before closing the current session, so any failure preserves it.
+            grant_consume(c, uid, device_id, provider, model, client_session_id)
+        cur = _one(c, "SELECT * FROM chat_sessions WHERE user_id=%s AND status='active' FOR NO KEY UPDATE", (uid,))
+        closed = [(cur["id"], e) for e in _close_session(c, cur["id"])] if cur else []
+        s = _one(c, "INSERT INTO chat_sessions (id,user_id,device_id,provider,model,client_session_id,binding_version) VALUES (%s,%s,%s,%s,%s,%s,2) RETURNING *",
+                 (_id("cs"), uid, device_id, provider, model, client_session_id))
+        return _session_out(s), closed, True
+
+
+# ── PC 명시 승인 grant(D7 기반, 2026-11-06) ─────────────────
+# 승인된 grant 는 session_new 안에서 세션 생성과 함께 1회 소비한다.
+# 웹 요청의 Origin 부재·X-MyCRM-Desktop 같은 머리글은 증거가 아니다 — verifier 는 요청 객체를 받지 않고 grant 행·proof 만 받는다.
+# 오래된 grant_approve helper 는 운영 기본에서 닫혀 있다. 세션 소비는 그 callback 결과를 신뢰하지 않고,
+# 실제 Ed25519 검증으로 기록된 verified challenge·active key·installation 만 근거로 삼는다.
+GRANT_TTL_SECONDS = 300
+GRANT_PROVIDERS = ("claude", "codex")
+REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_desktop_verifier = None   # legacy approve-only hook. grant_consume 는 이 callback 을 사용하지 않는다.
+
+
+def _grant_verifier():
+    v = _desktop_verifier
+    if not callable(v):
+        raise CrmError("CONSENT_REQUIRED", "PC 허용 증명을 확인할 수단이 아직 없어요.", "PC 허용 절차가 준비된 뒤 다시 시도하세요.")
+    return v
+
+
+def _grant_args(device_id, provider, model, request_id):
+    if (not isinstance(device_id, str) or not 1 <= len(device_id) <= 200 or provider not in GRANT_PROVIDERS
+            or (model is not None and (not isinstance(model, str) or not MODEL_RE.fullmatch(model)))
+            or not isinstance(request_id, str) or not REQUEST_ID_RE.fullmatch(request_id)):
+        raise CrmError("ARG-INVALID", "허용 요청 값이 올바르지 않아요.")
+
+
+def _grant_binding(g):
+    return {k: g[k] for k in ("id", "user_id", "device_id", "provider", "model", "request_id")}
+
+
+def grant_request(uid: str, device_id: str, provider: str, model, request_id: str):
+    """허용 요청 저장(pending). 같은 request_id·같은 바인딩 = 같은 행(멱등), 다른 바인딩 = GRANT-CONFLICT.
+    chat_sessions 는 건드리지 않는다 — 요청만으로 기존 active 세션이 닫히지 않는다. 반환 (grant, created)."""
+    _grant_args(device_id, provider, model, request_id)
+    with tx() as c:
+        _user_lock(c, uid)
+        if device_id not in _active_devices(c, uid):
+            raise CrmError("NOT-FOUND", "그 장치를 찾을 수 없어요.")
+        old = _one(c, "SELECT * FROM chat_provider_grants WHERE user_id=%s AND request_id=%s FOR UPDATE", (uid, request_id))
+        if old:
+            if (old["device_id"], old["provider"], old["model"]) != (device_id, provider, model):
+                raise CrmError("GRANT-CONFLICT", "같은 허용 요청 식별자를 다른 선택에 이미 썼어요.")
+            return dict(old), False
+        g = _one(c, "INSERT INTO chat_provider_grants (id,user_id,device_id,provider,model,request_id,expires_at) "
+                    "VALUES (%s,%s,%s,%s,%s,%s, now() + make_interval(secs => %s)) RETURNING *",
+                 (_id("cg"), uid, device_id, provider, model, request_id, GRANT_TTL_SECONDS))
+        return dict(g), True
+
+
+def grant_approve(uid: str, request_id: str, proof):
+    """pending → approved. verifier 없음·거절 = CONSENT_REQUIRED(상태 그대로). 만료 = GRANT-EXPIRED. 이미 승인·소비 = GRANT-USED."""
+    verify = _grant_verifier()   # 행을 읽기 전에 닫는다
+    if not isinstance(request_id, str) or not REQUEST_ID_RE.fullmatch(request_id):
+        raise CrmError("ARG-INVALID", "허용 요청 값이 올바르지 않아요.")
+    with tx() as c:
+        _user_lock(c, uid)
+        g = _one(c, "SELECT * FROM chat_provider_grants WHERE user_id=%s AND request_id=%s FOR UPDATE",
+                 (uid, request_id))
+        if not g:
+            raise CrmError("NOT-FOUND", "그 허용 요청을 찾을 수 없어요.")
+        if g["state"] != "pending":
+            raise CrmError("GRANT-USED", "이미 처리한 허용 요청이에요.")
+        # Evaluate only after the row lock. PostgreSQL now() is transaction-start time and
+        # can be stale if SELECT ... FOR UPDATE waited past the grant expiry.
+        if g["expires_at"] <= _db_clock(c):
+            raise CrmError("GRANT-EXPIRED", "허용 요청 시간이 지났어요.", "다시 요청하세요.")
+        if verify(uid, _grant_binding(g), proof) is not True:
+            raise CrmError("CONSENT_REQUIRED", "PC 허용 증명을 확인하지 못했어요.", "PC 에서 다시 허용하세요.")
+        if g["expires_at"] <= _db_clock(c):
+            raise CrmError("GRANT-EXPIRED", "허용 요청 시간이 지났어요.", "다시 요청하세요.")
+        return dict(_one(c, "UPDATE chat_provider_grants SET state='approved', approved_at=clock_timestamp() WHERE id=%s AND state='pending' RETURNING *",
+                         (g["id"],)))
+
+
+def grant_consume(c, uid: str, device_id: str, provider: str, model, request_id: str) -> str:
+    """호출한 쪽 트랜잭션(c) 안에서 approved grant 를 1회 소비 — 세션 생성과 같이 커밋·롤백된다. 반환 grant id.
+    실제 desktop 키 서명이 검증된 challenge 와 active key/install 이 함께 있어야 한다.
+    바인딩 불일치 = GRANT-INVALID, 소비됨 = GRANT-USED, 검증 근거 없음 = CONSENT_REQUIRED, 만료 = GRANT-EXPIRED."""
+    _grant_args(device_id, provider, model, request_id)
+    g = _one(c, "SELECT * FROM chat_provider_grants WHERE user_id=%s AND request_id=%s FOR UPDATE",
+             (uid, request_id))
+    if not g:
+        raise CrmError("CONSENT_REQUIRED", "이 대화에 필요한 PC 허용이 없어요.", "PC 에서 허용하세요.")
+    if (g["device_id"], g["provider"], g["model"]) != (device_id, provider, model) or device_id not in _active_devices(c, uid):
+        raise CrmError("GRANT-INVALID", "이 선택에 맞는 PC 허용이 없어요.", "PC 에서 다시 허용하세요.")
+    if g["state"] == "consumed":
+        raise CrmError("GRANT-USED", "이미 쓴 PC 허용이에요.", "PC 에서 다시 허용하세요.")
+    if g["state"] != "approved" or g["approved_at"] is None:
+        raise CrmError("CONSENT_REQUIRED", "PC 허용이 아직 없어요.", "PC 에서 허용하세요.")
+    wall_now = _db_clock(c)
+    wall_epoch = int(wall_now.timestamp())
+    if g["expires_at"] <= wall_now:
+        raise CrmError("GRANT-EXPIRED", "PC 허용 시간이 지났어요.", "PC 에서 다시 허용하세요.")
+
+    proof = _one(c, "SELECT ch.id, ch.expires_at, k.state AS key_state, i.revoked_at AS installation_revoked_at "
+                    "FROM chat_consent_challenges ch "
+                    "JOIN desktop_consent_keys k ON k.id=ch.key_id AND k.user_id=ch.user_id "
+                    "JOIN desktop_installations i ON i.user_id=ch.user_id AND i.id=ch.installation_id "
+                    "WHERE ch.grant_id=%s AND ch.user_id=%s AND ch.device_id=%s AND ch.session_id=%s "
+                    "AND i.device_id=ch.device_id "
+                    "AND ch.provider=%s AND ch.model IS NOT DISTINCT FROM %s AND ch.state='verified' "
+                    "FOR UPDATE OF ch, k, i", (g["id"], uid, device_id, request_id, provider, model))
+    if not proof or proof["key_state"] != "active" or proof["installation_revoked_at"] is not None:
+        raise CrmError("CONSENT_REQUIRED", "PC 허용 서명을 확인하지 못했어요.", "PC 에서 다시 허용하세요.")
+    proof_now = int(_db_clock(c).timestamp())
+    if proof["expires_at"] <= proof_now:
+        raise CrmError("GRANT-EXPIRED", "PC 허용 시간이 지났어요.", "PC 에서 다시 허용하세요.")
+
+    consumed = _one(c, "UPDATE chat_provider_grants SET state='consumed', consumed_at=clock_timestamp() "
+                       "WHERE id=%s AND state='approved' AND expires_at > clock_timestamp() "
+                       "AND EXISTS (SELECT 1 FROM chat_consent_challenges ch WHERE ch.id=%s AND ch.grant_id=%s "
+                       "AND ch.state='verified' AND to_timestamp(ch.expires_at) > clock_timestamp()) RETURNING id",
+                    (g["id"], proof["id"], g["id"]))
+    if not consumed:
+        raise CrmError("GRANT-EXPIRED", "PC 허용 시간이 지났어요.", "PC 에서 다시 허용하세요.")
+    return g["id"]
+
+
+# ── PC 동의 키·challenge(2026-11-07) ─────────────────
+# HTTP route(POST /api/chat/consent/*)는 데스크톱 main→private IPC→device agent 경로에서 호출된다.
+# 웹 renderer 는 장치 Bearer 나 서명 private key 를 받지 않는다.
+# 함수는 (웹 세션으로 확인된 uid, 원문 Authorization 머리글)을 받아 장치 토큰을 여기서 직접 검증한다. 호출자가 넘긴 장치 id·Origin·
+# X-MyCRM-Desktop·renderer 값은 증거가 아니다. 설치본은 호출자가 고르지만, 그 설치본의 device_id 가 토큰의 장치와 같아야만 통과한다.
+# 서버가 challenge 서명을 확인하면 grant 는 approved 가 되고 session_new 에서 한 번 소비된다. provider turn dispatch 는 계속 차단한다.
+from consent_signature import EXPIRED as _SIG_EXPIRED, encode_consent as _encode_consent, verify_consent as _verify_consent  # noqa: E402
+from consent_signature import _load_public_key as _load_consent_key  # noqa: E402
+
+CONSENT_POP_TTL_SECONDS = 120
+CONSENT_CHALLENGE_TTL_SECONDS = 120
+KEY_POP_PROVIDER = "mycrm-key"   # GRANT_PROVIDERS 와 겹치지 않는다 — 키 증명 서명을 grant 동의로 다시 쓸 수 없다
+INSTALLATION_RE = re.compile(r"^di_[0-9a-f]{24}$")
+KEY_ID_RE = re.compile(r"^ck_[0-9a-f]{24}$")
+NONCE_RE = re.compile(r"^[A-Za-z0-9_-]{22,128}$")
+CONSENT_BODY_MAX = 4 * 1024      # grant·동의 route 본문(바이트). main.BodyLimit(256KB)보다 좁다
+AUTHZ_MAX = 512                  # Authorization 머리글 글자 수
+B64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _consent_denied():
+    # 무엇이 어긋났는지(사용자·장치·설치본·키) 밝히지 않는다
+    return CrmError("CONSENT_REQUIRED", "이 PC 의 동의 절차를 확인하지 못했어요.", "PC 앱에서 다시 시도하세요.")
+
+
+def _consent_bearer(authorization):
+    """장치 Bearer 토큰 검증(실패 = AUTH-*·TOKEN-*). tx 밖에서 부른다 — authenticate 는 자기 트랜잭션을 쓴다."""
+    return imports.authenticate(authorization if isinstance(authorization, str) else "")
+
+
+def _consent_bind(c, uid, dev, installation_id) -> str:
+    """세션 uid·토큰 장치·설치본이 한 묶음인지 tx 안에서 다시 본다(잠금 포함). 반환 = 장치 id."""
+    if dev.get("user_id") != uid or dev.get("id") not in _active_devices(c, uid):
+        raise _consent_denied()
+    inst = _one(c, "SELECT device_id, revoked_at FROM desktop_installations WHERE user_id=%s AND id=%s FOR UPDATE", (uid, installation_id))
+    if not inst or inst["revoked_at"] is not None or inst["device_id"] != dev["id"]:
+        raise _consent_denied()
+    return dev["id"]
+
+
+def _db_clock(c):
+    """실제 벽시계. now()는 transaction 시작 시각이라 lock 대기 뒤 만료 판단에 쓰면 안 된다."""
+    return _one(c, "SELECT clock_timestamp() AS t", ())["t"]
+
+
+def _db_now(c) -> int:
+    """서명 계약의 epoch 초 시계. 호출자는 관련 행 잠금을 얻은 뒤 읽는다."""
+    return int(_db_clock(c).timestamp())
+
+
+def _require_consumed_session_consent(c, uid, session):
+    """Fail closed unless the active provider session still has its full signed consent binding.
+
+    Caller holds the user and session locks. Device, grant, challenge, key, and
+    installation are locked here so key revocation (including PC-lock revoke)
+    and turn creation serialize on the same user transaction.
+    """
+    if (session.get("binding_version") != 2 or session.get("provider") not in GRANT_PROVIDERS
+            or not session.get("client_session_id") or session.get("user_id") != uid):
+        raise _consent_denied()
+    user = _one(c, "SELECT status,blocked_at FROM users WHERE id=%s", (uid,))
+    if not user or user["status"] != "active" or user["blocked_at"] is not None:
+        raise _consent_denied()
+    device_id = session.get("device_id")
+    device = _one(c, "SELECT id,user_id,channel,token_expires_at,token_revoked_at,revoked_at "
+                  "FROM import_streams WHERE id=%s AND user_id=%s FOR NO KEY UPDATE", (device_id, uid))
+    grant = _one(c, "SELECT * FROM chat_provider_grants WHERE user_id=%s AND request_id=%s FOR UPDATE",
+                 (uid, session["client_session_id"]))
+    challenge = _one(c, "SELECT * FROM chat_consent_challenges WHERE user_id=%s AND grant_id=%s "
+                      "AND device_id=%s AND session_id=%s AND provider=%s AND model IS NOT DISTINCT FROM %s "
+                      "AND state='verified' ORDER BY created_at DESC LIMIT 1 FOR UPDATE",
+                      (uid, grant["id"] if grant else "", device_id, session["client_session_id"],
+                       session["provider"], session["model"]))
+    key = _one(c, "SELECT * FROM desktop_consent_keys WHERE id=%s AND user_id=%s FOR UPDATE",
+               (challenge["key_id"] if challenge else "", uid))
+    installation = _one(c, "SELECT * FROM desktop_installations WHERE id=%s AND user_id=%s FOR UPDATE",
+                        (challenge["installation_id"] if challenge else "", uid))
+    now = _db_clock(c)
+    session_expires_at = session["created_at"] + timedelta(days=KEEP_DAYS)
+    challenge_expires_at = (datetime.fromtimestamp(challenge["expires_at"], timezone.utc)
+                            if challenge else None)
+    if (not device or device["channel"] != "device" or device["revoked_at"] is not None
+            or device["token_revoked_at"] is not None or device["token_expires_at"] <= now
+            or not grant or (grant["user_id"], grant["device_id"], grant["provider"], grant["model"], grant["request_id"])
+            != (uid, device_id, session["provider"], session["model"], session["client_session_id"])
+            or grant["state"] != "consumed" or grant["consumed_at"] is None
+            or grant["consumed_at"] >= grant["expires_at"] or session_expires_at <= now
+            or not challenge or (challenge["user_id"], challenge["device_id"], challenge["session_id"],
+                                  challenge["provider"], challenge["model"])
+            != (uid, device_id, session["client_session_id"], session["provider"], session["model"])
+            or challenge_expires_at <= grant["consumed_at"]
+            or not key or key["state"] != "active" or key["installation_id"] != challenge["installation_id"]
+            or key["device_id"] != device_id or not installation or installation["revoked_at"] is not None
+            or installation["device_id"] != device_id):
+        raise _consent_denied()
+
+
+def _pop_claims(uid, device_id, key_id, purpose, nonce, expires_at):
+    return {"user_id": uid, "device_id": device_id, "session_id": key_id, "provider": KEY_POP_PROVIDER,
+            "model": purpose, "nonce": nonce, "expires_at": int(expires_at)}
+
+
+def _check_installation(installation_id):
+    if not isinstance(installation_id, str) or not INSTALLATION_RE.fullmatch(installation_id):
+        raise CrmError("ARG-INVALID", "설치본 값이 올바르지 않아요.")
+
+
+def consent_key_begin(uid: str, authorization: str, installation_id: str, spki_der: bytes) -> dict:
+    """새 서명 키 등록 시작(pending). 반환 {key_id, claims} — claims(model='bind')를 새 키로 서명해 activate 에 낸다.
+    같은 설치본의 옛 pending 키는 지운다(대기 키 1개)."""
+    _check_installation(installation_id)
+    try:
+        _load_consent_key(spki_der)
+    except TypeError:
+        raise CrmError("ARG-INVALID", "공개키 형식이 올바르지 않아요.") from None
+    dev = _consent_bearer(authorization)
+    with tx() as c:
+        _user_lock(c, uid)
+        device_id = _consent_bind(c, uid, dev, installation_id)
+        c.execute("DELETE FROM desktop_consent_keys WHERE user_id=%s AND installation_id=%s AND state='pending'", (uid, installation_id))
+        now = _db_now(c)
+        nonce = secrets.token_urlsafe(32)
+        k = _one(c, "INSERT INTO desktop_consent_keys (id,user_id,installation_id,device_id,spki,pop_nonce,pop_expires_at) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+                 (_id("ck"), uid, installation_id, device_id, spki_der, nonce, now + CONSENT_POP_TTL_SECONDS))
+        return {"key_id": k["id"], "claims": _pop_claims(uid, device_id, k["id"], "bind", nonce, now + CONSENT_POP_TTL_SECONDS)}
+
+
+def consent_key_activate(uid: str, authorization: str, installation_id: str, key_id: str, pop_signature, rotate_signature=None) -> dict:
+    """pending → active. 새 키 서명(model='bind') 필수, active 키가 이미 있으면 옛 키 서명(model='rotate', 같은 nonce·key_id)도 필수.
+    시도는 한 번뿐 — 실패해도 그 pending 키는 revoked 로 커밋한다. 성공 = 옛 키·그 키의 issued challenge 를 같은 tx 에서 폐기."""
+    _check_installation(installation_id)
+    if not isinstance(key_id, str) or not KEY_ID_RE.fullmatch(key_id):
+        raise CrmError("ARG-INVALID", "키 값이 올바르지 않아요.")
+    dev = _consent_bearer(authorization)
+    err = out = None
+    with tx() as c:
+        _user_lock(c, uid)
+        device_id = _consent_bind(c, uid, dev, installation_id)
+        k = _one(c, "SELECT * FROM desktop_consent_keys WHERE id=%s AND user_id=%s AND installation_id=%s FOR UPDATE", (key_id, uid, installation_id))
+        if not k or k["state"] != "pending" or k["device_id"] != device_id:
+            raise _consent_denied()
+        now = _db_now(c)
+        claims = _pop_claims(uid, device_id, k["id"], "bind", k["pop_nonce"], k["pop_expires_at"])
+        new_v = _verify_consent(claims, pop_signature, bytes(k["spki"]), now_seconds=now)
+        old = _one(c, "SELECT * FROM desktop_consent_keys WHERE user_id=%s AND installation_id=%s AND state='active' FOR UPDATE", (uid, installation_id))
+        old_ok = old is None or _verify_consent(dict(claims, model="rotate"), rotate_signature, bytes(old["spki"]), now_seconds=now).ok
+        if not (new_v.ok and old_ok):
+            c.execute("UPDATE desktop_consent_keys SET state='revoked', revoked_at=now() WHERE id=%s", (k["id"],))
+            err = CrmError("GRANT-EXPIRED", "키 등록 시간이 지났어요.", "PC 앱에서 다시 시도하세요.") if new_v.code == _SIG_EXPIRED else _consent_denied()
+        else:
+            if old:
+                c.execute("UPDATE chat_consent_challenges SET state='revoked', settled_at=now() WHERE key_id=%s AND state='issued'", (old["id"],))
+                c.execute("UPDATE desktop_consent_keys SET state='revoked', revoked_at=now() WHERE id=%s", (old["id"],))
+            r = _one(c, "UPDATE desktop_consent_keys SET state='active', activated_at=now() WHERE id=%s AND state='pending' RETURNING id, state",
+                     (k["id"],))
+            out = {"key_id": r["id"], "state": r["state"], "rotated": old is not None}
+    if err:
+        raise err
+    return out
+
+
+def consent_key_revoke(uid: str, installation_id: str) -> int:
+    """웹 세션만으로 그 설치본의 pending·active 키와 issued challenge 를 폐기(권한을 줄이기만 하므로 장치 토큰을 요구하지 않는다).
+    다시 등록하려면 begin·activate(장치 토큰 + PoP)를 처음부터 거친다. 반환 = 폐기한 키 수."""
+    _check_installation(installation_id)
+    with tx() as c:
+        _user_lock(c, uid)
+        return _consent_revoke(c, uid, installation_id)
+
+
+def _consent_revoke(c, uid, installation_id) -> int:
+    c.execute("UPDATE chat_consent_challenges SET state='revoked', settled_at=now() WHERE user_id=%s AND installation_id=%s AND state='issued'",
+              (uid, installation_id))
+    cur = c.execute("UPDATE desktop_consent_keys SET state='revoked', revoked_at=now() WHERE user_id=%s AND installation_id=%s "
+                    "AND state IN ('pending','active')", (uid, installation_id))
+    return cur.rowcount
+
+
+def consent_key_revoke_bound(uid: str, authorization: str, installation_id: str) -> int:
+    """route 용 폐기 — 세션 uid·장치 Bearer·설치본 묶음을 같은 tx 에서 확인한 뒤 consent_key_revoke 와 같은 폐기를 한다.
+    (consent_key_revoke 는 authorization 인자가 없어 route 의 「세션 + Bearer」 조건을 helper 에 넘길 수 없다.)"""
+    _check_installation(installation_id)
+    dev = _consent_bearer(authorization)
+    with tx() as c:
+        _user_lock(c, uid)
+        _consent_bind(c, uid, dev, installation_id)
+        return _consent_revoke(c, uid, installation_id)
+
+
+def consent_challenge_issue(uid: str, authorization: str, installation_id: str, request_id: str) -> dict:
+    """pending grant 하나에 대한 서명 요청. 반환 {challenge_id, claims}. session_id = grant.request_id(만들 대화의 client_session_id).
+    같은 grant 의 옛 issued challenge 는 revoked. 만료 = min(지금+TTL, grant 만료)."""
+    _check_installation(installation_id)
+    if not isinstance(request_id, str) or not REQUEST_ID_RE.fullmatch(request_id):
+        raise CrmError("ARG-INVALID", "허용 요청 값이 올바르지 않아요.")
+    dev = _consent_bearer(authorization)
+    with tx() as c:
+        _user_lock(c, uid)
+        device_id = _consent_bind(c, uid, dev, installation_id)
+        key = _one(c, "SELECT id FROM desktop_consent_keys WHERE user_id=%s AND installation_id=%s AND state='active' FOR UPDATE", (uid, installation_id))
+        if not key:
+            raise _consent_denied()
+        g = _one(c, "SELECT *, floor(extract(epoch from expires_at))::bigint AS exp_epoch "
+                    "FROM chat_provider_grants WHERE user_id=%s AND request_id=%s FOR UPDATE", (uid, request_id))
+        if not g or g["device_id"] != device_id or g["state"] != "pending" or g["model"] is None:
+            raise CrmError("GRANT-INVALID", "이 PC 에 맞는 허용 요청이 없어요.")
+        wall_now = _db_clock(c)
+        now = int(wall_now.timestamp())
+        exp = min(now + CONSENT_CHALLENGE_TTL_SECONDS, int(g["exp_epoch"]))
+        if g["expires_at"] <= wall_now or exp <= now:
+            raise CrmError("GRANT-EXPIRED", "허용 요청 시간이 지났어요.", "다시 요청하세요.")
+        nonce = secrets.token_urlsafe(32)
+        claims = {"user_id": uid, "device_id": device_id, "session_id": g["request_id"], "provider": g["provider"],
+                  "model": g["model"], "nonce": nonce, "expires_at": exp}
+        try:
+            _encode_consent(claims)   # 서명 형식에 안 맞는 값(model 의 '/' 등)은 challenge 를 만들지 않는다
+        except TypeError:
+            raise CrmError("GRANT-INVALID", "이 허용 요청은 PC 서명 형식에 맞지 않아요.") from None
+        c.execute("UPDATE chat_consent_challenges SET state='revoked', settled_at=now() WHERE user_id=%s AND grant_id=%s AND state='issued'",
+                  (uid, g["id"]))
+        ch = _one(c, "INSERT INTO chat_consent_challenges (id,user_id,device_id,installation_id,key_id,grant_id,session_id,provider,model,nonce,expires_at) "
+                     "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+                  (_id("cc"), uid, device_id, installation_id, key["id"], g["id"], g["request_id"], g["provider"], g["model"], nonce, exp))
+        return {"challenge_id": ch["id"], "claims": claims}
+
+
+def consent_challenge_verify(uid: str, authorization: str, installation_id: str, nonce: str, signature) -> dict:
+    """issued challenge 를 한 번 검증한다. 서명 대상 claims 는 DB 행에서 다시 만든다(요청 값을 쓰지 않는다).
+    키·grant·설치본이 그새 바뀌었으면 revoked, 서명 불일치 rejected, 만료 expired — 모두 커밋되고 다시 쓸 수 없다.
+    다른 사용자·장치·설치본의 호출은 상태를 바꾸지 않고 CONSENT_REQUIRED. 성공은 같은 트랜잭션에서 challenge=verified, grant=approved로 기록한다.
+    grant 소비와 provider 실행은 별도 verifier 연결 전까지 차단한다."""
+    _check_installation(installation_id)
+    if not isinstance(nonce, str) or not NONCE_RE.fullmatch(nonce):
+        raise CrmError("ARG-INVALID", "nonce 값이 올바르지 않아요.")
+    dev = _consent_bearer(authorization)
+    err = out = None
+    with tx() as c:
+        _user_lock(c, uid)
+        device_id = _consent_bind(c, uid, dev, installation_id)
+        ch = _one(c, "SELECT * FROM chat_consent_challenges WHERE user_id=%s AND nonce=%s FOR UPDATE", (uid, nonce))
+        if not ch or ch["installation_id"] != installation_id or ch["device_id"] != device_id:
+            raise _consent_denied()
+        if ch["state"] != "issued":
+            raise CrmError("GRANT-USED", "이미 처리한 동의 요청이에요.", "PC 앱에서 다시 시도하세요.")
+        key = _one(c, "SELECT * FROM desktop_consent_keys WHERE id=%s FOR UPDATE", (ch["key_id"],))
+        g = _one(c, "SELECT * FROM chat_provider_grants WHERE id=%s FOR UPDATE", (ch["grant_id"],))
+        now = _db_now(c)
+        if (not key or key["state"] != "active" or key["installation_id"] != installation_id or not g or g["state"] != "pending"
+                or (g["user_id"], g["device_id"], g["provider"], g["model"], g["request_id"])
+                != (uid, ch["device_id"], ch["provider"], ch["model"], ch["session_id"])):
+            state, err = "revoked", _consent_denied()
+        else:
+            claims = {"user_id": uid, "device_id": ch["device_id"], "session_id": ch["session_id"], "provider": ch["provider"],
+                      "model": ch["model"], "nonce": ch["nonce"], "expires_at": int(ch["expires_at"])}
+            v = _verify_consent(claims, signature, bytes(key["spki"]), now_seconds=now)
+            if v.ok:
+                approved = _one(c, "UPDATE chat_provider_grants SET state='approved', approved_at=clock_timestamp() "
+                                "WHERE id=%s AND state='pending' AND expires_at > clock_timestamp() RETURNING id", (g["id"],))
+                if approved:
+                    state, out = "verified", {"challenge_id": ch["id"], "state": "verified", "grant_id": g["id"]}
+                else:
+                    state, err = "expired", CrmError("GRANT-EXPIRED", "허용 요청 시간이 지났어요.", "다시 요청하세요.")
+            elif v.code == _SIG_EXPIRED:
+                state, err = "expired", CrmError("GRANT-EXPIRED", "동의 요청 시간이 지났어요.", "PC 앱에서 다시 시도하세요.")
+            else:
+                state, err = "rejected", _consent_denied()
+        c.execute("UPDATE chat_consent_challenges SET state=%s, settled_at=now() WHERE id=%s AND state='issued'", (state, ch["id"]))
+    if err:
+        raise err
+    return out
+
+
+def session_resume(uid: str, sid: str):
+    s = session_get(uid, sid)
+    if s["status"] != "active" or s.get("binding_version") != 2:
+        raise CrmError("SESSION-CLOSED", "이 대화는 재개할 수 없어요.", "새 대화를 시작하세요.")
+    return _session_out(s)
+
+
 def sessions_list(uid: str) -> list:
     with tx() as c:
         return [_session_out(s) for s in _all(c, "SELECT * FROM chat_sessions WHERE user_id=%s ORDER BY created_at DESC, id LIMIT 50", (uid,))]
@@ -147,6 +833,109 @@ def _session_get(c, uid, sid, lock=False):
 def session_get(uid: str, sid: str) -> dict:
     with tx() as c:
         return dict(_session_get(c, uid, sid))
+
+
+def _approval_closed():
+    return CrmError("APPROVAL-CLOSED", "확인할 수 없는 작업이에요.")
+
+
+def _approval_session(c, uid, sid):
+    _user_lock(c, uid)
+    session = _session_get(c, uid, sid, lock=True)
+    if session["status"] != "active":
+        raise _approval_closed()
+    _require_consumed_session_consent(c, uid, session)
+    return session
+
+
+def approval_prepare(uid, sid, tid, op, params):
+    """Create a server-owned preview only; this path never executes the action."""
+    import facade
+    if (op not in CHAT_APPROVABLE_OPS or not isinstance(params, dict)
+            or any(k in params for k in ("uid", "user_id", "bind"))):
+        raise _approval_closed()
+    spec = facade.OPS.get(op)
+    if not spec or spec.tier != "decide" or spec.bind != "hmac":
+        raise _approval_closed()
+    with db.tx_scope() as c:
+        _approval_session(c, uid, sid)
+        if not _one(c, "SELECT id FROM chat_turns WHERE id=%s AND session_id=%s AND status='running' FOR UPDATE", (tid, sid)):
+            raise _approval_closed()
+        if _one(c, "SELECT count(*) AS n FROM chat_approvals WHERE user_id=%s AND session_id=%s "
+                   "AND state='pending' AND expires_at>clock_timestamp()", (uid, sid))["n"] >= APPROVAL_PENDING_LIMIT:
+            raise CrmError("RATE-LIMIT", "확인 대기 중인 작업이 너무 많아요.")
+        if _one(c, "SELECT count(*) AS n FROM chat_approvals WHERE user_id=%s AND session_id=%s", (uid, sid))["n"] >= APPROVAL_SESSION_LIMIT:
+            raise CrmError("RATE-LIMIT", "이 대화의 확인 작업 한도에 도달했어요.")
+        facade.validate(spec, params)
+        norm = facade.normalize(op, params)
+        preview = facade.preview(op, norm, uid)
+        if preview.get("irreversible") is not False:
+            raise _approval_closed()
+        aid = _id("ca")
+        c.execute("INSERT INTO chat_approvals (id,user_id,session_id,turn_id,op,params,preview,expires_at) "
+                  "VALUES (%s,%s,%s,%s,%s,%s,%s,clock_timestamp()+make_interval(secs => %s))",
+                  (aid, uid, sid, tid, op, Jsonb(norm), Jsonb(preview), APPROVAL_TTL_SECONDS))
+        return {"status": "pending_confirmation", "approval_id": aid}
+
+
+def approvals_list(uid, sid):
+    with tx() as c:
+        _session_get(c, uid, sid)
+        rows = _all(c, "SELECT * FROM chat_approvals WHERE user_id=%s AND session_id=%s "
+                       "AND (state IN ('confirmed','cancelled') OR (state='pending' AND expires_at>clock_timestamp())) "
+                       "ORDER BY created_at,id LIMIT %s", (uid, sid, APPROVAL_SESSION_LIMIT))
+        return [{"id": r["id"], "turn_id": r["turn_id"], "op": r["op"], "params": r["params"],
+                 "shown": r["preview"]["shown"], "impact": r["preview"]["impact"],
+                 "irreversible": r["preview"]["irreversible"], "status": r["state"],
+                 "created_at": _iso(r["created_at"]), "expires_at": _iso(r["expires_at"]),
+                 "finished_at": _iso(r["finished_at"]), "result": r["result"]} for r in rows]
+
+
+def approval_confirm(uid, sid, aid):
+    """Execute exactly the stored action, after current consent and preview revalidation."""
+    import facade
+    from chat_mcp_gateway import _mint_trusted_principal
+    if not chat_mcp_enabled():
+        raise _off()
+    with db.tx_scope() as c:
+        session = _approval_session(c, uid, sid)
+        row = _one(c, "SELECT * FROM chat_approvals WHERE id=%s AND user_id=%s AND session_id=%s FOR UPDATE", (aid, uid, sid))
+        if not row or row["state"] != "pending" or row["expires_at"] <= _db_clock(c):
+            raise _approval_closed()
+        op, params, previous = row["op"], row["params"], row["preview"]
+        if op not in CHAT_APPROVABLE_OPS or not isinstance(params, dict) or not isinstance(previous, dict):
+            raise _approval_closed()
+        spec = facade.OPS.get(op)
+        if not spec or spec.tier != "decide" or spec.bind != "hmac":
+            raise _approval_closed()
+        now_preview = facade.preview(op, params, uid)
+        if (previous.get("irreversible") is not False or now_preview.get("irreversible") is not False
+                or not hmac.compare_digest(previous["bind"], now_preview["bind"])
+                or previous != now_preview):
+            raise CrmError("APPROVAL-STALE", "대상이 바뀌어 다시 확인해야 해요.")
+        principal = _mint_trusted_principal(user_id=uid, device_id=session["device_id"], session_id=sid,
+                                           provider=session["provider"], model=session["model"],
+                                           expires_at=_db_clock(c) + timedelta(seconds=15))
+        result = facade.dispatch("decide", op, params, principal, previous["bind"])
+        if getattr(result, "isError", False):
+            raise CrmError("MCP-ERROR", "작업을 완료하지 못했어요.")
+        value = getattr(result, "structured_content", None)
+        if not isinstance(value, dict):
+            raise CrmError("MCP-ERROR", "작업 결과를 확인하지 못했어요.")
+        c.execute("UPDATE chat_approvals SET state='confirmed',result=%s,finished_at=clock_timestamp() WHERE id=%s",
+                  (Jsonb(value), aid))
+        return {"status": "confirmed", "result": value}
+
+
+def approval_cancel(uid, sid, aid):
+    with db.tx_scope() as c:
+        _user_lock(c, uid)
+        _session_get(c, uid, sid, lock=True)
+        row = _one(c, "SELECT state,expires_at FROM chat_approvals WHERE id=%s AND user_id=%s AND session_id=%s FOR UPDATE", (aid, uid, sid))
+        if not row or row["state"] != "pending" or row["expires_at"] <= _db_clock(c):
+            raise _approval_closed()
+        c.execute("UPDATE chat_approvals SET state='cancelled',finished_at=clock_timestamp() WHERE id=%s", (aid,))
+        return {"status": "cancelled"}
 
 
 def _last_seq(c, tid) -> int:
@@ -191,8 +980,8 @@ def _sweep_idle(c, sid):
     return [_finish(c, t, "failed", "TURN-TIMEOUT") for t in rows]
 
 
-def turn_create(uid: str, sid: str, text, client_turn_id, *, connected) -> dict:
-    out = _turn_create(uid, sid, text, client_turn_id, connected)
+def turn_create(uid: str, sid: str, text, client_turn_id, *, connected, capable=None) -> dict:
+    out = _turn_create(uid, sid, text, client_turn_id, connected, capable)
     if isinstance(out, list):   # 장치 철회 — 세션을 닫았다(커밋). 끝낸 턴 이벤트는 거절과 함께 넘겨 SSE 로 보낸다
         e = CrmError("DEVICE-GONE", "이 대화의 PC 연결이 해제됐어요.", "새 대화를 시작하세요.")
         e.events = out
@@ -200,7 +989,7 @@ def turn_create(uid: str, sid: str, text, client_turn_id, *, connected) -> dict:
     return out
 
 
-def _turn_create(uid, sid, text, client_turn_id, connected):
+def _turn_create(uid, sid, text, client_turn_id, connected, capable=None):
     """턴 만들기. connected(device_id) → bool — 장치 WS 가 붙어 있나(허브). 반환 {turn, created, session, events(서버가 넣은 끝 이벤트)}."""
     if not isinstance(text, str) or not text.strip():
         raise CrmError("ARG-INVALID", "보낼 글이 비었어요.")
@@ -216,8 +1005,18 @@ def _turn_create(uid, sid, text, client_turn_id, connected):
             return {"turn": dict(old), "created": False, "session": dict(s), "events": []}
         if s["status"] != "active":
             raise CrmError("SESSION-CLOSED", "끝난 대화예요.", "새 대화를 시작하세요.")
+        if s.get("binding_version", 0) != 2:
+            raise CrmError("PROVIDER-UNAVAILABLE", "이전 형식의 대화는 새 요청을 시작할 수 없어요.", "새 대화를 시작하세요.")
         if s["device_id"] not in _active_devices(c, uid):   # 닫기는 커밋하고(트랜잭션을 정상으로 끝낸 뒤) 거절한다
             return _close_session(c, sid, "DEVICE-GONE")
+        if s.get("provider") in GRANT_PROVIDERS:
+            _require_consumed_session_consent(c, uid, s)
+        elif s.get("provider") != "fake":
+            raise CrmError("PROVIDER-UNAVAILABLE", "이 공급자를 사용할 수 없어요.", "새 대화를 시작하세요.")
+        if not connected(s["device_id"]):
+            raise CrmError("DEVICE-OFFLINE", "PC 가 연결돼 있지 않아요.", "PC 에서 my-crm 에이전트 대화를 켜세요.")
+        if not capable or not capable(s):
+            raise CrmError("PROVIDER-UNAVAILABLE", "이 대화에 고정한 AI 또는 모델을 PC가 제공하지 않아요.", "연결 상태와 선택을 확인하세요.")
         evs = [e for e in _sweep_idle(c, sid) if e]
         if _one(c, "SELECT 1 FROM chat_turns WHERE session_id=%s AND status='running'", (sid,)):
             raise CrmError("TURN-BUSY", "앞 답이 아직 끝나지 않았어요.", "끝나거나 중지한 뒤 보내세요.")
@@ -225,12 +1024,16 @@ def _turn_create(uid, sid, text, client_turn_id, connected):
                     "WHERE s.user_id=%s AND t.created_at > now() - interval '60 seconds'", (uid,))["n"]
         if n >= TURNS_PER_MINUTE:
             raise CrmError("RATE-LIMIT", f"1분에 {TURNS_PER_MINUTE}번까지 보낼 수 있어요.", "잠시 뒤 다시 보내세요.")
-        if not connected(s["device_id"]):
-            raise CrmError("DEVICE-OFFLINE", "PC 가 연결돼 있지 않아요.", "PC 에서 my-crm 에이전트 대화(python3 -m agent chat)를 켜세요.")
         t = _one(c, "INSERT INTO chat_turns (id,session_id,client_turn_id) VALUES (%s,%s,%s) RETURNING *", (_id("ct"), sid, client_turn_id))
         c.execute("INSERT INTO chat_messages (id,session_id,turn_id,role,body) VALUES (%s,%s,%s,'user',%s)", (_id("cm"), sid, t["id"], text))
         c.execute("UPDATE chat_sessions SET last_at=now() WHERE id=%s", (sid,))
-        return {"turn": dict(t), "created": True, "session": dict(s), "events": evs, "text": text}
+        outcomes = _all(c, "SELECT id,op,state FROM chat_approvals WHERE user_id=%s AND session_id=%s "
+                           "AND state IN ('confirmed','cancelled') ORDER BY finished_at,id LIMIT %s",
+                        (uid, sid, APPROVAL_SESSION_LIMIT))
+        safe_outcomes = [{"id": row["id"], "op": row["op"], "status": row["state"]} for row in outcomes
+                         if row["op"] in CHAT_APPROVABLE_OPS]
+        return {"turn": dict(t), "created": True, "session": dict(s), "events": evs, "text": text,
+                "approval_outcomes": safe_outcomes}
 
 
 def turn_fail(tid: str, code: str):
@@ -421,6 +1224,9 @@ class _Dev:
         self.ws, self.dev = ws, dev
         self.lock = asyncio.Lock()
         self.providers: list = []
+        self.v2 = False
+        self.agent_version = None
+        self.capabilities: list = []
         self.closed = False
         self.stop_sent: set = set()   # 이 연결에서 turn.stop 을 보낸 turn_id(끝난 턴 이벤트가 오면 한 번만 다시 알린다)
 
@@ -522,10 +1328,22 @@ class Routes:
         u = self.usage
         return [
             Route("/api/chat/sessions", u("web:chat_sessions", self.sessions), methods=["GET", "POST"]),
+            Route("/api/chat/capabilities", u("web:chat_capabilities", self.capabilities)),
             Route("/api/chat/sessions/{sid}/messages", u("web:chat_messages", self.messages)),
+            Route("/api/chat/sessions/{sid}/approvals", u("web:chat_approvals", self.approvals)),
+            Route("/api/chat/sessions/{sid}/approvals/{aid}/confirm", u("web:chat_approval_confirm", self.approval_confirm), methods=["POST"]),
+            Route("/api/chat/sessions/{sid}/approvals/{aid}/cancel", u("web:chat_approval_cancel", self.approval_cancel), methods=["POST"]),
             Route("/api/chat/sessions/{sid}/turns", u("web:chat_turns", self.turns), methods=["POST"]),
             Route("/api/chat/sessions/{sid}/stop", u("web:chat_stop", self.stop), methods=["POST"]),
             Route("/api/chat/sessions/{sid}/stream", u("web:chat_stream", self.stream)),
+            Route("/api/chat/grants", u("web:chat_grant", self.grant), methods=["POST"]),
+            Route("/api/chat/mcp", u("web:chat_mcp", self.chat_mcp), methods=["POST"]),
+            Route(LAUNCH_AUTHORIZATION_PATH, u("web:chat_launch_authorization", self.launch_authorization), methods=["POST"]),
+            Route("/api/chat/consent/keys/begin", u("web:chat_consent_key_begin", self.consent_key_begin), methods=["POST"]),
+            Route("/api/chat/consent/keys/activate", u("web:chat_consent_key_activate", self.consent_key_activate), methods=["POST"]),
+            Route("/api/chat/consent/keys/revoke", u("web:chat_consent_key_revoke", self.consent_key_revoke), methods=["POST"]),
+            Route("/api/chat/consent/challenges/issue", u("web:chat_consent_issue", self.consent_issue), methods=["POST"]),
+            Route("/api/chat/consent/challenges/verify", u("web:chat_consent_verify", self.consent_verify), methods=["POST"]),
             WebSocketRoute("/api/device/chat/ws", self.device_ws),
         ]
 
@@ -559,7 +1377,22 @@ class Routes:
             return err
         try:
             if request.method == "POST":
-                did = (await self._body(request)).get("device_id")
+                body = await self._body(request)
+                if body.get("operation") in ("new", "resume"):
+                    if body["operation"] == "resume":
+                        out = await run_in_threadpool(session_resume, uid, body.get("session_id"))
+                        out["connected"] = hub.connected(uid, out["device_id"])
+                        return JSONResponse(out, headers={"cache-control": "no-store"})
+                    did, provider, model, client_id = (body.get("device_id"), body.get("provider"), body.get("model"), body.get("client_session_id"))
+                    d = hub.dev(uid, did) if isinstance(did, str) else None
+                    capable = bool(d and d.v2 and _supports(d.capabilities, provider, model))
+                    out, closed, created = await run_in_threadpool(session_new, uid, did, provider, model, client_id, capability_ok=capable)
+                    for old_sid, ev in closed:
+                        hub.publish_event(uid, old_sid, ev)
+                    out["connected"] = hub.connected(uid, did)
+                    out["created"] = created
+                    return JSONResponse(out, status_code=201 if created else 200, headers={"cache-control": "no-store"})
+                did = body.get("device_id")
                 if did is not None and not isinstance(did, str):
                     raise CrmError("ARG-INVALID", "device_id 는 글자여야 해요.")
                 out, closed = await run_in_threadpool(session_open, uid, did)
@@ -577,6 +1410,22 @@ class Routes:
         except CrmError as e:
             return _err(e)
 
+    async def capabilities(self, request):
+        uid, err = await self._gate(request)
+        if err:
+            return err
+        try:
+            ids = await run_in_threadpool(_active_devices_for_user, uid)
+            devices = []
+            for did in ids:
+                d = hub.dev(uid, did)
+                if d and d.v2:
+                    devices.append({"device_id": did, "connected": True, "agent_version": d.agent_version,
+                                    "capabilities_version": 2, "capabilities": d.capabilities})
+            return JSONResponse({"devices": devices}, headers={"cache-control": "no-store"})
+        except CrmError as e:
+            return _err(e)
+
     async def messages(self, request):
         uid, err = await self._gate(request)
         if err:
@@ -587,6 +1436,36 @@ class Routes:
             return _err(e)
         return JSONResponse({"messages": out}, headers={"cache-control": "no-store"})
 
+    async def approvals(self, request):
+        uid, err = await self._gate(request)
+        if err:
+            return err
+        try:
+            out = await run_in_threadpool(approvals_list, uid, request.path_params["sid"])
+            return JSONResponse({"approvals": out}, headers={"cache-control": "no-store"})
+        except CrmError as e:
+            return _err(e)
+
+    async def _approval_action(self, request, action):
+        uid, err = await self._gate(request, post=True)
+        if err:
+            return err
+        try:
+            if await self._body(request) != {}:
+                raise CrmError("ARG-INVALID", "확인 요청에는 작업 내용을 넣을 수 없어요.")
+            out = await run_in_threadpool(action, uid, request.path_params["sid"], request.path_params["aid"])
+            return JSONResponse(out, headers={"cache-control": "no-store"})
+        except CrmError as e:
+            return _err(e)
+        except Exception:
+            return _err(CrmError("MCP-ERROR", "작업을 완료하지 못했어요."))
+
+    async def approval_confirm(self, request):
+        return await self._approval_action(request, approval_confirm)
+
+    async def approval_cancel(self, request):
+        return await self._approval_action(request, approval_cancel)
+
     async def turns(self, request):
         uid, err = await self._gate(request, post=True)
         if err:
@@ -595,7 +1474,8 @@ class Routes:
         try:
             b = await self._body(request)
             r = await run_in_threadpool(turn_create, uid, sid, b.get("text"), b.get("client_turn_id"),
-                                        connected=lambda did: hub.connected(uid, did))
+                                        connected=lambda did: hub.connected(uid, did),
+                                        capable=lambda s: (lambda d: bool(d and d.v2 and _supports(d.capabilities, s["provider"], s["model"])))(hub.dev(uid, s["device_id"])))
         except CrmError as e:
             for ev in getattr(e, "events", []):   # DEVICE-GONE — 세션을 닫으며 끝낸 턴
                 hub.publish_event(uid, sid, ev)
@@ -607,14 +1487,17 @@ class Routes:
             hub.publish(uid, sid, f"{t['id']}:0", "turn", {"turn_id": t["id"], "client_turn_id": t["client_turn_id"], "text": r["text"],
                                                            "created_at": _iso(t["created_at"])})
             d = hub.dev(uid, r["session"]["device_id"])
-            msg = {"type": "turn.start", "session_id": sid, "turn_id": t["id"], "text": r["text"]}
+            msg = {"type": "turn.start", "session_id": sid, "turn_id": t["id"], "text": r["text"],
+                   "provider": r["session"]["provider"], "model": r["session"]["model"], "binding_version": r["session"]["binding_version"]}
+            if r.get("approval_outcomes"):
+                msg["approval_outcomes"] = r["approval_outcomes"]
             if r["session"]["cli_session_ref"]:
                 msg["cli_session_ref"] = r["session"]["cli_session_ref"]
+            if r["session"].get("binding_version") == 2 and r["session"].get("provider") in GRANT_PROVIDERS:
+                msg["launch_authorization_path"] = LAUNCH_AUTHORIZATION_PATH
             if not (d and await d.send(msg)):   # 붙어 있다고 봤는데 보내기 실패 — 턴을 끝낸다(재실행 없음)
                 ev = await run_in_threadpool(turn_fail, t["id"], "DEVICE-OFFLINE")
                 hub.publish_event(uid, sid, ev)
-            elif d.providers and not r["session"]["provider"]:
-                await run_in_threadpool(provider_set, sid, d.providers[0])
         return JSONResponse({"turn_id": t["id"], "status": t["status"], "created": r["created"]},
                             status_code=201 if r["created"] else 200, headers={"cache-control": "no-store"})
 
@@ -689,6 +1572,242 @@ class Routes:
 
         return StreamingResponse(gen(), media_type="text/event-stream",
                                  headers={"cache-control": "no-store", "x-accel-buffering": "no"})
+
+    @staticmethod
+    async def _chat_mcp_body(request) -> dict:
+        if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
+            raise CrmError("ARG-INVALID", "JSON 본문이 필요해요.")
+        raw = await request.body()
+        if len(raw) > CONSENT_BODY_MAX:
+            raise CrmError("TEXT-LIMIT", "요청 본문이 너무 커요.")
+
+        def pairs(items):
+            out = {}
+            for key, value in items:
+                if key in out:
+                    raise ValueError("duplicate key")
+                out[key] = value
+            return out
+
+        try:
+            body = json.loads(raw.decode("utf-8"), object_pairs_hook=pairs,
+                              parse_constant=lambda _v: (_ for _ in ()).throw(ValueError("constant")))
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            raise CrmError("ARG-INVALID", "JSON 본문이 필요해요.") from None
+        if not isinstance(body, dict) or body.get("tool") not in ("list", "find", "read", "write", "decide"):
+            raise CrmError("ARG-INVALID", "도구 이름이 올바르지 않아요.")
+        tool = body["tool"]
+        common = {"session_id", "turn_id", "tool", "params"}
+        allowed = common if tool in ("list", "find") else common | {"op", "bind"}
+        required = common if tool in ("list", "find") else common | {"op"}
+        if not required <= set(body) or set(body) - allowed:
+            raise CrmError("ARG-INVALID", "필드가 빠졌거나 받지 않는 필드가 있어요.")
+        if (not isinstance(body["session_id"], str) or not re.fullmatch(r"cs_[0-9a-f]{24}", body["session_id"])
+                or not isinstance(body["turn_id"], str) or not re.fullmatch(r"ct_[0-9a-f]{24}", body["turn_id"])):
+            raise CrmError("ARG-INVALID", "현재 대화와 턴 식별자가 필요해요.")
+        if tool in ("read", "write", "decide") and (not isinstance(body.get("op"), str) or not body["op"] or len(body["op"]) > 128):
+            raise CrmError("ARG-INVALID", "op 값이 올바르지 않아요.")
+        if tool in ("read", "write", "decide") and "bind" in body and (not isinstance(body["bind"], str) or len(body["bind"]) > 128):
+            raise CrmError("ARG-INVALID", "bind 값이 올바르지 않아요.")
+        if not isinstance(body["params"], dict):
+            raise CrmError("ARG-INVALID", "params 객체가 필요해요.")
+        if tool == "find" and (set(body["params"]) - {"query", "family", "op"}):
+            raise CrmError("ARG-INVALID", "find 인자가 올바르지 않아요.")
+        return body
+
+    async def chat_mcp(self, request):
+        """Short session-scoped route for the local provider agent. Disabled by default."""
+        if not chat_mcp_enabled():
+            return _err(_off())
+        try:
+            authorization = self._bearer(request)
+            dev = await run_in_threadpool(self._auth, authorization)
+            await run_in_threadpool(imports._rate, dev)
+            body = await self._chat_mcp_body(request)
+            result = await run_in_threadpool(_chat_mcp_execute, dev, authorization, body)
+            return JSONResponse({"result": result}, headers={"cache-control": "no-store"})
+        except CrmError as e:
+            return _err(e)
+        except Exception:
+            # Never put request headers, params, or raw exception text in an HTTP response.
+            return _err(CrmError("MCP-ERROR", "도구 호출을 완료하지 못했어요."))
+
+    @staticmethod
+    async def _launch_authorization_body(request) -> dict:
+        if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
+            raise CrmError("ARG-INVALID", "JSON 본문이 필요해요.")
+        raw = await request.body()
+        if len(raw) > 512:
+            raise CrmError("TEXT-LIMIT", "요청 본문이 너무 커요.")
+        def pairs(items):
+            out = {}
+            for key, value in items:
+                if key in out:
+                    raise ValueError("duplicate key")
+                out[key] = value
+            return out
+        try:
+            body = json.loads(raw.decode("utf-8"), object_pairs_hook=pairs,
+                              parse_constant=lambda _v: (_ for _ in ()).throw(ValueError("constant")))
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            raise CrmError("ARG-INVALID", "JSON 본문이 필요해요.") from None
+        if (not isinstance(body, dict) or set(body) != {"session_id", "turn_id"}
+                or not isinstance(body["session_id"], str) or not re.fullmatch(r"cs_[0-9a-f]{24}", body["session_id"])
+                or not isinstance(body["turn_id"], str) or not re.fullmatch(r"ct_[0-9a-f]{24}", body["turn_id"])):
+            raise CrmError("ARG-INVALID", "현재 대화와 턴 식별자가 필요해요.")
+        return body
+
+    async def launch_authorization(self, request):
+        """Revalidate the device's current provider launch scope for each request."""
+        if not enabled() or not PROVIDER_LAUNCH_READY:
+            return _err(_off())
+        try:
+            authorization = self._bearer(request)
+            dev = await run_in_threadpool(self._auth, authorization)
+            await run_in_threadpool(imports._rate, dev)
+            body = await self._launch_authorization_body(request)
+            result = await run_in_threadpool(_chat_launch_authorization, dev, authorization,
+                                             body["session_id"], body["turn_id"])
+            return JSONResponse(result, headers={"cache-control": "no-store", "pragma": "no-cache"})
+        except CrmError as e:
+            return _err(e)
+        except Exception:
+            return _err(CrmError("MCP-ERROR", "대화 실행 권한을 확인하지 못했어요."))
+
+    # ── PC 허용 grant 요청 · 동의 키 · challenge (2026-11-07) ──
+    # 권한 주체 = 웹 세션 uid 하나. 본문에 user_id 를 받지 않는다(모르는 필드 = ARG-INVALID).
+    # Origin 검사는 CSRF 방어일 뿐 PC 증거가 아니다. X-MyCRM-Desktop·renderer 표식은 읽지 않는다.
+    # 키·challenge 경로는 세션에 더해 Authorization: Bearer <장치 토큰>을 요구하고, 원문 그대로 helper 에 넘긴다 —
+    # 토큰 주인 = 세션 uid · 활성 장치 · 설치본.device_id 일치는 helper(_consent_bind)가 tx 안에서 본다. 장치 id 는 토큰에서만 나온다.
+    # grant route 는 요청만 저장한다. challenge verify 가 승인하고, session_new 가 같은 트랜잭션에서 소비한다.
+    # provider turn dispatch 는 별도 안전 검증 전까지 차단한다.
+
+    @staticmethod
+    async def _strict_body(request, spec: dict, optional=()) -> dict:
+        """JSON 객체 본문을 엄격히 읽는다. spec = {필드: (최대 글자 수, null 허용)}. optional 에 없는 spec 필드는 필수.
+        Content-Type application/json · CONSENT_BODY_MAX 바이트 · 중복 키·모르는 필드·문자열 아닌 값 = 거절."""
+        if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
+            raise CrmError("ARG-INVALID", "JSON 본문이 필요해요.")
+        cl = request.headers.get("content-length")
+        if cl is not None and (not cl.isdigit() or int(cl) > CONSENT_BODY_MAX):
+            raise CrmError("TEXT-LIMIT", "요청 본문이 너무 커요.")
+        raw = bytearray()
+        async for chunk in request.stream():
+            raw += chunk
+            if len(raw) > CONSENT_BODY_MAX:
+                raise CrmError("TEXT-LIMIT", "요청 본문이 너무 커요.")
+
+        def pairs(kv):
+            d = {}
+            for k, v in kv:
+                if k in d:
+                    raise ValueError("duplicate key")
+                d[k] = v
+            return d
+
+        def no_const(_):
+            raise ValueError("constant")
+
+        try:
+            b = json.loads(bytes(raw).decode("utf-8"), object_pairs_hook=pairs, parse_constant=no_const)
+        except (ValueError, RecursionError):   # UnicodeDecodeError·JSONDecodeError 포함, 깊은 중첩
+            raise CrmError("ARG-INVALID", "JSON 본문이 필요해요.") from None
+        if not isinstance(b, dict):
+            raise CrmError("ARG-INVALID", "JSON 객체가 필요해요.")
+        required = set(spec) - set(optional)
+        if not required <= set(b) or not set(b) <= set(spec):
+            raise CrmError("ARG-INVALID", "필드가 빠졌거나 받지 않는 필드가 있어요.")
+        for k, v in b.items():
+            max_len, nullable = spec[k]
+            if v is None and nullable:
+                continue
+            if type(v) is not str or not 1 <= len(v) <= max_len:
+                raise CrmError("ARG-INVALID", f"{k} 값이 올바르지 않아요.")
+        return b
+
+    @staticmethod
+    def _bearer(request) -> str:
+        """Authorization 머리글 원문(검증은 helper 가 imports.authenticate 로). 없음·여러 개·Bearer 아님·너무 김 = AUTH-INVALID."""
+        hs = request.headers.getlist("authorization")
+        if len(hs) != 1 or not hs[0].startswith("Bearer ") or len(hs[0]) > AUTHZ_MAX:
+            raise CrmError("AUTH-INVALID", "장치 토큰이 없거나 형식이 틀렸어요.", "장치를 다시 연결하세요.")
+        return hs[0]
+
+    @staticmethod
+    def _b64url_bytes(s: str, field: str) -> bytes:
+        """canonical unpadded base64url → bytes. 별칭(패딩 비트)·패딩·다른 글자 = ARG-INVALID."""
+        try:
+            if not B64URL_RE.fullmatch(s):
+                raise ValueError
+            raw = base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+            if base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") != s:
+                raise ValueError
+        except ValueError:   # binascii.Error 포함
+            raise CrmError("ARG-INVALID", f"{field} 값이 올바르지 않아요.") from None
+        return raw
+
+    async def _consent_call(self, request, spec, call, optional=(), bearer=True, status=200, after=None):
+        """스위치(503) → 세션(401) → Origin(403, CSRF) → Bearer 형식(401) → 본문 모양(400·413) → helper(uid = 세션)."""
+        uid, err = await self._gate(request, post=True)
+        if err:
+            return err
+        try:
+            authz = self._bearer(request) if bearer else None
+            b = await self._strict_body(request, spec, optional)
+            out = await run_in_threadpool(call, uid, authz, b)
+            if isinstance(out, tuple):
+                out, status = out
+            if after is not None:
+                await after(uid, authz, b, out)
+        except CrmError as e:
+            return _err(e)
+        return JSONResponse(out, status_code=status, headers={"cache-control": "no-store"})
+
+    async def grant(self, request):
+        """POST /api/chat/grants {device_id, provider, model|null, request_id} → pending grant(멱등). device_id 는 권한이 아니라 선택값 —
+        grant_request 가 세션 uid 의 활성 장치인지 본다. 연결된 PC에 동의 요청을 알린다. 201 새로 · 200 같은 요청."""
+        def call(uid, _authz, b):
+            g, created = grant_request(uid, b["device_id"], b["provider"], b["model"], b["request_id"])
+            return ({"request_id": g["request_id"], "device_id": g["device_id"], "provider": g["provider"], "model": g["model"],
+                     "state": g["state"], "expires_at": _iso(g["expires_at"]), "created": created}, 201 if created else 200)
+        async def notify(uid, _authz, _body, result):
+            d = hub.dev(uid, result["device_id"])
+            if d and result["state"] == "pending":
+                await d.send({"type": "consent.request", "request_id": result["request_id"]})
+        return await self._consent_call(request, {"device_id": (200, False), "provider": (40, False), "model": (120, True),
+                                                  "request_id": (64, False)}, call, bearer=False, after=notify)
+
+    async def consent_key_begin(self, request):
+        """POST /api/chat/consent/keys/begin {installation_id, spki(base64url DER)} + Bearer → {key_id, claims}."""
+        def call(uid, authz, b):
+            return consent_key_begin(uid, authz, b["installation_id"], self._b64url_bytes(b["spki"], "spki"))
+        return await self._consent_call(request, {"installation_id": (40, False), "spki": (128, False)}, call)
+
+    async def consent_key_activate(self, request):
+        """POST /api/chat/consent/keys/activate {installation_id, key_id, pop_signature, rotate_signature?} + Bearer → {key_id, state, rotated}."""
+        def call(uid, authz, b):
+            return consent_key_activate(uid, authz, b["installation_id"], b["key_id"], b["pop_signature"], b.get("rotate_signature"))
+        return await self._consent_call(request, {"installation_id": (40, False), "key_id": (40, False), "pop_signature": (128, False),
+                                                  "rotate_signature": (128, False)}, call, optional=("rotate_signature",))
+
+    async def consent_key_revoke(self, request):
+        """POST /api/chat/consent/keys/revoke {installation_id} + Bearer → {revoked: 폐기한 키 수}."""
+        def call(uid, authz, b):
+            return {"revoked": consent_key_revoke_bound(uid, authz, b["installation_id"])}
+        return await self._consent_call(request, {"installation_id": (40, False)}, call)
+
+    async def consent_issue(self, request):
+        """POST /api/chat/consent/challenges/issue {installation_id, request_id} + Bearer → {challenge_id, claims}."""
+        def call(uid, authz, b):
+            return consent_challenge_issue(uid, authz, b["installation_id"], b["request_id"])
+        return await self._consent_call(request, {"installation_id": (40, False), "request_id": (64, False)}, call)
+
+    async def consent_verify(self, request):
+        """POST /api/chat/consent/challenges/verify {installation_id, nonce, signature} + Bearer → {challenge_id, state, grant_id}.
+        성공 시 grant 는 approved, consume/provider 실행은 여전히 fail-closed."""
+        def call(uid, authz, b):
+            return consent_challenge_verify(uid, authz, b["installation_id"], b["nonce"], b["signature"])
+        return await self._consent_call(request, {"installation_id": (40, False), "nonce": (128, False), "signature": (128, False)}, call)
 
     # ── 장치 WS ──
     @staticmethod
@@ -779,6 +1898,11 @@ class Routes:
             if typ == "hello":
                 p = m.get("providers")
                 d.providers = [x for x in p if isinstance(x, str) and PROVIDER_RE.match(x)][:8] if isinstance(p, list) else []
+                d.v2 = m.get("capabilities_version") == 2 and isinstance(m.get("agent_version"), str) and len(m["agent_version"]) <= 80
+                d.agent_version = m.get("agent_version") if d.v2 else None
+                d.capabilities = _normalize_capabilities(m.get("capabilities")) if d.v2 else []
+                if not d.capabilities:
+                    d.v2 = False
             elif typ == "event":
                 try:
                     r = await run_in_threadpool(ingest, dev, m.get("turn_id"), m.get("seq"), m.get("kind"), m.get("data"))
@@ -788,7 +1912,10 @@ class Routes:
                     # 연결을 살려 두면 그 seq 이후가 전부 「빈 칸」이 되어 다음 재연결까지 묶인다
                     name = type(e).__name__[:30].upper()
                     db.usage_count(None, "api:chat_ws_event", name if _CODE.match(name) else "EXC")
-                    await d.ws.close(code=1011)
+                    try:
+                        await d.ws.close(code=1011)
+                    except Exception:   # 반대편이 이미 닫은 WS — 연결 정리는 device_ws 의 finally 가 맡는다
+                        pass
                     return
                 if r["state"] == "foreign":
                     continue

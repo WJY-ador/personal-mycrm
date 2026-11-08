@@ -15,9 +15,11 @@ import os
 import re
 import sys
 
-from . import AGENT_VERSION, config as _config, contract, hmacid, keystore, osutil, runner, schedule, store as _store
+from . import AGENT_VERSION, chat_mcp_bridge, config as _config, contract, hmacid, keystore, osutil, runner, schedule, store as _store
 
 EXIT_OK, EXIT_ERR, EXIT_USAGE, EXIT_HALT = 0, 1, 2, 3
+CHAT_CLAUDE_PROVIDER_READY = False  # server+desktop launch lifecycle review gate; keep default OFF
+CHAT_CODEX_PROVIDER_READY = False  # subscription home/login and production package trust are unverified
 
 
 class Ctx:
@@ -82,6 +84,11 @@ def _parser() -> argparse.ArgumentParser:
     choice.add_argument("--path", help="설치된 Claude 실행 파일 절대 경로")
     choice.add_argument("--clear", action="store_true", help="저장된 CLI 경로만 지움")
 
+    codex_cfg = sub.add_parser("configure-codex", help="Codex CLI 실행 파일과 명시 모델 ID 설정")
+    codex_cfg.add_argument("--path", required=True, help="설치된 Codex 실행 파일 절대 경로")
+    codex_cfg.add_argument("--model", action="append", required=True,
+                           help="구독에서 확인한 모델 ID(여러 번 지정 가능, 최대 20개)")
+
     s = sub.add_parser("schedule", help="현재 사용자 예약(1시간마다)")
     s.add_argument("action", choices=("install", "remove"))
 
@@ -96,6 +103,16 @@ def _parser() -> argparse.ArgumentParser:
 
     ch = sub.add_parser("chat", help="웹 「대화」 — 서버에 WebSocket 으로 붙어 받은 턴을 이 PC 에서 실행(상주, 종료 = Ctrl+C)")
     ch.add_argument("--fake", action="store_true", help="모델 대신 정해진 가짜 대본으로 답한다(시험·측정용)")
+    ch.add_argument("--consent-only", action="store_true", help="데스크톱 native 동의 요청만 중계한다(모델 실행 없음)")
+
+    bridge = sub.add_parser("chat-mcp-bridge", help=argparse.SUPPRESS)
+    bridge.add_argument("--agent-home", required=True)
+    bridge.add_argument("--session-id", required=True)
+    bridge.add_argument("--turn-id", required=True)
+    bridge.add_argument("--device-id", required=True)
+    bridge.add_argument("--provider", required=True, choices=("claude", "codex"))
+    bridge.add_argument("--model", required=True)
+    bridge.add_argument("--authorization-path", required=True)
 
     m = sub.add_parser("migrate", help="실자료 이관(board-migration/2) — login·logout·stage·status·cancel·receipt")
     ms = m.add_subparsers(dest="mcmd")
@@ -664,6 +681,41 @@ def cmd_configure_cli(ctx: Ctx, a) -> int:
     return EXIT_OK
 
 
+def cmd_configure_codex(ctx: Ctx, a) -> int:
+    path = a.path
+    models = a.model
+    if (not isinstance(path, str) or not path or not os.path.isabs(path) or len(path) > 4096
+            or "\x00" in path):
+        ctx.say("Codex 실행 파일 절대 경로를 확인해 주세요.")
+        return EXIT_ERR
+    selected = os.path.realpath(path)
+    if not os.path.isfile(selected) or not os.access(selected, os.X_OK):
+        ctx.say("실행 가능한 Codex 파일을 선택해 주세요.")
+        return EXIT_ERR
+    if (not isinstance(models, list) or not 1 <= len(models) <= 20
+            or len(set(models)) != len(models)
+            or any(not isinstance(model, str)
+                   or not re.fullmatch(r"[A-Za-z0-9._:/+-]{1,120}", model) for model in models)):
+        ctx.say("Codex 모델 ID를 1개 이상, 서로 다르게 입력해 주세요.")
+        return EXIT_ERR
+    ctx.paths.ensure()
+    try:
+        with osutil.FileLock(ctx.paths.lock("config")):
+            cfg = _config.load(ctx.paths)
+            cfg["summary"]["codex_cli_path"] = selected
+            cfg["summary"]["codex_models"] = list(models)
+            _config.save(ctx.paths, cfg)
+    except osutil.LockBusy:
+        ctx.say("다른 설정 저장이 진행 중입니다. 잠시 후 다시 시도해 주세요.")
+        return EXIT_ERR
+    except _config.ConfigError:
+        ctx.say("Codex 설정을 저장하지 못했습니다.")
+        return EXIT_ERR
+    # Setting a path/model list does not enable the provider readiness gate.
+    ctx.say("Codex CLI와 모델 ID를 저장했어요.")
+    return EXIT_OK
+
+
 def cmd_schedule(ctx: Ctx, a) -> int:
     try:
         if a.action == "install":
@@ -684,7 +736,7 @@ def cmd_serve(ctx: Ctx, a, *, serve_forever=True):
         return cmd_serve_jobs(ctx, a)
     from . import viewer
     cfg = _config.load(ctx.paths)
-    port = a.port or cfg["viewer_port"]
+    port = a.port if a.port is not None else cfg["viewer_port"]
     srv = viewer.make_server(port=port, resolve_raw=viewer.store_resolver(ctx.paths))
     ctx.say(f"원문 뷰어: http://{viewer.BIND_HOST}:{srv.server_address[1]}/raw/<id> (Ctrl+C 로 종료)")
     if not serve_forever:
@@ -772,7 +824,7 @@ def cmd_chat(ctx: Ctx, a) -> int:
     PR 1 은 --fake(FakeProvider)만 — 실 CLI(ClaudeProvider)는 PR 2. exit: 신호로 멈춤 0 · 설정·키 저장소 1 · 쓰는 법 2 · 인증 거절 3."""
     import signal
     import threading
-    from . import chat
+    from . import chat, chat_providers
 
     def log(rec: dict) -> None:
         keep = {k: v for k, v in rec.items() if k in ("event", "ok", "error", "status", "why", "end", "stopped")
@@ -782,9 +834,14 @@ def cmd_chat(ctx: Ctx, a) -> int:
         if flush:
             flush()
 
-    if not a.fake and "provider" not in ctx.chat_kw:
-        ctx.say("실 CLI 공급자는 아직 없어요 — 지금은 --fake 로만 켤 수 있어요.")
-        return EXIT_USAGE
+    if a.consent_only:
+        if not (os.environ.get("MYCRM_CHAT_BRIDGE_SOCKET") and os.environ.get("MYCRM_CHAT_BRIDGE_TOKEN")):
+            log({"event": "start", "stopped": "bridge"})
+            return EXIT_ERR
+    elif CHAT_CLAUDE_PROVIDER_READY and not a.fake:
+        if not (os.environ.get("MYCRM_CHAT_BRIDGE_SOCKET") and os.environ.get("MYCRM_CHAT_BRIDGE_TOKEN")):
+            log({"event": "start", "stopped": "bridge"})
+            return EXIT_ERR
     try:
         cfg = _config.load(ctx.paths)
     except _config.ConfigError:
@@ -803,8 +860,59 @@ def cmd_chat(ctx: Ctx, a) -> int:
         log({"event": "start", "stopped": "auth"})
         return EXIT_HALT
     kw = dict(ctx.chat_kw)
-    provider = kw.pop("provider", None) or chat.FakeProvider()
+    if a.consent_only:
+        from .consent_bridge import request_approval
+        bridge_socket = os.environ["MYCRM_CHAT_BRIDGE_SOCKET"]
+        bridge_token = os.environ["MYCRM_CHAT_BRIDGE_TOKEN"]
+        provider = None
+        kw.pop("provider", None)
+        kw.pop("registry", None)
+
+        def consent_request(request_id, authorization):
+            return request_approval(bridge_socket, bridge_token, request_id, authorization)
+    else:
+        provider = kw.pop("provider", None) or (chat.FakeProvider() if a.fake else None)
+        consent_request = kw.pop("consent_request", None)
+        if consent_request is None and not a.fake:
+            bridge_socket = os.environ.get("MYCRM_CHAT_BRIDGE_SOCKET")
+            bridge_token = os.environ.get("MYCRM_CHAT_BRIDGE_TOKEN")
+            if bridge_socket and bridge_token:
+                from .consent_bridge import request_approval
+                consent_request = lambda request_id, authorization: request_approval(
+                    bridge_socket, bridge_token, request_id, authorization)
+    claude_factory = kw.pop("claude_factory", None) if not (a.fake or a.consent_only) else None
+    if a.fake or a.consent_only:
+        kw.pop("claude_factory", None)
+    codex_factory = kw.pop("codex_factory", None) if not (a.fake or a.consent_only) else None
+    if a.fake or a.consent_only or not CHAT_CODEX_PROVIDER_READY:
+        codex_factory = None
+        kw.pop("codex_factory", None)
     stopping = kw.pop("stopping", None) or threading.Event()
+    if os.environ.get("MYCRM_DESKTOP_CONTROL") == "1":
+        def read_desktop_control():
+            # Supervisor owns this pipe and sends one small stop record before
+            # closing it. Read it only in desktop-managed mode so an interactive
+            # terminal's stdin is never consumed by the resident chat process.
+            while not stopping.is_set():
+                try:
+                    line = ctx.stdin.readline(1025)
+                except TypeError:
+                    line = ctx.stdin.readline()
+                except Exception:
+                    return
+                if not line:
+                    return
+                if len(line) > 1024:
+                    continue
+                try:
+                    message = json.loads(line)
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(message, dict) and message == {"command": "stop"}:
+                    stopping.set()
+                    return
+
+        threading.Thread(target=read_desktop_control, name="chat-desktop-control", daemon=True).start()
     old = {}
     if threading.current_thread() is threading.main_thread():
         for sig in (signal.SIGINT, signal.SIGTERM):
@@ -818,13 +926,56 @@ def cmd_chat(ctx: Ctx, a) -> int:
             except keystore.KeyStoreError:
                 return None
 
-        agent = chat.ChatAgent(chat.ws_url(server), token_now, provider, agent_version=AGENT_VERSION, stopping=stopping, log=log, **kw)
+        ref_store = kw.pop("ref_store", None) or chat_providers.CliSessionRefStore(ks, sid)
+        if not a.fake and not a.consent_only and claude_factory is None and CHAT_CLAUDE_PROVIDER_READY:
+            from .chat_launch_authority import LaunchAuthorizationClient
+            from .chat_claude import ClaudeProviderFactory
+            cli_path = (cfg.get("summary") or {}).get("cli_path")
+            if not cli_path:
+                log({"event": "start", "stopped": "claude-cli"})
+                return EXIT_ERR
+            try:
+                auth_client = LaunchAuthorizationClient(server, token_now)
+                claude_factory = ClaudeProviderFactory(auth_client, cli_path=cli_path, server_url=server,
+                    agent_home=ctx.paths.home, expected_device_id=sid)
+            except Exception:
+                log({"event": "start", "stopped": "claude-runtime"})
+                return EXIT_ERR
+        if not a.fake and not a.consent_only and codex_factory is None and CHAT_CODEX_PROVIDER_READY:
+            from .chat_launch_authority import LaunchAuthorizationClient
+            from .chat_codex import CodexProviderFactory
+            summary = cfg.get("summary") or {}
+            cli_path = summary.get("codex_cli_path")
+            models = summary.get("codex_models")
+            if not (isinstance(cli_path, str) and isinstance(models, list) and models):
+                log({"event": "start", "stopped": "codex-runtime"})
+                return EXIT_ERR
+            try:
+                auth_client = LaunchAuthorizationClient(server, token_now)
+                codex_factory = CodexProviderFactory(auth_client, cli_path=cli_path, server_url=server,
+                    agent_home=ctx.paths.home, expected_device_id=sid, models=tuple(models))
+            except Exception:
+                log({"event": "start", "stopped": "codex-runtime"})
+                return EXIT_ERR
+        agent = chat.ChatAgent(chat.ws_url(server), token_now, provider, ref_store=ref_store,
+                               agent_version=AGENT_VERSION, stopping=stopping, log=log, consent_request=consent_request,
+                               claude_factory=claude_factory, codex_factory=codex_factory, **kw)
         why = agent.run()
     finally:
         for sig, h in old.items():
             signal.signal(sig, h)
     log({"event": "stop", "stopped": why})
     return EXIT_HALT if why == "auth" else EXIT_OK
+
+
+def cmd_chat_mcp_bridge(ctx: Ctx, a) -> int:
+    """Internal stdio MCP bridge entry used by the supervised agent sidecar."""
+    argv = ["--agent-home", a.agent_home, "--session-id", a.session_id, "--turn-id", a.turn_id,
+            "--device-id", a.device_id, "--provider", a.provider, "--model", a.model,
+            "--authorization-path", a.authorization_path]
+    # The provider factory pins this explicit home. Do not let the process-wide
+    # --home/default context silently redirect bridge keystore/config lookup.
+    return chat_mcp_bridge.main(argv, home=a.agent_home)
 
 
 def cmd_disconnect(ctx: Ctx, a) -> int:
@@ -892,7 +1043,9 @@ def cmd_migrate(ctx: Ctx, a) -> int:
 
 COMMANDS = {"connect": cmd_connect, "validate": cmd_validate, "run-once": cmd_run_once, "status": cmd_status,
             "schedule": cmd_schedule, "serve": cmd_serve, "disconnect": cmd_disconnect,
-            "configure-cli": cmd_configure_cli, "migrate": cmd_migrate, "chat": cmd_chat}
+            "configure-cli": cmd_configure_cli, "configure-codex": cmd_configure_codex,
+            "migrate": cmd_migrate, "chat": cmd_chat,
+            "chat-mcp-bridge": cmd_chat_mcp_bridge}
 
 
 def _utf8_stdio():

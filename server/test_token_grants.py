@@ -208,9 +208,9 @@ def test_schema():
     db.init_schema()
     with db.tx() as c:
         want = _shape(c, tables)
-    # 옛 DB 흉내 — 새 표 2개·M2 열·인덱스·CHECK 없음 · 감사 열거 옛 값
+    # 옛 DB 흉내 — 새 token/device 및 consent 표·M2 열·인덱스·CHECK 없음 · 감사 열거 옛 값
     with db.tx() as c:
-        c.execute("DROP TABLE token_grants, desktop_installations")
+        c.execute("DROP TABLE chat_consent_challenges, desktop_consent_keys, chat_provider_grants, token_grants, desktop_installations")
         c.execute("DROP INDEX ux_import_streams_pending")
         c.execute("ALTER TABLE import_streams DROP CONSTRAINT ck_import_streams_pending, DROP COLUMN pending_token_id, "
                   "DROP COLUMN pending_secret_hash, DROP COLUMN pending_expires_at")
