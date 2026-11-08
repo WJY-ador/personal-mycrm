@@ -69,32 +69,66 @@ class AppServerProcess:
         self.relay = relay
         self.consent_current = consent_current
         self.timeout = timeout
+        self._state_lock = threading.Lock()
+        self._termination_lock = threading.Lock()
+        self._stopping = threading.Event()
+        self._proc = None
+        self._terminated = False
+
+    def _terminate(self, proc):
+        with self._termination_lock:
+            if not self._terminated:
+                self.supervisor.terminate_tree(proc)
+                self._terminated = True
+
+    def stop(self):
+        self._stopping.set()
+        with self._state_lock:
+            proc = self._proc
+        if proc is not None:
+            self._terminate(proc)
 
     def run(self, argv, *, cwd, env, model, text, thread_ref=None, developer_instructions=''):
-        if self.consent_current() is not True:
+        if self._stopping.is_set() or self.consent_current() is not True:
             raise ValueError('consent-revoked')
         proc = None
         completed = False
         try:
             proc = self.supervisor.spawn(argv, cwd=cwd, env=env, stdin=subprocess.PIPE,
                                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            with self._state_lock:
+                self._proc = proc
+            if self._stopping.is_set():
+                raise ValueError('consent-revoked')
             transport = JsonRpcTransport(proc.stdout, proc.stdin)
-            turn = AppServerTurn(transport, self.relay, self.consent_current, timeout=self.timeout)
+            turn = AppServerTurn(transport, self.relay,
+                                 lambda: not self._stopping.is_set() and self.consent_current() is True,
+                                 timeout=self.timeout)
             for kind, data in turn.run(model=model, cwd=cwd, text=text, thread_ref=thread_ref,
                                        developer_instructions=developer_instructions):
                 if kind == 'done':
                     completed = True
                 else:
                     yield kind, data
+        except Exception:
+            if self._stopping.is_set():
+                raise ValueError('consent-revoked') from None
+            raise
         finally:
             if proc is not None:
                 try:
-                    self.supervisor.terminate_tree(proc)
+                    self._terminate(proc)
                 finally:
                     for stream in (proc.stdin, proc.stdout):
                         if stream:
-                            stream.close()
-        if completed:
+                            try:
+                                stream.close()
+                            except BrokenPipeError:
+                                if not self._stopping.is_set():
+                                    raise
+                    with self._state_lock:
+                        self._proc = None
+        if completed and not self._stopping.is_set():
             yield 'done', {}
 
 

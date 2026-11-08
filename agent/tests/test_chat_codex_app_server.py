@@ -2,6 +2,7 @@
 import os
 import subprocess
 import sys
+import threading
 import unittest
 
 from agent.chat_codex_dynamic import AppServerProcess
@@ -69,6 +70,34 @@ class AppServerProcessTest(unittest.TestCase):
                                     model='synthetic', text='ask for confirmation'):
                 events.append(event)
         self.assertNotIn(('done', {}), events)
+
+    def test_stop_interrupts_running_process_without_completion(self):
+        class IdleSupervisor(SyntheticSupervisor):
+            def spawn(self, argv, **kwargs):
+                self.proc = subprocess.Popen([sys.executable, '-u', '-c', 'import time; time.sleep(30)'], **kwargs)
+                ready.set()
+                return self.proc
+        ready = threading.Event()
+        fixture = fixtures.DynamicToolRelayTest()
+        fixture.setUp()
+        supervisor = IdleSupervisor()
+        runner = AppServerProcess(supervisor, fixture.relay, lambda: True, timeout=5)
+        events, errors = [], []
+        def run():
+            try:
+                events.extend(runner.run(['synthetic'], cwd=os.path.abspath('.'), env={},
+                                         model='synthetic', text='hello'))
+            except ValueError as error:
+                errors.append(str(error))
+        worker = threading.Thread(target=run)
+        worker.start()
+        self.assertTrue(ready.wait(3))
+        runner.stop()
+        worker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(supervisor.stopped)
+        self.assertNotIn(('done', {}), events)
+        self.assertTrue(errors)
 
 
 if __name__ == '__main__':

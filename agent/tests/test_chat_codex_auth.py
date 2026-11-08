@@ -10,6 +10,7 @@ from agent.chat_codex_auth import (
 )
 
 
+@unittest.skipUnless(os.name == 'posix' and hasattr(os, 'O_NOFOLLOW'), 'private POSIX storage required')
 class CodexAuthTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

@@ -5,16 +5,17 @@ This does not exercise the network device authorization or a real Codex model.
 import json
 import os
 import sys
+import tempfile
 import urllib.parse
 import unittest
 import uuid
 from dataclasses import replace
 from pathlib import Path
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from unittest.mock import patch
 
-from agent.chat_codex_dynamic import AppServerProcess, DynamicToolRelay
-from agent.chat_mcp_bridge import McpStdioBridge
+from agent.chat_codex import CodexProvider
+from agent.chat_codex_app_provider import AppServerCandidateProvider
 from agent.tests.test_chat_codex_dynamic import SyntheticClient
 from agent.tests.test_chat_codex_app_server import SyntheticSupervisor
 
@@ -50,13 +51,29 @@ class CodexApprovalDatabaseTest(unittest.TestCase):
             # The HTTP device grant is not part of this test. Calls below invoke
             # the real server approval function after the existing bridge checks.
             client.call_mcp = lambda auth, surface, args, *, op=None, bind='': webchat.approval_prepare(uid, sid, tid, op, args)
-            bridge = McpStdioBridge(client, '/api/chat/launch-authorization', sid, tid,
-                                    'codex', 'synthetic-model', 'synthetic-device')
-            runner = AppServerProcess(SyntheticSupervisor(), DynamicToolRelay(bridge), lambda: True, timeout=3)
-            env = {'MYCRM_SYNTHETIC_ARGUMENTS': json.dumps({'op':'record_edit','params':params,'bind':'synthetic'})}
-            with patch('webchat._require_consumed_session_consent'), patch('webchat.chat_mcp_enabled', return_value=True):
-                events = list(runner.run(['synthetic'], cwd=os.path.abspath('.'), env=env,
-                                         model='synthetic-model', text='request review'))
+            with tempfile.TemporaryDirectory(prefix='mycrm-synthetic-auth-') as home, \
+                 patch('webchat._require_consumed_session_consent'), \
+                 patch('webchat.chat_mcp_enabled', return_value=True), \
+                 patch('agent.chat_codex_app_provider.APP_SERVER_CANDIDATE_READY', True), \
+                 patch.object(CodexProvider, 'is_available', return_value=True):
+                os.chmod(home, 0o700)
+                auth_home = os.path.join(home, 'codex-auth')
+                os.mkdir(auth_home, 0o700)
+                auth_file = os.path.join(auth_home, 'auth.json')
+                with open(auth_file, 'w', encoding='utf-8') as handle:
+                    handle.write('synthetic')
+                os.chmod(auth_file, 0o600)
+                env = {'CODEX_HOME':auth_home, 'HOME':home, 'PATH':'/usr/bin:/bin',
+                       'MYCRM_SYNTHETIC_ARGUMENTS':json.dumps({'op':'record_edit','params':params,'bind':'synthetic'})}
+                context = SimpleNamespace(codex_home=auth_home, cwd=home, runtime_dir=home,
+                    session_id=sid, turn_id=tid, device_id='synthetic-device', model='synthetic-model', env=env)
+                base = object.__new__(CodexProvider)
+                base.cli_path, base.model = '/usr/bin/true', 'synthetic-model'
+                base.launch_context = context
+                base.launch_verifier = SimpleNamespace(client=client, verify_codex_grant=lambda _: True)
+                base.process_supervisor, base.timeout = SyntheticSupervisor(), 3
+                provider = AppServerCandidateProvider(base, agent_home=home)
+                events = list(provider.start_turn('request review'))
                 self.assertEqual(events[-1], ('done', {}))
                 cards = webchat.approvals_list(uid, sid)
                 self.assertEqual(len(cards), 1)
