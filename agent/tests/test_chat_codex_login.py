@@ -52,6 +52,25 @@ class CodexLoginDialogTests(unittest.TestCase):
         self.assertEqual(statuses, ['waiting', 'cancelled'])
         self.assertTrue(any(m.get('method') == 'account/login/cancel' for m in transport.sent))
 
+    def test_cancel_waits_for_delayed_cancel_response(self):
+        class Delayed(fixtures.SyntheticTransport):
+            def __init__(self, events):
+                super().__init__(events)
+                self.delayed = False
+            def receive(self, timeout):
+                if self.sent and self.sent[-1].get('method') == 'account/login/cancel' and not self.delayed:
+                    self.delayed = True
+                    raise TimeoutError()
+                return super().receive(timeout)
+        transport = Delayed([
+            {'id':1,'result':{}},
+            {'id':2,'result':{'type':'chatgpt','loginId':'synthetic','authUrl':'https://auth.openai.com/authorize'}},
+            {'id':3,'result':{'status':'canceled'}},
+        ])
+        statuses = []
+        self.assertEqual(run_login_dialog(transport, '/synthetic', lambda _:True, lambda:True,
+                                          statuses.append, timeout=3), 'cancelled')
+
     def test_session_gate_is_closed_by_default(self):
         statuses = []
         self.assertEqual(run_login_session('/tmp/synthetic', '/usr/bin/true',

@@ -29,3 +29,10 @@ test('rejects and does not expose unexpected child output',()=>{
   c.stdout.write('{"status":"completed"}\n');
   assert.equal(login.view().status,'error');assert.equal(JSON.stringify(states).includes('https://'),false);
 });
+
+test('closing rejects if child does not confirm exit',async()=>{
+  const c=child();let killed=false;c.kill=()=>{killed=true;};
+  const login=createCodexLogin({enabled:true,spawn:()=>c,binary:'/agent',home:'/private',closeTimeoutMs:10});
+  login.start();await assert.rejects(login.close(),/login-stop-unconfirmed/);
+  assert.equal(killed,false);assert.equal(login.view().status,'error');
+});

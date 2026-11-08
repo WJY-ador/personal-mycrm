@@ -2,12 +2,12 @@
 
 // The child opens the browser itself. URLs, OAuth codes and token contents never
 // enter this module; only a bounded fixed-word status protocol is accepted.
-function createCodexLogin({spawn,binary,home,enabled=false,onChange=()=>{}}){
+function createCodexLogin({spawn,binary,home,enabled=false,onChange=()=>{},closeTimeoutMs=5000}){
   let current='idle',child=null,buffer='',timer=null;
   const allowed=new Set(['waiting','completed','cancelled','unavailable','error']);
   function update(value){if(current!==value){current=value;onChange(value);}}
   function cancel(){if(child){try{child.stdin.write('cancel\n');}catch{};}return {status:current};}
-  function stopSoon(target){cancel();const t=setTimeout(()=>{try{target.kill('SIGTERM');}catch{}},5000);t.unref?.();}
+  function stopSoon(){cancel();}
   function start(){
     if(!enabled)return {status:'unavailable'};
     if(child)return {status:current};
@@ -43,10 +43,12 @@ function createCodexLogin({spawn,binary,home,enabled=false,onChange=()=>{}}){
   }
   function close(){
     if(!child)return Promise.resolve();
-    const target=child;return new Promise(resolve=>{
-      let done=false;const finish=()=>{if(!done){done=true;resolve();}};
-      target.once('close',finish);cancel();
-      const t=setTimeout(()=>{try{target.kill('SIGTERM');}catch{}finish();},5000);t.unref?.();
+    const target=child;return new Promise((resolve,reject)=>{
+      let done=false,timer;
+      const finish=()=>{if(!done){done=true;clearTimeout(timer);resolve();}};
+      target.once('close',finish);
+      timer=setTimeout(()=>{if(!done){done=true;target.removeListener('close',finish);update('error');reject(new Error('login-stop-unconfirmed'));}},closeTimeoutMs);
+      cancel();
     });
   }
   return Object.freeze({start,cancel,close,view:()=>({enabled,status:current})});

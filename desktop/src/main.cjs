@@ -359,7 +359,9 @@ async function initialize(){
   app.on('before-quit',event=> {
     if(quitting)return;event.preventDefault();quitting=true;clearInterval(pollTimer);changed();
     const pending=[...commands].map(child=>new Promise(resolve=>child.once('close',resolve)));
-    Promise.all([stopProcesses({closing:true}),codexLogin.close(),...pending]).finally(async()=>{consentLock?.dispose();consentRuntime?.dispose();await consentBridge?.close();tray?.destroy();app.quit();});
+    Promise.all([stopProcesses({closing:true}),codexLogin.close(),...pending]).then(async()=>{
+      consentLock?.dispose();consentRuntime?.dispose();await consentBridge?.close();tray?.destroy();app.quit();
+    },()=>{quitting=false;changed();dialog.showErrorBox('MyCRM','연결 장치를 안전하게 종료하지 못했어요. 다시 종료해 주세요.');});
   });
   createDashboard();
   win.on('focus',()=>connector.poll('focus'));

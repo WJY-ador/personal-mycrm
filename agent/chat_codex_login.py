@@ -30,7 +30,7 @@ def run_login_dialog(transport, home, open_browser, cancelled, report, *, timeou
     deadline = time.monotonic() + timeout
     buffered = []
 
-    def receive():
+    def receive(*, interrupt_on_cancel=True):
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -38,17 +38,17 @@ def run_login_dialog(transport, home, open_browser, cancelled, report, *, timeou
             try:
                 message = transport.receive(min(remaining, 1.0))
             except TimeoutError:
-                if cancelled():
+                if interrupt_on_cancel and cancelled():
                     return None
                 continue
             if not isinstance(message, dict):
                 raise ValueError('login-protocol')
             return message
 
-    def request(message):
+    def request(message, *, interrupt_on_cancel=True):
         transport.send(message)
         while True:
-            reply = receive()
+            reply = receive(interrupt_on_cancel=interrupt_on_cancel)
             if reply is None:
                 raise ValueError('login-cancelled')
             if reply.get('id') == message['id'] and 'method' not in reply:
@@ -73,7 +73,7 @@ def run_login_dialog(transport, home, open_browser, cancelled, report, *, timeou
         if cancelled():
             # Cancellation response is authoritative. A completed/unknown login
             # must not be reported as cancelled.
-            if request(login_cancel_request(3, login_id)).get('status') != 'canceled':
+            if request(login_cancel_request(3, login_id), interrupt_on_cancel=False).get('status') != 'canceled':
                 raise ValueError('login-cancel-failed')
             report('cancelled')
             return 'cancelled'
