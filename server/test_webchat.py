@@ -1633,6 +1633,16 @@ def test_sessions(srv, ua, ub, tok_a, dev_a, dev_b2):
         assert [x["session_id"] for x in lst if x["status"] == "active"] == [s["session_id"]]
     pc.close()
     with web(srv, ua) as h:
+        # Closing the client socket is asynchronous from the server's point of
+        # view. Assert the offline behavior only after the hub has detached it.
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            devices = h.get('/api/chat/capabilities').json()['devices']
+            if not any(d['device_id'] == dev_a for d in devices):
+                break
+            time.sleep(0.02)
+        else:
+            raise AssertionError('server did not detach the closed device')
         repeated = h.post("/api/chat/sessions", json=payload)
         assert repeated.status_code == 200 and repeated.json()["session_id"] == s["session_id"], "중복 new는 장치 offline이어도 재실행하지 않는다"
         unavailable = dict(payload, client_session_id="offline-new-session")
