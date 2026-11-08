@@ -2,13 +2,14 @@
 
 계약(서버 server/webchat.py 와 같은 값, notes 구현계획 §2):
 - 연결: wss://<서버>/api/device/chat/ws · Authorization: Bearer <장치 토큰>. 장치당 1연결(새 연결이 옛 연결을 대체).
-- 서버→PC turn.start{session_id, turn_id, text, cli_session_ref?} · turn.stop{turn_id} · ack{turn_id, seq} · ping
+- 서버→PC turn.start{session_id, turn_id, text, cli_session_ref?, approval_outcomes?} · turn.stop{turn_id} · ack{turn_id, seq} · ping
 - PC→서버 hello{agent_version, providers[]} · event{turn_id, seq, kind, data} · session_ref{session_id, cli_session_ref} · pong
 - kind = delta{text} · tool_call{name, input?} · tool_result{name, ok, summary?} · done{} · error{code}. 중지 = error{code:"STOPPED"}.
 - seq 는 턴 안에서 1부터. delta 는 최대 COALESCE_SEC(0.5초) 묶음. ack(누적) 전 이벤트만 턴당 BUFFER_MAX(256KB) 보유,
   재연결 때 그대로 다시 보낸다(서버가 (turn_id, seq) 중복을 무시). 버퍼가 차면 공급자를 멈추고 error{code:"BUFFER-LIMIT"} 로 끝낸다.
 - 턴 자동 재실행 금지 — 연결이 끊겨도 실행 중 턴은 계속 돌고, 출력만 재전송한다.
-- 공급자 어댑터: start_turn(text, cli_session_ref) → (kind, data) 이터레이터 · stop(). kind "session_ref" 는 이벤트가 아니라
+- 공급자 어댑터: start_turn(text, cli_session_ref, approval_outcomes?) → (kind, data) 이터레이터 · stop(). 서버 생성 approval_outcomes 는
+  사용자 원문과 분리된 내부 context 로만 전달한다. kind "session_ref" 는 이벤트가 아니라
   session_ref 메시지로 보낸다(CLI 세션 ID 는 PC 가 보유 — 재개용으로만 서버에 둔다).
 - 메시지 하나 ≤ WS_MESSAGE_MAX(64KB): delta 는 쪼개 보내고, 그 밖 이벤트는 짧은 값만 남긴 data + truncated:true 로 줄인다.
 - SILENCE_MAX(서버 ping 2번) 동안 아무것도 못 받으면 반쯤 열린 연결로 보고 닫고 다시 붙는다.
@@ -21,12 +22,16 @@ from __future__ import annotations
 
 import json
 import queue
+import re
+import secrets
 import socket
 import threading
 import time
 from collections import OrderedDict
 
 from . import wsclient
+from .chat_providers import CliSessionRefStore, ProviderRegistry, ProviderUnavailable
+from .chat_approval_context import normalize_approval_outcomes
 
 WS_PATH = "/api/device/chat/ws"
 COALESCE_SEC = 0.5
@@ -85,6 +90,8 @@ class FakeProvider:
         self.script = script
         self._stop = threading.Event()
         self.turns = 0
+        self.last_turn_text = None
+        self.last_approval_outcomes = ()
 
     def _default(self, text: str):
         n = len(text)
@@ -95,9 +102,11 @@ class FakeProvider:
                 ("delta", {"text": "끝."}),
                 ("done", {})]
 
-    def start_turn(self, text: str, cli_session_ref: str | None = None):
+    def start_turn(self, text: str, cli_session_ref: str | None = None, *, approval_outcomes=()):
         self._stop.clear()
         self.turns += 1
+        self.last_turn_text = text
+        self.last_approval_outcomes = tuple(approval_outcomes)
         if not cli_session_ref:
             yield "session_ref", {"cli_session_ref": f"fake-{int(time.time())}-{self.turns}"}
         for kind, data in (self.script(text) if callable(self.script) else self.script or self._default(text)):
@@ -154,16 +163,32 @@ class TurnBuffer:
 class ChatAgent:
     """연결 관리 · 턴 실행. run() 은 stopping 이 설 때까지(또는 인증 거절) 돈다. 반환 = 멈춘 이유(signal·auth·switch-off 아님 — 재시도)."""
 
-    def __init__(self, url: str, token, provider, *, agent_version: str = "", connect=wsclient.connect,
+    def __init__(self, url: str, token, provider=None, *, registry=None, ref_store=None, agent_version: str = "", connect=wsclient.connect,
                  backoff: wsclient.Backoff | None = None, stopping: threading.Event | None = None, log=None,
-                 coalesce: float = COALESCE_SEC, buffer_max: int = BUFFER_MAX, recv_tick: float = RECV_TICK,
-                 ws_max: int = WS_MESSAGE_MAX, silence_max: float = SILENCE_MAX):
+                 coalesce: float = COALESCE_SEC, buffer_max: int = BUFFER_MAX, recv_tick: float = RECV_TICK, consent_request=None,
+                 ws_max: int = WS_MESSAGE_MAX, silence_max: float = SILENCE_MAX, claude_factory=None,
+                 codex_factory=None):
         """token = 글자 또는 공급 함수(호출할 때마다 키 저장소를 다시 읽는다)."""
-        self.url, self.provider = url, provider
+        self.url = url
+        self.registry = registry or ProviderRegistry.from_providers([provider] if provider is not None else [])
+        from .chat_claude import ClaudeProviderFactory
+        from .chat_codex import CodexProviderFactory
+        if claude_factory is not None and type(claude_factory) is not ClaudeProviderFactory:
+            raise ValueError("claude-factory")
+        if codex_factory is not None and type(codex_factory) is not CodexProviderFactory:
+            raise ValueError("codex-factory")
+        self.claude_factory = claude_factory
+        self.codex_factory = codex_factory
+        self.ref_store = ref_store
+        # Legacy attributes remain for the single-flight stop path; turns resolve from the registry.
+        self.provider = provider
         self.token_fn = token if callable(token) else (lambda: token)
         self.ws_max, self.silence_max = ws_max, silence_max
         self.agent_version = agent_version
         self.connect = connect
+        self.consent_request = consent_request
+        self.consent_lock = threading.Lock()
+        self.consent_pending = set()
         self.backoff = backoff or wsclient.Backoff()
         self.stopping = stopping or threading.Event()
         self.log = log or (lambda rec: None)
@@ -175,9 +200,11 @@ class ChatAgent:
         self.out_lock = threading.RLock()
         self.buffers: OrderedDict = OrderedDict()   # turn_id → TurnBuffer
         self.current: str | None = None             # 실행 중 turn_id(공급자 하나 = 턴 하나)
+        self.current_provider = None
         self.seen: OrderedDict = OrderedDict()      # 받은 turn_id(최근 SEEN_MAX) — 버퍼를 비운 뒤에도 같은 턴을 다시 실행하지 않는다
         self.threads: list = []
         self.connects = 0
+        self.session_bindings = {}  # session_id -> (provider, model)
 
     # ── 보내기 ──
     def _send(self, msg: str) -> bool:
@@ -191,6 +218,14 @@ class ChatAgent:
         except wsclient.WsError:
             return False
 
+    def _stop_provider(self, provider) -> bool:
+        try:
+            provider.stop()
+            return True
+        except Exception:
+            self.log({"event": "turn", "error": "PROVIDER-STOP"})
+            return False
+
     def _resend(self) -> None:
         for b in list(self.buffers.values()):
             for m in b.pending():
@@ -202,13 +237,25 @@ class ChatAgent:
             del self.buffers[tid]
 
     # ── 턴 실행 ──
-    def _run_turn(self, session_id: str, turn_id: str, text: str, ref) -> None:
+    def _run_turn_managed(self, session_id: str, turn_id: str, text: str, provider, ref, approval_outcomes) -> None:
+        try:
+            self._run_turn(session_id, turn_id, text, provider, ref, approval_outcomes)
+        finally:
+            close = getattr(provider, "close", None)
+            if callable(close):
+                close()
+
+    def _run_turn(self, session_id: str, turn_id: str, text: str, provider, ref, approval_outcomes=()) -> None:
         buf = self.buffers[turn_id]
         q: queue.Queue = queue.Queue()
 
         def pump():
             try:
-                for kind, data in self.provider.start_turn(text, ref):
+                if approval_outcomes:
+                    turn_events = provider.start_turn(text, ref, approval_outcomes=approval_outcomes)
+                else:
+                    turn_events = provider.start_turn(text, ref)
+                for kind, data in turn_events:
                     q.put((kind, data))
             except Exception as e:   # 공급자 실패 — 코드만
                 q.put(("error", {"code": "PROVIDER-" + type(e).__name__[:20].upper()}))
@@ -233,7 +280,7 @@ class ChatAgent:
                 msg = buf.add(kind, data, force=force)
                 if msg is None:   # 버퍼 상한 — 공급자를 멈추고 끝 이벤트로 닫는다
                     over = True
-                    self.provider.stop()
+                    self._stop_provider(provider)
                     self.current = None
                     msg = buf.add("error", {"code": "BUFFER-LIMIT"}, force=True)
                     self.log({"event": "turn", "error": "BUFFER-LIMIT"})
@@ -257,9 +304,12 @@ class ChatAgent:
                 break
             kind, data = item
             if kind == "session_ref":
-                ref = data.get("cli_session_ref")
-                if isinstance(ref, str) and ref:
-                    self._send(_dumps({"type": "session_ref", "session_id": session_id, "cli_session_ref": ref}))
+                cli_ref = data.get("cli_session_ref")
+                if isinstance(cli_ref, str) and cli_ref and len(cli_ref) <= 512:
+                    handle = secrets.token_urlsafe(32)
+                    model = self.session_bindings[session_id][1]
+                    if self.ref_store and self.ref_store.put(handle, session_id, provider.name, model, cli_ref):
+                        self._send(_dumps({"type": "session_ref", "session_id": session_id, "cli_session_ref": handle}))
                 continue
             if kind not in KINDS or not isinstance(data, dict) or ended:
                 continue
@@ -287,6 +337,28 @@ class ChatAgent:
         typ = m.get("type")
         if typ == "ping":
             self._send(_dumps({"type": "pong"}))
+        elif typ == "consent.request":
+            request_id = m.get("request_id")
+            if (not callable(self.consent_request) or not isinstance(request_id, str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", request_id)):
+                return
+            with self.consent_lock:
+                if request_id in self.consent_pending:
+                    return
+                self.consent_pending.add(request_id)
+
+            def forward():
+                try:
+                    token = self.token_fn()
+                    if isinstance(token, str) and token:
+                        self.consent_request(request_id, "Bearer " + token)
+                except Exception:
+                    pass
+                finally:
+                    with self.consent_lock:
+                        self.consent_pending.discard(request_id)
+
+            threading.Thread(target=forward, name="chat-consent-bridge", daemon=True).start()
         elif typ == "ack":
             b = self.buffers.get(m.get("turn_id"))
             if b and isinstance(m.get("seq"), int):
@@ -294,22 +366,95 @@ class ChatAgent:
                 self._gc()
         elif typ == "turn.stop":
             if m.get("turn_id") == self.current:
-                self.provider.stop()
+                if self.current_provider is not None:
+                    self._stop_provider(self.current_provider)
         elif typ == "turn.start":
             tid, sid, text = m.get("turn_id"), m.get("session_id"), m.get("text")
             if not (isinstance(tid, str) and isinstance(sid, str) and isinstance(text, str)) or tid in self.seen:
                 return   # 모양이 틀렸거나 이미 받은 턴 — 다시 실행하지 않는다(D6)
-            self.seen[tid] = True
-            while len(self.seen) > SEEN_MAX:
-                self.seen.popitem(last=False)
+            try:
+                if "approval_outcomes" in m and m["approval_outcomes"] is None:
+                    raise ValueError("approval-outcomes-shape")
+                approval_outcomes = normalize_approval_outcomes(m.get("approval_outcomes"))
+            except ValueError:
+                b = self.buffers[tid] = TurnBuffer(tid, self.buffer_max)
+                self.seen[tid] = True
+                self._send(b.add("error", {"code": "APPROVAL-OUTCOMES"}, force=True))
+                return
+            provider_name, model = m.get("provider"), m.get("model")
+            factory = None
+            if provider_name == "claude":
+                if (self.claude_factory is None or m.get("binding_version") != 2
+                        or model not in self.claude_factory.models):
+                    provider = None
+                else:
+                    factory = self.claude_factory
+                    provider = None
+            elif provider_name == "codex":
+                if (self.codex_factory is None or m.get("binding_version") != 2
+                        or model not in self.codex_factory.models):
+                    provider = None
+                else:
+                    factory = self.codex_factory
+                    provider = None
+            else:
+                try:
+                    provider = self.registry.validate_turn(provider_name, model, m.get("binding_version"))
+                except ProviderUnavailable:
+                    provider = None
+            if provider is None and factory is None:
+                b = self.buffers[tid] = TurnBuffer(tid, self.buffer_max)
+                self.seen[tid] = True
+                self._send(b.add("error", {"code": "PROVIDER-BINDING"}, force=True))
+                return
+            binding = (provider_name, model)
+            previous = self.session_bindings.get(sid)
+            if previous is not None and previous != binding:
+                b = self.buffers[tid] = TurnBuffer(tid, self.buffer_max)
+                self.seen[tid] = True
+                self._send(b.add("error", {"code": "PROVIDER-BINDING"}, force=True))
+                return
             if self.current is not None:   # 서버가 세션당 1턴을 지킨다 — 그래도 겹치면 실행하지 않고 끝 이벤트만
                 b = self.buffers[tid] = TurnBuffer(tid, self.buffer_max)
                 self._send(b.add("error", {"code": "PC-BUSY"}, force=True))
                 return
+            if factory is not None:
+                try:
+                    provider = factory.create_turn(sid, tid, m.get("launch_authorization_path"),
+                                                   provider_name, model)
+                except Exception:
+                    b = self.buffers[tid] = TurnBuffer(tid, self.buffer_max)
+                    self.seen[tid] = True
+                    self._send(b.add("error", {"code": "PROVIDER-BINDING"}, force=True))
+                    return
+            if self.ref_store and not self.ref_store.bind_session(sid, *binding):
+                close = getattr(provider, "close", None)
+                if callable(close): close()
+                b = self.buffers[tid] = TurnBuffer(tid, self.buffer_max)
+                self.seen[tid] = True
+                self._send(b.add("error", {"code": "PROVIDER-BINDING"}, force=True))
+                return
+            handle = m.get("cli_session_ref")
+            ref = None
+            if handle is not None:
+                ref = self.ref_store.get(handle, sid, provider_name, model) if self.ref_store else None
+                if not ref:
+                    close = getattr(provider, "close", None)
+                    if callable(close): close()
+                    b = self.buffers[tid] = TurnBuffer(tid, self.buffer_max)
+                    self.seen[tid] = True
+                    self._send(b.add("error", {"code": "CLI-SESSION-REF"}, force=True))
+                    return
+            self.session_bindings[sid] = binding
+            self.seen[tid] = True
+            while len(self.seen) > SEEN_MAX:
+                self.seen.popitem(last=False)
             self.buffers[tid] = TurnBuffer(tid, self.buffer_max)
             self.current = tid
-            ref = m.get("cli_session_ref") if isinstance(m.get("cli_session_ref"), str) else None
-            th = threading.Thread(target=self._run_turn, args=(sid, tid, text, ref), name="chat-turn", daemon=True)
+            self.current_provider = provider
+            th = threading.Thread(target=self._run_turn_managed,
+                                  args=(sid, tid, text, provider, ref, approval_outcomes),
+                                  name="chat-turn", daemon=True)
             self.threads.append(th)
             th.start()
 
@@ -321,7 +466,14 @@ class ChatAgent:
         with self.out_lock:   # hello·재전송이 끝날 때까지 턴 스레드의 새 이벤트를 붙든다(seq 순서 보장)
             with self.ws_lock:
                 self.ws = ws
-            self._send(_dumps({"type": "hello", "agent_version": self.agent_version, "providers": [self.provider.name]}))
+            caps = self.registry.capabilities()
+            if self.claude_factory is not None:
+                caps.append({"provider": "claude", "models": list(self.claude_factory.models)})
+            if self.codex_factory is not None:
+                caps.append({"provider": "codex", "models": list(self.codex_factory.models)})
+            self._send(_dumps({"type": "hello", "agent_version": self.agent_version,
+                               "providers": [c["provider"] for c in caps], "capabilities_version": 2,
+                               "capabilities": caps}))
             self._resend()
         try:
             while not self.stopping.is_set():
@@ -380,5 +532,6 @@ class ChatAgent:
             if why not in ("signal", "auth-closed"):
                 self.stopping.wait(self.backoff.next())
         if self.current:
-            self.provider.stop()
+            if self.current_provider is not None:
+                self._stop_provider(self.current_provider)
         return "signal"

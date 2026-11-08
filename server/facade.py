@@ -588,6 +588,21 @@ def dispatch(surface, op, params, ctx, bind=None):
     return out
 
 
+def dispatch_trusted(surface, op, params, principal, bind=None):
+    """Internal HTTP chat path. Accept only a gateway-minted request principal.
+
+    Operation resolution, Pydantic input validation, guard, bind, quota, and
+    tool-level authorization remain the same as dispatch(). This function does
+    not accept user ids, bearer strings, or caller-created MCP Context objects.
+    """
+    from chat_mcp import allowed_operations, validate_call
+    from chat_mcp_gateway import trusted_principal_uid
+    if trusted_principal_uid(principal) is None:
+        raise crm_error("AUTH", "로그인 정보가 없어요.")
+    validate_call(surface, op, params, allowed_operations(load_catalog()))
+    return dispatch(surface, op, params, principal, bind)
+
+
 def decide_preview_fn(ops):
     """read(op="decide_preview") — D∪P(자기 바인딩 제외) op 의 shown·impact·irreversible·bind. 쓰지 않는다."""
     enum = {"enum": list(ops)}

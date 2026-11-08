@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
+import sys
+import tempfile
 import threading
 import time
+import types
 import unittest
+from unittest.mock import patch
 
-from agent import chat, wsclient
+from agent import chat, chat_providers, wsclient
+from agent import chat_claude
+from agent.chat_launch_authority import LaunchAuthorizationClient
 from agent.tests import helpers
 from agent.tests.wsfake import FakeWsServer
 
@@ -80,7 +87,8 @@ class Script:
 
 def run_agent(srv, provider, token="TOK", **kw):
     stopping = threading.Event()
-    a = chat.ChatAgent(srv.url, token, provider, agent_version="t", stopping=stopping, **{**FAST, **kw})
+    refs = chat_providers.CliSessionRefStore(helpers.MemoryKeyStore(), "device-test")
+    a = chat.ChatAgent(srv.url, token, provider, ref_store=refs, agent_version="t", stopping=stopping, **{**FAST, **kw})
     res = {}
     th = threading.Thread(target=lambda: res.setdefault("why", a.run()), daemon=True)
     th.start()
@@ -88,6 +96,174 @@ def run_agent(srv, provider, token="TOK", **kw):
 
 
 class AgentTest(unittest.TestCase):
+    def test_turn_start_keeps_server_approval_outcomes_separate_from_original_text(self):
+        provider = chat.FakeProvider(step=0)
+        sent = []
+        class Socket:
+            def send_text(self, message): sent.append(json.loads(message)); return True
+        agent = chat.ChatAgent("ws://unused", "synthetic-token", provider=provider,
+                               stopping=threading.Event(), coalesce=0)
+        agent.ws = Socket()
+        original_text = "Please continue with my original request"
+        outcome = {"id": "ca_" + "c" * 24, "op": "record_edit", "status": "confirmed"}
+        agent._on({"type": "turn.start", "session_id": "cs_synthetic", "turn_id": "ct_synthetic",
+                   "text": original_text, "provider": "fake", "model": None, "binding_version": 2,
+                   "approval_outcomes": [outcome]})
+        agent.threads[0].join(5)
+        self.assertEqual(provider.last_turn_text, original_text)
+        self.assertEqual(provider.last_approval_outcomes,
+                         ((outcome["id"], outcome["op"], outcome["status"]),))
+
+    def test_turn_start_rejects_untrusted_approval_outcomes_before_provider_run(self):
+        provider = chat.FakeProvider(step=0)
+        sent = []
+        class Socket:
+            def send_text(self, message): sent.append(json.loads(message)); return True
+        agent = chat.ChatAgent("ws://unused", "synthetic-token", provider=provider,
+                               stopping=threading.Event(), coalesce=0)
+        agent.ws = Socket()
+        agent._on({"type": "turn.start", "session_id": "cs_synthetic", "turn_id": "ct_synthetic",
+                   "text": "synthetic original", "provider": "fake", "model": None, "binding_version": 2,
+                   "approval_outcomes": [{"id": "ca_" + "d" * 24, "op": "record_edit",
+                                           "status": "confirmed", "params": {"secret": "synthetic"}}]})
+        self.assertEqual(provider.turns, 0)
+        self.assertEqual(sent[-1]["data"], {"code": "APPROVAL-OUTCOMES"})
+
+    @unittest.skipUnless(sys.platform == "darwin", "requires macOS process supervisor")
+    def test_claude_factory_turn_runs_only_the_synthetic_cli_and_returns_events(self):
+        from datetime import datetime, timedelta, timezone
+        expiry = (datetime.now(timezone.utc) + timedelta(seconds=10)).isoformat().replace("+00:00", "Z")
+        response = {"authorized": True, "binding": {"user_id": "u_synthetic", "device_id": "is_" + "a" * 24,
+            "session_id": "cs_synthetic", "turn_id": "ct_synthetic", "provider": "claude",
+            "model": "claude-synthetic", "grant_id": "g_synthetic", "consent_challenge_id": "ch_synthetic",
+            "expires_at": expiry}, "tools": {"mcp__my-crm__find": "read", "mcp__my-crm__record_get": "read"}}
+        class Reply:
+            status = 200
+            def read(self, *_args): return json.dumps(response).encode()
+            def __enter__(self): return self
+            def __exit__(self, *_): pass
+        class Opener:
+            def __init__(self): self.calls = 0
+            def open(self, *_args, **_kwargs): self.calls += 1; return Reply()
+        with tempfile.TemporaryDirectory(prefix="chat-e2e-") as home:
+            cli = os.path.join(home, "fake-claude")
+            script = "#!" + sys.executable + "\nimport json\n"
+            script += "print(json.dumps({'type':'system','subtype':'init','session_id':'fixture-session','cwd':'.','tools':['mcp__my-crm__find','mcp__my-crm__read'],'mcp_servers':[{'name':'my-crm','status':'connected'}],'model':'claude-synthetic','permissionMode':'default'}),flush=True)\n"
+            script += "print(json.dumps({'type':'assistant','session_id':'fixture-session','message':{'role':'assistant','content':[{'type':'text','text':'synthetic reply'}]}}),flush=True)\n"
+            script += "print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_id':'fixture-session'}),flush=True)\n"
+            with open(cli, "w") as f: f.write(script)
+            os.chmod(cli, 0o700)
+            client = LaunchAuthorizationClient("https://synthetic.invalid", lambda: "synthetic-token")
+            opener = Opener()
+            client._opener = opener
+            factory = chat_claude.ClaudeProviderFactory(client, cli_path=cli, server_url="https://synthetic.invalid",
+                agent_home=home, expected_device_id="is_" + "a" * 24, env={"HOME": home, "PATH": "/usr/bin"},
+                temp_parent=home, models=("claude-synthetic",), timeout=3)
+            sent = []
+            class Socket:
+                def send_text(self, message): sent.append(json.loads(message)); return True
+            agent = chat.ChatAgent("wss://synthetic.invalid/api/device/chat/ws", "synthetic-token",
+                                   claude_factory=factory, stopping=threading.Event(), coalesce=0)
+            agent.ws = Socket()
+            agent._on({"type": "turn.start", "session_id": "cs_synthetic", "turn_id": "ct_synthetic",
+                       "text": "Reply OK", "provider": "claude", "model": "claude-synthetic",
+                       "binding_version": 2, "launch_authorization_path": "/api/chat/launch-authorization"})
+            agent.threads[0].join(5)
+            self.assertFalse(agent.threads[0].is_alive())
+            self.assertGreaterEqual(opener.calls, 1)
+            events = [item for item in sent if item.get("type") == "event"]
+            self.assertEqual([item["kind"] for item in events], ["delta", "done"])
+            self.assertEqual(events[0]["data"]["text"], "synthetic reply")
+            self.assertNotIn("synthetic-token", repr(sent))
+
+    @patch.object(chat_claude, "sys", types.SimpleNamespace(platform="darwin", executable=sys.executable))
+    def test_claude_turn_requires_server_launch_authorization_before_provider_creation(self):
+        class Reply:
+            status = 200
+            def read(self, *_args):
+                from datetime import datetime, timedelta, timezone
+                expiry = (datetime.now(timezone.utc) + timedelta(seconds=10)).isoformat().replace("+00:00", "Z")
+                return json.dumps({"authorized": True, "binding": {
+                    "user_id": "u-synthetic", "device_id": "is_" + "a" * 24,
+                    "session_id": "cs_expected", "turn_id": "ct_other", "provider": "claude",
+                    "model": "claude-synthetic", "grant_id": "g_synthetic",
+                    "consent_challenge_id": "ch_synthetic", "expires_at": expiry},
+                    "tools": {"mcp__my-crm__record_get": "read"}}).encode()
+            def __enter__(self): return self
+            def __exit__(self, *_): pass
+        class Opener:
+            def open(self, *_args, **_kwargs): return Reply()
+        with tempfile.TemporaryDirectory(prefix="chat-agent-launch-") as home:
+            cli = os.path.join(home, "fake-claude")
+            with open(cli, "w") as f:
+                f.write("#!/bin/sh\nexit 0\n")
+            os.chmod(cli, 0o700)
+            client = LaunchAuthorizationClient("https://synthetic.invalid", lambda: "synthetic-device-token")
+            client._opener = Opener()  # test-only transport installed after default construction; no user path can supply it
+            factory = chat_claude.ClaudeProviderFactory(client, cli_path=cli, server_url="https://synthetic.invalid",
+                agent_home=home, expected_device_id="is_" + "a" * 24, env={"HOME": home, "PATH": "/usr/bin"},
+                temp_parent=home, models=("claude-synthetic",))
+            sent = []
+            class Socket:
+                def send_text(self, message): sent.append(json.loads(message)); return True
+            agent = chat.ChatAgent("wss://synthetic.invalid/api/device/chat/ws", "token",
+                                   claude_factory=factory, stopping=threading.Event())
+            agent.ws = Socket()
+            agent._on({"type": "turn.start", "session_id": "cs_expected", "turn_id": "ct_expected",
+                       "text": "synthetic", "provider": "claude", "model": "claude-synthetic",
+                       "binding_version": 2, "launch_authorization_path": "/api/chat/launch-authorization"})
+        self.assertEqual(sent[-1]["data"], {"code": "PROVIDER-BINDING"})
+        self.assertIsNone(agent.current_provider)
+
+    def test_consent_request_is_forwarded_once_to_local_desktop_callback(self):
+        calls = []
+        entered = threading.Event()
+        release = threading.Event()
+
+        def consent(request_id, authorization):
+            calls.append((request_id, authorization))
+            entered.set()
+            release.wait(2)
+
+        agent = chat.ChatAgent("ws://unused", lambda: "synthetic-device-token", chat.FakeProvider(),
+                               consent_request=consent)
+        agent._on({"type": "consent.request", "request_id": "request_test_1"})
+        self.assertTrue(entered.wait(1))
+        agent._on({"type": "consent.request", "request_id": "request_test_1"})
+        agent._on({"type": "consent.request", "request_id": "bad id"})
+        self.assertEqual(calls, [("request_test_1", "Bearer synthetic-device-token")])
+        release.set()
+
+    def test_rejects_missing_or_changed_provider_binding_without_fallback(self):
+        got = {}
+
+        def conn(c, s):
+            c.recv()
+            c.send({"type": "turn.start", "session_id": "cs_1", "turn_id": "ct_first", "text": "x",
+                    "provider": "fake", "model": None, "binding_version": 2})
+            got["first"] = s.events(c, "done")
+            c.send({"type": "turn.start", "session_id": "cs_1", "turn_id": "ct_changed", "text": "x",
+                    "provider": "claude", "model": "made-up", "binding_version": 2})
+            got["changed"] = s.events(c, "error")
+            c.send({"type": "turn.start", "session_id": "cs_2", "turn_id": "ct_missing", "text": "x"})
+            got["missing"] = s.events(c, "error")
+            c.recv()
+
+        provider = chat.FakeProvider(step=0)
+        srv = FakeWsServer(Script(conn))
+        a, stopping, th, _ = run_agent(srv, provider, coalesce=0.0)
+        try:
+            deadline = time.time() + 5
+            while "missing" not in got and time.time() < deadline:
+                time.sleep(0.05)
+            self.assertEqual(got["changed"][-1]["data"], {"code": "PROVIDER-BINDING"})
+            self.assertEqual(got["missing"][-1]["data"], {"code": "PROVIDER-BINDING"})
+            self.assertEqual(provider.turns, 1, "유효한 선택만 실행하고 실패 시 대체 공급자 없음")
+        finally:
+            stopping.set()
+            th.join(5)
+            srv.close()
+
     def test_turn_roundtrip_coalesce_session_ref(self):
         got = {}
 
@@ -95,7 +271,7 @@ class AgentTest(unittest.TestCase):
             got["hello"] = c.recv()
             c.send({"type": "ping"})
             got["pong"] = c.recv()
-            c.send({"type": "turn.start", "session_id": "cs_1", "turn_id": "ct_1", "text": "안녕"})
+            c.send({"type": "turn.start", "session_id": "cs_1", "turn_id": "ct_1", "text": "안녕", "provider": "fake", "model": None, "binding_version": 2})
             got["events"] = s.events(c, "done")
             c.recv()
 
@@ -106,7 +282,7 @@ class AgentTest(unittest.TestCase):
             deadline = time.time() + 5
             while "events" not in got and time.time() < deadline:
                 time.sleep(0.05)
-            self.assertEqual(got["hello"], {"type": "hello", "agent_version": "t", "providers": ["fake"]})
+            self.assertEqual(got["hello"], {"type": "hello", "agent_version": "t", "providers": ["fake"], "capabilities_version": 2, "capabilities": [{"provider": "fake", "models": [None]}]})
             self.assertEqual(srv.requests[0]["headers"]["authorization"], "Bearer TOK")
             self.assertEqual(got["pong"], {"type": "pong"})
             ev = got["events"]
@@ -129,7 +305,7 @@ class AgentTest(unittest.TestCase):
 
         def conn1(c, s):
             c.recv()   # hello
-            c.send({"type": "turn.start", "session_id": "cs_1", "turn_id": "ct_9", "text": "x"})
+            c.send({"type": "turn.start", "session_id": "cs_1", "turn_id": "ct_9", "text": "x", "provider": "fake", "model": None, "binding_version": 2})
             ev = s.events(c, ack=False, n=2)   # 둘 받고 ack 없이 끊는다
             got["first"] = [e["seq"] for e in ev]
             c.drop()
@@ -163,12 +339,12 @@ class AgentTest(unittest.TestCase):
 
         def conn1(c, s):
             c.recv()
-            c.send({"type": "turn.start", "session_id": "cs_1", "turn_id": "ct_s", "text": "x"})
+            c.send({"type": "turn.start", "session_id": "cs_1", "turn_id": "ct_s", "text": "x", "provider": "fake", "model": None, "binding_version": 2})
             first = s.events(c, n=1)
             c.send({"type": "turn.stop", "turn_id": "ct_s"})
             got["stop"] = first + s.events(c, "error")
-            c.send({"type": "turn.start", "session_id": "cs_1", "turn_id": "ct_s", "text": "x"})   # 같은 턴 다시 = 실행 안 함
-            c.send({"type": "turn.start", "session_id": "cs_1", "turn_id": "ct_b", "text": "big"})
+            c.send({"type": "turn.start", "session_id": "cs_1", "turn_id": "ct_s", "text": "x", "provider": "fake", "model": None, "binding_version": 2})   # 같은 턴 다시 = 실행 안 함
+            c.send({"type": "turn.start", "session_id": "cs_1", "turn_id": "ct_b", "text": "big", "provider": "fake", "model": None, "binding_version": 2})
             got["buf"] = s.events(c, "error", ack=False)   # ack 없음 — 버퍼가 찬다
             c.recv()
 
@@ -234,7 +410,7 @@ class ReviewTest(unittest.TestCase):
 
         def conn1(c, s):
             c.recv()
-            c.send({"type": "turn.start", "session_id": "cs_1", "turn_id": "ct_big", "text": "x"})
+            c.send({"type": "turn.start", "session_id": "cs_1", "turn_id": "ct_big", "text": "x", "provider": "fake", "model": None, "binding_version": 2})
             got["ev"] = s.events(c, "done")
             c.recv()
 
@@ -317,10 +493,41 @@ class CliTest(unittest.TestCase):
         self.th = helpers.TempHome()
         self.addCleanup(self.th.cleanup)
 
-    def test_requires_fake_and_token(self):
-        code, out = helpers.run_cli(["--home", self.th.home, "chat"])
-        self.assertEqual(code, 2)
-        self.assertIn("--fake", out)
+    def test_ready_false_normal_chat_connects_without_provider_and_forwards_consent(self):
+        self.assertFalse(__import__("agent.cli", fromlist=["CHAT_CLAUDE_PROVIDER_READY"]).CHAT_CLAUDE_PROVIDER_READY)
+        got = {"hello": None}
+        consented = threading.Event()
+        stopping = threading.Event()
+        def handler(c):
+            got["hello"] = c.recv()
+            c.send({"type": "consent.request", "request_id": "request_synthetic"})
+            consented.wait(3)
+        server = FakeWsServer(handler)
+        self.addCleanup(server.close)
+        helpers.connected_config(self.th, f"http://127.0.0.1:{server.port}")
+        ks = helpers.keystore_with_secrets()
+        bridge_calls = []
+        def request_approval(socket_path, bridge_token, request_id, authorization):
+            bridge_calls.append((socket_path, bridge_token, request_id, authorization))
+            consented.set()
+            stopping.set()
+            return True
+        env = {"MYCRM_CHAT_BRIDGE_SOCKET": "/synthetic/chat.sock",
+               "MYCRM_CHAT_BRIDGE_TOKEN": "synthetic-desktop-bridge-token"}
+        with patch.dict(os.environ, env), patch("agent.consent_bridge.request_approval", request_approval):
+            code, out = helpers.run_cli(["--home", self.th.home, "chat"], ks_factory=lambda svc: ks,
+                                        chat_kw={"stopping": stopping, "codex_factory": object(), **FAST})
+        self.assertEqual(code, 0)
+        self.assertEqual(got["hello"]["providers"], [])
+        self.assertEqual(bridge_calls, [(env["MYCRM_CHAT_BRIDGE_SOCKET"], env["MYCRM_CHAT_BRIDGE_TOKEN"],
+                                         "request_synthetic", "Bearer " + helpers.TOKEN)])
+        self.assertNotIn(env["MYCRM_CHAT_BRIDGE_TOKEN"], out)
+        self.assertNotIn(helpers.TOKEN, out)
+
+    def test_consent_only_requires_bridge_and_fake_still_requires_device_token(self):
+        code, out = helpers.run_cli(["--home", self.th.home, "chat", "--consent-only"])
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(out.strip()), {"event": "start", "stopped": "bridge"})
         helpers.connected_config(self.th, "http://127.0.0.1:9")
         code, out = helpers.run_cli(["--home", self.th.home, "chat", "--fake"], ks_factory=lambda svc: helpers.MemoryKeyStore())
         self.assertEqual(code, 3)
@@ -354,6 +561,76 @@ class CliTest(unittest.TestCase):
                                     chat_kw={"connect": lambda *a, **k: (_ for _ in ()).throw(wsclient.WsError("handshake", 403, "AUTH-BLOCKED")),
                                              **FAST})
         self.assertEqual(code, 3)
+
+    def test_supervisor_stdin_stop_reaches_active_provider_in_normal_chat(self):
+        class ControlInput:
+            def __init__(self):
+                self.ready = threading.Event()
+                self.line = ""
+            def readline(self):
+                self.ready.wait(5)
+                value, self.line = self.line, ""
+                return value
+            def stop(self):
+                self.line = '{"command":"stop"}\n'
+                self.ready.set()
+
+        class StopAwareProvider:
+            name = "fake"
+            def __init__(self):
+                self.started = threading.Event()
+                self.stopped = threading.Event()
+                self.proc = None
+            def start_turn(self, text, cli_session_ref=None):
+                import subprocess
+                self.proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                             stderr=subprocess.DEVNULL)
+                self.started.set()
+                self.proc.wait(timeout=5)
+                yield "error", {"code": "STOPPED"}
+            def stop(self):
+                if self.proc is not None and self.proc.poll() is None:
+                    self.proc.terminate()
+                    try:
+                        self.proc.wait(timeout=2)
+                    except Exception:
+                        self.proc.kill()
+                        self.proc.wait(timeout=2)
+                self.stopped.set()
+
+        provider, control = StopAwareProvider(), ControlInput()
+        def handler(c):
+            c.recv()
+            c.send({"type": "turn.start", "session_id": "cs_1", "turn_id": "ct_control",
+                    "text": "synthetic", "provider": "fake", "model": None, "binding_version": 2})
+            c.recv()
+
+        server = FakeWsServer(handler)
+        self.addCleanup(server.close)
+        helpers.connected_config(self.th, f"http://127.0.0.1:{server.port}")
+        ks = helpers.keystore_with_secrets()
+        env = patch.dict(os.environ, {"MYCRM_DESKTOP_CONTROL": "1"})
+        result = {}
+        def run():
+            with env:
+                result["value"] = helpers.run_cli(["--home", self.th.home, "chat"],
+                    ks_factory=lambda svc: ks, stdin=control,
+                    chat_kw={"provider": provider, **FAST})
+        worker = threading.Thread(target=run, daemon=True)
+        worker.start()
+        try:
+            self.assertTrue(provider.started.wait(3), "synthetic turn should start before desktop stop")
+            control.stop()
+            worker.join(3)
+            self.assertFalse(worker.is_alive(), "stdin stop should end normal chat promptly")
+            self.assertTrue(provider.stopped.is_set(), "ChatAgent must stop its active provider on desktop stop")
+            self.assertIsNotNone(provider.proc.poll(), "desktop stop must terminate the synthetic provider child")
+            self.assertEqual(result["value"][0], 0)
+        finally:
+            control.stop()
+            worker.join(1)
+            server.close()
 
 
 if __name__ == "__main__":

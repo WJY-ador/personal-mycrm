@@ -981,6 +981,9 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
   user_id          text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   device_id        text NOT NULL,
   provider         text CHECK (provider IS NULL OR char_length(provider) BETWEEN 1 AND 40),   -- 첫 턴을 보낼 때 PC hello 의 providers[0]
+  model            text,
+  client_session_id text,
+  binding_version  smallint NOT NULL DEFAULT 0,
   cli_session_ref  text CHECK (cli_session_ref IS NULL OR char_length(cli_session_ref) BETWEEN 1 AND 200),   -- PC 가 보낸 CLI 세션 ID(재개용)
   status           text NOT NULL DEFAULT 'active' CHECK (status IN ('active','closed')),
   created_at       timestamptz NOT NULL DEFAULT now(),
@@ -1005,6 +1008,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_chat_turns_running ON chat_turns (session_i
 CREATE INDEX IF NOT EXISTS ix_chat_turns_session ON chat_turns (session_id, created_at, id);
 CREATE INDEX IF NOT EXISTS ix_chat_turns_created ON chat_turns (created_at);
 
+-- A model can propose a guarded action, but only the signed-in user can
+-- confirm the server-owned preview. Rows are deleted with their chat session.
+CREATE TABLE IF NOT EXISTS chat_approvals (
+  id               text PRIMARY KEY CHECK (id ~ '^ca_[0-9a-f]{24}$'),
+  user_id          text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  session_id       text NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  turn_id          text NOT NULL REFERENCES chat_turns(id) ON DELETE CASCADE,
+  op               text NOT NULL,
+  params           jsonb NOT NULL CHECK (jsonb_typeof(params) = 'object'),
+  preview          jsonb NOT NULL CHECK (jsonb_typeof(preview) = 'object'),
+  result           jsonb CHECK (result IS NULL OR jsonb_typeof(result) = 'object'),
+  state            text NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','confirmed','cancelled')),
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  expires_at       timestamptz NOT NULL,
+  finished_at      timestamptz,
+  CHECK ((state = 'pending') = (finished_at IS NULL))
+);
+ALTER TABLE chat_approvals ADD COLUMN IF NOT EXISTS result jsonb CHECK (result IS NULL OR jsonb_typeof(result) = 'object');
+CREATE INDEX IF NOT EXISTS ix_chat_approvals_session ON chat_approvals (user_id, session_id, created_at);
+
 CREATE TABLE IF NOT EXISTS chat_events (
   turn_id          text NOT NULL REFERENCES chat_turns(id) ON DELETE CASCADE,
   seq              integer NOT NULL CHECK (seq > 0),
@@ -1026,6 +1049,64 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 );
 CREATE INDEX IF NOT EXISTS ix_chat_messages_session ON chat_messages (session_id, created_at);
 CREATE INDEX IF NOT EXISTS ix_chat_messages_created ON chat_messages (created_at);
+
+-- PC 명시 승인 grant(2026-11-06, D7 기반) — 실제 공급자 세션을 열기 전 PC 가 한 번 허용했다는 기록.
+CREATE TABLE IF NOT EXISTS chat_provider_grants (
+  id           text PRIMARY KEY CHECK (id ~ '^cg_[0-9a-f]{24}$'),
+  user_id      text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  device_id    text NOT NULL CHECK (char_length(device_id) BETWEEN 1 AND 200),
+  provider     text NOT NULL CHECK (provider IN ('claude','codex')),
+  model        text CHECK (model IS NULL OR char_length(model) BETWEEN 1 AND 120),
+  request_id   text NOT NULL CHECK (request_id ~ '^[A-Za-z0-9_-]{1,64}$'),
+  state        text NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','approved','consumed')),
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  expires_at   timestamptz NOT NULL,
+  approved_at  timestamptz,
+  consumed_at  timestamptz,
+  UNIQUE (user_id, request_id),
+  CHECK (expires_at > created_at),
+  CHECK ((state = 'pending') = (approved_at IS NULL)),
+  CHECK ((state = 'consumed') = (consumed_at IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS ix_chat_provider_grants_created ON chat_provider_grants (created_at);
+
+CREATE TABLE IF NOT EXISTS desktop_consent_keys (
+  id               text PRIMARY KEY CHECK (id ~ '^ck_[0-9a-f]{24}$'),
+  user_id          text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  installation_id  text NOT NULL,
+  device_id        text NOT NULL CHECK (char_length(device_id) BETWEEN 1 AND 200),
+  spki             bytea NOT NULL CHECK (octet_length(spki) = 44),
+  state            text NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','active','revoked')),
+  pop_nonce        text NOT NULL UNIQUE CHECK (pop_nonce ~ '^[A-Za-z0-9_-]{22,128}$'),
+  pop_expires_at   bigint NOT NULL CHECK (pop_expires_at > 0),
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  activated_at     timestamptz,
+  revoked_at       timestamptz,
+  FOREIGN KEY (user_id, installation_id) REFERENCES desktop_installations(user_id, id) ON DELETE CASCADE,
+  CHECK ((state = 'pending') = (activated_at IS NULL AND revoked_at IS NULL) OR state = 'revoked'),
+  CHECK ((state = 'revoked') = (revoked_at IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_desktop_consent_keys_active ON desktop_consent_keys (user_id, installation_id) WHERE state = 'active';
+
+CREATE TABLE IF NOT EXISTS chat_consent_challenges (
+  id               text PRIMARY KEY CHECK (id ~ '^cc_[0-9a-f]{24}$'),
+  user_id          text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  device_id        text NOT NULL CHECK (char_length(device_id) BETWEEN 1 AND 200),
+  installation_id  text NOT NULL,
+  key_id           text NOT NULL REFERENCES desktop_consent_keys(id) ON DELETE CASCADE,
+  grant_id         text NOT NULL REFERENCES chat_provider_grants(id) ON DELETE CASCADE,
+  session_id       text NOT NULL CHECK (session_id ~ '^[A-Za-z0-9_-]{1,64}$'),
+  provider         text NOT NULL CHECK (provider IN ('claude','codex')),
+  model            text NOT NULL CHECK (char_length(model) BETWEEN 1 AND 120),
+  nonce            text NOT NULL UNIQUE CHECK (nonce ~ '^[A-Za-z0-9_-]{22,128}$'),
+  expires_at       bigint NOT NULL CHECK (expires_at > 0),
+  state            text NOT NULL DEFAULT 'issued' CHECK (state IN ('issued','verified','rejected','expired','revoked')),
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  settled_at       timestamptz,
+  FOREIGN KEY (user_id, installation_id) REFERENCES desktop_installations(user_id, id) ON DELETE CASCADE,
+  CHECK ((state = 'issued') = (settled_at IS NULL))
+);
+CREATE INDEX IF NOT EXISTS ix_chat_consent_challenges_grant ON chat_consent_challenges (user_id, grant_id, state);
 
 -- 사용자별 저장 데이터 변경 revision — 주기 polling의 가벼운 확인용.
 -- 고정 대상 표: /api/state 및 그 UI 보조 GET이 읽는 지속 자료. last_used_at은 heartbeat라 전용 예외로 뺀다.

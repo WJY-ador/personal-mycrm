@@ -52,6 +52,15 @@ class PackagingTests(unittest.TestCase):
                         missing.add(name + " -> " + rel)
         self.assertEqual(missing, set())
 
+    def test_sidecar_inputs_are_declared_as_optional_manifest_files(self):
+        allow = set(json.loads((ROOT / "packaging/agent-files.json").read_text()))
+        manifest = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))
+        files = {entry["path"]: entry for entry in manifest["files"]}
+        missing = allow - set(files)
+        self.assertEqual(missing, set())
+        for name in allow:
+            self.assertFalse(files[name]["required"], name)
+
     def test_checksum_manifest_is_stable_and_excludes_its_own_output(self):
         checksums = load("checksums")
         with tempfile.TemporaryDirectory(dir=ROOT / "release") as temp:

@@ -6,11 +6,11 @@
   "support": {
     "macos": {
       "core": "시험함 (Apple Silicon, Python 3.9·3.14)",
-      "optional": "로컬 에이전트(agent/, 호스팅 판 연결 장치): 단위 시험함(Python 3.9·3.14, Keychain·launchd 는 모의 실행기) — 예약 launchd 1시간, 수집 likes 1종. 알림 없음"
+      "optional": "로컬 에이전트(agent/, 호스팅 판 연결 장치): 단위 시험함(Python 3.9, 3.14, Keychain, launchd 는 모의 실행기) — 예약 launchd 1시간, 수집 likes 1종. 알림 없음. 대화 후보 모듈 포함(기본 비활성); Claude CLI 경로는 macOS 전용이고 프로세스 격리는 완전한 샌드박스가 아님, Codex 경로는 프로덕션 격리 구현 부재로 사용 불가."
     },
     "windows-native": {
       "core": "미검증 — 코드 대응만",
-      "optional": "로컬 에이전트: 미검증 — 자격 증명 저장소(Credential Manager)·예약(Task Scheduler) 코드 있음, 단위 시험(모의 API·모의 schtasks)만 통과, 실제 Windows 에서 연결·업로드·예약 미확인. 알림 없음"
+      "optional": "로컬 에이전트: 미검증 — 자격 증명 저장소(Credential Manager), 예약(Task Scheduler) 코드 있음, 단위 시험(모의 API, 모의 schtasks)만 통과, 실제 Windows 에서 연결, 업로드, 예약 미확인. 알림 없음. 대화 기능은 지원하지 않음(Claude 경로 macOS 전용, Codex 경로 Windows 격리 미구현)."
     },
     "windows-wsl": {
       "core": "미검증·미결정",
@@ -92,6 +92,38 @@
       "required": false
     },
     {
+      "path": "agent/chat.py",
+      "required": false
+    },
+    {
+      "path": "agent/chat_approval_context.py",
+      "required": false
+    },
+    {
+      "path": "agent/chat_claude.py",
+      "required": false
+    },
+    {
+      "path": "agent/chat_codex.py",
+      "required": false
+    },
+    {
+      "path": "agent/chat_launch_authority.py",
+      "required": false
+    },
+    {
+      "path": "agent/chat_mcp_bridge.py",
+      "required": false
+    },
+    {
+      "path": "agent/chat_process_supervisor.py",
+      "required": false
+    },
+    {
+      "path": "agent/chat_providers.py",
+      "required": false
+    },
+    {
       "path": "agent/cli.py",
       "required": false
     },
@@ -101,6 +133,10 @@
     },
     {
       "path": "agent/config.py",
+      "required": false
+    },
+    {
+      "path": "agent/consent_bridge.py",
       "required": false
     },
     {
@@ -281,6 +317,10 @@
     },
     {
       "path": "agent/viewer.py",
+      "required": false
+    },
+    {
+      "path": "agent/wsclient.py",
       "required": false
     },
     {

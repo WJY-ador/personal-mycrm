@@ -514,6 +514,10 @@ def _init_schema(c):
         for n, ddl in _CHAT_TURNS_COLS:   # 웹 「대화」 PR 1 리뷰 — 누계 열(PR 1 첫 판으로 만든 표엔 없다). schema.sql 최종형과 같은 모양
             if not _has_col(c, "chat_turns", n):
                 c.execute(f"ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS {n} {ddl}")
+        for n, ddl in _CHAT_SESSION_V2_COLS:
+            if not _has_col(c, "chat_sessions", n):
+                c.execute(f"ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS {n} {ddl}")
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_chat_sessions_client ON chat_sessions (user_id, client_session_id) WHERE client_session_id IS NOT NULL")
         _migrate_stack(c)   # PR ②-b — jobs 새 열·definitions_version text·items 판 포인터·generation_kind 넓히기
         _migrate_trash(c)   # 휴지통 PR-1 — 5종 휴지통 열·CHECK·부분 인덱스 · 사람 표식 · 접수 deleted 상태
         _migrate_pc_connect(c)   # PC 연결(2026-11-02) — import_streams M2 대기 토큰 열·CHECK·UNIQUE. 새 표 2개는 schema.sql
@@ -569,6 +573,8 @@ ITEM_LINK_TARGET_CHECK = ("CHECK (num_nonnulls(target_item_id, target_record_id,
 
 _CHAT_TURNS_COLS = (("n_events", "integer NOT NULL DEFAULT 0 CHECK (n_events >= 0)"),
                     ("n_bytes", "bigint NOT NULL DEFAULT 0 CHECK (n_bytes >= 0)"))
+_CHAT_SESSION_V2_COLS = (("model", "text"), ("client_session_id", "text"),
+                         ("binding_version", "smallint NOT NULL DEFAULT 0"))
 
 
 def _migrate_board_import(c):
@@ -965,11 +971,19 @@ def tx():
 
 @contextmanager
 def tx_scope():
-    """여러 db 함수를 한 트랜잭션으로 묶는다(board 이전 행 단위 원자성 — imports.migration_apply_row 만 쓴다).
-    안에서 부르는 tx() 는 모두 이 연결의 savepoint 다. 중첩 tx_scope 는 거절. 바깥 코드의 기존 동작(tx 마다 새 연결)은 그대로."""
+    """여러 db 함수를 한 트랜잭션으로 묶는다.
+
+    바깥 scope 는 풀 연결과 트랜잭션을 소유한다. 안쪽 tx_scope/tx 호출은
+    같은 연결에서 savepoint 를 연다. 안쪽 실패를 호출자가 잡으면 해당
+    savepoint 만 되돌리고 바깥 작업은 계속할 수 있다. 실패가 밖으로
+    전파되면 바깥 트랜잭션 전체가 되돌아간다.
+    """
     var = _scope()
-    if var.get() is not None:
-        raise RuntimeError("tx_scope 는 중첩하지 않는다")
+    existing = var.get()
+    if existing is not None:
+        with existing.transaction():
+            yield existing
+        return
     with pool().connection() as c:
         with c.transaction():
             token = var.set(c)
@@ -3584,7 +3598,7 @@ DELETE_NOTICE = ("7일 뒤 자료를 모두 지우고 계정을 닫습니다. �
 # tickets 는 보존 문의 1건을 빼고 지운다(ticket_history 는 cascade). 시험이 「이 목록 = schema 의 user_id 테이블 − 예외」를 정적으로 본다.
 # board 이전(2026-10-20): 관계(activity_links) → 접수 대응표(import_entries) → 업무 자료(activities) → 한도·입력원(import_counters·import_streams).
 # PR ②-b: 판·stage(items 자식, 확인 이벤트를 가리킨다) → 확인 이벤트 → items.
-DELETE_TABLES = ("chat_sessions", "record_history", "token_grants", "desktop_installations", "desktop_handoffs", "page_layouts", "stack_sessions", "jobs", "item_links", "activity_links", "import_entries", "activities", "import_counters",
+DELETE_TABLES = ("chat_approvals", "chat_sessions", "chat_consent_challenges", "chat_provider_grants", "desktop_consent_keys", "record_history", "token_grants", "desktop_installations", "desktop_handoffs", "page_layouts", "stack_sessions", "jobs", "item_links", "activity_links", "import_entries", "activities", "import_counters",
                  "import_streams", "migration_plan_items", "migration_plans", "migration_tokens", "item_stage", "item_versions", "confirm_events", "item_history", "items", "user_roles", "field_defs",
                  "object_defs", "std_choices", "std_marks",
                  "candidate_history", "candidates", "source_reflections", "records", "sources", "questions", "profile", "tabs",

@@ -119,6 +119,17 @@ _call_uid: contextvars.ContextVar = contextvars.ContextVar("crm_call_uid", defau
 
 
 def uid_of(ctx: Context) -> str:
+    # The chat MCP HTTP route mints this identity only after revalidating the
+    # device token and consumed consent/session bindings from server state.
+    # It is a separate internal path; ordinary MCP requests still require the
+    # OAuth access token below.
+    from chat_mcp_gateway import trusted_principal_uid
+    chat_uid = trusted_principal_uid(ctx)
+    if chat_uid is not None:
+        memo = _call_uid.get()
+        if memo is not None:
+            memo["uid"] = chat_uid
+        return chat_uid
     memo = _call_uid.get()
     if memo is not None and "uid" in memo:
         return memo["uid"]
