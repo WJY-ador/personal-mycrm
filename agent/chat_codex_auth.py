@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import shutil
 import stat
 
 try:
@@ -22,6 +23,28 @@ class CodexAuthError(RuntimeError):
 
 # Pass as separate argv entries, not through a shell.
 CODEX_AUTH_CONFIG_ARGS = ('-c', 'cli_auth_credentials_store="file"')
+
+
+def safe_cli_path(cli_path, source_path):
+    """Keep CLI and real Node directories, excluding relative paths and agent shims."""
+    if not isinstance(cli_path, str) or not os.path.isabs(cli_path) or not isinstance(source_path, str):
+        raise CodexAuthError('invalid executable path')
+    directories = []
+    for item in source_path.split(os.pathsep):
+        if not item or not os.path.isabs(item):
+            continue
+        resolved = os.path.realpath(item)
+        if '/.cmuxterm/cmux-cli-shims/' in resolved + '/' or '/.codex/tmp/' in resolved + '/':
+            continue
+        if resolved not in directories:
+            directories.append(resolved)
+    node = shutil.which('node', path=os.pathsep.join(directories))
+    result = [os.path.dirname(cli_path)]
+    if node:
+        node = os.path.realpath(node)
+        if os.path.isfile(node) and os.access(node, os.X_OK):
+            result.append(os.path.dirname(node))
+    return os.pathsep.join(dict.fromkeys(result + ['/usr/bin', '/bin']))
 
 
 def _check_stat(info, *, directory=False):

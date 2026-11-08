@@ -7,6 +7,7 @@ from pathlib import Path
 from agent.chat_codex_auth import (
     CodexAuthError, codex_auth_lock, login_cancel_request, login_start_request,
     prepare_codex_home, validate_credentials, login_completed,
+    safe_cli_path,
 )
 
 
@@ -16,6 +17,21 @@ class CodexAuthTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.parent = Path(self.tmp.name)
+
+    def test_cli_path_finds_node_without_including_relative_or_shim_directories(self):
+        node_dir = self.parent / 'node-bin'
+        node_dir.mkdir()
+        node = node_dir / 'node'
+        node.write_text('#!/bin/sh\n', encoding='utf8')
+        node.chmod(0o700)
+        shim = self.parent / '.cmuxterm' / 'cmux-cli-shims' / 'session'
+        shim.mkdir(parents=True)
+        (shim / 'node').write_text('#!/bin/sh\n', encoding='utf8')
+        (shim / 'node').chmod(0o700)
+        result = safe_cli_path('/usr/local/bin/codex', f'.:{shim}:{node_dir}')
+        self.assertIn(os.path.realpath(str(node_dir)), result.split(os.pathsep))
+        self.assertNotIn(os.path.realpath(str(shim)), result.split(os.pathsep))
+        self.assertNotIn('.', result.split(os.pathsep))
 
     def test_private_home_created_and_no_credentials_required(self):
         home = Path(prepare_codex_home(str(self.parent)))

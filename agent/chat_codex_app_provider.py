@@ -10,7 +10,7 @@ import threading
 
 from .chat_approval_context import format_approval_outcomes
 from .chat_codex import CodexProvider, _DISABLED_FEATURES, _FORBIDDEN_ENV
-from .chat_codex_auth import codex_auth_lock, prepare_codex_home, validate_credentials
+from .chat_codex_auth import codex_auth_lock, prepare_codex_home, safe_cli_path, validate_credentials
 from .chat_codex_dynamic import AppServerProcess, DynamicToolRelay
 from .chat_launch_authority import AUTH_PATH
 from .chat_mcp_bridge import McpStdioBridge
@@ -63,6 +63,7 @@ class AppServerCandidateProvider:
             if (env.get('CODEX_HOME') != self.auth_home or _FORBIDDEN_ENV.intersection(env)
                     or os.path.lexists(os.path.join(self.auth_home, 'config.toml'))):
                 raise ValueError('unsafe-environment')
+            env['PATH'] = safe_cli_path(self.base.cli_path, os.environ.get('PATH', ''))
             instructions = format_approval_outcomes(approval_outcomes)
             argv = [self.base.cli_path, 'app-server', '--listen', 'stdio://',
                     '-c', 'cli_auth_credentials_store="file"', '-c', 'web_search="disabled"',

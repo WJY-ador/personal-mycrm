@@ -21,6 +21,13 @@ function state(s){
   $('process-detail').textContent=Object.entries(s.processes).map(([name,p])=>(name==='jobs'?'대화 정리':'원문 뷰어')+': '+(labels[p.state]||p.state)).join(' · ');
   for(const b of document.querySelectorAll('button'))b.disabled=s.busy;
   for(const id of ['allow-cli','auto-start','codex-models'])$(id).disabled=s.busy;
+  const login=s.codexLogin||{enabled:false,status:'idle'};
+  const loginText={idle:'로그인 기능을 준비하고 있어요.',starting:'로그인을 시작하고 있어요.',waiting:'브라우저에서 로그인해 주세요.',completed:'Codex 구독 로그인을 확인했어요.',cancelled:'로그인을 취소했어요.',unavailable:'로그인 기능을 준비하고 있어요.',error:'로그인을 완료하지 못했어요. 다시 시도해 주세요.'};
+  $('codex-login-state').textContent=loginText[login.status]||loginText.error;
+  const loginPending=login.status==='starting'||login.status==='waiting';
+  $('codex-login-start').disabled=s.busy||!s.ready||!s.connection.codexCliConfigured||!login.enabled||loginPending;
+  $('codex-login-cancel').hidden=!loginPending;
+  $('codex-login-cancel').disabled=s.busy;
   if(!s.ready){$('start').disabled=true;$('sync').disabled=true;say('연결 장치 실행 파일이 없습니다. 공식 설치 패키지로 다시 설치해 주세요.');}
   const pc=s.pc||{};
   $('login').hidden=pc.session!=='none';
@@ -39,6 +46,8 @@ $('allow-cli').onchange=()=>act(()=>window.mycrm.allowCli($('allow-cli').checked
 $('auto-start').onchange=()=>act(()=>window.mycrm.autoStart($('auto-start').checked),'로그인 시 앱 실행 설정을 저장했어요.');
 $('choose-cli').onclick=()=>act(()=>window.mycrm.chooseCli(),'Claude 실행 파일 설정을 확인했어요.');
 $('configure-codex').onclick=()=>act(()=>window.mycrm.configureCodex({models:$('codex-models').value}),'Codex CLI 설정을 저장했어요.');
+$('codex-login-start').onclick=()=>act(()=>window.mycrm.codexLoginStart());
+$('codex-login-cancel').onclick=()=>act(()=>window.mycrm.codexLoginCancel());
 $('start').onclick=()=>act(()=>window.mycrm.start(),'연결 장치를 시작했어요.');
 $('stop').onclick=()=>act(()=>window.mycrm.stop(),'연결 장치를 중지했어요.');
 $('sync').onclick=()=>act(()=>window.mycrm.sync(),'동기화를 마쳤어요.');

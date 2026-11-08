@@ -89,6 +89,8 @@ def _parser() -> argparse.ArgumentParser:
     codex_cfg.add_argument("--model", action="append", required=True,
                            help="구독에서 확인한 모델 ID(여러 번 지정 가능, 최대 20개)")
 
+    sub.add_parser("codex-app-login", help=argparse.SUPPRESS)
+
     s = sub.add_parser("schedule", help="현재 사용자 예약(1시간마다)")
     s.add_argument("action", choices=("install", "remove"))
 
@@ -716,6 +718,37 @@ def cmd_configure_codex(ctx: Ctx, a) -> int:
     return EXIT_OK
 
 
+def cmd_codex_app_login(ctx: Ctx, a) -> int:
+    """Private desktop protocol. Only fixed status words are written to stdout."""
+    import threading
+    from . import chat_codex_login
+    def report(status):
+        print(json.dumps({'status': status}, separators=(',', ':')), file=ctx.out, flush=True)
+    if chat_codex_login.APP_SERVER_LOGIN_READY is not True:
+        report('unavailable')
+        return EXIT_ERR
+    try:
+        cfg = _config.load(ctx.paths)
+        cli_path = (cfg.get('summary') or {}).get('codex_cli_path')
+    except Exception:
+        report('error')
+        return EXIT_ERR
+    cancelled = threading.Event()
+    def read_cancel():
+        try:
+            while True:
+                line = ctx.stdin.readline()
+                if not line or line.strip() == 'cancel':
+                    cancelled.set()
+                    return
+        except Exception:
+            cancelled.set()
+    threading.Thread(target=read_cancel, daemon=True, name='codex-login-cancel').start()
+    result = chat_codex_login.run_login_session(ctx.paths.home, cli_path,
+        cancelled=cancelled.is_set, report=report, open_browser=ctx.browser_open)
+    return EXIT_OK if result in ('completed', 'cancelled') else EXIT_ERR
+
+
 def cmd_schedule(ctx: Ctx, a) -> int:
     try:
         if a.action == "install":
@@ -1044,6 +1077,7 @@ def cmd_migrate(ctx: Ctx, a) -> int:
 COMMANDS = {"connect": cmd_connect, "validate": cmd_validate, "run-once": cmd_run_once, "status": cmd_status,
             "schedule": cmd_schedule, "serve": cmd_serve, "disconnect": cmd_disconnect,
             "configure-cli": cmd_configure_cli, "configure-codex": cmd_configure_codex,
+            "codex-app-login": cmd_codex_app_login,
             "migrate": cmd_migrate, "chat": cmd_chat,
             "chat-mcp-bridge": cmd_chat_mcp_bridge}
 
