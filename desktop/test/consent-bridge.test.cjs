@@ -19,7 +19,7 @@ async function send(socketPath, body){
  });
 }
 
-test('private local bridge authenticates supervised child and forwards only a validated request',async()=>{
+test('private local bridge authenticates supervised child and forwards only a validated request',{skip:process.platform==='win32'},async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'mycrm-consent-bridge-'));
  await fs.chmod(root,0o700);
  const calls=[];
@@ -49,7 +49,7 @@ test('bridge refuses non-private or non-owned socket directory',async()=>{
  try{await assert.rejects(bridge.start());}finally{await bridge.close();await fs.rm(root,{recursive:true,force:true});}
 });
 
-test('desktop Stop aborts native approval immediately before the supervised child exits',async()=>{
+test('desktop Stop aborts native approval immediately before the supervised child exits',{skip:process.platform==='win32'},async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'mycrm-consent-bridge-abort-'));
  await fs.chmod(root,0o700);
  let signal,startedResolve;
@@ -79,7 +79,7 @@ test('desktop Stop aborts native approval immediately before the supervised chil
  }
 });
 
-test('closing the supervised child socket aborts the native approval handler',async()=>{
+test('closing the supervised child socket aborts the native approval handler',{skip:process.platform==='win32'},async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'mycrm-consent-bridge-close-'));
  await fs.chmod(root,0o700);
  let signal,startedResolve;
@@ -102,4 +102,17 @@ test('closing the supervised child socket aborts the native approval handler',as
   for(let i=0;i<50&&!signal.aborted;i++)await new Promise(resolve=>setTimeout(resolve,10));
   assert.equal(signal.aborted,true);
  }finally{client?.destroy();await bridge.close();await fs.rm(root,{recursive:true,force:true});}
+});
+
+test('Windows bridge refuses startup before creating a socket or invoking the handler',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'mycrm-consent-windows-'));
+ let called=false;
+ const bridge=new ConsentBridge({directory:root,platform:'win32',handler:async()=>{called=true;return true;}});
+ try{
+  await assert.rejects(bridge.start(),/OS IPC unavailable/);
+  assert.equal(called,false);
+  assert.equal(bridge.server,null);
+  assert.equal(bridge.socketPath,null);
+  assert.throws(()=>bridge.childEnv(),/bridge unavailable/);
+ }finally{await bridge.close();await fs.rm(root,{recursive:true,force:true});}
 });
