@@ -54,7 +54,7 @@ class PackagingTests(unittest.TestCase):
 
     def test_sidecar_inputs_are_declared_as_optional_manifest_files(self):
         allow = set(json.loads((ROOT / "packaging/agent-files.json").read_text()))
-        manifest = json.loads((ROOT / "manifest.json").read_text())
+        manifest = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))
         files = {entry["path"]: entry for entry in manifest["files"]}
         missing = allow - set(files)
         self.assertEqual(missing, set())

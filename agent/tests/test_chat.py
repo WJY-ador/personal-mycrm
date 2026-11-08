@@ -9,6 +9,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 from unittest.mock import patch
 
@@ -128,6 +129,7 @@ class AgentTest(unittest.TestCase):
         self.assertEqual(provider.turns, 0)
         self.assertEqual(sent[-1]["data"], {"code": "APPROVAL-OUTCOMES"})
 
+    @unittest.skipUnless(sys.platform == "darwin", "requires macOS process supervisor")
     def test_claude_factory_turn_runs_only_the_synthetic_cli_and_returns_events(self):
         from datetime import datetime, timedelta, timezone
         expiry = (datetime.now(timezone.utc) + timedelta(seconds=10)).isoformat().replace("+00:00", "Z")
@@ -174,6 +176,7 @@ class AgentTest(unittest.TestCase):
             self.assertEqual(events[0]["data"]["text"], "synthetic reply")
             self.assertNotIn("synthetic-token", repr(sent))
 
+    @patch.object(chat_claude, "sys", types.SimpleNamespace(platform="darwin", executable=sys.executable))
     def test_claude_turn_requires_server_launch_authorization_before_provider_creation(self):
         class Reply:
             status = 200

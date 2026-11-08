@@ -10,6 +10,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 from unittest.mock import patch
 
@@ -88,6 +89,11 @@ class FixtureAuthority:
             and bridge == chat_claude.PinnedBridgeDescriptor(self.bridge_path, (), self.bridge_sha256)
             and grant.config == expected_config
         )
+
+
+def simulated_macos(test):
+    """Exercise platform-independent factory validation without spawning a process."""
+    return patch.object(chat_claude, "sys", types.SimpleNamespace(platform="darwin", executable=sys.executable))(test)
 
 
 class ClaudeProviderTest(unittest.TestCase):
@@ -229,6 +235,14 @@ class ClaudeProviderTest(unittest.TestCase):
             with self.assertRaises(chat_claude.ClaudeProviderUnavailable):
                 self.provider(launch_verifier=lambda _grant: True)
 
+    def test_server_factory_rejects_unsupported_platform(self):
+        client = self.auth_client(LaunchAuthorization("u", "d", "s", "t", "claude", "model", "g", "c", time.time() + 10, {}))
+        with patch.object(chat_claude, "sys", types.SimpleNamespace(platform="linux", executable=sys.executable)):
+            with self.assertRaisesRegex(chat_claude.ClaudeProviderUnavailable, "platform"):
+                chat_claude.ClaudeProviderFactory(client, cli_path=self.exe, server_url="https://synthetic.invalid",
+                    agent_home=self.root, expected_device_id="d", temp_parent=self.root)
+
+    @simulated_macos
     def test_server_factory_binds_launch_context_and_strips_api_key_environment(self):
         authorization = LaunchAuthorization("user-synthetic", "device-synthetic", "cs_synthetic", "ct_synthetic",
             "claude", "claude-sonnet-4-5", "grant-synthetic", "challenge-synthetic",
@@ -253,6 +267,7 @@ class ClaudeProviderTest(unittest.TestCase):
         self.assertFalse(os.listdir(provider.launch_context.cwd))
         provider.close()
 
+    @simulated_macos
     def test_server_factory_denies_binding_tamper_before_provider_or_spawn(self):
         bad = LaunchAuthorization("user-synthetic", "device-attacker", "cs_synthetic", "ct_synthetic",
             "claude", "claude-sonnet-4-5", "grant-synthetic", "challenge-synthetic", time.time() + 10,
@@ -263,6 +278,7 @@ class ClaudeProviderTest(unittest.TestCase):
             factory.create_turn("cs_synthetic", "ct_synthetic", "/api/chat/launch-authorization",
                                 "claude", "claude-sonnet-4-5")
 
+    @simulated_macos
     def test_server_factory_rejects_publicly_injected_transport(self):
         client = LaunchAuthorizationClient("https://synthetic.invalid", lambda: "synthetic-device-token", opener=object())
         self.assertFalse(client.production_transport)
@@ -270,6 +286,7 @@ class ClaudeProviderTest(unittest.TestCase):
             chat_claude.ClaudeProviderFactory(client, cli_path=self.exe, server_url="https://synthetic.invalid",
                 agent_home=self.root, expected_device_id="device-synthetic", temp_parent=self.root)
 
+    @simulated_macos
     def test_server_factory_uses_internal_sidecar_subcommand_when_frozen(self):
         client = self.auth_client(LaunchAuthorization("user-synthetic", "device-synthetic", "cs_synthetic", "ct_synthetic",
             "claude", "claude-sonnet-4-5", "grant-synthetic", "challenge-synthetic", time.time() + 10,
@@ -285,6 +302,7 @@ class ClaudeProviderTest(unittest.TestCase):
             self.assertIsNone(bridge.code_path)
             provider.close()
 
+    @simulated_macos
     def test_server_revalidation_failure_rejects_provider_before_child_spawn(self):
         authorization = LaunchAuthorization("user-synthetic", "device-synthetic", "cs_synthetic", "ct_synthetic",
             "claude", "claude-sonnet-4-5", "grant-synthetic", "challenge-synthetic", time.time() + 10,
@@ -302,6 +320,7 @@ class ClaudeProviderTest(unittest.TestCase):
         self.assertEqual(count, [])
         provider.close()
 
+    @simulated_macos
     def test_server_revalidation_rejects_replaced_grant_before_child_spawn(self):
         authorization = LaunchAuthorization("user-synthetic", "device-synthetic", "cs_synthetic", "ct_synthetic",
             "claude", "claude-sonnet-4-5", "grant-synthetic", "challenge-synthetic", time.time() + 10,
@@ -398,6 +417,7 @@ class ClaudeProviderTest(unittest.TestCase):
         self.launch.current = lambda: False
         self.assertFalse(provider.is_available())
 
+    @unittest.skipUnless(sys.platform == "darwin", "requires macOS process supervisor")
     def test_argv_uses_fixed_tools_and_never_contains_user_text(self):
         text = "synthetic prompt --dangerously-skip-permissions"
         list(self.provider().start_turn(text))
@@ -421,6 +441,7 @@ class ClaudeProviderTest(unittest.TestCase):
         self.assertIn("MyCRM", system_context)
         self.assertIn("pending_confirmation", system_context)
 
+    @unittest.skipUnless(sys.platform == "darwin", "requires macOS process supervisor")
     def test_approval_outcomes_are_appended_as_separate_system_context(self):
         provider = self.provider()
         text = "synthetic original text stays untouched"
@@ -434,6 +455,7 @@ class ClaudeProviderTest(unittest.TestCase):
             sent = json.loads(handle.readline())
         self.assertEqual(sent["message"]["content"][0]["text"], text)
 
+    @unittest.skipUnless(sys.platform == "darwin", "requires macOS process supervisor")
     def test_two_turn_session_ref_is_passed_to_cli_resume(self):
         provider = self.provider()
         first = list(provider.start_turn("synthetic first turn"))
@@ -464,11 +486,13 @@ class ClaudeProviderTest(unittest.TestCase):
                                capture_output=True, text=True, check=False).stdout.strip()
         self.assertTrue(not state or state.startswith("Z"), f"fake MCP child still running: {state}")
 
+    @unittest.skipUnless(sys.platform == "darwin", "requires macOS process supervisor")
     def test_unexpected_builtin_tool_event_is_rejected_without_dispatch(self):
         self._fixture("forbidden-tool")
         out = list(self.provider().start_turn("synthetic blocked-tool request"))
         self.assertEqual(out[-1], ("error", {"code": "CLI-FAILED"}))
 
+    @unittest.skipUnless(sys.platform == "darwin", "requires macOS process supervisor")
     def test_stdin_uses_official_user_jsonl_schema_and_env_has_no_api_credentials(self):
         self._fixture("echo")
         captured = {}
@@ -489,6 +513,7 @@ class ClaudeProviderTest(unittest.TestCase):
         payload = json.loads(line)
         self.assertEqual(payload, {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "합성 질문"}]}})
 
+    @unittest.skipUnless(sys.platform == "darwin", "requires macOS process supervisor")
     def test_stream_json_maps_known_messages_and_retains_only_local_session_ref(self):
         out = list(self.provider().start_turn("synthetic prompt"))
         self.assertEqual(out[0], ("session_ref", {"cli_session_ref": "fixture-session-01"}))
@@ -514,6 +539,7 @@ class ClaudeProviderTest(unittest.TestCase):
         out = list(provider.start_turn("synthetic prompt", "--dangerously-skip-permissions"))
         self.assertEqual(out[0], ("error", {"code": "CLI-SESSION-REF"}))
 
+    @unittest.skipUnless(sys.platform == "darwin", "requires macOS process supervisor")
     def test_stop_terminates_running_fixture_process(self):
         self._fixture("hang")
         provider = self.provider(timeout=5)
@@ -573,6 +599,7 @@ class ClaudeProviderTest(unittest.TestCase):
                 except ProcessLookupError:
                     pass
 
+    @unittest.skipUnless(sys.platform == "darwin", "requires macOS process supervisor")
     def test_timeout_kills_process_and_auth_stderr_is_redacted(self):
         self._fixture("hang")
         timeout_out = list(self.provider(timeout=0.1).start_turn("synthetic prompt"))
@@ -582,6 +609,7 @@ class ClaudeProviderTest(unittest.TestCase):
         self.assertEqual(error_out[-1], ("error", {"code": "CLI-FAILED"}))
         self.assertNotIn("fixture-secret", repr(error_out))
 
+    @unittest.skipUnless(sys.platform == "darwin", "requires macOS process supervisor")
     def test_concurrent_turn_is_rejected(self):
         self._fixture("hang")
         provider = self.provider(timeout=5)
