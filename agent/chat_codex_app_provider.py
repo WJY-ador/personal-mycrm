@@ -6,6 +6,8 @@ verified. Do not register or enable this provider solely on the unit tests.
 from __future__ import annotations
 
 import os
+import re
+import subprocess
 import threading
 
 from .chat_approval_context import format_approval_outcomes
@@ -18,7 +20,81 @@ from .chat_mcp_bridge import McpStdioBridge
 APP_SERVER_CANDIDATE_READY = False
 _EXTRA_DISABLED = ('plugins', 'hooks', 'multi_agent', 'unified_exec', 'view_image',
                    'image_generation', 'skill_search', 'skill_mcp_dependency_install',
-                   'code_mode_host', 'tool_suggest', 'sleep_tool')
+                   'tool_suggest', 'sleep_tool', 'goals')
+# Add a version only after running the isolation and dynamic-tool probes on it.
+SUPPORTED_CLI_VERSIONS = ('0.166.0', '0.167.0')
+_VERSION_RE = re.compile(r'codex-cli (0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})(-[0-9A-Za-z.-]{1,40})?\Z')
+
+
+def _capture_version_output(cli_path, *, cwd, env):
+    """Bound output and runtime even if the selected executable misbehaves."""
+    proc = subprocess.Popen([cli_path, '--version'], cwd=cwd, env=env,
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    output = []
+    def read_bounded():
+        try:
+            output.append(proc.stdout.read(257))
+        except (OSError, ValueError):
+            pass
+    reader = threading.Thread(target=read_bounded, daemon=True)
+    reader.start()
+    try:
+        reader.join(5)
+        if reader.is_alive() or not output or len(output[0]) > 256:
+            return None
+        try:
+            returncode = proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            return None
+        return output[0].decode('utf-8', 'strict') if returncode == 0 else None
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+        reader.join(1)
+        proc.stdout.close()
+
+
+def inspect_cli_version(cli_path, *, cwd, env):
+    """Return only a sanitized diagnostic; untested versions remain disabled."""
+    result = {'status': 'unavailable', 'installed_version': None,
+              'supported_versions': list(SUPPORTED_CLI_VERSIONS),
+              'recommended_action': 'check_installation'}
+    if not isinstance(cli_path, str) or not os.path.isabs(cli_path):
+        return result
+    try:
+        output = _capture_version_output(cli_path, cwd=cwd, env=env)
+        match = _VERSION_RE.fullmatch(output.strip()) if output is not None else None
+        if match is None:
+            return result
+        version = '.'.join(match.group(i) for i in (1, 2, 3)) + (match.group(4) or '')
+        result['installed_version'] = version
+        if version in SUPPORTED_CLI_VERSIONS:
+            result.update(status='supported', recommended_action='none')
+        elif tuple(int(match.group(i)) for i in (1, 2, 3)) < tuple(map(int, SUPPORTED_CLI_VERSIONS[0].split('.'))):
+            result.update(status='too_old', recommended_action='update_codex')
+        elif match.group(4):
+            result.update(status='unverified_version', recommended_action='update_mycrm')
+        else:
+            result.update(status='unverified_newer', recommended_action='update_mycrm')
+    except (OSError, subprocess.TimeoutExpired, UnicodeError):
+        pass
+    return result
+
+
+def _cli_version_supported(cli_path, *, cwd, env):
+    return inspect_cli_version(cli_path, cwd=cwd, env=env)['status'] == 'supported'
+
+
+def _build_appserver_argv(cli_path):
+    argv = [cli_path, 'app-server', '--listen', 'stdio://', '--strict-config',
+            '-c', 'cli_auth_credentials_store="file"', '-c', 'web_search="disabled"',
+            '-c', 'mcp_servers={}', '-c', 'agents.enabled=false',
+            '-c', 'tools.experimental_request_user_input.enabled=false',
+            '-c', 'features.code_mode_host=true']
+    for name in dict.fromkeys(_DISABLED_FEATURES + _EXTRA_DISABLED):
+        argv.extend(('-c', 'features.' + name + '=false'))
+    return argv
 
 
 class AppServerCandidateProvider:
@@ -64,12 +140,10 @@ class AppServerCandidateProvider:
                     or os.path.lexists(os.path.join(self.auth_home, 'config.toml'))):
                 raise ValueError('unsafe-environment')
             env['PATH'] = safe_cli_path(self.base.cli_path, os.environ.get('PATH', ''))
+            if not _cli_version_supported(self.base.cli_path, cwd=context.cwd, env=env):
+                raise ValueError('unsupported-cli-version')
             instructions = format_approval_outcomes(approval_outcomes)
-            argv = [self.base.cli_path, 'app-server', '--listen', 'stdio://',
-                    '-c', 'cli_auth_credentials_store="file"', '-c', 'web_search="disabled"',
-                    '-c', 'mcp_servers={}']
-            for name in dict.fromkeys(_DISABLED_FEATURES + _EXTRA_DISABLED):
-                argv.extend(('-c', 'features.' + name + '=false'))
+            argv = _build_appserver_argv(self.base.cli_path)
             with codex_auth_lock(self.auth_home):
                 if not validate_credentials(self.auth_home):
                     raise ValueError('login-required')

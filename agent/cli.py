@@ -14,6 +14,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 
 from . import AGENT_VERSION, chat_mcp_bridge, config as _config, contract, hmacid, keystore, osutil, runner, schedule, store as _store
 
@@ -90,6 +91,7 @@ def _parser() -> argparse.ArgumentParser:
                            help="구독에서 확인한 모델 ID(여러 번 지정 가능, 최대 20개)")
 
     sub.add_parser("codex-app-login", help=argparse.SUPPRESS)
+    sub.add_parser("codex-version-status", help=argparse.SUPPRESS)
 
     s = sub.add_parser("schedule", help="현재 사용자 예약(1시간마다)")
     s.add_argument("action", choices=("install", "remove"))
@@ -718,6 +720,23 @@ def cmd_configure_codex(ctx: Ctx, a) -> int:
     return EXIT_OK
 
 
+def cmd_codex_version_status(ctx: Ctx, a) -> int:
+    """Return a bounded diagnostic for the selected CLI, without secrets."""
+    from .chat_codex_app_provider import inspect_cli_version
+    from .chat_codex_auth import safe_cli_path
+    try:
+        cfg = _config.load(ctx.paths)
+        cli_path = (cfg.get('summary') or {}).get('codex_cli_path')
+        with tempfile.TemporaryDirectory(prefix='mycrm-codex-version-') as temporary:
+            env = {'HOME': temporary, 'CODEX_HOME': temporary,
+                   'PATH': safe_cli_path(cli_path, os.environ.get('PATH', '')) if cli_path else '/usr/bin:/bin'}
+            result = inspect_cli_version(cli_path, cwd=temporary, env=env)
+    except Exception:
+        result = inspect_cli_version(None, cwd='/', env={})
+    ctx.say(json.dumps(result, ensure_ascii=True, separators=(',', ':')))
+    return EXIT_OK
+
+
 def cmd_codex_app_login(ctx: Ctx, a) -> int:
     """Private desktop protocol. Only fixed status words are written to stdout."""
     import threading
@@ -1078,6 +1097,7 @@ COMMANDS = {"connect": cmd_connect, "validate": cmd_validate, "run-once": cmd_ru
             "schedule": cmd_schedule, "serve": cmd_serve, "disconnect": cmd_disconnect,
             "configure-cli": cmd_configure_cli, "configure-codex": cmd_configure_codex,
             "codex-app-login": cmd_codex_app_login,
+            "codex-version-status": cmd_codex_version_status,
             "migrate": cmd_migrate, "chat": cmd_chat,
             "chat-mcp-bridge": cmd_chat_mcp_bridge}
 

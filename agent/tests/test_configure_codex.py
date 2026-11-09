@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import os
+import json
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from agent import config
 from agent.tests.helpers import TempHome, run_cli
@@ -24,6 +27,26 @@ class ConfigureCodexTest(unittest.TestCase):
     def config_bytes(self):
         with open(self.home.paths.config, "rb") as handle:
             return handle.read()
+
+    def test_version_status_reports_selected_cli_without_exposing_path_or_secrets(self):
+        self.call('--path', self.cli, '--model', 'synthetic')
+        with patch.dict(os.environ, {'OPENAI_API_KEY': 'synthetic-secret'}), \
+             patch('agent.chat_codex_app_provider._capture_version_output', return_value='codex-cli 0.168.0\n') as run:
+            code, output = run_cli(['--home', self.home.home, 'codex-version-status'])
+        self.assertEqual(code, 0, output)
+        result = json.loads(output)
+        self.assertEqual(result['status'], 'unverified_newer')
+        self.assertEqual(result['installed_version'], '0.168.0')
+        self.assertNotIn(self.cli, output)
+        self.assertNotIn('synthetic-secret', output)
+        self.assertNotIn('OPENAI_API_KEY', run.call_args.kwargs['env'])
+
+    def test_version_status_without_selected_cli_is_safe_and_machine_readable(self):
+        code, output = run_cli(['--home', self.home.home, 'codex-version-status'])
+        self.assertEqual(code, 0, output)
+        result = json.loads(output)
+        self.assertEqual(result['status'], 'unavailable')
+        self.assertEqual(result['recommended_action'], 'check_installation')
 
     def test_saves_real_cli_path_and_repeated_explicit_model_ids(self):
         cfg = config.load(self.home.paths)

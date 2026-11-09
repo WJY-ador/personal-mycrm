@@ -1,5 +1,5 @@
 'use strict';
-const $=id=>document.getElementById(id);let latestDownload=null;
+const $=id=>document.getElementById(id);let latestDownload=null,codexVersionRequested=false,codexVersionRequest=0;
 function say(text){$('message').textContent=text;}
 function state(s){
   $('version').textContent='v'+s.version;$('connection').textContent=s.pc?.revoked?'해제됨':s.connection.connected?'연결됨':'연결 안 됨';
@@ -7,6 +7,7 @@ function state(s){
   $('allow-cli').checked=s.allowCli;$('auto-start').checked=s.autoStart;
   $('cli-state').textContent=s.connection.cliConfigured?' 실행 파일 지정됨':' 실행 파일을 지정해 주세요';
   const codexModels=s.connection.codexModels||[];
+  if(s.ready&&s.connection.codexCliConfigured&&!codexVersionRequested){codexVersionRequested=true;$('codex-version-check').click();}
   $('codex-state').textContent=s.connection.codexCliConfigured
     ?(codexModels.length?'Codex CLI 경로와 모델 ID 저장됨':'Codex CLI 경로 저장됨, 모델 ID 설정 필요')
     :'Codex CLI 경로와 모델 ID 설정 필요';
@@ -45,7 +46,22 @@ $('connect-form').onsubmit=event=>{event.preventDefault();const token=$('token')
 $('allow-cli').onchange=()=>act(()=>window.mycrm.allowCli($('allow-cli').checked),'실행 설정을 저장했어요. 시작을 누르면 적용됩니다.');
 $('auto-start').onchange=()=>act(()=>window.mycrm.autoStart($('auto-start').checked),'로그인 시 앱 실행 설정을 저장했어요.');
 $('choose-cli').onclick=()=>act(()=>window.mycrm.chooseCli(),'Claude 실행 파일 설정을 확인했어요.');
-$('configure-codex').onclick=()=>act(()=>window.mycrm.configureCodex({models:$('codex-models').value}),'Codex CLI 설정을 저장했어요.');
+$('configure-codex').onclick=async()=>{const value=await act(()=>window.mycrm.configureCodex({models:$('codex-models').value}),'Codex CLI 설정을 저장했어요.');if(value&&!value.canceled&&value.code===0)$('codex-version-check').click();};
+$('codex-version-check').onclick=async()=>{
+  const request=++codexVersionRequest;
+  $('codex-version-state').textContent='CLI 버전을 확인하고 있어요.';
+  const result=await window.mycrm.codexVersion().catch(()=>null);
+  if(request!==codexVersionRequest)return;
+  const v=result?.ok&&result.value;
+  if(!v){$('codex-version-state').textContent='CLI 버전을 확인하지 못했어요. 실행 파일 설정을 확인하고 다시 확인해 주세요.';return;}
+  const installed=v.installed_version?'설치된 Codex CLI: '+v.installed_version+'. ':'설치된 Codex CLI 버전을 확인하지 못했어요. ';
+  const supported=v.supported_versions?.length?'현재 MyCRM에서 검증한 버전: '+v.supported_versions.join(', ')+'. ':'';
+  const newest=[...(v.supported_versions||[])].filter(x=>/^\d+\.\d+\.\d+$/.test(x)).sort((a,b)=>{const av=a.split('.').map(Number),bv=b.split('.').map(Number);return bv[0]-av[0]||bv[1]-av[1]||bv[2]-av[2];})[0];
+  const oldHelp=newest?'npm으로 설치했다면 터미널에서 npm install -g @openai/codex@'+newest+' 명령을 실행하세요. 다른 설치 방식은 공식 설치 안내를 확인하세요. 최신 CLI는 아직 검증되지 않았을 수 있어요. 설치 후 실행 파일을 다시 선택하고 버전을 확인해 주세요.':'검증된 버전 목록을 확인하지 못했어요. MyCRM 업데이트와 공식 설치 안내를 확인한 뒤 다시 확인해 주세요.';
+  const next={supported:'이 CLI 버전은 검증됐어요. 대화 기능의 활성화 상태는 별도로 확인해 주세요.',too_old:oldHelp,unverified_newer:'이 CLI 버전은 아직 MyCRM에서 검증하지 않았어요. MyCRM 업데이트를 확인한 뒤 다시 확인해 주세요.',unverified_version:'이 CLI 버전은 아직 MyCRM에서 검증하지 않았어요. MyCRM 업데이트를 확인한 뒤 다시 확인해 주세요.',unavailable:'Codex 실행 파일 설정과 설치 상태를 확인한 뒤 다시 확인해 주세요.'};
+  $('codex-version-state').textContent=installed+supported+(next[v.status]||next.unavailable);
+};
+$('codex-help').onclick=()=>act(()=>window.mycrm.codexHelp());
 $('codex-login-start').onclick=()=>act(()=>window.mycrm.codexLoginStart());
 $('codex-login-cancel').onclick=()=>act(()=>window.mycrm.codexLoginCancel());
 $('start').onclick=()=>act(()=>window.mycrm.start(),'연결 장치를 시작했어요.');

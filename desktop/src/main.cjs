@@ -17,6 +17,7 @@ const {createConsentLockGuard}=require('./consent-lock-guard.cjs');
 const {startChatSidecar}=require('./chat-sidecar.cjs');
 const {findCliCandidates,parseModelIds}=require('./cli-discovery.cjs');
 const {createCodexLogin}=require('./codex-login.cjs');
+const {checkCodexVersion}=require('./codex-version.cjs');
 const CODEX_LOGIN_EXPERIMENT_READY=false;
 let win,dash,tray,supervisor,log,prefs={},binary,home,settingsFile,quitting=false,ready=false;
 let busy=false,trayLive=null,connector=null,pollTimer=null,consentBridge=null,consentRuntime=null,consentLock=null,codexLogin=null; const commands=new Set();
@@ -324,6 +325,8 @@ async function initialize(){
     return codexLogin.start();
   });
   register('codex-login-cancel',()=>codexLogin.cancel());
+  register('codex-version',()=>checkCodexVersion({spawn,binary,home}));
+  register('codex-help',()=>shell.openExternal('https://developers.openai.com/codex/cli'));
   register('allow-cli',value=>exclusively(async()=>{
     if(typeof value!=='boolean')throw new Error('input');
     await supervisor.stop('jobs');prefs.allowCli=value;savePreferences();return snapshot();

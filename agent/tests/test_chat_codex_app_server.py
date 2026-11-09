@@ -99,6 +99,77 @@ class AppServerProcessTest(unittest.TestCase):
         self.assertNotIn(('done', {}), events)
         self.assertTrue(errors)
 
+    def test_revoked_consent_terminates_idle_child_without_completion(self):
+        class IdleSupervisor(SyntheticSupervisor):
+            def spawn(self, argv, **kwargs):
+                self.proc = subprocess.Popen([sys.executable, '-u', '-c', 'import time; time.sleep(30)'], **kwargs)
+                ready.set()
+                return self.proc
+        ready, revoked = threading.Event(), threading.Event()
+        fixture = fixtures.DynamicToolRelayTest()
+        fixture.setUp()
+        supervisor = IdleSupervisor()
+        runner = AppServerProcess(supervisor, fixture.relay, lambda: not revoked.is_set(), timeout=5)
+        events, errors = [], []
+        def run():
+            try:
+                events.extend(runner.run(['synthetic'], cwd=os.path.abspath('.'), env={},
+                                         model='synthetic', text='hello'))
+            except ValueError as error:
+                errors.append(str(error))
+        worker = threading.Thread(target=run)
+        worker.start()
+        self.assertTrue(ready.wait(3))
+        revoked.set()
+        worker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(supervisor.stopped)
+        self.assertIsNotNone(supervisor.proc.poll())
+        self.assertNotIn(('done', {}), events)
+        self.assertIn('consent-revoked', errors)
+
+    def test_revoked_consent_during_active_turn_terminates_child(self):
+        active_child = r'''
+import json,sys,time
+def read(): return json.loads(sys.stdin.buffer.readline())
+def send(x): print(json.dumps(x),flush=True)
+x=read(); send({'id':x['id'],'result':{}})
+read()
+x=read(); send({'id':x['id'],'result':{'thread':{'id':'11111111-1111-4111-8111-111111111111'}}})
+x=read(); send({'id':x['id'],'result':{'turn':{'id':'22222222-2222-4222-8222-222222222222'}}})
+time.sleep(30)
+'''
+        class ActiveSupervisor(SyntheticSupervisor):
+            def spawn(self, argv, **kwargs):
+                self.proc = subprocess.Popen([sys.executable, '-u', '-c', active_child], **kwargs)
+                return self.proc
+        active, revoked = threading.Event(), threading.Event()
+        fixture = fixtures.DynamicToolRelayTest()
+        fixture.setUp()
+        supervisor = ActiveSupervisor()
+        runner = AppServerProcess(supervisor, fixture.relay, lambda: not revoked.is_set(), timeout=5)
+        events, errors = [], []
+        def run():
+            try:
+                for event in runner.run(['synthetic'], cwd=os.path.abspath('.'), env={},
+                                        model='synthetic', text='hello'):
+                    events.append(event)
+                    if event[0] == 'session_ref':
+                        active.set()
+            except ValueError as error:
+                errors.append(str(error))
+        worker = threading.Thread(target=run)
+        worker.start()
+        self.assertTrue(active.wait(3))
+        revoked.set()
+        worker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(supervisor.stopped)
+        self.assertIsNotNone(supervisor.proc.poll())
+        self.assertNotIn(('done', {}), events)
+        self.assertIn('consent-revoked', errors)
+        self.assertEqual(fixture.client.calls, [])
+
 
 if __name__ == '__main__':
     unittest.main()
