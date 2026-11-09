@@ -55,6 +55,7 @@ class CodexApprovalDatabaseTest(unittest.TestCase):
                  patch('webchat._require_consumed_session_consent'), \
                  patch('webchat.chat_mcp_enabled', return_value=True), \
                  patch('agent.chat_codex_app_provider.APP_SERVER_CANDIDATE_READY', True), \
+                 patch('agent.chat_codex_app_provider._cli_version_supported', return_value=True), \
                  patch.object(CodexProvider, 'is_available', return_value=True):
                 os.chmod(home, 0o700)
                 auth_home = os.path.join(home, 'codex-auth')

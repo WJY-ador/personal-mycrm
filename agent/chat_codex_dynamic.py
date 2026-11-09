@@ -88,7 +88,8 @@ class AppServerProcess:
         if proc is not None:
             self._terminate(proc)
 
-    def run(self, argv, *, cwd, env, model, text, thread_ref=None, developer_instructions=''):
+    def run(self, argv, *, cwd, env, model, text, thread_ref=None, developer_instructions='',
+            require_authenticated_account=False):
         if self._stopping.is_set() or self.consent_current() is not True:
             raise ValueError('consent-revoked')
         proc = None
@@ -105,7 +106,8 @@ class AppServerProcess:
                                  lambda: not self._stopping.is_set() and self.consent_current() is True,
                                  timeout=self.timeout)
             for kind, data in turn.run(model=model, cwd=cwd, text=text, thread_ref=thread_ref,
-                                       developer_instructions=developer_instructions):
+                                       developer_instructions=developer_instructions,
+                                       require_authenticated_account=require_authenticated_account):
                 if kind == 'done':
                     completed = True
                 else:
@@ -234,7 +236,8 @@ class AppServerTurn:
         self.transport, self.relay = transport, relay
         self.consent_current, self.timeout = consent_current, float(timeout)
 
-    def run(self, *, model, cwd, text, thread_ref=None, developer_instructions=""):
+    def run(self, *, model, cwd, text, thread_ref=None, developer_instructions="",
+            require_authenticated_account=False):
         if (not isinstance(model, str) or not re.fullmatch(r"[A-Za-z0-9._:/+-]{1,120}", model)
                 or not isinstance(cwd, str) or not os.path.isabs(cwd)
                 or not isinstance(text, str) or len(text) > 8000 or "\x00" in text
@@ -281,6 +284,11 @@ class AppServerTurn:
         request(1, "initialize", {"clientInfo": {"name":"mycrm", "version":"1"},
                                    "capabilities":{"experimentalApi":True}})
         self.transport.send({"method":"initialized", "params":{}})
+        if require_authenticated_account:
+            account_result = request(4, "account/read", {"refreshToken": False})
+            account = account_result.get("account")
+            if not isinstance(account, dict) or account.get("type") != "chatgpt":
+                raise ValueError("login-required")
         thread_params = {"model":model, "cwd":cwd, "sandbox":"read-only",
                          "developerInstructions":developer_instructions}
         if thread_ref is None:

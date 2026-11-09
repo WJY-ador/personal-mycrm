@@ -17,7 +17,10 @@ thread='11111111-1111-4111-8111-111111111111'
 turn='22222222-2222-4222-8222-222222222222'
 x=read(); send({'id':x['id'],'result':{}})
 read()
-x=read(); send({'id':x['id'],'result':{'thread':{'id':thread}}})
+x=read()
+if x.get('method')=='account/read':
+ send({'id':x['id'],'result':{'account':{'type':'chatgpt'}}}); x=read()
+send({'id':x['id'],'result':{'thread':{'id':thread}}})
 x=read(); send({'id':x['id'],'result':{'turn':{'id':turn}}})
 arguments=json.loads(os.environ.get('MYCRM_SYNTHETIC_ARGUMENTS',
  '{"op":"candidate_decide","params":{},"bind":"abc"}'))
@@ -44,6 +47,29 @@ class SyntheticSupervisor:
 
 
 class AppServerProcessTest(unittest.TestCase):
+    def test_expired_or_missing_account_is_rejected_before_thread_start(self):
+        child = r'''
+import json,sys
+def read(): return json.loads(sys.stdin.buffer.readline())
+def send(x): print(json.dumps(x),flush=True)
+x=read(); send({'id':x['id'],'result':{}})
+read()
+x=read(); assert x['method']=='account/read'; send({'id':x['id'],'result':{'account':None}})
+sys.stdin.buffer.read()
+'''
+        class NoAccountSupervisor(SyntheticSupervisor):
+            def spawn(self, argv, **kwargs):
+                self.proc = subprocess.Popen([sys.executable, '-u', '-c', child], **kwargs)
+                return self.proc
+        fixture = fixtures.DynamicToolRelayTest()
+        fixture.setUp()
+        supervisor = NoAccountSupervisor()
+        runner = AppServerProcess(supervisor, fixture.relay, lambda: True, timeout=3)
+        with self.assertRaisesRegex(ValueError, 'login-required'):
+            list(runner.run(['synthetic'], cwd=os.path.abspath('.'), env={},
+                model='synthetic', text='hello', require_authenticated_account=True))
+        self.assertTrue(supervisor.stopped)
+
     def test_pending_confirmation_via_child_process_and_authenticated_bridge(self):
         fixture = fixtures.DynamicToolRelayTest()
         fixture.setUp()

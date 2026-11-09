@@ -995,7 +995,7 @@ def cmd_chat(ctx: Ctx, a) -> int:
                 return EXIT_ERR
         if not a.fake and not a.consent_only and codex_factory is None and CHAT_CODEX_PROVIDER_READY:
             from .chat_launch_authority import LaunchAuthorizationClient
-            from .chat_codex import CodexProviderFactory
+            from .chat_codex_app_provider import AppServerCandidateFactory
             summary = cfg.get("summary") or {}
             cli_path = summary.get("codex_cli_path")
             models = summary.get("codex_models")
@@ -1004,7 +1004,7 @@ def cmd_chat(ctx: Ctx, a) -> int:
                 return EXIT_ERR
             try:
                 auth_client = LaunchAuthorizationClient(server, token_now)
-                codex_factory = CodexProviderFactory(auth_client, cli_path=cli_path, server_url=server,
+                codex_factory = AppServerCandidateFactory(auth_client, cli_path=cli_path, server_url=server,
                     agent_home=ctx.paths.home, expected_device_id=sid, models=tuple(models))
             except Exception:
                 log({"event": "start", "stopped": "codex-runtime"})

@@ -1,17 +1,18 @@
-"""Unregistered, disabled Codex app-server provider candidate.
+"""Disabled Codex app-server provider and server-authorized factory.
 
 The feature remains off until tool isolation, login and real CLI E2E have been
-verified. Do not register or enable this provider solely on the unit tests.
+verified. Do not enable this provider solely on the unit tests.
 """
 from __future__ import annotations
 
 import os
 import re
+import signal
 import subprocess
 import threading
 
 from .chat_approval_context import format_approval_outcomes
-from .chat_codex import CodexProvider, _DISABLED_FEATURES, _FORBIDDEN_ENV
+from .chat_codex import CodexProvider, CodexProviderFactory, _DISABLED_FEATURES, _FORBIDDEN_ENV
 from .chat_codex_auth import codex_auth_lock, prepare_codex_home, safe_cli_path, validate_credentials
 from .chat_codex_dynamic import AppServerProcess, DynamicToolRelay
 from .chat_launch_authority import AUTH_PATH
@@ -29,8 +30,10 @@ _VERSION_RE = re.compile(r'codex-cli (0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(0|[1-9
 def _capture_version_output(cli_path, *, cwd, env):
     """Bound output and runtime even if the selected executable misbehaves."""
     proc = subprocess.Popen([cli_path, '--version'], cwd=cwd, env=env,
-        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        start_new_session=(os.name == 'posix'))
     output = []
+    completed = False
     def read_bounded():
         try:
             output.append(proc.stdout.read(257))
@@ -46,13 +49,22 @@ def _capture_version_output(cli_path, *, cwd, env):
             returncode = proc.wait(timeout=1)
         except subprocess.TimeoutExpired:
             return None
+        completed = True
         return output[0].decode('utf-8', 'strict') if returncode == 0 else None
     finally:
+        if not completed and os.name == 'posix':
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         if proc.poll() is None:
             proc.kill()
         proc.wait()
         reader.join(1)
-        proc.stdout.close()
+        # A detached descendant may retain the pipe. Closing a buffered stream
+        # while another thread is reading it can block beyond the deadline.
+        if not reader.is_alive():
+            proc.stdout.close()
 
 
 def inspect_cli_version(cli_path, *, cwd, env):
@@ -95,6 +107,34 @@ def _build_appserver_argv(cli_path):
     for name in dict.fromkeys(_DISABLED_FEATURES + _EXTRA_DISABLED):
         argv.extend(('-c', 'features.' + name + '=false'))
     return argv
+
+
+class AppServerCandidateFactory:
+    """Mint each turn with the existing server authorization and isolated auth home."""
+
+    name = 'codex'
+
+    def __init__(self, authorization_client, *, cli_path, server_url, agent_home,
+                 expected_device_id, models, env=None, process_supervisor=None, timeout=300):
+        if APP_SERVER_CANDIDATE_READY is not True:
+            raise ValueError('not-ready')
+        auth_home = prepare_codex_home(agent_home)
+        self.agent_home = os.path.realpath(agent_home)
+        self._base = CodexProviderFactory(authorization_client, cli_path=cli_path,
+            server_url=server_url, agent_home=self.agent_home, codex_home=auth_home,
+            expected_device_id=expected_device_id, models=models, env=env,
+            process_supervisor=process_supervisor, timeout=timeout)
+        self.models = self._base.models
+
+    def create_turn(self, session_id, turn_id, authorization_path, provider, model):
+        if APP_SERVER_CANDIDATE_READY is not True:
+            raise ValueError('not-ready')
+        base = self._base.create_turn(session_id, turn_id, authorization_path, provider, model)
+        try:
+            return AppServerCandidateProvider(base, agent_home=self.agent_home)
+        except Exception:
+            base.close()
+            raise
 
 
 class AppServerCandidateProvider:
@@ -158,7 +198,8 @@ class AppServerCandidateProvider:
                     runner.stop()
                 try:
                     yield from runner.run(argv, cwd=context.cwd, env=env, model=self.base.model,
-                        text=text, thread_ref=cli_session_ref, developer_instructions=instructions)
+                        text=text, thread_ref=cli_session_ref, developer_instructions=instructions,
+                        require_authenticated_account=True)
                 finally:
                     with self._state_lock:
                         self._runner = None
