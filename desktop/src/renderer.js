@@ -69,6 +69,42 @@ $('stop').onclick=()=>act(()=>window.mycrm.stop(),'연결 장치를 중지했어
 $('sync').onclick=()=>act(()=>window.mycrm.sync(),'동기화를 마쳤어요.');
 $('disconnect').onclick=()=>act(()=>window.mycrm.disconnect(),'연결을 해제했어요. 기존 데이터는 보존됩니다.');
 $('logs').onclick=()=>act(()=>window.mycrm.logs());
-$('update').onclick=async()=>{const result=await act(()=>window.mycrm.update());if(!result)return;latestDownload=result.url;$('download').hidden=false;$('update-state').textContent=result.state==='available'?'새 버전 '+result.version+'을 받을 수 있어요. 연결 장치를 중지하고 앱을 종료한 뒤 설치하세요.':result.state==='not-published'?'아직 게시된 안정 버전이 없습니다.':'최신 안정 버전을 사용하고 있어요.';};
+let updateCheckId=0,updateInFlight=false,lastAvailableVersion=null;
+async function checkForUpdate(){
+  if(updateInFlight)return;
+  updateInFlight=true;
+  const id=++updateCheckId;
+  if(!lastAvailableVersion){$('update-state').textContent='업데이트를 확인하고 있어요.';$('download').hidden=true;latestDownload=null;}
+  try {
+    const response=await window.mycrm.update();
+    if(id!==updateCheckId)return;
+    if(!response.ok||!response.value)throw new Error('update-unavailable');
+    const result=response.value;
+    if(result.state==='available'){
+      lastAvailableVersion=result.version;
+      $('update-badge').textContent='새 버전 '+result.version;$('update-badge').hidden=false;
+      latestDownload=result.url;$('download').hidden=false;
+      $('update-state').textContent='새 버전 '+result.version+'을 받을 수 있어요. 연결 장치를 중지하고 앱을 종료한 뒤 설치하세요.';
+    }else if(result.state==='not-published'){
+      $('update-badge').hidden=true;
+      lastAvailableVersion=null;latestDownload=null;$('download').hidden=true;
+      $('update-state').textContent='아직 게시된 안정 버전이 없습니다.';
+    }else if(result.state==='current'){
+      $('update-badge').hidden=true;
+      lastAvailableVersion=null;latestDownload=null;$('download').hidden=true;
+      $('update-state').textContent='게시된 최신 안정 버전: '+result.version;
+    }else throw new Error('update-invalid');
+  }catch{
+    if(id===updateCheckId)$('update-state').textContent=lastAvailableVersion
+      ?'새 버전 '+lastAvailableVersion+'을 받을 수 있어요. 최신 상태를 다시 확인하지 못했어요.'
+      :'업데이트를 확인하지 못했어요. 네트워크를 확인하고 다시 시도해 주세요.';
+  }finally{
+    updateInFlight=false;
+  }
+}
+$('update').onclick=checkForUpdate;
 $('download').onclick=()=>act(()=>window.mycrm.download(latestDownload));
-window.mycrm.onStatus(state);refresh();
+window.mycrm.onStatus(state);refresh();checkForUpdate();
+// The app may remain open for days. Retry periodically without interrupting work.
+const updateTimer=setInterval(checkForUpdate,6*60*60*1000);
+window.addEventListener('pagehide',()=>clearInterval(updateTimer),{once:true});
