@@ -4,8 +4,8 @@ const fs=require('node:fs');const path=require('node:path');const vm=require('no
 function app(diagnostic){
  const elements=new Map();const element=id=>{if(!elements.has(id))elements.set(id,{textContent:'',value:'',hidden:false,disabled:false,click(){return this.onclick?.();}});return elements.get(id);};
  const document={getElementById:element,querySelectorAll:()=>[],activeElement:null};
- const mycrm={status:async()=>({ok:false}),onStatus:()=>{},codexVersion:async()=>({ok:true,value:diagnostic})};
- const context={document,window:{mycrm},console};vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../src/renderer.js'),'utf8'),context);
+ const mycrm={status:async()=>({ok:false}),onStatus:()=>{},update:async()=>({ok:false}),codexVersion:async()=>({ok:true,value:diagnostic})};
+ const context={document,window:{mycrm,addEventListener:()=>{}},console,setInterval:()=>1,clearInterval:()=>{}};vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../src/renderer.js'),'utf8'),context);
  return {element,context};
 }
 test('unverified newer CLI explains MyCRM update and a recheck without declaring the chat ready',async()=>{
