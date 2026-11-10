@@ -4,6 +4,9 @@ export const CHAT_WAIT = ["queued", "leased", "running"];
 export const UNIT_JOIN = "\n\n";   // 정리 글 = units.text 를 이 구분으로 결합(PC stack/1 과 같은 값)
 // 장치 없음(③-0.2) — PRD 1-2 고정 문구(글자 그대로, 한 곳)
 export const CHAT_NODEV = "이 기능은 본인 PC에서 본인 Claude 구독으로 실행하며, PC 연결과 에이전트 실행이 필요합니다.";
+// PC 오프라인(장치 있음, 최근 수신 없음) — 서랍 안내 한 줄. 버튼·메뉴 이름 = 앱 문구 그대로(desktop/src/index.html 버튼 연결 장치 시작, main.cjs 메뉴 MyCRM > 연결 장치 CmdOrCtrl+2).
+// 오프라인에 보낸 글 = 서버에 queued 로 남고 PC 가 폴하면 이어서 할당된다(db.job_assign). 만료 = 첫 입력 뒤 24시간(db.JOB_TTL_HOURS, 세션 만료까지).
+export const CHAT_OFFLINE = "PC나 연결 장치가 꺼져 있어 지금은 정리되지 않아요. MyCRM 앱 메뉴의 연결 장치(⌘2, Windows는 Ctrl+2)에서 [연결 장치 시작]을 누르면 보낸 글을 이어서 정리해요(첫 입력 뒤 24시간까지).";
 export const CHAT_DONE: Record<string, string> = {
   failed: "정리하지 못했어요. 다시 보내 주세요.", cancelled: "작업이 취소됐어요. 다시 보내 주세요.",
   expired: "대화가 만료됐어요(첫 입력 뒤 24시간). 새로 시작해 주세요.", needs_check: "PC 쪽 정리가 끝났는지 알 수 없어요. 연결 장치를 확인한 뒤 다시 보내 주세요.",

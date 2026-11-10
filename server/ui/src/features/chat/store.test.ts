@@ -65,14 +65,14 @@ test("재정리 = 구조(원 결과·편집 세대·고친 글·뺀 변경·막�
   expect((s2.api.confirm as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual(["j1", { request_id: ids[0], preview_id: "p1", preview_version: 1, preview_sha: "h1" }]);
 });
 
-test("새로 고침 복원 — 기다리는 작업: 오프라인 = 첫 롱폴 전 PC 연결 대기 문구(대기·실행 중) · 최근 연결 = 「정리하고 있어요…」", async () => {
+test("새로 고침 복원 — 기다리는 작업: 오프라인 = 첫 롱폴 전 PC 대기 문구(대기·실행 중) · 최근 연결 = 「정리하고 있어요…」", async () => {
   const go = async (state: string, status: string) => {
     const s = mk(); s.S = st({ devices_status: { state, last_seen_at: T, threshold_seconds: 180 } }); s.sid = "s9";
     s.api.session = vi.fn(async () => ({ ok: true as const, j: { session_id: "s9", input_kind: "converse", expires_at: "2099-01-01T00:00:00+00:00", edit_generation: 0,
       latest_job: { id: "j-" + state + status, status }, preview: null, confirmed: false } }));
     return [await s.restore("s9"), s.line];
   };
-  const off = `PC 연결을 기다리고 있어요(마지막 연결 ${mdhm(T)}). 연결되지 않으면 작업이 취소되거나 대화가 만료될 수 있어요.`;
+  const off = `PC를 기다리고 있어요(마지막 연결 ${mdhm(T)}). PC가 연결되면 이어서 정리해요.`;
   expect(await go("offline", "queued")).toEqual(["wait", off]);
   expect(await go("offline", "running")).toEqual(["wait", off]);
   expect(await go("recent", "queued")).toEqual(["wait", "정리하고 있어요…"]);
@@ -94,4 +94,21 @@ test("장치 없음 + 확정 전 세션 — 작업 접수 0(새 턴·재정리·
   expect((s.api.confirm as ReturnType<typeof vi.fn>).mock.calls[0][1].preview_id).toBe("p2");
   expect([s.line, s.sid]).toEqual(["저장했어요 · 변경 1", ""]);
   expect(reload).toHaveBeenCalledTimes(1);
+});
+
+test("오프라인에 보내기 — 막지 않는다 · 첫 롱폴 전에도 진행 중이 아니라 PC 대기 문구 · 롱폴이 queued 를 줘도 같은 문구 · 최근 연결 = 정리하고 있어요", async () => {
+  const go = async (state: string) => {
+    const s = mk(); s.S = st({ devices_status: { state, last_seen_at: T, threshold_seconds: 180 } }); s.input = "오늘 회의 메모";
+    expect(s.canSend()).toBe(true);
+    await s.send();
+    return [(s.api.send as ReturnType<typeof vi.fn>).mock.calls.length, s.line, s.turns.length];
+  };
+  const wait = `PC를 기다리고 있어요(마지막 연결 ${mdhm(T)}). PC가 연결되면 이어서 정리해요.`;
+  expect(await go("offline")).toEqual([1, wait, 1]);
+  expect(await go("recent")).toEqual([1, "정리하고 있어요…", 1]);
+  const s = mk(); s.S = st({ devices_status: { state: "offline", last_seen_at: null, threshold_seconds: 180 } }); s.input = "메모";
+  let n = 0;
+  s.api.poll = vi.fn(async () => (++n === 1 ? { ok: true as const, j: { id: "jx", status: "queued" } } : new Promise(() => {}))) as unknown as typeof s.api.poll;
+  await s.send(); await new Promise(r => setTimeout(r, 1100));
+  expect([n, s.line]).toEqual([2, "PC를 기다리고 있어요. PC가 연결되면 이어서 정리해요."]);
 });

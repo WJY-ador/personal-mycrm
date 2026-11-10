@@ -43,16 +43,17 @@ export class ChatStore {
   on() { return !!this.S?.switches?.converse; }
   dev() { const d = this.S?.devices_status; return d && ["none", "recent", "offline"].includes(d.state) ? d : null; }
   noDev() { const d = this.dev(); return !!d && d.state === "none"; }
+  offline() { const d = this.dev(); return !!d && d.state === "offline"; }
   seen(d: { last_seen_at: string | null }) { return d.last_seen_at ? `마지막 연결 ${mdhm(d.last_seen_at)}` : ""; }
   devText() {
     const d = this.dev();
     if (!d || d.state === "none") return "";
     return d.state === "recent" ? "최근 연결" : ["PC 오프라인", this.seen(d)].filter(Boolean).join(" · ");
   }
-  // 받기를 기다리는 작업 — 오프라인이면 PC 연결 대기·취소·만료를 알린다
+  // 받기를 기다리는 작업 — 오프라인이면 PC 를 기다린다고 알린다(할 일·만료는 서랍 안내 CHAT_OFFLINE). 보낸 글은 queued 로 남아 PC 가 오면 이어서 정리된다
   queuedLine() {
     const d = this.dev();
-    if (d && d.state === "offline") return `PC 연결을 기다리고 있어요${d.last_seen_at ? `(${this.seen(d)})` : ""}. 연결되지 않으면 작업이 취소되거나 대화가 만료될 수 있어요.`;
+    if (d && d.state === "offline") return `PC를 기다리고 있어요${d.last_seen_at ? `(${this.seen(d)})` : ""}. PC가 연결되면 이어서 정리해요.`;
     return "PC 가 받기를 기다리고 있어요… PC 가 켜져 있어야 정리돼요.";
   }
   curSid() { return this.sid || (this.S?.stack_session ? String(this.S.stack_session.id || "") : ""); }   // 이어 받을 세션(첫 그리기 땐 아직 sid 전)
@@ -111,7 +112,7 @@ export class ChatStore {
     try { await this.poll(jid, say); } finally { if (this.polling === jid) this.polling = ""; }
   }
   async poll(jid: string, say?: string) {
-    this.setLine(say || "정리하고 있어요…");
+    this.setLine(this.offline() ? this.queuedLine() : say || "정리하고 있어요…");   // 오프라인 = 첫 롱폴(최대 30초) 전에도 진행 중으로 보이지 않게
     for (;;) {
       const t0 = Date.now();
       const res = await this.api.poll(jid);
@@ -254,10 +255,9 @@ export class ChatStore {
     this.gen = Math.max(this.gen, Number(s.edit_generation) || 0);
     const lj = s.latest_job || { id: "", status: "" };
     this.dirty = false; this.preview = null; this.ready = false;
-    if (lj.id && CHAT_WAIT.includes(lj.status)) {   // 오프라인이면 첫 롱폴을 기다리지 않고 바로 PC 연결 대기 문구(최근 연결 = 기존 문구)
+    if (lj.id && CHAT_WAIT.includes(lj.status)) {   // 오프라인 대기 문구는 poll 이 첫 롱폴 전에 고른다(최근 연결 = 기존 문구)
       this.preview = s.preview || null; this.draw();
-      const d = this.dev();
-      void this.wait(lj.id, d && d.state === "offline" ? this.queuedLine() : undefined); return "wait";
+      void this.wait(lj.id); return "wait";
     }
     this.want = lj.id || "";
     if (s.preview && lj.status === "result_ready") {   // 원 결과 버전은 작업 응답에만 있다 — 그 작업을 한 번 읽어 미리보기와 같이 그린다

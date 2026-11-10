@@ -26,27 +26,28 @@ const q = <E extends Element>(sel: string) => el.querySelector(sel) as E;
 const btn = (t: string) => [...el.querySelectorAll("button")].find(b => b.textContent === t) as HTMLButtonElement;
 // 남의 장치 정보가 devices_status 에 섞여 와도 화면에 나오지 않는다(화면은 state·last_seen_at 만 읽는다)
 const leak = { devices: [{ id: "dv-other", label: "남의장치라벨" }], user: { email: "other@example.com" }, label: "남의장치라벨", user_id: "u-other" };
+const OFFLINE = "PC나 연결 장치가 꺼져 있어 지금은 정리되지 않아요. MyCRM 앱 메뉴의 연결 장치(⌘2, Windows는 Ctrl+2)에서 [연결 장치 시작]을 누르면 보낸 글을 이어서 정리해요(첫 입력 뒤 24시간까지).";
 const dev = (state: string, last: string | null = T, x: object = {}) => ({ devices_status: { state, last_seen_at: last, threshold_seconds: 180, ...x } });
 
 test("장치 상태 — 없음 = 버튼 대신 안내(탭 줄·좁은 화면 한 줄) · 최근 연결 · 오프라인 = 마지막 연결 · 필드 없음·모르는 값 = 현행 · 스위치 꺼짐 = 버튼·서랍 0 · 남 장치 0", async () => {
   const look = async (S: AppState) => {
     const s = mk(); s.open = true; await show(s, S);   // 옛 시험 look() — 열려 있던 서랍에 새 상태
     return { nav: nav.childElementCount, hasA: !!nav.querySelector("a"), navText: nav.textContent, note: noteM.textContent, open: s.open, hidden: aside()?.hidden ?? true,
-      ctx: aside()?.querySelector("header span")?.textContent ?? "", form: (aside()?.querySelector("form") as HTMLElement | null)?.hidden ?? true, sid: s.sid, q: s.queuedLine() };
+      ctx: aside()?.querySelector("header span")?.textContent ?? "", dnote: (aside()?.querySelector("p[role=note]") as HTMLElement | null)?.hidden === false ? aside()!.querySelector("p[role=note]")!.textContent : "", form: (aside()?.querySelector("form") as HTMLElement | null)?.hidden ?? true, sid: s.sid, q: s.queuedLine() };
   };
   const sess = { stack_session: { id: "s-old", expires_at: T } };
   const n = await look(st(dev("none", null, leak)));
-  expect([n.navText, n.hasA, n.note, n.sid, n.form]).toEqual([NODEV, false, NODEV, "", true]);
+  expect([n.navText, n.hasA, n.note, n.sid, n.form, n.dnote]).toEqual([NODEV, false, NODEV, "", true, NODEV]);
   const r = await look(st({ ...sess, ...dev("recent", T, leak) }));
-  expect([r.navText, r.ctx, r.open, r.hidden, r.note]).toEqual(["대화", "최근 연결 · 임시 보관", true, false, ""]);
+  expect([r.navText, r.ctx, r.open, r.hidden, r.note, r.dnote]).toEqual(["대화", "최근 연결 · 임시 보관", true, false, "", ""]);
   expect(r.q).toBe("PC 가 받기를 기다리고 있어요… PC 가 켜져 있어야 정리돼요.");
   const f = await look(st({ ...sess, ...dev("offline", T, leak) }));
-  expect([f.navText, f.ctx]).toEqual(["대화", `PC 오프라인 · 마지막 연결 ${mdhm(T)} · 임시 보관`]);
-  expect(f.q).toBe(`PC 연결을 기다리고 있어요(마지막 연결 ${mdhm(T)}). 연결되지 않으면 작업이 취소되거나 대화가 만료될 수 있어요.`);
+  expect([f.navText, f.ctx, f.form, f.dnote]).toEqual(["대화", `PC 오프라인 · 마지막 연결 ${mdhm(T)} · 임시 보관`, false, OFFLINE]);   // 오프라인 = 입력 칸 그대로 + 할 일 안내
+  expect(f.q).toBe(`PC를 기다리고 있어요(마지막 연결 ${mdhm(T)}). PC가 연결되면 이어서 정리해요.`);
   const f0 = await look(st({ ...sess, ...dev("offline", null) }));
   expect([f0.ctx, f0.q.includes("마지막 연결")]).toEqual(["PC 오프라인 · 임시 보관", false]);
   for (const x of [await look(st(sess)), await look(st({ ...sess, ...dev("busy") }))])
-    expect([x.navText, x.ctx, x.open, x.q]).toEqual(["대화", "임시 보관", true, "PC 가 받기를 기다리고 있어요… PC 가 켜져 있어야 정리돼요."]);
+    expect([x.navText, x.ctx, x.open, x.q, x.dnote]).toEqual(["대화", "임시 보관", true, "PC 가 받기를 기다리고 있어요… PC 가 켜져 있어야 정리돼요.", ""]);
   for (const d of [dev("none"), dev("recent"), dev("offline"), {}]) {
     const o = await look(st({ ...sess, ...d, switches: { trash: false, converse: false } }));
     expect([o.nav, o.note, o.open, o.hidden]).toEqual([0, "", false, true]);
