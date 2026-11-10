@@ -37,10 +37,10 @@ jobs:
             arch: x64
     runs-on: ${{ matrix.runner }}
     env:
-      # Until distribution certificates are configured, these are unsigned beta artifacts.
+      # No Apple certificate: electron-builder must not search the keychain on its own.
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-      # mac uses explicit ad-hoc signing (desktop/package.json mac.identity "-"); electron-builder skips
-      # signing on pull_request runs unless this is set. No secrets are available to this job.
+      # mac signs through desktop/scripts/mac-sign.cjs (ad-hoc unless the release certificate step ran);
+      # electron-builder skips signing on pull_request runs unless this is set. pull_request runs get no secrets.
       CSC_FOR_PULL_REQUEST: 'true'
       GH_TOKEN: ''
     steps:
@@ -81,9 +81,74 @@ jobs:
         run: npm test
       - name: Build and smoke-test native agent
         run: python packaging/build_agent.py --app-version ${{ steps.app.outputs.version }}
+      - name: Import mac release signing certificate
+        # The event decides, not whether the secret exists: tag pushes and manual runs sign with the
+        # self-signed release certificate (packaging/README.md), pull_request runs stay ad-hoc.
+        # An empty secret fails here: an ad-hoc release would break the in-app update chain.
+        if: matrix.platform == 'mac' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+        id: macsign
+        shell: bash
+        env:
+          MAC_SIGN_P12_BASE64: ${{ secrets.MAC_SIGN_P12_BASE64 }}
+          MAC_SIGN_P12_PASSWORD: ${{ secrets.MAC_SIGN_P12_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$MAC_SIGN_P12_BASE64" ] || [ -z "$MAC_SIGN_P12_PASSWORD" ]; then
+            echo "::error::MAC_SIGN_P12_BASE64 and MAC_SIGN_P12_PASSWORD are required to sign a mac release"
+            exit 1
+          fi
+          keychain="$RUNNER_TEMP/mycrm-sign.keychain-db"
+          p12="$RUNNER_TEMP/mycrm-sign.p12"
+          keychain_password=$(openssl rand -hex 24)
+          echo "::add-mask::$keychain_password"
+          trap 'rm -f "$p12"' EXIT
+          printf '%s' "$MAC_SIGN_P12_BASE64" | base64 --decode > "$p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          echo "keychain=$keychain" >> "$GITHUB_OUTPUT"
+          # On the macOS 15 runner codesign finds the key only through the user search list; --keychain
+          # alone fails with "The specified item could not be found in the keychain". The runner is
+          # discarded after the job, and delete-keychain below also drops it from the list.
+          search=("$keychain")
+          while IFS= read -r k; do search+=("$k"); done < <(security list-keychains -d user | sed 's/^ *"//; s/"$//')
+          security list-keychains -d user -s "${search[@]}"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$p12" -k "$keychain" -P "$MAC_SIGN_P12_PASSWORD" -T /usr/bin/codesign > /dev/null
+          # Let codesign use the key without a prompt.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" > /dev/null
+          # The certificate is not trusted, so find-identity without -v; it must hold exactly one identity.
+          identities=$(security find-identity -p codesigning "$keychain" | awk '$1 ~ /^[0-9]+\)$/ {print $2}' | sort -u)
+          if [ "$(printf '%s\n' "$identities" | grep -c .)" != 1 ]; then
+            echo "::error::the signing keychain must hold exactly one code signing identity"
+            exit 1
+          fi
+          echo "MYCRM_MAC_SIGN_SHA1=$identities" >> "$GITHUB_ENV"
+          echo "MYCRM_MAC_SIGN_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
       - name: Create native installer
         working-directory: desktop
-        run: npm run dist -- --${{ matrix.platform }} --${{ matrix.arch }} --publish never
+        shell: bash
+        # The dist script already passes --publish never; passing it twice turns it into a list that
+        # electron-builder no longer reads as "never". The update marker goes only on release-signed mac builds.
+        # mac gets one retry: electron-builder compresses the zip while dmgbuild builds the dmg, and dmgbuild's
+        # last hdiutil detach has failed with "Resource busy" on macos-15-intel. Building them in two calls
+        # would make the second call overwrite latest-mac.yml, so the retry is the smaller change.
+        run: |
+          marker=""
+          if [ -n "${MYCRM_MAC_SIGN_SHA1:-}" ]; then marker="-c.extraMetadata.mycrmMacUpdater=true"; fi
+          if npm run dist -- --${{ matrix.platform }} --${{ matrix.arch }} $marker; then exit 0; fi
+          if [ "${{ matrix.platform }}" != mac ]; then exit 1; fi
+          echo "::warning::mac installer build failed once; detaching dmgbuild leftovers and building again"
+          node scripts/dmg-leftovers.cjs ../release/desktop
+          npm run dist -- --${{ matrix.platform }} --${{ matrix.arch }} $marker
+      - name: Check update feed, app-update.yml and signing mode
+        shell: bash
+        run: node desktop/scripts/check-build.cjs release/desktop ${{ matrix.platform }} ${{ matrix.arch }} ${{ steps.app.outputs.version }}
+      - name: Remove signing keychain
+        if: always() && steps.macsign.outputs.keychain != ''
+        shell: bash
+        env:
+          KEYCHAIN: ${{ steps.macsign.outputs.keychain }}
+        run: security delete-keychain "$KEYCHAIN"
       - name: Verify final installed-bundle sidecar
         run: python packaging/verify_bundle.py
       - name: Install, launch and uninstall on this clean runner
@@ -104,9 +169,10 @@ jobs:
           retention-days: 30
           path: |
             release/desktop/*.dmg
+            release/desktop/*.zip
             release/desktop/*.exe
             release/desktop/*.blockmap
-            release/desktop/*.yml
+            release/desktop/latest*.yml
             release/desktop/SHA256SUMS.txt
 
   release:
@@ -137,27 +203,38 @@ jobs:
         with:
           pattern: MyCRM-*-${{ github.sha }}
           path: dist
-      - name: Rename to fixed download names and checksum
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Install release script dependencies
+        # Only js-yaml is needed; skip install scripts so the Electron binary is not downloaded.
+        working-directory: desktop
+        run: npm ci --ignore-scripts
+      - name: Release names, merged mac feed, checksums
+        # desktop/scripts/release-assets.cjs: drop "-<version>" from every build name, merge the arm64 and
+        # x64 latest-mac.yml, rewrite the feeds to the release names, then check that every file a feed
+        # points to is an asset with the same name, sha512 and size.
         run: |
           version=$(node -p "require('./desktop/package.json').version")
-          mkdir upload
-          cp "dist/MyCRM-mac-arm64-$GITHUB_SHA/MyCRM-$version-mac-arm64.dmg" upload/MyCRM-mac-arm64.dmg
-          cp "dist/MyCRM-mac-x64-$GITHUB_SHA/MyCRM-$version-mac-x64.dmg" upload/MyCRM-mac-x64.dmg
-          cp "dist/MyCRM-win-x64-$GITHUB_SHA/MyCRM-$version-win-x64.exe" upload/MyCRM-win-x64.exe
+          node desktop/scripts/release-assets.cjs prepare dist upload "$version" "$GITHUB_SHA"
           python3 packaging/checksums.py upload
+          node desktop/scripts/release-assets.cjs check upload "$version"
           cat upload/SHA256SUMS.txt
       - name: Create draft release
         run: |
+          mapfile -t assets < <(node desktop/scripts/release-assets.cjs names)
           gh release create "$TAG" --draft --verify-tag \
             --title "MyCRM $TAG (베타)" --notes-file packaging/release-notes.md \
-            upload/MyCRM-mac-arm64.dmg upload/MyCRM-mac-x64.dmg upload/MyCRM-win-x64.exe upload/SHA256SUMS.txt
-      - name: Draft must carry exactly the four assets
+            "${assets[@]/#/upload/}"
+      - name: Draft must carry exactly the release assets
         run: |
-          expected=$(printf '%s\n' MyCRM-mac-arm64.dmg MyCRM-mac-x64.dmg MyCRM-win-x64.exe SHA256SUMS.txt | sort)
+          expected=$(node desktop/scripts/release-assets.cjs names | sort)
           # Read the draft from the release list; tag lookups may not return drafts.
           actual=$(gh api "repos/$GH_REPO/releases?per_page=30" --jq ".[] | select(.tag_name == \"$TAG\" and .draft) | .assets[].name" | sort)
           if [ -z "$actual" ] || [ "$actual" != "$expected" ]; then
-            echo "::error::draft assets differ from the expected four"
+            echo "::error::draft assets differ from desktop/scripts/release-assets.cjs names"
             echo "$actual"
             exit 1
           fi
