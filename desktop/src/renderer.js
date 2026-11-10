@@ -54,11 +54,10 @@ $('codex-version-check').onclick=async()=>{
   if(request!==codexVersionRequest)return;
   const v=result?.ok&&result.value;
   if(!v){$('codex-version-state').textContent='CLI 버전을 확인하지 못했어요. 실행 파일 설정을 확인하고 다시 확인해 주세요.';return;}
-  const installed=v.installed_version?'설치된 Codex CLI: '+v.installed_version+'. ':'설치된 Codex CLI 버전을 확인하지 못했어요. ';
+  const installed=v.installed_version?'MyCRM에서 관리하는 Codex CLI: '+v.installed_version+'. ':'MyCRM에서 관리하는 Codex CLI 버전을 확인하지 못했어요. ';
   const supported=v.supported_versions?.length?'현재 MyCRM에서 검증한 버전: '+v.supported_versions.join(', ')+'. ':'';
-  const newest=[...(v.supported_versions||[])].filter(x=>/^\d+\.\d+\.\d+$/.test(x)).sort((a,b)=>{const av=a.split('.').map(Number),bv=b.split('.').map(Number);return bv[0]-av[0]||bv[1]-av[1]||bv[2]-av[2];})[0];
-  const oldHelp=newest?'npm으로 설치했다면 터미널에서 npm install -g @openai/codex@'+newest+' 명령을 실행하세요. 다른 설치 방식은 공식 설치 안내를 확인하세요. 최신 CLI는 아직 검증되지 않았을 수 있어요. 설치 후 실행 파일을 다시 선택하고 버전을 확인해 주세요.':'검증된 버전 목록을 확인하지 못했어요. MyCRM 업데이트와 공식 설치 안내를 확인한 뒤 다시 확인해 주세요.';
-  const next={supported:'이 CLI 버전은 검증됐어요. 대화 기능의 활성화 상태는 별도로 확인해 주세요.',too_old:oldHelp,unverified_newer:'이 CLI 버전은 아직 MyCRM에서 검증하지 않았어요. MyCRM 업데이트를 확인한 뒤 다시 확인해 주세요.',unverified_version:'이 CLI 버전은 아직 MyCRM에서 검증하지 않았어요. MyCRM 업데이트를 확인한 뒤 다시 확인해 주세요.',unavailable:'Codex 실행 파일 설정과 설치 상태를 확인한 뒤 다시 확인해 주세요.'};
+  const oldHelp='MyCRM에서 관리하는 Codex 버전을 확인하지 못했어요. 연결과 MyCRM 업데이트를 확인한 뒤 다시 확인해 주세요.';
+  const next={supported:'이 CLI 버전은 검증됐어요. 대화 기능의 활성화 상태는 별도로 확인해 주세요.',too_old:oldHelp,unverified_newer:'이 CLI 버전은 아직 MyCRM에서 검증하지 않았어요. MyCRM 업데이트를 확인한 뒤 다시 확인해 주세요.',unverified_version:'이 CLI 버전은 아직 MyCRM에서 검증하지 않았어요. MyCRM 업데이트를 확인한 뒤 다시 확인해 주세요.',unavailable:'Codex 실행 파일 설정과 설치 상태를 확인한 뒤 다시 확인해 주세요.',policy_unavailable:'Codex 호환 정보를 가져오지 못했어요. 연결을 확인한 뒤 다시 확인해 주세요.',policy_unverified:'Codex 호환 정보를 확인할 수 없어요. MyCRM 업데이트를 확인한 뒤 다시 확인해 주세요.',policy_expired:'Codex 호환 정보의 유효 기간이 끝났어요. MyCRM 업데이트를 확인한 뒤 다시 확인해 주세요.',setup_required:'Codex 로그인을 시작하면 MyCRM에서 검증된 CLI를 준비해요.'};
   $('codex-version-state').textContent=installed+supported+(next[v.status]||next.unavailable);
 };
 $('codex-help').onclick=()=>act(()=>window.mycrm.codexHelp());

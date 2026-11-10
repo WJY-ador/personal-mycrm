@@ -16,9 +16,40 @@ from agent.chat_codex_app_provider import AppServerCandidateProvider, _build_app
 from agent.tests import test_chat_codex_app_server as process_fixtures
 from agent.tests import test_chat_codex_dynamic as relay_fixtures
 from agent.tests.test_chat_codex import FixtureSupervisor
+from agent.tests.helpers import MemoryKeyStore
 
 
 class AppServerCandidateProviderTest(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'posix' and hasattr(os, 'O_NOFOLLOW'), 'private POSIX storage required')
+    def test_managed_new_version_requires_verified_policy_for_each_launch(self):
+        with tempfile.TemporaryDirectory() as home:
+            os.chmod(home, 0o700)
+            auth_home = os.path.join(home, 'codex-auth')
+            os.mkdir(auth_home, 0o700)
+            auth_file = os.path.join(auth_home, 'auth.json')
+            with open(auth_file, 'w', encoding='utf-8') as handle:
+                handle.write('synthetic')
+            os.chmod(auth_file, 0o600)
+            fixture = relay_fixtures.DynamicToolRelayTest()
+            fixture.setUp()
+            context = SimpleNamespace(codex_home=auth_home, cwd=home, runtime_dir=home,
+                session_id='s1', turn_id='t1', device_id='d1', model='synthetic',
+                env={'CODEX_HOME':auth_home, 'HOME':home, 'PATH':'/usr/bin:/bin'}, current=lambda: True)
+            base = object.__new__(CodexProvider)
+            base.cli_path, base.model, base.launch_context = '/usr/bin/true', 'synthetic', context
+            base.launch_verifier = SimpleNamespace(client=fixture.client, verify_codex_grant=lambda _: True)
+            base.process_supervisor, base.timeout = process_fixtures.SyntheticSupervisor(), 3
+            store = MemoryKeyStore()
+            with patch('agent.chat_codex_app_provider.APP_SERVER_CANDIDATE_READY', True), \
+                 patch('agent.chat_codex_app_provider._cli_version_supported', return_value=False), \
+                 patch('agent.chat_codex_app_provider.verify_managed_cli_locked', side_effect=[True, False]) as verify, \
+                 patch.object(CodexProvider, 'is_available', return_value=True):
+                provider = AppServerCandidateProvider(base, agent_home=home,
+                                                       managed_store=store, managed_version='0.168.0')
+                self.assertEqual(list(provider.start_turn('request'))[-1], ('done', {}))
+                self.assertEqual(list(provider.start_turn('request'))[-1], ('error', {'code':'CODEX-FAILED'}))
+                self.assertEqual(verify.call_count, 2)
+
     @unittest.skipUnless(os.name == 'posix' and hasattr(os, 'O_NOFOLLOW'), 'private POSIX storage required')
     def test_factory_through_child_and_server_bound_approval_request(self):
         from agent.chat_codex_app_provider import AppServerCandidateFactory
@@ -126,6 +157,21 @@ class AppServerCandidateProviderTest(unittest.TestCase):
                     provider.close()
                 with self.assertRaises(Exception):
                     factory.create_turn(binding['session_id'], 'different-turn', AUTH_PATH, 'codex', 'synthetic-model')
+                store = MemoryKeyStore()
+                with patch('agent.chat_codex_app_provider.resolve_managed_cli',
+                           return_value={'version':'0.168.0', 'path':exe}) as resolve:
+                    managed = AppServerCandidateFactory(client, cli_path=None, managed_store=store,
+                        server_url='https://synthetic.invalid', agent_home=home,
+                        expected_device_id=binding['device_id'], models=('synthetic-model',),
+                        process_supervisor=FixtureSupervisor())
+                    managed_provider = managed.create_turn(binding['session_id'], binding['turn_id'], AUTH_PATH,
+                                                            'codex', 'synthetic-model')
+                    try:
+                        self.assertEqual(managed_provider._managed_version, '0.168.0')
+                        self.assertIs(managed_provider._managed_store, store)
+                        self.assertGreaterEqual(resolve.call_count, 2)
+                    finally:
+                        managed_provider.close()
 
     def test_factory_refuses_registration_when_candidate_gate_is_closed(self):
         from agent.chat_codex_app_provider import AppServerCandidateFactory

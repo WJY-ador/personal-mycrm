@@ -12,11 +12,11 @@ test('unverified newer CLI explains MyCRM update and a recheck without declaring
  const {element}=app({status:'unverified_newer',installed_version:'0.167.0',supported_versions:['0.166.0']});await element('codex-version-check').onclick();
  const text=element('codex-version-state').textContent;assert.match(text,/0\.167\.0/);assert.match(text,/0\.166\.0/);assert.match(text,/MyCRM 업데이트/);assert.match(text,/다시 확인/);assert.doesNotMatch(text,/사용 가능/);
 });
-test('old CLI explains official installation update and check again',async()=>{
+test('old managed CLI asks to recheck the managed version without global install instructions',async()=>{
  const {element}=app({status:'too_old',installed_version:'0.165.0',supported_versions:['0.167.0','0.166.0']});await element('codex-version-check').onclick();
- assert.match(element('codex-version-state').textContent,/npm install -g @openai\/codex@0\.167\.0/);
- assert.match(element('codex-version-state').textContent,/최신 CLI는 아직 검증되지 않았을 수/);
- assert.match(element('codex-version-state').textContent,/다시 선택하고 버전을 확인/);
+ assert.match(element('codex-version-state').textContent,/MyCRM/);
+ assert.match(element('codex-version-state').textContent,/다시 확인/);
+ assert.doesNotMatch(element('codex-version-state').textContent,/npm install -g|실행 파일을 다시 선택/);
 });
 test('validated CLI version does not claim that the feature is enabled',async()=>{
  const {element}=app({status:'supported',installed_version:'0.166.0',supported_versions:['0.166.0']});await element('codex-version-check').onclick();

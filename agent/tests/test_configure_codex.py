@@ -28,25 +28,50 @@ class ConfigureCodexTest(unittest.TestCase):
         with open(self.home.paths.config, "rb") as handle:
             return handle.read()
 
-    def test_version_status_reports_selected_cli_without_exposing_path_or_secrets(self):
+    def test_version_status_reports_managed_cli_without_exposing_path_or_secrets(self):
         self.call('--path', self.cli, '--model', 'synthetic')
         with patch.dict(os.environ, {'OPENAI_API_KEY': 'synthetic-secret'}), \
+             patch('agent.chat_codex_update.inspect_managed_cli', return_value={'path':self.cli, 'version':'0.168.0'}), \
              patch('agent.chat_codex_app_provider._capture_version_output', return_value='codex-cli 0.168.0\n') as run:
             code, output = run_cli(['--home', self.home.home, 'codex-version-status'])
         self.assertEqual(code, 0, output)
         result = json.loads(output)
-        self.assertEqual(result['status'], 'unverified_newer')
+        self.assertEqual(result['status'], 'supported')
         self.assertEqual(result['installed_version'], '0.168.0')
         self.assertNotIn(self.cli, output)
         self.assertNotIn('synthetic-secret', output)
         self.assertNotIn('OPENAI_API_KEY', run.call_args.kwargs['env'])
 
-    def test_version_status_without_selected_cli_is_safe_and_machine_readable(self):
-        code, output = run_cli(['--home', self.home.home, 'codex-version-status'])
+    def test_version_status_without_policy_reports_unavailable_policy_not_missing_cli(self):
+        with patch('agent.chat_codex_update.inspect_managed_cli', side_effect=ValueError('compatibility-policy-unavailable')):
+            code, output = run_cli(['--home', self.home.home, 'codex-version-status'])
         self.assertEqual(code, 0, output)
         result = json.loads(output)
-        self.assertEqual(result['status'], 'unavailable')
-        self.assertEqual(result['recommended_action'], 'check_installation')
+        self.assertEqual(result['status'], 'policy_unavailable')
+        self.assertEqual(result['recommended_action'], 'retry')
+
+    def test_version_status_reports_unready_trust_without_claiming_cli_is_missing(self):
+        with patch('agent.chat_codex_update.inspect_managed_cli', side_effect=ValueError('managed-codex-not-ready')):
+            code, output = run_cli(['--home', self.home.home, 'codex-version-status'])
+        self.assertEqual(code, 0, output)
+        self.assertEqual(json.loads(output)['status'], 'policy_unverified')
+        self.assertNotIn('managed-codex-not-ready', output)
+
+    def test_version_status_explains_expired_policy(self):
+        with patch('agent.chat_codex_update.inspect_managed_cli', side_effect=ValueError('compatibility-policy-expired')):
+            code, output = run_cli(['--home', self.home.home, 'codex-version-status'])
+        self.assertEqual(code, 0, output)
+        result = json.loads(output)
+        self.assertEqual(result['status'], 'policy_expired')
+        self.assertEqual(result['recommended_action'], 'update_mycrm')
+
+    def test_version_status_explains_managed_setup_required(self):
+        with patch('agent.chat_codex_update.inspect_managed_cli', side_effect=ValueError('managed-cli-setup-required')):
+            code, output = run_cli(['--home', self.home.home, 'codex-version-status'])
+        self.assertEqual(code, 0, output)
+        result = json.loads(output)
+        self.assertEqual(result['status'], 'setup_required')
+        self.assertEqual(result['recommended_action'], 'start_login')
 
     def test_saves_real_cli_path_and_repeated_explicit_model_ids(self):
         cfg = config.load(self.home.paths)

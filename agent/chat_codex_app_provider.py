@@ -15,6 +15,8 @@ from .chat_approval_context import format_approval_outcomes
 from .chat_codex import CodexProvider, CodexProviderFactory, _DISABLED_FEATURES, _FORBIDDEN_ENV
 from .chat_codex_auth import codex_auth_lock, prepare_codex_home, safe_cli_path, validate_credentials
 from .chat_codex_dynamic import AppServerProcess, DynamicToolRelay
+from .chat_codex_update import resolve_managed_cli, verify_managed_cli_locked
+from .keystore import KeyStore
 from .chat_launch_authority import AUTH_PATH
 from .chat_mcp_bridge import McpStdioBridge
 
@@ -115,32 +117,50 @@ class AppServerCandidateFactory:
     name = 'codex'
 
     def __init__(self, authorization_client, *, cli_path, server_url, agent_home,
-                 expected_device_id, models, env=None, process_supervisor=None, timeout=300):
+                 expected_device_id, models, env=None, process_supervisor=None, timeout=300,
+                 managed_store=None):
         if APP_SERVER_CANDIDATE_READY is not True:
             raise ValueError('not-ready')
         auth_home = prepare_codex_home(agent_home)
         self.agent_home = os.path.realpath(agent_home)
-        self._base = CodexProviderFactory(authorization_client, cli_path=cli_path,
-            server_url=server_url, agent_home=self.agent_home, codex_home=auth_home,
-            expected_device_id=expected_device_id, models=models, env=env,
-            process_supervisor=process_supervisor, timeout=timeout)
+        if managed_store is not None and not isinstance(managed_store, KeyStore):
+            raise ValueError('managed-cli-binding')
+        self._managed_store = managed_store
+        self._managed_version = None
+        self._factory_lock = threading.RLock()
+        self._factory_args = {'server_url':server_url, 'agent_home':self.agent_home,
+            'codex_home':auth_home, 'expected_device_id':expected_device_id,
+            'models':models, 'env':env, 'process_supervisor':process_supervisor, 'timeout':timeout}
+        self._authorization_client = authorization_client
+        if managed_store is not None:
+            resolved = resolve_managed_cli(self.agent_home, managed_store)
+            cli_path, self._managed_version = resolved['path'], resolved['version']
+        self._base = CodexProviderFactory(authorization_client, cli_path=cli_path, **self._factory_args)
         self.models = self._base.models
 
     def create_turn(self, session_id, turn_id, authorization_path, provider, model):
         if APP_SERVER_CANDIDATE_READY is not True:
             raise ValueError('not-ready')
-        base = self._base.create_turn(session_id, turn_id, authorization_path, provider, model)
-        try:
-            return AppServerCandidateProvider(base, agent_home=self.agent_home)
-        except Exception:
-            base.close()
-            raise
+        with self._factory_lock:
+            if self._managed_store is not None:
+                resolved = resolve_managed_cli(self.agent_home, self._managed_store)
+                if resolved['path'] != self._base.cli_path or resolved['version'] != self._managed_version:
+                    self._base = CodexProviderFactory(self._authorization_client, cli_path=resolved['path'],
+                                                      **self._factory_args)
+                    self._managed_version = resolved['version']
+            base = self._base.create_turn(session_id, turn_id, authorization_path, provider, model)
+            try:
+                return AppServerCandidateProvider(base, agent_home=self.agent_home,
+                    managed_store=self._managed_store, managed_version=self._managed_version)
+            except Exception:
+                base.close()
+                raise
 
 
 class AppServerCandidateProvider:
     name = 'codex'
 
-    def __init__(self, base, *, agent_home):
+    def __init__(self, base, *, agent_home, managed_store=None, managed_version=None):
         if APP_SERVER_CANDIDATE_READY is not True:
             raise ValueError('not-ready')
         if type(base) is not CodexProvider or not base.is_available():
@@ -150,9 +170,18 @@ class AppServerCandidateProvider:
         auth_home = prepare_codex_home(agent_home)
         if base.launch_context.codex_home != auth_home:
             raise ValueError('auth-home-binding')
+        if (managed_store is None) != (managed_version is None):
+            raise ValueError('managed-cli-binding')
+        if managed_store is not None and (not isinstance(managed_store, KeyStore)
+                or not isinstance(managed_version, str)
+                or not re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)', managed_version)):
+            raise ValueError('managed-cli-binding')
         if os.path.lexists(os.path.join(auth_home, 'config.toml')):
             raise ValueError('unexpected-user-config')
         self.base = base
+        self.agent_home = os.path.realpath(agent_home)
+        self._managed_store = managed_store
+        self._managed_version = managed_version
         self.auth_home = auth_home
         self._lock = threading.Lock()
         self._state_lock = threading.Lock()
@@ -180,11 +209,14 @@ class AppServerCandidateProvider:
                     or os.path.lexists(os.path.join(self.auth_home, 'config.toml'))):
                 raise ValueError('unsafe-environment')
             env['PATH'] = safe_cli_path(self.base.cli_path, os.environ.get('PATH', ''))
-            if not _cli_version_supported(self.base.cli_path, cwd=context.cwd, env=env):
+            if self._managed_store is None and not _cli_version_supported(self.base.cli_path, cwd=context.cwd, env=env):
                 raise ValueError('unsupported-cli-version')
             instructions = format_approval_outcomes(approval_outcomes)
             argv = _build_appserver_argv(self.base.cli_path)
             with codex_auth_lock(self.auth_home):
+                if self._managed_store is not None and verify_managed_cli_locked(
+                        self.agent_home, self._managed_store, self._managed_version, self.base.cli_path) is not True:
+                    raise ValueError('managed-cli-denied')
                 if not validate_credentials(self.auth_home):
                     raise ValueError('login-required')
                 bridge = McpStdioBridge(self.base.launch_verifier.client, AUTH_PATH,

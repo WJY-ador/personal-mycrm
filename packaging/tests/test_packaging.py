@@ -3,6 +3,8 @@ import importlib.util
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -13,6 +15,24 @@ def load(name):
     return module
 
 class PackagingTests(unittest.TestCase):
+    def test_smoke_runs_real_sidecar_version_diagnostic_with_isolated_home(self):
+        build = load("build_agent")
+        calls = []
+        def fake_run(argv, **kwargs):
+            calls.append((argv, kwargs))
+            if argv[1:] == ["--desktop-info"]:
+                return SimpleNamespace(returncode=0, stdout='{"app_version":"0.1.2","agent_version":"0.1.0","protocol":1,"ca_bundled":true,"ca_count":1}', stderr='')
+            if argv[-1] == 'codex-version-status':
+                return SimpleNamespace(returncode=0, stdout='{"status":"policy_unverified","installed_version":null,"supported_versions":[],"recommended_action":"update_mycrm"}', stderr='')
+            return SimpleNamespace(returncode=0, stdout='', stderr='')
+        with patch.object(build.subprocess, 'run', side_effect=fake_run), patch.object(build, 'check_ca', return_value=1):
+            build.smoke(Path('/synthetic/mycrm-agent'), '0.1.2')
+        diagnostics = [(argv, kw) for argv,kw in calls if argv[-1] == 'codex-version-status']
+        self.assertEqual(len(diagnostics), 1)
+        argv, kw = diagnostics[0]
+        self.assertEqual(argv[1], '--home')
+        self.assertTrue(argv[2].endswith('/isolated-home'))
+        self.assertEqual(kw['env']['MYCRM_AGENT_HOME'], argv[2])
     def test_allowlist_does_not_collect_private_worktree_files(self):
         build = load("build_agent")
         with tempfile.TemporaryDirectory(dir=ROOT / "release") as temp:
@@ -23,6 +43,10 @@ class PackagingTests(unittest.TestCase):
             self.assertNotIn("agent/board_manifest.py", names)
             for relative, digest in hashes.items():
                 self.assertEqual(build.sha256(ROOT / relative), digest)
+            from agent.chat_codex_fingerprint import digest_input_hashes, source_fingerprint
+            build_info = (Path(temp) / '_desktop_build.py').read_text(encoding='utf-8')
+            self.assertIn('CODEX_CONFIG_SHA256 = ' + repr(digest_input_hashes(hashes)), build_info)
+            self.assertEqual(digest_input_hashes(hashes), source_fingerprint(ROOT))
 
     def test_allowlist_covers_agent_imports(self):
         # 앱 sidecar 가 `migrate login --token-stdin` 을 돌린다 — cli 가 부르는 agent 모듈이 목록에서 빠지면 ImportError

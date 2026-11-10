@@ -1,5 +1,6 @@
 """Disabled app-owned Codex login flow. The login URL is never reported."""
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -66,17 +67,21 @@ def run_login_dialog(transport, home, open_browser, cancelled, report, *, timeou
     login_id, url = start.get('loginId'), start.get('authUrl')
     if start.get('type') != 'chatgpt' or not isinstance(login_id, str) or not login_id or not _valid_auth_url(url):
         raise ValueError('login-response')
+    def cancel_login():
+        # Cancellation response is authoritative. A completed/unknown login
+        # must not be reported as cancelled.
+        if request(login_cancel_request(3, login_id), interrupt_on_cancel=False).get('status') != 'canceled':
+            raise ValueError('login-cancel-failed')
+        report('cancelled')
+        return 'cancelled'
+    if cancelled():
+        return cancel_login()
     if open_browser(url) is not True:
         raise ValueError('browser-unavailable')
     report('waiting')
     while True:
         if cancelled():
-            # Cancellation response is authoritative. A completed/unknown login
-            # must not be reported as cancelled.
-            if request(login_cancel_request(3, login_id), interrupt_on_cancel=False).get('status') != 'canceled':
-                raise ValueError('login-cancel-failed')
-            report('cancelled')
-            return 'cancelled'
+            return cancel_login()
         event = buffered.pop(0) if buffered else receive()
         if event is None:
             continue
@@ -93,13 +98,19 @@ def run_login_dialog(transport, home, open_browser, cancelled, report, *, timeou
         return 'completed'
 
 
-def run_login_session(agent_home, cli_path, *, cancelled, report, open_browser=None, supervisor=None, timeout=600):
+def run_login_session(agent_home, cli_path, *, cancelled, report, open_browser=None, supervisor=None, timeout=600,
+                      managed_store=None, managed_version=None):
     """Run one isolated CLI login under an exclusive app-owned auth lock."""
     if APP_SERVER_LOGIN_READY is not True:
         report('unavailable')
         return 'unavailable'
     if (not isinstance(cli_path, str) or not os.path.isabs(cli_path) or os.path.islink(cli_path)
             or not os.path.isfile(cli_path) or not os.access(cli_path, os.X_OK)):
+        report('error')
+        return 'error'
+    from .keystore import KeyStore
+    if (not isinstance(managed_store, KeyStore) or not isinstance(managed_version, str)
+            or not re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)', managed_version)):
         report('error')
         return 'error'
     from .chat_codex import _DISABLED_FEATURES
@@ -123,6 +134,9 @@ def run_login_session(agent_home, cli_path, *, cancelled, report, open_browser=N
                'PATH':safe_cli_path(cli_path, os.environ.get('PATH', ''))}
         with codex_auth_lock(home), tempfile.TemporaryDirectory(prefix='codex-login-', dir=agent_home) as cwd:
             os.chmod(cwd, 0o700)
+            from .chat_codex_update import verify_managed_cli_locked
+            if verify_managed_cli_locked(agent_home, managed_store, managed_version, cli_path) is not True:
+                raise ValueError('managed-cli-denied')
             proc = supervisor.spawn(argv, cwd=cwd, env=env, stdin=subprocess.PIPE,
                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             try:

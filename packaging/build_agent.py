@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -37,7 +38,12 @@ def stage_source(destination, version, root=ROOT):
         target.write_bytes(source.read_bytes())
         hashes[name] = sha256(target)
     shutil.copyfile(PACKAGING / "agent_entry.py", destination / "agent_entry.py")
-    (destination / "_desktop_build.py").write_text("APP_VERSION = " + repr(version) + "\n", encoding="utf-8")
+    spec = importlib.util.spec_from_file_location('_mycrm_fingerprint', destination / 'agent/chat_codex_fingerprint.py')
+    fingerprint = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fingerprint)
+    (destination / "_desktop_build.py").write_text(
+        "APP_VERSION = " + repr(version) + "\nCODEX_CONFIG_SHA256 = "
+        + repr(fingerprint.digest_input_hashes(hashes)) + "\n", encoding="utf-8")
     return hashes
 
 
@@ -64,6 +70,9 @@ def smoke(binary, version):
         env.pop("SSL_CERT_FILE", None)
         env.pop("SSL_CERT_DIR", None)
         env["MYCRM_AGENT_HOME"] = str(home)
+        env["HOME"] = str(home)
+        for key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
+            env.pop(key, None)
         def run(*args):
             # Keep stderr in the failure so CI logs show the cause.
             result = subprocess.run([str(binary), *args], cwd=scratch, env=env, check=False,
@@ -78,6 +87,13 @@ def smoke(binary, version):
         print("sidecar CA bundle: " + str(count) + " certificates")
         run("--help")
         run("--home", str(home), "status")
+        # Exercise the normal packaged diagnostic and its imports in an isolated
+        # home. This is not an authenticated provider or CLI isolation probe.
+        diagnostic = json.loads(run("--home", str(home), "codex-version-status").stdout)
+        if diagnostic.get("status") not in ("policy_unverified", "setup_required"):
+            raise ValueError("unexpected isolated Codex diagnostic status: " + repr(diagnostic.get("status")))
+        if diagnostic.get("installed_version") is not None or diagnostic.get("supported_versions") != []:
+            raise ValueError("isolated Codex diagnostic exposed unexpected installation")
 
 
 def build(output, version):

@@ -1,0 +1,188 @@
+name: Codex compatibility for one supported source
+
+on:
+  workflow_call:
+    inputs:
+      source:
+        required: true
+        type: string
+      versions:
+        required: true
+        type: string
+    secrets:
+      MYCRM_COMPAT_SIGNING_KEY:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  authorize-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24'
+      - name: Source must be current or a supported published ancestor
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMPAT_SOURCE: ${{ inputs.source }}
+        run: |
+          set -eu
+          node desktop/scripts/codex-compat-release-plan.cjs > "$RUNNER_TEMP/compat-source-plan"
+          node -e 'const fs=require("node:fs"); const line=fs.readFileSync(process.argv[1],"utf8").trim(); if(!line.startsWith("sources="))process.exit(1); const xs=JSON.parse(line.slice(8)); if(!xs.includes(process.env.COMPAT_SOURCE))process.exit(1)' "$RUNNER_TEMP/compat-source-plan"
+  probe:
+    name: probe-${{ matrix.arch }}-${{ matrix.version }}
+    needs: authorize-source
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+        version: ${{ fromJSON(inputs.versions) }}
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    env:
+      CODEX_VERSION: ${{ matrix.version }}
+      COMPAT_SOURCE: ${{ inputs.source }}
+      NPM_CONFIG_USERCONFIG: /dev/null
+      NPM_CONFIG_GLOBALCONFIG: /dev/null
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source }}
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24'
+      - name: Validate exact stable version
+        run: python -c 'import os,re; assert re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", os.environ["CODEX_VERSION"])'
+      - name: Install isolated CLI
+        run: npm install --prefix "$RUNNER_TEMP/codex-probe" --ignore-scripts --no-audit --no-fund "@openai/codex@$CODEX_VERSION"
+      - name: Install agent verification dependency
+        run: python -m pip install -r packaging/requirements-agent.txt
+      - name: Verify this source can consume signed compatibility policies
+        run: |
+          python -m unittest agent.tests.test_chat_codex_compat
+          node --test desktop/test/codex-compat-policy.test.cjs
+      - name: Probe actual CLI with local synthetic model
+        shell: bash
+        run: |
+          set -eu
+          case "$(uname -m)" in
+            arm64) platform=arm64; triple=aarch64-apple-darwin ;;
+            x86_64) platform=x64; triple=x86_64-apple-darwin ;;
+            *) exit 1 ;;
+          esac
+          cli="$RUNNER_TEMP/codex-probe/node_modules/@openai/codex-darwin-$platform/vendor/$triple/bin/codex"
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/codex-probe" \
+            "@openai/codex@$CODEX_VERSION-darwin-$platform" > /dev/null
+          archive="$RUNNER_TEMP/codex-probe/openai-codex-$CODEX_VERSION-darwin-$platform.tgz"
+          python -m agent.codex_compat_probe --cli "$cli" --expected-version "$CODEX_VERSION" \
+            --package-root "$RUNNER_TEMP/codex-probe/node_modules" --archive "$archive" --source-sha "$COMPAT_SOURCE" \
+            --receipt "$RUNNER_TEMP/compat-receipt.json"
+      - name: Upload probe receipt (not an authorization)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: codex-probe-${{ inputs.source }}-${{ matrix.arch }}-${{ matrix.version }}
+          path: ${{ runner.temp }}/compat-receipt.json
+          if-no-files-found: error
+
+  sign-verified-evidence:
+    # Disabled until an independently reviewed operating key and trust path exist.
+    # Pull requests never receive the signing key, even when a variable is set.
+    if: >-
+      always() && needs.authorize-source.result == 'success' &&
+      needs.probe.result != 'cancelled' &&
+      vars.MYCRM_COMPAT_PUBLISH_ENABLED == 'true' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    needs: [authorize-source, probe]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: codex-probe-${{ inputs.source }}-*
+          path: ${{ runner.temp }}/compat-evidence
+      - name: Retain only CLI versions probed on both Mac architectures
+        id: verified
+        env:
+          VERSIONS_JSON: ${{ inputs.versions }}
+          MYCRM_COMPAT_EVIDENCE_DIR: ${{ runner.temp }}/compat-evidence
+          COMPAT_SOURCE: ${{ inputs.source }}
+        run: node desktop/scripts/codex-compat-evidence-select.cjs >> "$GITHUB_OUTPUT"
+      - name: Preserve reviewed issuer and checkout supported source
+        env:
+          COMPAT_SOURCE: ${{ inputs.source }}
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/trusted-issuer/scripts" "$RUNNER_TEMP/trusted-issuer/src"
+          cp desktop/scripts/codex-compat-issuer.cjs "$RUNNER_TEMP/trusted-issuer/scripts/"
+          cp desktop/src/codex-compat-policy.cjs "$RUNNER_TEMP/trusted-issuer/src/"
+          git merge-base --is-ancestor "$COMPAT_SOURCE" "$GITHUB_SHA"
+          git checkout --detach "$COMPAT_SOURCE"
+      - name: Sign only same-run verified versions
+        env:
+          VERSIONS_JSON: ${{ steps.verified.outputs.versions }}
+          MYCRM_COMPAT_EVIDENCE_DIR: ${{ runner.temp }}/compat-evidence
+          MYCRM_COMPAT_KEY_ID: ${{ vars.MYCRM_COMPAT_KEY_ID }}
+          MYCRM_COMPAT_SIGNING_KEY: ${{ secrets.MYCRM_COMPAT_SIGNING_KEY }}
+          COMPAT_SOURCE: ${{ inputs.source }}
+        shell: bash
+        run: |
+          set -eu
+          test -n "$MYCRM_COMPAT_SIGNING_KEY"
+          test -n "$MYCRM_COMPAT_KEY_ID"
+          mkdir "$RUNNER_TEMP/compat-signed"
+          for arch in arm64 x64; do
+            MYCRM_POLICY_ARCH="$arch" node - <<'NODE' > "$RUNNER_TEMP/compat-payload.json"
+          const fs = require('node:fs'), path = require('node:path');
+          const versions = JSON.parse(process.env.VERSIONS_JSON);
+          const arch = process.env.MYCRM_POLICY_ARCH;
+          const receipts = versions.map(version => JSON.parse(fs.readFileSync(path.join(
+            process.env.MYCRM_COMPAT_EVIDENCE_DIR, `codex-probe-${process.env.COMPAT_SOURCE}-${arch}-${version}`, 'compat-receipt.json'), 'utf8')));
+          if (!receipts.length || receipts.some(r => r.config_sha256 !== receipts[0].config_sha256)) process.exit(1);
+          const now = Math.floor(Date.now()/1000);
+          const attempt = Number(process.env.GITHUB_RUN_ATTEMPT);
+          const revision = Number(process.env.GITHUB_RUN_NUMBER)*100 + attempt;
+          if (!Number.isSafeInteger(revision) || revision < 1 || !Number.isInteger(attempt) || attempt < 1 || attempt > 99) process.exit(1);
+          process.stdout.write(JSON.stringify({schema:2,revision,issued_at:now,expires_at:now+30*86400,
+            os:'darwin',arch,min_app:require('./desktop/package.json').version,source_sha:process.env.COMPAT_SOURCE,
+            config_sha256:receipts[0].config_sha256,
+            versions:receipts.map(r => ({version:r.version,native_sha256:r.native_sha256,host_sha256:r.host_sha256}))}));
+          NODE
+            digest="$(node -e 'const x=require(process.argv[1]); if(!/^[0-9a-f]{64}$/.test(x.config_sha256))process.exit(1); process.stdout.write(x.config_sha256)' "$RUNNER_TEMP/compat-payload.json")"
+            mkdir -p "$RUNNER_TEMP/compat-issuer-evidence"
+            for version in $(node -e 'process.stdout.write(JSON.parse(process.env.VERSIONS_JSON).join(" "))'); do
+              ln -s "$MYCRM_COMPAT_EVIDENCE_DIR/codex-probe-$COMPAT_SOURCE-$arch-$version" "$RUNNER_TEMP/compat-issuer-evidence/codex-probe-$arch-$version"
+            done
+            GITHUB_SHA="$COMPAT_SOURCE" MYCRM_COMPAT_EVIDENCE_DIR="$RUNNER_TEMP/compat-issuer-evidence" node "$RUNNER_TEMP/trusted-issuer/scripts/codex-compat-issuer.cjs" < "$RUNNER_TEMP/compat-payload.json" > "$RUNNER_TEMP/compat-signed/darwin-$arch-$digest.json"
+            rm "$RUNNER_TEMP"/compat-issuer-evidence/codex-probe-"$arch"-*
+          done
+      - name: Upload signed policies for independent review
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: codex-signed-policies-${{ inputs.source }}
+          path: ${{ runner.temp }}/compat-signed/*.json
+          if-no-files-found: error

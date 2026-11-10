@@ -24,3 +24,10 @@ test('pre-release version remains visible and marked unverified',async()=>{
  const expected={status:'unverified_version',installed_version:'0.166.0-beta.1',supported_versions:['0.166.0'],recommended_action:'update_mycrm'};
  child.stdout.end(JSON.stringify(expected));child.emit('close',0);assert.deepEqual(await promise,expected);
 });
+test('policy failures remain distinct from a missing CLI',async()=>{
+ for(const [status,recommended_action] of [['policy_unavailable','retry'],['policy_unverified','update_mycrm'],['policy_expired','update_mycrm'],['setup_required','start_login']]){
+  const child=fakeChild();const promise=checkCodexVersion({spawn:()=>child,binary:'/app/agent',home:'/app/data'});
+  const expected={status,installed_version:null,supported_versions:[],recommended_action};
+  child.stdout.end(JSON.stringify(expected));child.emit('close',0);assert.deepEqual(await promise,expected);
+ }
+});

@@ -288,7 +288,10 @@ jobs:
           PY
           python server/test_ui_build.py
 
-      # board 이전(2026-10-20) — 로컬 에이전트(agent/, 표준 라이브러리만). 서버 DB 를 쓰지 않는다
+      - name: Install agent verification dependency
+        run: pip install -r packaging/requirements-agent.txt
+
+      # 로컬 에이전트 시험은 서버 DB를 사용하지 않는다.
       - name: "④-b 로컬 에이전트 시험 (agent/tests)"
         run: python -m unittest discover -s agent/tests -t . -v
 
@@ -308,6 +311,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.9"
+
+      - name: Install agent verification dependency
+        run: pip install -r packaging/requirements-agent.txt
 
       - name: "로컬 에이전트 시험 (Python 3.9)"
         run: python --version && python -m unittest discover -s agent/tests -t . -v
