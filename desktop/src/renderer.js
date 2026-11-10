@@ -18,7 +18,8 @@ function state(s){
   const problem=Object.values(s.processes).some(p=>['failed','authentication-required'].includes(p.state));
   $('runtime').textContent=problem?'조치 필요':running?'실행 중':'중지됨';
   const labels={running:'실행 중',stopped:'중지됨',failed:'실행 실패', 'authentication-required':'토큰을 다시 연결하세요',starting:'시작 중',stopping:'작업 종료를 기다리는 중', 'retry-wait':'잠시 뒤 재시도'};
-  $('process-detail').textContent=Object.entries(s.processes).map(([name,p])=>(name==='jobs'?'대화 정리':'원문 뷰어')+': '+(labels[p.state]||p.state)).join(' · ');
+  const names={viewer:'원문 뷰어',jobs:'대화 정리',chat:'AI 대화'};
+  $('process-detail').textContent=Object.entries(s.processes).map(([name,p])=>(names[name]||name)+': '+(labels[p.state]||p.state)).join(' · ');
   for(const b of document.querySelectorAll('button'))b.disabled=s.busy;
   for(const id of ['allow-cli','auto-start','codex-models'])$(id).disabled=s.busy;
   if(!s.ready){$('start').disabled=true;$('sync').disabled=true;say('연결 장치 실행 파일이 없습니다. 공식 설치 패키지로 다시 설치해 주세요.');}
@@ -34,7 +35,7 @@ async function act(fn,success){try{const r=await fn();if(!r.ok){say(r.error);ret
 async function refresh(){const r=await window.mycrm.status();if(r.ok)state(r.value);}
 $('dashboard').onclick=()=>act(()=>window.mycrm.dashboard());
 $('login').onclick=()=>act(()=>window.mycrm.login(),'브라우저에서 로그인을 마치면 앱으로 돌아와요.');
-$('connect-form').onsubmit=event=>{event.preventDefault();const token=$('token').value;$('token').value='';act(()=>window.mycrm.connect(token),'이 PC를 연결했어요. 시작을 눌러 실행하세요.');};
+$('connect-form').onsubmit=event=>{event.preventDefault();const token=$('token').value;$('token').value='';act(()=>window.mycrm.connect(token),'이 PC를 연결했어요. 연결 장치가 꺼져 있으면 시작을 눌러 주세요.');};
 $('allow-cli').onchange=()=>act(()=>window.mycrm.allowCli($('allow-cli').checked),'실행 설정을 저장했어요. 시작을 누르면 적용됩니다.');
 $('auto-start').onchange=()=>act(()=>window.mycrm.autoStart($('auto-start').checked),'로그인 시 앱 실행 설정을 저장했어요.');
 $('choose-cli').onclick=()=>act(()=>window.mycrm.chooseCli(),'Claude 실행 파일 설정을 확인했어요.');
@@ -59,7 +60,7 @@ async function checkForUpdate(){
       lastAvailableVersion=result.version;
       $('update-badge').textContent='새 버전 '+result.version;$('update-badge').hidden=false;
       latestDownload=result.url;$('download').hidden=false;
-      $('update-state').textContent='새 버전 '+result.version+'을 받을 수 있어요. 연결 장치를 중지하고 앱을 종료한 뒤 설치하세요.';
+      $('update-state').textContent='새 버전 '+result.version+'을 받을 수 있어요. 앱을 종료한 뒤 설치하세요.';
     }else if(result.state==='not-published'){
       $('update-badge').hidden=true;
       lastAvailableVersion=null;latestDownload=null;$('download').hidden=true;

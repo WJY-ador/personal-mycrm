@@ -16,8 +16,9 @@ const {createConsentRuntime}=require('./consent-runtime.cjs');
 const {createConsentLockGuard}=require('./consent-lock-guard.cjs');
 const {startChatSidecar}=require('./chat-sidecar.cjs');
 const {findCliCandidates,parseModelIds}=require('./cli-discovery.cjs');
+const {AutoRun,readPreferences,startConnection,startAutomatically,addChat,stopChatForLock,startProcesses:launchProcesses}=require('./autorun.cjs');
 let win,dash,tray,supervisor,log,prefs={},binary,home,settingsFile,quitting=false,ready=false;
-let busy=false,trayLive=null,connector=null,pollTimer=null,consentBridge=null,consentRuntime=null,consentLock=null; const commands=new Set();
+let busy=false,trayLive=null,connector=null,pollTimer=null,consentBridge=null,consentRuntime=null,consentLock=null,autorun=null; const commands=new Set();
 function stopProcesses(options){consentBridge?.abortPending();return supervisor.stopAll(options);}
 // Login handoff: one pending login (verifier never leaves memory) and a deep link that arrived before the window existed.
 let pendingLogin=null,queuedLink=handoff.findLink(process.argv);
@@ -33,7 +34,7 @@ else {
   app.whenReady().then(initialize).catch(()=> {dialog.showErrorBox('MyCRM','앱을 시작하지 못했어요. 다시 설치하거나 지원팀에 문의해 주세요.');app.exit(1);});
 }
 function preferences() {
-  try {const p=JSON.parse(fs.readFileSync(settingsFile,'utf8'));return {allowCli:p.allowCli===true};} catch {return {allowCli:false};}
+  try {return readPreferences(fs.readFileSync(settingsFile,'utf8'));} catch {return {allowCli:false};}
 }
 function savePreferences() {
   const tmp=settingsFile+'.tmp';fs.writeFileSync(tmp,JSON.stringify(prefs),{mode:0o600});fs.renameSync(tmp,settingsFile);
@@ -56,8 +57,8 @@ function snapshot() {
     connection:{connected,cliConfigured,codexCliConfigured,codexModels,expires},codexCandidates,
     pc:connector?.view()||{session:'unknown',revoked:false,registered:false},processes:supervisor?.snapshot()||{}};
 }
-function changed(){if(win&&!win.isDestroyed())win.webContents.send('status',snapshot());refreshTray();}
-function trayMenu(live){return Menu.buildFromTemplate([{label:'대시보드 열기',click:showDashboard},{label:'연결 장치',click:show},{type:'separator'},{label:'연결 장치 중지',enabled:live,click:()=>exclusively(()=>stopProcesses()).catch(()=>{})},{label:'종료',click:()=>app.quit()}]);}
+function changed(){if(win&&!win.isDestroyed())win.webContents.send('status',snapshot());refreshTray();autorun?.nudge('change');}
+function trayMenu(live){return Menu.buildFromTemplate([{label:'대시보드 열기',click:showDashboard},{label:'연결 장치',click:show},{type:'separator'},{label:'연결 장치 중지',enabled:live,click:()=>exclusively(userStop).catch(()=>{})},{label:'종료',click:()=>app.quit()}]);}
 function refreshTray(){if(!tray||tray.isDestroyed())return;const live=hasLiveProcess(supervisor?.snapshot());if(live===trayLive)return;trayLive=live;tray.setContextMenu(trayMenu(live));}
 function show(){if(win){win.show();win.focus();}}
 function showDashboard(){if(dash&&!dash.isDestroyed()){dash.show();dash.focus();}}
@@ -127,7 +128,7 @@ function createDashboard(){
   // Subframes (captcha, provider widgets) are not gated; only top-level navigation is.
   wc.on('will-redirect',(e,url,_inPlace,isMainFrame)=>{if(e.isMainFrame??isMainFrame)guard(e,e.url||url);});
   dash.on('close',event=>{if(!quitting){event.preventDefault();dash.hide();}});
-  dash.on('focus',()=>connector?.poll('focus'));
+  dash.on('focus',()=>{connector?.poll('focus');autorun?.nudge('focus');});
   if(queuedLink){const link=queuedLink;queuedLink=null;deepLink(link);}else dash.loadURL(DASHBOARD).catch(()=>{});
 }
 async function external(url){if(!safeExternal(url))throw new Error('url');await shell.openExternal(url);}
@@ -184,12 +185,12 @@ async function startChatAgent(){
   if(!consentBridge)throw new Error('bridge');
   await startChatSidecar(supervisor,consentBridge);
 }
-async function startProcesses(names){
-  if(names.includes('chat')&&!consentLock?.canStart())throw new Error('consent-lock-'+(consentLock?.status()||'unsupported'));
-  if(names.includes('viewer'))supervisor.start('viewer',['serve']);
-  if(names.includes('jobs')&&prefs.allowCli&&connection().cliConfigured)supervisor.start('jobs',['serve','--jobs'],{allowCli:true});
-  if(names.includes('chat')&&connection().connected)await startChatAgent();
-}
+// One start for the button and the automatic start (autorun.cjs). The caller holds the app lock.
+const startDeps={get supervisor(){return supervisor;},get consentLock(){return consentLock;},prefs:()=>prefs,connection:()=>connection(),
+  ready:()=>ready,startChat:()=>startChatAgent()};
+function startProcesses(names){return launchProcesses(names,startDeps);}
+// The user's stop (window or tray). Recorded first so the automatic start cannot bring it back in this run.
+async function userStop(){autorun?.userStopped();await stopProcesses();}
 // Puts an issued token into the sidecar through stdin. A device token replaces the connection, so running processes
 // stop first and the ones that were running start again afterwards. The caller holds the app lock.
 async function install(scope,token){
@@ -279,11 +280,16 @@ async function initialize(){
   });
   consentLock=createConsentLockGuard({powerMonitor,platform:process.platform,onLock:async()=>{
     consentBridge?.abortPending();
-    const stopped=supervisor?.stop('chat')||Promise.resolve();
+    const stopped=supervisor?stopChatForLock(supervisor,autorun):Promise.resolve();
     const revoked=consentRuntime?.invalidateOnLock()||Promise.resolve(false);
     const results=await Promise.allSettled([stopped,revoked]);
     return results[0].status==='fulfilled'&&results[1].status==='fulfilled'&&results[1].value===true;
   }});
+  // Opening the app starts the connection device the way [연결 장치 시작] does, unless the user stopped it last time.
+  // While the consent lock is closed it starts without chat and adds chat on a later focus or timer tick.
+  autorun=new AutoRun({wanted:()=>prefs.autoRun!==false,connected:()=>connection().connected,idle:()=>!busy&&!quitting,
+    start:()=>exclusively(()=>startAutomatically(startDeps)),chatReady:()=>consentLock?.canStart()===true,
+    addChat:()=>exclusively(()=>addChat(startDeps)),remember:value=>{prefs.autoRun=value;savePreferences();},log});
   register('status',()=>snapshot());
   // M4: the browser opens only from this button (or the dashboard's own login link), never from a failed request.
   register('login',()=>{startLogin();});
@@ -324,12 +330,10 @@ async function initialize(){
     app.setLoginItemSettings({openAtLogin:value});return snapshot();
   }));
   register('start',()=>exclusively(async()=>{
-    if(!ready||!connection().connected)throw new Error('not-connected');
-    if(prefs.allowCli&&!connection().cliConfigured)throw new Error('cli');
-    await startProcesses(['viewer',...(prefs.allowCli?['jobs']:[]),'chat']);
+    await startConnection(startDeps);autorun.manualStarted();
     return snapshot();
   }));
-  register('stop',()=>exclusively(async()=>{await stopProcesses();return snapshot();}));
+  register('stop',()=>exclusively(async()=>{await userStop();return snapshot();}));
   // Turning collection on is the moment this PC gets a device automatically (no device yet, or one left from another
   // account). A run halted on auth asks for a fresh token for the same device once, then resumes.
   register('sync',()=>exclusively(async()=>{
@@ -353,12 +357,13 @@ async function initialize(){
     Promise.all([stopProcesses({closing:true}),...pending]).finally(async()=>{consentLock?.dispose();consentRuntime?.dispose();await consentBridge?.close();tray?.destroy();app.quit();});
   });
   createDashboard();
-  win.on('focus',()=>connector.poll('focus'));
-  pollTimer=setInterval(()=>connector.poll('timer'),grants.POLL_MS);
+  win.on('focus',()=>{connector.poll('focus');autorun.nudge('focus');});
+  pollTimer=setInterval(()=>{connector.poll('timer');autorun.nudge('timer');},grants.POLL_MS);
   connector.poll('timer');
   await win.loadFile(path.join(__dirname,'index.html'));
   const icon=nativeImage.createFromDataURL('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAIElEQVR42mNkYPj/n4ECwESJ5lEDRg0YNWDUgFEDBg0AADMSAh/0xSqxAAAAAElFTkSuQmCC');
   tray=new Tray(icon);tray.setToolTip('MyCRM');refreshTray();tray.on('double-click',showDashboard);tray.on('click',showDashboard);
+  autorun.nudge('startup');
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {label:'MyCRM',submenu:[{label:'대시보드',accelerator:'CmdOrCtrl+1',click:showDashboard},{label:'연결 장치',accelerator:'CmdOrCtrl+2',click:show},{type:'separator'},{label:'종료',accelerator:process.platform==='darwin'?'Command+Q':'Alt+F4',click:()=>app.quit()}]},
     {role:'editMenu'},
