@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiErr } from "../../shared/api";
+import { BP, maxW } from "../../shared/breakpoints";
 import type { UiCtx } from "../../shared/ctx";
 import { itemDecide } from "../../shared/item";
 import { PartFail } from "../../shared/PartFail";
@@ -21,7 +22,7 @@ export function Drawer({ ctx, S, id, open, gone }: Props) {
   const [busy, setBusy] = useState(false);
   const [st, setSt] = useState(""), [er, setEr] = useState("");
   const box = useRef<HTMLDivElement>(null);
-  useEffect(() => { if (q.data && window.matchMedia?.("(max-width: 900px)").matches) box.current?.scrollIntoView?.({ block: "start" }); }, [q.data?.id]);
+  useEffect(() => { if (q.data && window.matchMedia?.(maxW(BP.board)).matches) box.current?.scrollIntoView?.({ block: "start" }); }, [q.data?.id]);
   if (q.isError && !q.data) return <PartFail err={apiErr(q.error)} what="이 항목" />;
   if (!q.data) return <p className="empty">불러오는 중이에요…</p>;
   const it: ItemFull = q.data, d = it.object, cur = viewOf(it), back = `#${TAB}/${d.id}`;

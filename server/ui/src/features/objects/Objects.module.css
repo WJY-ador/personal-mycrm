@@ -1,17 +1,17 @@
 /* 자료 종류(사람·출처·읽고 든 생각) — 옛 app.html .objgrp·.objgrid·.pcard·.rcard·.mecols 를 옮김(R4-2). 색은 app.html 전역 CSS 변수.
    카드 틀(.asset-card·.card·.cards)·폼(.fform·.frow·.finput)은 다른 옛 화면과 같이 쓰는 전역 규칙. */
-.grp { margin-bottom: 1.2rem; }
-.grp > h3 { display: flex; align-items: center; gap: .4rem; font-size: .8rem; font-weight: 600; color: var(--muted); margin: 0 0 .5rem; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: .6rem; }
-.grid :global(.asset-card) { gap: .3rem; padding: .7rem .85rem; }
-.grid :global(.asset-card .meta) { margin-top: .2rem; }
-.rbody { white-space: pre-wrap; margin: .2rem 0 .4rem; font-size: .9rem; line-height: 1.65; }
+.grp { margin-bottom: var(--sp-8); }
+.grp > h3 { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-2); font-weight: 600; color: var(--muted); margin: 0 0 var(--sp-4); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--sp-5); }
+.grid :global(.asset-card) { gap: var(--sp-2); padding: var(--sp-5) var(--sp-6); }
+.grid :global(.asset-card .meta) { margin-top: var(--sp-1); }
+.rbody { white-space: pre-wrap; margin: var(--sp-1) 0 var(--sp-3); font-size: var(--fs-3); line-height: 1.65; }
 .clip { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
-.pacts { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .3rem; align-items: center; }
-.pcard { display: flex; align-items: center; justify-content: space-between; gap: .6rem; flex-wrap: wrap; }
+.pacts { display: flex; flex-wrap: wrap; gap: var(--sp-3); margin-top: var(--sp-2); align-items: center; }
+.pcard { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-5); flex-wrap: wrap; }
 .pcard a { font-weight: 600; color: var(--ink); text-decoration: none; }
 .pcard a:hover { color: var(--accent); }
-.cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+.cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-7); }
 .cols > * { min-width: 0; }
-.alias { margin: 0 0 .2rem; }
-@media (max-width: 700px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+.alias { margin: 0 0 var(--sp-1); }
+@media (max-width: 767px) { .cols { grid-template-columns: minmax(0, 1fr); } }

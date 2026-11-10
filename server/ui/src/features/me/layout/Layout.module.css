@@ -1,25 +1,25 @@
 /* Setup — 페이지 레이아웃(끌어 놓기 목록 2 · 저장 줄). 옛 app.html .setlay·ol.dnd·.setbar 그대로 */
-.layg { margin-top: 1.1rem; }
-.layg h3 { font-size: .86rem; margin: 0 0 .5rem; }
-.dnd { list-style: none; margin: 0; padding: .5rem; display: flex; gap: .4rem; border: 1px dashed var(--line); border-radius: 8px; background: var(--paper); }
+.layg { margin-top: var(--sp-7); }
+.layg h3 { font-size: var(--fs-3); margin: 0 0 var(--sp-4); }
+.dnd { list-style: none; margin: 0; padding: var(--sp-4); display: flex; gap: var(--sp-3); border: 1px dashed var(--line); border-radius: var(--r-4); background: var(--paper); }
 .h { flex-wrap: wrap; }
 .v { flex-direction: column; max-width: 28rem; }
-.dnd > li { display: flex; align-items: center; gap: .45rem; min-height: 40px; padding: .35rem .75rem .35rem .4rem; border: 1px solid var(--line); border-radius: 6px;
-  background: var(--card); font-size: .86rem; cursor: grab; user-select: none; }
+.dnd > li { display: flex; align-items: center; gap: var(--sp-3); min-height: 40px; padding: var(--sp-3) var(--sp-6) var(--sp-3) var(--sp-3); border: 1px solid var(--line); border-radius: var(--r-3);
+  background: var(--card); font-size: var(--fs-3); cursor: grab; user-select: none; }
 .label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.moves { display: flex; flex: none; gap: .25rem; margin-left: auto; }
-.move { display: inline-grid; place-items: center; width: 32px; min-width: 32px; height: 32px; padding: 0; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); color: var(--ink); font: inherit; line-height: 1; cursor: pointer; }
+.moves { display: flex; flex: none; gap: var(--sp-2); margin-left: auto; }
+.move { display: inline-grid; place-items: center; width: 32px; min-width: 32px; height: 32px; padding: 0; border: 1px solid var(--line); border-radius: var(--r-3); background: var(--paper); color: var(--ink); font: inherit; line-height: 1; cursor: pointer; }
 .move:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .move:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .move:disabled { color: var(--muted); cursor: not-allowed; opacity: .65; }
 .dnd > li:hover { border-color: var(--accent); }
 .dnd > li:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .dnd > li.dragging { cursor: grabbing; border-color: var(--accent); box-shadow: 0 2px 8px color-mix(in srgb, var(--ink) 18%, transparent); opacity: .9; }
-.grip { color: var(--muted); font-size: 1rem; padding: .2rem .25rem; touch-action: none; cursor: grab; }
-.setbar { display: flex; align-items: center; justify-content: space-between; gap: .8rem; margin-top: 1.2rem; padding-top: .8rem; border-top: 1px solid var(--line); }
+.grip { color: var(--muted); font-size: var(--fs-4); padding: var(--sp-1) var(--sp-2); touch-action: none; cursor: grab; }
+.setbar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-6); margin-top: var(--sp-8); padding-top: var(--sp-6); border-top: 1px solid var(--line); }
 .setbar p { margin: 0; }
 /* 자리 알림 보이는 문구 = 옮긴 행의 이름 바로 아래 한 줄(흐름 안 — 고정·붙는 상자 없음 = 다른 행 버튼을 덮지 않는다).
    정적 문구(전환 효과 없음 = 움직임 줄이기 설정에도 그대로). 화면 읽기는 #lay-pos(.sr) 가 맡고 이 문구는 aria-hidden. */
-.rowpos { display: block; margin-top: .15rem; color: var(--ink); font-size: .78rem; line-height: 1.35; }
+.rowpos { display: block; margin-top: var(--sp-1); color: var(--ink); font-size: var(--fs-2); line-height: 1.35; }
 .setbar button { margin-left: auto; }
-@media (max-width: 767px) { .h { flex-direction: column; } .grip { padding: .4rem .5rem; } }
+@media (max-width: 767px) { .h { flex-direction: column; } .grip { padding: var(--sp-3) var(--sp-4); } }

@@ -12,7 +12,8 @@
   --serif: "Noto Sans KR", -apple-system, "Apple SD Gothic Neo", sans-serif;
   --mono: ui-monospace, Menlo, "Apple SD Gothic Neo", monospace;
 }
-/* 어두운 화면 — 헤더 ☀/☾ 토글(/assets/theme.js)이 켤 때만. OS 다크 설정은 따르지 않는다(기본은 밝은 화면). */
+/* 어두운 화면 — <html data-theme="dark"> 일 때. 붙이는 쪽은 /assets/theme.js 하나: 헤더 ☀/☾ 토글로 고른 값이 있으면 그것, 없으면 OS 다크 설정.
+   CSS 는 OS 설정을 직접 보지 않는다(판정은 theme.js 한 곳). */
 :root[data-theme="dark"] {
   color-scheme: dark;
   --paper: #15181A; --card: #1E2224; --ink: #E7EAE6; --muted: #A3AAA6; --soft: #8E9591; --line: #2E3335;
@@ -20,9 +21,17 @@
   --ai: #A79BE8; --ai-bg: #272437; --cand-bg: #202029; --cand-line: #3B3850; --memo: #A3AAA6; --memo-bg: #262A2C;
   --mine: #4FB08A; --mine-bg: #1C2E26; --fail: #F08A7E; --fail-bg: #33201E; --mark: #6E5A1A; --mark-ink: #E7EAE6;
 }
-/* DMO 토큰 = structure_svg.tokens_css(dark_attr=True, dark_media=False) 그대로 — 앱 테마 토글(data-theme)을 따르고 OS 는 따르지 않는다. 시험이 같은 문자열을 본다 */
+/* DMO 토큰 = structure_svg.tokens_css(dark_attr=True, dark_media=False) 그대로 — 앱 테마(data-theme, theme.js 가 정한다)를 따른다. 시험이 같은 문자열을 본다 */
 :root{--dmo-ink:#2B2824;--dmo-muted:#6B635A;--dmo-line:#4A443E;--dmo-core-bg:#F6E3EA;--dmo-core-line:#A3406B;--dmo-standard-bg:#DCEBE3;--dmo-standard-line:#186A4B;--dmo-template-bg:#FBEBD8;--dmo-template-line:#B5651D;--dmo-custom-bg:#ECEAE6;--dmo-custom-line:#6B635A}:root[data-theme="dark"]{--dmo-ink:#E7EAE6;--dmo-muted:#A3AAA6;--dmo-line:#BFC6C2;--dmo-core-bg:#3A2230;--dmo-core-line:#E08AB0;--dmo-standard-bg:#1C2E26;--dmo-standard-line:#4FB08A;--dmo-template-bg:#33281C;--dmo-template-line:#E0A262;--dmo-custom-bg:#2A2D2E;--dmo-custom-line:#A3AAA6}
 /* 축 색 8 — 「나」 축 띠·목록 점(React CSS Modules 가 var(--ax1~8)로 쓴다). dataviz 기준 팔레트 순서 그대로(validate_palette:
    라이트 #FFFFFF·다크 #1E2224 위 인접 CVD ΔE ≥ 8.4·정상 시각 ≥ 19.3 통과, 라이트 3색 대비 < 3:1 → 칩에 코드·이름·건수 글자를 늘 같이 쓴다). 코드 순 1~8, 9번째부터 --soft */
 :root { --ax1: #2a78d6; --ax2: #eb6834; --ax3: #1baf7a; --ax4: #eda100; --ax5: #e87ba4; --ax6: #008300; --ax7: #6250d6; --ax8: #e34948; }
 :root[data-theme="dark"] { --ax1: #3987e5; --ax2: #d95926; --ax3: #199e70; --ax4: #c98500; --ax5: #d55181; --ax6: #008300; --ax7: #9085e9; --ax8: #e66767; }
+/* 단계 토큰 — 간격 --sp-* · 글자 크기 --fs-* · 반경 --r-*. 밝음·어둠 공통(색이 아니라 어두운 화면 블록에서 다시 정하지 않는다).
+   값 = 2026-11-10 조사(server/ui/src CSS)에서 가장 많이 쓰던 값. 옛 값은 가까운 단계로 옮겼다(폭: 글자 1px · 간격 2px · 반경 2px 안).
+   기준 1rem = 16px(html 기본). 본문 글자(body 14px)는 global.css 그대로. */
+:root {
+  --sp-1: .2rem; --sp-2: .3rem; --sp-3: .4rem; --sp-4: .5rem; --sp-5: .6rem; --sp-6: .8rem; --sp-7: 1rem; --sp-8: 1.2rem; --sp-9: 1.4rem;
+  --fs-1: .7rem; --fs-2: .8rem; --fs-3: .9rem; --fs-4: 1rem; --fs-5: 1.25rem; --fs-6: 1.35rem; --fs-7: 1.6rem;
+  --r-1: 2px; --r-2: 4px; --r-3: 6px; --r-4: 8px; --r-5: 10px; --r-6: 12px; --r-pill: 999px;
+}
