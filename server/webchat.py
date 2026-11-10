@@ -13,6 +13,7 @@
                                                       뒤부터 DB 재생 → 실시간. 사용자당 활성 1(새 연결이 옛 연결을 닫음 — 옛 쪽에 event: replaced).
                                                       heartbeat 15초. 재생 상한 = 최근 REPLAY_TURNS 턴·REPLAY_BYTES(넘으면 맨 앞 event: trimmed)
   POST /api/chat/grants {device_id, provider, model|null, request_id} → pending grant(201 새로·200 같은 요청). 서명된 PC 승인 뒤 approved, 소비·공급자 실행은 차단
+  GET  /api/chat/grants/{request_id}               → {request_id, device_id, provider, model, state, prompt, expires_at, connected}(읽기 전용, 본인 것만)
 웹 세션 + Origin + Authorization: Bearer 장치 토큰(2026-11-07, 엄격 JSON·4KB):
   POST /api/chat/consent/keys/{begin,activate,revoke} · POST /api/chat/consent/challenges/{issue,verify}
 장치(Authorization: Bearer 장치 토큰): WS /api/device/chat/ws
@@ -465,6 +466,35 @@ def grant_request(uid: str, device_id: str, provider: str, model, request_id: st
                     "VALUES (%s,%s,%s,%s,%s,%s, now() + make_interval(secs => %s)) RETURNING *",
                  (_id("cg"), uid, device_id, provider, model, request_id, GRANT_TTL_SECONDS))
         return dict(g), True
+
+
+def grant_status(uid: str, request_id: str) -> dict:
+    """허용 대기 화면용 읽기(2026-11-10). 상태를 바꾸지 않는다. 세션 uid 의 요청만, 남의 것과 없는 것 = NOT-FOUND.
+    state = pending, approved, consumed, 소비 전에 만료(서버 벽시계) = expired.
+    prompt = PC 동의 창 상태: none(PC 가 아직 서명 요청을 열지 않음), open(창이 떠 있음), done(서명 확인됨),
+    closed(창이 끝났는데 승인 없음). PC 의 취소는 서버에 오지 않아 취소, 시간 초과, 서명 실패를 closed 하나로 둔다."""
+    if not isinstance(request_id, str) or not REQUEST_ID_RE.fullmatch(request_id):
+        raise CrmError("ARG-INVALID", "허용 요청 값이 올바르지 않아요.")
+    with tx() as c:
+        g = _one(c, "SELECT * FROM chat_provider_grants WHERE user_id=%s AND request_id=%s", (uid, request_id))
+        if not g:
+            raise CrmError("NOT-FOUND", "그 허용 요청을 찾을 수 없어요.")
+        now = _db_clock(c)
+        ch = _one(c, "SELECT state, expires_at FROM chat_consent_challenges WHERE user_id=%s AND grant_id=%s "
+                     "ORDER BY created_at DESC, id DESC LIMIT 1", (uid, g["id"]))
+    state = g["state"]
+    if state != "consumed" and g["expires_at"] <= now:
+        state = "expired"
+    if not ch:
+        prompt = "none"
+    elif ch["state"] == "verified":
+        prompt = "done"
+    elif ch["state"] == "issued" and int(ch["expires_at"]) > int(now.timestamp()):
+        prompt = "open"
+    else:
+        prompt = "closed"
+    return {"request_id": g["request_id"], "device_id": g["device_id"], "provider": g["provider"], "model": g["model"],
+            "state": state, "prompt": prompt, "expires_at": _iso(g["expires_at"])}
 
 
 def grant_approve(uid: str, request_id: str, proof):
@@ -1337,6 +1367,7 @@ class Routes:
             Route("/api/chat/sessions/{sid}/stop", u("web:chat_stop", self.stop), methods=["POST"]),
             Route("/api/chat/sessions/{sid}/stream", u("web:chat_stream", self.stream)),
             Route("/api/chat/grants", u("web:chat_grant", self.grant), methods=["POST"]),
+            Route("/api/chat/grants/{request_id}", u("web:chat_grant_status", self.grant_status)),
             Route("/api/chat/mcp", u("web:chat_mcp", self.chat_mcp), methods=["POST"]),
             Route(LAUNCH_AUTHORIZATION_PATH, u("web:chat_launch_authorization", self.launch_authorization), methods=["POST"]),
             Route("/api/chat/consent/keys/begin", u("web:chat_consent_key_begin", self.consent_key_begin), methods=["POST"]),
@@ -1776,6 +1807,19 @@ class Routes:
                 await d.send({"type": "consent.request", "request_id": result["request_id"]})
         return await self._consent_call(request, {"device_id": (200, False), "provider": (40, False), "model": (120, True),
                                                   "request_id": (64, False)}, call, bearer=False, after=notify)
+
+    async def grant_status(self, request):
+        """GET /api/chat/grants/{request_id} → {request_id, device_id, provider, model, state, prompt, expires_at, connected}.
+        허용 대기 화면이 1~2초마다 읽는다(세션이 아직 없어 세션 SSE 에 실을 수 없다). 스위치와 세션 검사는 다른 GET 과 같다."""
+        uid, err = await self._gate(request)
+        if err:
+            return err
+        try:
+            out = await run_in_threadpool(grant_status, uid, request.path_params["request_id"])
+        except CrmError as e:
+            return _err(e)
+        out["connected"] = hub.connected(uid, out["device_id"])
+        return JSONResponse(out, headers={"cache-control": "no-store"})
 
     async def consent_key_begin(self, request):
         """POST /api/chat/consent/keys/begin {installation_id, spki(base64url DER)} + Bearer → {key_id, claims}."""

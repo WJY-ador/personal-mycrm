@@ -6,7 +6,7 @@
 다루는 것: 스위치 꺼짐 503(API·SSE·WS) · 세션(장치 자동·여러 대·없음) · 턴 멱등·TURN-BUSY·DEVICE-OFFLINE · (turn_id,seq) 중복 무시·빈 칸
 · 누적 ack · SSE 재생·Last-Event-ID 재개·사용자당 1 · WS 인증(무토큰·틀림·철회·다른 사용자 턴 거절) · 중지 · 한도(글자·분당·이벤트·WS 64KB)
 · 유휴 턴 TURN-TIMEOUT · 30일 삭제 · 계정 삭제 cascade · 응답에 남의 데이터 없음
-· grant 요청·동의 키·challenge HTTP route(세션 401·Origin 403·Bearer 401·바인딩 409·엄격 JSON·4KB·native 서명 뒤 approved, provider fail-closed).
+· grant 요청, 상태 조회(GET), 동의 키, challenge HTTP route(세션 401·Origin 403·Bearer 401·바인딩 409·엄격 JSON·4KB·native 서명 뒤 approved, provider fail-closed).
 """
 import asyncio
 import http.client
@@ -273,7 +273,7 @@ def test_switch_off(srv, ua, tok_a):
     switch(False)
     with web(srv, ua) as h:
         for r in (h.post("/api/chat/sessions", json={}), h.get("/api/chat/sessions"), h.get("/api/chat/sessions/cs_x/stream"),
-                  h.post("/api/chat/sessions/cs_x/turns", json={"text": "a", "client_turn_id": "c1"})):
+                  h.post("/api/chat/sessions/cs_x/turns", json={"text": "a", "client_turn_id": "c1"}), h.get("/api/chat/grants/route-x")):
             assert r.status_code == 503 and r.json()["code"] == "SWITCH-OFF", (r.status_code, r.text)
     try:
         wsclient.connect(srv.ws, {"Authorization": "Bearer " + tok_a}, timeout=5)
@@ -291,6 +291,8 @@ def test_switch_off(srv, ua, tok_a):
 def test_gate(srv, ua):
     with web(srv) as h:
         r = h.post("/api/chat/sessions", json={})
+        assert r.status_code == 401 and r.json()["code"] == "UNAUTHORIZED"
+        r = h.get("/api/chat/grants/route-x")
         assert r.status_code == 401 and r.json()["code"] == "UNAUTHORIZED"
     with web(srv, ua, origin=False) as h:
         r = h.post("/api/chat/sessions", json={})
@@ -458,7 +460,10 @@ def test_grant_fail_closed(ua, ub, dev_a):
         assert _grant_state(ua, "grant-r3") == "approved"
         assert _code(lambda: webchat.grant_approve(ua, "grant-r4", "synthetic-ok")) == "GRANT-EXPIRED"
         assert _grant_state(ua, "grant-r4") == "pending"
-        ok("grant: 만료(서버 now 기준) 뒤 승인·소비 모두 GRANT-EXPIRED")
+        assert [webchat.grant_status(ua, r)["state"] for r in ("grant-r3", "grant-r4")] == ["expired", "expired"]
+        assert (_grant_state(ua, "grant-r3"), _grant_state(ua, "grant-r4")) == ("approved", "pending")   # 읽기는 상태를 바꾸지 않는다
+        assert _code(lambda: webchat.grant_status(ub, "grant-r3")) == "NOT-FOUND"
+        ok("grant: 만료(서버 now 기준) 뒤 승인·소비 모두 GRANT-EXPIRED · 상태 조회 = expired(읽기 전용, 남의 것 NOT-FOUND)")
     finally:
         webchat._desktop_verifier = None
         with db.tx() as c:
@@ -615,6 +620,7 @@ def test_consent_challenge(ua, ub, tok_a, dev_a):
             bad = dict(cl, **{field: cl["expires_at"] + 1 if val is None else val})
             assert _code(lambda: verify(ua, bearer, inst, cl["nonce"], sign(k2, bad))) == "CONSENT_REQUIRED", field
             assert ch_state(cl["nonce"]) == "rejected", field
+            assert (webchat.grant_status(ua, "consent-r1")["state"], webchat.grant_status(ua, "consent-r1")["prompt"]) == ("pending", "closed"), field
         ch = issue(ua, bearer, inst, "consent-r1")
         cl = ch["claims"]
         assert _code(lambda: verify(ua, bearer, inst, cl["nonce"], sign(k1, cl))) == "CONSENT_REQUIRED"   # 폐기된 옛 키
@@ -635,9 +641,13 @@ def test_consent_challenge(ua, ub, tok_a, dev_a):
         ok("동의 challenge: 7필드 바인딩·DB 기준 재구성·1회 시도·재발급 시 옛 것 폐기·재생 GRANT-USED·signed approval")
 
         webchat.grant_request(ua, dev_a, "claude", "test-model", "consent-expiry")
+        assert webchat.grant_status(ua, "consent-expiry")["prompt"] == "none"
         ch = issue(ua, bearer, inst, "consent-expiry")
+        assert webchat.grant_status(ua, "consent-expiry")["prompt"] == "open"
         with db.tx() as c:
             c.execute("UPDATE chat_consent_challenges SET expires_at=floor(extract(epoch from now()))::bigint - 1 WHERE nonce=%s", (ch["claims"]["nonce"],))
+        st = webchat.grant_status(ua, "consent-expiry")   # PC 창이 응답 없이 끝남(취소와 구분하지 않는다)
+        assert (st["state"], st["prompt"]) == ("pending", "closed") and ch_state(ch["claims"]["nonce"]) == "issued", st
         cl = dict(ch["claims"], expires_at=rows("SELECT expires_at FROM chat_consent_challenges WHERE nonce=%s", (ch["claims"]["nonce"],))[0]["expires_at"])
         assert _code(lambda: verify(ua, bearer, inst, cl["nonce"], sign(k2, cl))) == "GRANT-EXPIRED"
         assert ch_state(cl["nonce"]) == "expired"
@@ -850,6 +860,15 @@ def test_consent_routes(srv, ua, ub, tok_a, dev_a):
             code(post(h, GRANT, dict(grant_body, request_id="route-rs", state="approved")), 400, "ARG-INVALID")
             code(post(h, GRANT, {k: v for k, v in grant_body.items() if k != "model"}), 400, "ARG-INVALID")
             assert _grant_state(ua, "route-r1") == "pending" and n_grants("route-rb") + n_grants("route-ru") + n_grants("route-rs") == 0
+            st = h.get("/api/chat/grants/route-r1")
+            assert st.status_code == 200 and st.headers.get("cache-control") == "no-store", st.text
+            assert st.json() == {"request_id": "route-r1", "device_id": dev_a, "provider": "claude", "model": "test-model", "state": "pending",
+                                 "prompt": "none", "expires_at": g["expires_at"], "connected": True}, st.json()
+            r = h.get("/api/chat/grants/route-none")
+            assert r.status_code == 404 and r.json()["code"] == "NOT-FOUND", r.text
+            r = h.get("/api/chat/grants/bad%20id!")
+            assert r.status_code == 400 and r.json()["code"] == "ARG-INVALID", r.text
+            assert _grant_state(ua, "route-r1") == "pending"
             ok("grant route: 세션 uid 의 활성 장치만 · 201/200 멱등 · GRANT-CONFLICT · 남의 장치 404 · user_id·state 필드 거절 · pending")
 
             # 키 등록 — 새 키 PoP, 1회 시도, 남의 토큰은 상태를 못 바꾼다
@@ -878,11 +897,15 @@ def test_consent_routes(srv, ua, ub, tok_a, dev_a):
             assert r.status_code == 200, r.text
             cl = r.json()["claims"]
             assert (cl["user_id"], cl["device_id"], cl["session_id"], cl["provider"], cl["model"]) == (ua, dev_a, "route-r1", "claude", "test-model"), cl
+            st = h.get("/api/chat/grants/route-r1").json()
+            assert (st["state"], st["prompt"]) == ("pending", "open") and cl["nonce"] not in json.dumps(st), st
             ver = {"installation_id": inst, "nonce": cl["nonce"], "signature": sign(k1, cl)}
             code(post(h, VERIFY, ver, foreign), 409, "CONSENT_REQUIRED")
             code(post(h, VERIFY, dict(ver, user_id=ua), bearer), 400, "ARG-INVALID")
             assert ch_state(cl["nonce"]) == "issued"
         with web(srv, ub) as hb:   # 다른 세션 + 이 PC 토큰 = 세션 uid ≠ 토큰 주인
+            r = hb.get("/api/chat/grants/route-r1")   # 남의 허용 요청 = 없는 것과 같은 404
+            assert r.status_code == 404 and r.json()["code"] == "NOT-FOUND" and dev_a not in r.text, r.text
             code(post(hb, VERIFY, ver, bearer), 409, "CONSENT_REQUIRED")
             code(post(hb, REV, {"installation_id": inst}, bearer), 409, "CONSENT_REQUIRED")
         assert ch_state(cl["nonce"]) == "issued" and n_keys("active") == 1
@@ -891,6 +914,8 @@ def test_consent_routes(srv, ua, ub, tok_a, dev_a):
             r = post(h, VERIFY, ver, bearer)
             assert r.status_code == 200 and r.json()["state"] == "verified", r.text
             code(post(h, VERIFY, ver, bearer), 409, "GRANT-USED")   # 재생
+            st = h.get("/api/chat/grants/route-r1").json()
+            assert (st["state"], st["prompt"]) == ("approved", "done"), st
             # native 서명 검증은 grant 를 승인하지만 소비·provider 실행은 닫혀 있다
             assert _grant_state(ua, "route-r1") == "approved" and webchat._desktop_verifier is None
             assert _code(lambda: webchat.grant_approve(ua, "route-r1", r.json())) == "CONSENT_REQUIRED"
@@ -924,6 +949,7 @@ def test_consent_routes(srv, ua, ub, tok_a, dev_a):
             assert sorted(x[2] for x in created)==[False,True]
             assert rows("SELECT status FROM chat_sessions WHERE id=%s", (previous_id,))[0]["status"] == "closed"
             assert _grant_state(ua, "route-r1") == "consumed"
+            assert h.get("/api/chat/grants/route-r1").json()["state"] == "consumed"
             assert _code(lambda: _grant_consume(ua, dev_a, "claude", "test-model", "route-r1")) == "GRANT-USED"
             created_session=sessions[0]["session_id"]
             # The HTTP route is still hard-off. Exercise the internal handler
