@@ -253,6 +253,12 @@ def resolve_managed_cli(agent_home, store):
 
 def inspect_managed_cli(agent_home, store):
     """Check the cached managed CLI without attempting a network download."""
+    # Pinned keys, platform and build identity decide readiness before storage.
+    _production_updater(store, contextlib.nullcontext())
+    # A fresh install has no agent home yet. This read-only diagnostic never
+    # creates it; an existing home still gets the full private-storage check.
+    if not os.path.lexists(agent_home):
+        raise ValueError('managed-cli-setup-required')
     auth_home = prepare_codex_home(agent_home)
     return _production_updater(store, codex_auth_lock(auth_home)).inspect(agent_home)
 

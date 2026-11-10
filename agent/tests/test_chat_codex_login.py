@@ -142,7 +142,7 @@ class CodexLoginDialogTests(unittest.TestCase):
         from agent import cli
         output = io.StringIO()
         store = MemoryKeyStore()
-        ctx = SimpleNamespace(paths=SimpleNamespace(home='/synthetic-home'),
+        ctx = SimpleNamespace(paths=SimpleNamespace(home='/synthetic-home', ensure=lambda: None),
                               keystore=lambda _:store, stdin=io.StringIO(''),
                               out=output, browser_open=lambda _:True)
         with patch('agent.chat_codex_login.APP_SERVER_LOGIN_READY', True), \
@@ -165,7 +165,7 @@ class CodexLoginDialogTests(unittest.TestCase):
         from agent import cli
         from agent.chat_codex_prepare import PreparationCancelled
         output = io.StringIO()
-        ctx = SimpleNamespace(paths=SimpleNamespace(home='/synthetic-home'),
+        ctx = SimpleNamespace(paths=SimpleNamespace(home='/synthetic-home', ensure=lambda: None),
                               keystore=lambda _:MemoryKeyStore(), stdin=io.StringIO('cancel\n'),
                               out=output, browser_open=lambda _:True)
         def preparation(_argv, *, cancelled, env):
@@ -180,5 +180,29 @@ class CodexLoginDialogTests(unittest.TestCase):
              patch('agent.chat_codex_prepare.run_preparation', side_effect=preparation), \
              patch('agent.chat_codex_login.run_login_session') as run:
             self.assertEqual(cli.cmd_codex_app_login(ctx, None), cli.EXIT_OK)
+        run.assert_not_called()
+        self.assertEqual(output.getvalue(), '{"status":"cancelled"}\n')
+
+
+@unittest.skipUnless(os.name == 'posix' and hasattr(os, 'O_NOFOLLOW'), 'private POSIX storage required')
+class CodexAppLoginFreshHomeTests(unittest.TestCase):
+    def test_desktop_login_creates_private_home_before_preparation(self):
+        import stat
+        from agent import cli
+        from agent.chat_codex_prepare import PreparationCancelled
+        seen = {}
+        with tempfile.TemporaryDirectory() as root:
+            home = os.path.join(root, 'home')
+            def preparation(_argv, *, cancelled, env):
+                seen['mode'] = stat.S_IMODE(os.stat(home).st_mode)
+                raise PreparationCancelled()
+            output = io.StringIO()
+            with patch('agent.chat_codex_login.APP_SERVER_LOGIN_READY', True), \
+                 patch('threading.Thread.start'), \
+                 patch('agent.chat_codex_prepare.run_preparation', side_effect=preparation), \
+                 patch('agent.chat_codex_login.run_login_session') as run:
+                code = cli.main(['--home', home, 'codex-app-login'], out=output, stdin=io.StringIO(''))
+        self.assertEqual(code, cli.EXIT_OK)
+        self.assertEqual(seen.get('mode'), 0o700)
         run.assert_not_called()
         self.assertEqual(output.getvalue(), '{"status":"cancelled"}\n')

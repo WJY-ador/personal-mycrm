@@ -31,7 +31,7 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(len(diagnostics), 1)
         argv, kw = diagnostics[0]
         self.assertEqual(argv[1], '--home')
-        self.assertTrue(argv[2].endswith('/isolated-home'))
+        self.assertEqual(Path(argv[2]).name, 'isolated-home')
         self.assertEqual(kw['env']['MYCRM_AGENT_HOME'], argv[2])
     def test_allowlist_does_not_collect_private_worktree_files(self):
         build = load("build_agent")

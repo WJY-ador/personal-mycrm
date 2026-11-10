@@ -3,6 +3,11 @@ from __future__ import annotations
 
 import os
 import json
+import shutil
+import stat
+import sys
+import tempfile
+import types
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -109,6 +114,65 @@ class ConfigureCodexTest(unittest.TestCase):
                 self.assertEqual(code, 1)
                 with open(self.home.paths.config, "rb") as handle:
                     self.assertEqual(handle.read(), before)
+
+
+@unittest.skipUnless(os.name == "posix" and hasattr(os, "O_NOFOLLOW"), "private POSIX storage required")
+class CodexVersionStatusFreshHomeTest(unittest.TestCase):
+    """Real inspect_managed_cli on a home that does not exist yet (fresh install)."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="mcrm-version-status-")
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.home = os.path.join(self.root, "home")
+
+    def status(self, *, keys, system="Darwin"):
+        build = types.ModuleType("_desktop_build")
+        build.APP_VERSION = "0.1.2"
+        build.CODEX_CONFIG_SHA256 = "b" * 64
+        with patch("agent.chat_codex_update.TRUSTED_COMPAT_KEYS", keys), \
+             patch("agent.chat_codex_update.platform.system", return_value=system), \
+             patch("agent.chat_codex_update.platform.machine", return_value="arm64"), \
+             patch.dict(sys.modules, {"_desktop_build": build}):
+            code, output = run_cli(["--home", self.home, "codex-version-status"])
+        self.assertEqual(code, 0, output)
+        return json.loads(output)
+
+    def test_fresh_home_without_pinned_keys_reports_unverified_and_creates_nothing(self):
+        result = self.status(keys={})
+        self.assertEqual(result["status"], "policy_unverified")
+        self.assertEqual(result["recommended_action"], "update_mycrm")
+        self.assertIsNone(result["installed_version"])
+        self.assertEqual(result["supported_versions"], [])
+        self.assertFalse(os.path.lexists(self.home))
+
+    def test_fresh_home_with_ready_build_reports_setup_required_and_creates_nothing(self):
+        result = self.status(keys={"synthetic": object()})
+        self.assertEqual(result["status"], "setup_required")
+        self.assertEqual(result["recommended_action"], "start_login")
+        self.assertFalse(os.path.lexists(self.home))
+
+    def test_non_mac_reports_unverified_before_any_storage_check(self):
+        result = self.status(keys={"synthetic": object()}, system="Windows")
+        self.assertEqual(result["status"], "policy_unverified")
+        self.assertFalse(os.path.lexists(self.home))
+
+    def test_existing_non_private_home_still_fails_closed(self):
+        os.mkdir(self.home)
+        os.chmod(self.home, 0o755)
+        result = self.status(keys={"synthetic": object()})
+        self.assertEqual(result["status"], "policy_unavailable")
+        self.assertEqual(stat.S_IMODE(os.stat(self.home).st_mode), 0o755)
+
+    def test_prepare_managed_creates_private_home_before_resolving(self):
+        seen = {}
+        def resolve(home, _store):
+            seen["mode"] = stat.S_IMODE(os.stat(home).st_mode)
+            return {"path": "/synthetic-managed/codex", "version": "0.168.0"}
+        with patch("agent.chat_codex_update.resolve_managed_cli", side_effect=resolve):
+            code, output = run_cli(["--home", self.home, "codex-prepare-managed"])
+        self.assertEqual(code, 0, output)
+        self.assertEqual(seen.get("mode"), 0o700)
+        self.assertEqual(json.loads(output), {"path": "/synthetic-managed/codex", "version": "0.168.0"})
 
 
 if __name__ == "__main__":

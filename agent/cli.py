@@ -760,6 +760,8 @@ def cmd_codex_prepare_managed(ctx: Ctx, a) -> int:
         raise KeyboardInterrupt()
     previous = signal.signal(signal.SIGTERM, interrupt)
     try:
+        # A setup action on a fresh install creates the private (0700) home.
+        ctx.paths.ensure()
         cfg = _config.load(ctx.paths)
         result = resolve_managed_cli(ctx.paths.home, ctx.keystore(cfg))
         ctx.say(json.dumps({'path': result['path'], 'version': result['version']}, separators=(',', ':')))
@@ -792,6 +794,8 @@ def cmd_codex_app_login(ctx: Ctx, a) -> int:
             cancelled.set()
     threading.Thread(target=read_cancel, daemon=True, name='codex-login-cancel').start()
     try:
+        # A setup action on a fresh install creates the private (0700) home.
+        ctx.paths.ensure()
         cfg = _config.load(ctx.paths)
         managed_store = ctx.keystore(cfg)
         executable = os.path.realpath(sys.executable)
