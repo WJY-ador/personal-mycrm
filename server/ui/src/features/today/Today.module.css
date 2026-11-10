@@ -1,9 +1,9 @@
 /* 「오늘」·저장 승인 대기 — 옛 app.html .tlist·.tday·.tst·.tmore·.tempty·#inbox-one 규칙을 옮김(R4-2). 목록 틀(.home·.hlist·.hrows·.hdetail·.hback)은 「나」와 같이 쓰는 전역 규칙. */
-.list .day { font-size: .76rem; font-weight: 600; color: var(--muted); margin: .9rem .3rem .3rem; }
-.list .day:first-of-type { margin-top: .2rem; }
+.list .day { font-size: var(--fs-2); font-weight: 600; color: var(--muted); margin: var(--sp-6) var(--sp-2) var(--sp-2); }
+.list .day:first-of-type { margin-top: var(--sp-1); }
 .tst.wait { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
 .tst.kept { color: var(--mine); border-color: color-mix(in srgb, var(--mine) 45%, transparent); }
-.list .more { margin: .9rem .3rem 0; }
+.list .more { margin: var(--sp-6) var(--sp-2) 0; }
 .empty { display: flex; align-items: center; min-height: 8rem; }
-.one :global(.doc) + :global(.fnote), .one :global(.doc) + p + :global(.fnote) { margin-top: .9rem; }
-.one :global(.frow) { margin-top: .6rem; }
+.one :global(.doc) + :global(.fnote), .one :global(.doc) + p + :global(.fnote) { margin-top: var(--sp-6); }
+.one :global(.frow) { margin-top: var(--sp-5); }

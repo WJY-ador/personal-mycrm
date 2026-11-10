@@ -1,0 +1,54 @@
+/* 생성 파일 — 직접 고치지 말고 desktop 폴더에서 `node scripts/sync-tokens.cjs` 로 만든다.
+   정본: server/ui/src/shared/tokens.css (데스크톱 창이 쓰는 색, 글꼴 토큰 + 단계 토큰 --sp, --fs, --r 전부). 정본과 다르면 test/tokens-sync.test.cjs 가 실패한다.
+   어두운 값 = 정본의 :root[data-theme="dark"] 값. 이 창은 OS 다크 설정을 따른다(prefers-color-scheme). */
+:root {
+  color-scheme: light dark;
+  --paper: #F7F8F6;
+  --card: #FFFFFF;
+  --ink: #1F2937;
+  --muted: #6B7280;
+  --line: #E3E5E1;
+  --accent: #186A4B;
+  --on-accent: #FFFFFF;
+  --accent-soft: #EAF3EE;
+  --memo: #6B7280;
+  --memo-bg: #F3F4F6;
+  --serif: "Noto Sans KR", -apple-system, "Apple SD Gothic Neo", sans-serif;
+  --sp-1: .2rem;
+  --sp-2: .3rem;
+  --sp-3: .4rem;
+  --sp-4: .5rem;
+  --sp-5: .6rem;
+  --sp-6: .8rem;
+  --sp-7: 1rem;
+  --sp-8: 1.2rem;
+  --sp-9: 1.4rem;
+  --fs-1: .7rem;
+  --fs-2: .8rem;
+  --fs-3: .9rem;
+  --fs-4: 1rem;
+  --fs-5: 1.25rem;
+  --fs-6: 1.35rem;
+  --fs-7: 1.6rem;
+  --r-1: 2px;
+  --r-2: 4px;
+  --r-3: 6px;
+  --r-4: 8px;
+  --r-5: 10px;
+  --r-6: 12px;
+  --r-pill: 999px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #15181A;
+    --card: #1E2224;
+    --ink: #E7EAE6;
+    --muted: #A3AAA6;
+    --line: #2E3335;
+    --accent: #4FB08A;
+    --on-accent: #0F1412;
+    --accent-soft: #1C2E26;
+    --memo: #A3AAA6;
+    --memo-bg: #262A2C;
+  }
+}

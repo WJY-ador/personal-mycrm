@@ -1,8 +1,8 @@
 /* 휴지통 — 행 = 종류·제목·시각 + [복원]·[영구 삭제]. 좁은 폭은 버튼이 아래 줄로(잘리지 않게).
    색은 app.html 전역 CSS 변수를 그대로 쓴다(복사하지 않음). 전역 .hacts 여백을 이기려고 두 단계 선택자. */
-.list { list-style: none; margin: .6rem 0 0; padding: 0; display: flex; flex-direction: column; gap: .5rem; }
-.row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .3rem .8rem;
-  padding: .6rem .7rem; border: 1px solid var(--line); border-radius: 8px; }
+.list { list-style: none; margin: var(--sp-5) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-4); }
+.row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2) var(--sp-6);
+  padding: var(--sp-5) var(--sp-5); border: 1px solid var(--line); border-radius: var(--r-4); }
 .main { flex: 1 1 16rem; min-width: 0; overflow-wrap: anywhere; }
-.row :global(.recmeta) { margin: .25rem 0 0; }
+.row :global(.recmeta) { margin: var(--sp-2) 0 0; }
 .row .acts { margin: 0; }

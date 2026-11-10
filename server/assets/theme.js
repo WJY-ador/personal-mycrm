@@ -1,14 +1,18 @@
-// 화면 테마 — 기본은 밝은 화면. OS 다크 설정은 따르지 않는다.
+// 화면 테마 — ☀/☾ 버튼으로 고른 값이 있으면 그것, 없으면 OS 다크 설정을 따른다(OS 설정이 바뀌면 따라간다).
 // ☀/☾ 버튼([data-theme-toggle])으로 바꾸고 이 브라우저에만 기억한다(localStorage — 막혀 있으면 기억만 안 된다).
 // <head> 에서 동기로 읽힌다 → 본문을 그리기 전에 <html data-theme="dark"> 가 붙어 깜빡임이 없다.
+// CSS 는 [data-theme="dark"] 만 본다 — OS 판정은 이 파일 한 곳.
 // 시작 화면·도움말·대시보드가 같이 쓴다. 외부 출처 요청 없음(self 파일 하나 — 나중 script-src 'self' 통과).
 (function () {
   "use strict";
   var KEY = "crm-theme";
   var root = document.documentElement;
+  var os = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
 
   function read() {
-    try { return window.localStorage.getItem(KEY); } catch (e) { return null; }
+    var v = null;
+    try { v = window.localStorage.getItem(KEY); } catch (e) { /* 막힘 = 고른 값 없음 */ }
+    return v === "dark" || v === "light" ? v : null;
   }
   function save(v) {
     try { window.localStorage.setItem(KEY, v); } catch (e) { /* 사생활 보호 모드 등 — 이번 화면에만 적용 */ }
@@ -16,6 +20,9 @@
   function apply(theme) {
     if (theme === "dark") root.setAttribute("data-theme", "dark");
     else root.removeAttribute("data-theme");
+  }
+  function current() {   // 고른 값 → 없으면 OS
+    return read() || (os && os.matches ? "dark" : "light");
   }
   function isDark() {
     return root.getAttribute("data-theme") === "dark";
@@ -34,7 +41,7 @@
     }
   }
 
-  apply(read() === "dark" ? "dark" : "light");
+  apply(current());
 
   document.addEventListener("click", function (e) {
     var b = e.target && e.target.closest ? e.target.closest("[data-theme-toggle]") : null;
@@ -44,9 +51,16 @@
     save(next);
     sync();
   });
-  window.addEventListener("storage", function (e) {   // 다른 탭에서 바꾸면 따라간다
-    if (e.key === KEY) { apply(e.newValue === "dark" ? "dark" : "light"); sync(); }
+  window.addEventListener("storage", function (e) {   // 다른 탭에서 바꾸면 따라간다(지우면 OS 로)
+    if (e.key === KEY) { apply(current()); sync(); }
   });
+  function onOs() {   // OS 설정이 바뀜 — 고른 값이 없을 때만 따라간다
+    if (!read()) { apply(current()); sync(); }
+  }
+  if (os) {
+    if (os.addEventListener) os.addEventListener("change", onOs);
+    else if (os.addListener) os.addListener(onOs);
+  }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", sync);
   else sync();
 })();

@@ -76,6 +76,10 @@ jobs:
       - name: "UI 시험 (vitest — 화면·arch·견본 타입)"
         run: npm test --prefix server/ui
 
+      # 데스크톱 연결 장치 창의 토큰 사본(desktop/src/tokens.css) = 정본(server/ui/src/shared/tokens.css). 스크립트는 node 내장 모듈만 써서 npm ci 없이 돈다
+      - name: "데스크톱 토큰 사본 대조 (sync-tokens --check)"
+        run: node desktop/scripts/sync-tokens.cjs --check
+
       - name: Install server dependencies
         run: pip install -r server/requirements.txt
 

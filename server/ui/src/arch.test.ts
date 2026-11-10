@@ -62,3 +62,40 @@ test("저장소 쓰기 = 원문 포트·앱 업데이트 나중에 둘 · consol
   expect(src.filter(([, s]) => s.includes("127.0.0.1")).map(([p]) => p)).toEqual(["./features/activity/RawBox.tsx"]);
   expect(src.filter(([, s]) => /fetch\([^)]*127\.0\.0\.1/.test(s))).toEqual([]);
 });
+
+// 분기점(디자인1 결정 4) — CSS @media 폭과 TS 미디어 질의 폭은 shared/breakpoints.ts 의 값뿐. 정본 밖 숫자(옛 700·701 등)가 다시 들어오면 실패
+import { BP, BP_ALLOWED, maxW } from "./shared/breakpoints";
+import { MOBILE } from "./shared/mobile";
+// CSS 는 vitest 가 ?raw 로도 비워 주므로(CSS 처리 꺼짐) 파일을 직접 읽는다 — node 형식 정의가 없어 내장 모듈은 process.getBuiltinModule 로
+type Fs = { readdirSync(d: string, o: { recursive: true }): string[]; readFileSync(f: string, e: "utf-8"): string };
+const proc = (globalThis as unknown as { process: { getBuiltinModule(n: string): Fs; cwd(): string } }).process;
+const fs = proc.getBuiltinModule("node:fs");
+const SRC = `${proc.cwd()}/src/`;   // vitest 는 server/ui 에서 돈다(vite.config.ts 자리)
+const css = Object.fromEntries(fs.readdirSync(SRC, { recursive: true }).filter(f => f.endsWith(".css")).map(f => [`./${f}`, fs.readFileSync(SRC + f, "utf-8")]));
+
+test("분기점 = shared/breakpoints.ts 값뿐(CSS @media · TS 미디어 질의)", () => {
+  const bad: string[] = [];
+  let seen = 0;
+  const check = (where: string, dir: string, px: number) => {
+    seen++;
+    if (!(BP_ALLOWED[dir as "min" | "max"] as readonly number[]).includes(px)) bad.push(`${where} ${dir}-width: ${px}px`);
+  };
+  for (const [p, src] of Object.entries(css))
+    for (const m of src.matchAll(/@media([^{]*)\{/g))
+      for (const w of m[1].matchAll(/\((min|max)-width:\s*(\d+)px\)/g)) check(p, w[1], Number(w[2]));
+  expect(seen).toBeGreaterThan(20);   // 빈 검사 방지 — 실제 @media 를 읽었다
+  for (const [p, src] of Object.entries(files))
+    for (const w of src.matchAll(/\((min|max)-width:\s*(\d+)px\)/g)) check(p, w[1], Number(w[2]));
+  expect(bad).toEqual([]);
+  expect(MOBILE).toBe(maxW(BP.narrow));   // mobile.ts 는 글자 그대로 두되 값은 정본과 같다
+});
+
+// 단계 토큰(디자인1 결정 3) — CSS 가 쓰는 var(--sp-*·--fs-*·--r-*) 는 tokens.css 에 정의된 이름뿐(오타·없는 단계 방지)
+test("간격·글자·반경 단계 토큰은 tokens.css 에 정의된 이름만 쓴다", () => {
+  const tokens = css["./shared/tokens.css"];
+  const defined = new Set([...tokens.matchAll(/(--(?:sp|fs|r)-[\w]+)\s*:/g)].map(m => m[1]));
+  expect(defined.size).toBeGreaterThan(18);
+  const used = Object.entries(css).flatMap(([p, s]) => [...s.matchAll(/var\((--(?:sp|fs|r)-[\w]+)\)/g)].map(m => [p, m[1]]));
+  expect(used.length).toBeGreaterThan(500);
+  expect(used.filter(([, t]) => !defined.has(t))).toEqual([]);
+});

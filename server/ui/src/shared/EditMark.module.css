@@ -1,4 +1,4 @@
 /* 연필 — 글자 색보다 옅게(--muted), 값을 가리키면 주색. corner = 문단 상자 오른쪽 위 */
-.mark { display: inline-block; flex: none; margin-left: .35rem; vertical-align: -.1em; color: var(--muted); }
+.mark { display: inline-block; flex: none; margin-left: var(--sp-3); vertical-align: -.1em; color: var(--muted); }
 .corner { position: absolute; top: .55rem; right: .55rem; margin: 0; }
 :global(button):hover > .mark, :global([role="button"]):hover > .mark, :global(button):focus-visible > .mark { color: var(--accent); }

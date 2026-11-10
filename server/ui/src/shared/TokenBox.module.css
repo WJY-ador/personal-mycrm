@@ -1,7 +1,7 @@
 /* 한 번만 보이는 토큰 상자(연결 장치·이관) — 경고 색. 색은 app.html 전역 CSS 변수 */
-.box { border: 1px solid var(--warn); background: var(--warn-bg); border-radius: 8px; padding: .8rem .95rem; margin: 0 0 1rem; font-size: .84rem; }
+.box { border: 1px solid var(--warn); background: var(--warn-bg); border-radius: var(--r-4); padding: var(--sp-6) var(--sp-7); margin: 0 0 var(--sp-7); font-size: var(--fs-2); }
 .box > b { color: var(--warn); }
-.box p { margin: .3rem 0 .5rem; }
+.box p { margin: var(--sp-2) 0 var(--sp-4); }
 .box :global(.frow) { margin: 0; }
-.tok { font-family: var(--mono); font-size: .8rem; flex: 1 1 18rem; }
-@media (max-width: 700px) { .tok { font-size: 14px; } }
+.tok { font-family: var(--mono); font-size: var(--fs-2); flex: 1 1 18rem; }
+@media (max-width: 767px) { .tok { font-size: var(--fs-3); } }

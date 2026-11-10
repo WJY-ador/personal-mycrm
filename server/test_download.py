@@ -9,6 +9,8 @@ B. 켜짐("1") → 직링크 3개(고정 이름)·releases/latest 링크 1개·�
 C. UA 판정 — Mac UA = Mac 칸 먼저·강조, Windows UA = Windows 칸 먼저·강조, iPhone·Android·빈 UA = 같은 비중(Windows 먼저).
 D. 비로그인 200 · 로그인이면 「대시보드로」 · CSP 헤더 = CSP_BASE · 인라인 스크립트 0 · no-store.
 E. 정적 — start.html 하단에 /download 링크(「연결 장치」 화면의 링크 하나는 React — Vitest features/devices/DevicesScreen.test.tsx).
+F. 색 토큰(디자인 1) — 서버가 그리는 페이지(/·/help·/privacy·/download·_page·운영 화면)는 정본 ui/src/shared/tokens.css 를 그대로 넣는다.
+   start.html·web.py 인라인 CSS 에 공통 토큰 값을 다시 쓰지 않는다(시작 히어로 전용 값만 예외) · 파일이 없으면 빈 문자열 · CSP 그대로.
 """
 import asyncio
 import os
@@ -163,6 +165,37 @@ def test_static():
     print("OK — E 정적(start.html 하단 /download 링크 하나 · 옛 app.html 0 — 연결 장치 화면 링크는 Vitest)")
 
 
+async def test_tokens(h):
+    """F — 토큰 정본 한 곳. 페이지마다 정본(주석 뗀 것)이 그대로 들어가고, 공통 색 값을 다시 쓰지 않는다."""
+    src = (HERE / "ui" / "src" / "shared" / "tokens.css").read_text(encoding="utf-8")
+    want = re.sub(r"/\*.*?\*/", "", src, flags=re.S).strip()
+    assert web.TOKENS_CSS == want and "--paper:" in want and ':root[data-theme="dark"]' in want, "정본 그대로(주석만 뗀다)"
+    assert web.load_tokens(HERE / "없는-토큰.css") == "", "파일이 없으면 빈 문자열(서버는 뜬다)"
+    site = main.site
+    real = (site.dev, site.dev_user)
+    try:
+        site.dev, site.dev_user = False, ""
+        for path in ("/", "/help", "/privacy", "/download"):
+            r = await h.get(path)
+            assert r.status_code == 200 and r.text.count(want) == 1, path
+            assert "{{tokens}}" not in r.text and r.headers["content-security-policy"] == web.CSP_BASE, path
+    finally:
+        site.dev, site.dev_user = real
+    assert web.TOKENS_CSS in web._page("t", "<p>b</p>").body.decode() and web._ADMIN_CSS.startswith(web.TOKENS_CSS), "_page·운영 화면"
+    start = (HERE / "start.html").read_text(encoding="utf-8")
+    assert start.count("{{tokens}}") == 1 and start.index("{{tokens}}") < start.index(".bands {"), "자리 하나(/help 가 복사하는 앞부분 안)"
+    hero = start[start.index("start 전용"):]
+    assert not re.findall(r"#[0-9A-Fa-f]{3,8}\b", start[:start.index("start 전용")]), "공통 부분에 색 글자값 0(정본에서 받는다)"
+    assert set(re.findall(r"#[0-9A-Fa-f]{6}\b", hero)) == {"#B9B2E8", "#5B4FB8", "#5A5480", "#B4ABF5"}, "히어로 전용 값만"
+    web_src = (HERE / "web.py").read_text(encoding="utf-8")
+    for name, stop in (("_ADMIN_CSS = TOKENS_CSS", "_ADMIN_CSS +="), ("def _page(", "\ndef ")):
+        i = web_src.index(name)
+        chunk = web_src[i:web_src.index(stop, i + len(name))]
+        assert "{TOKENS_CSS}" in chunk or name.startswith("_ADMIN"), name
+        assert not re.findall(r"#[0-9A-Fa-f]{3,8}\b", chunk), name + " 색 글자값 0"
+    print("OK — F 토큰 정본 주입(/·/help·/privacy·/download·_page·운영 화면) · 공통 색 글자값 0 · 파일 없음 = 빈 문자열")
+
+
 async def run():
     saved = os.environ.get(FLAG)
     try:
@@ -172,6 +205,7 @@ async def run():
             await test_flag_on(h)
             await test_ua_order(h)
             await test_session(h)
+            await test_tokens(h)
     finally:
         set_flag(saved)
 

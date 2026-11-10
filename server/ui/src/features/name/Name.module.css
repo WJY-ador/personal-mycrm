@@ -1,6 +1,6 @@
 /* 이름 관문·「표시 이름 바꾸기」 대화창 — 옛 app.html .namegate·#name-dlg .acts 그대로 */
 .gate { max-width: 640px; }
-.after { margin-top: 1.2rem; padding-top: .8rem; border-top: 1px solid var(--line); font-size: .8rem; color: var(--muted);
-  display: flex; gap: .4rem .9rem; flex-wrap: wrap; align-items: center; }
+.after { margin-top: var(--sp-8); padding-top: var(--sp-6); border-top: 1px solid var(--line); font-size: var(--fs-2); color: var(--muted);
+  display: flex; gap: var(--sp-3) var(--sp-6); flex-wrap: wrap; align-items: center; }
 /* .dlg 를 붙여 전역 .acts 보다 앞선다(옛 #name-dlg .acts 와 같은 자리) */
-.dlg .acts { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: .8rem; }
+.dlg .acts { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: var(--sp-6); }
