@@ -862,3 +862,18 @@ test("revision 갱신 — 같은 기준값 1의 훅 둘 = 표지가 그대로면
     }
   } finally { for (const r of roots) act(() => r.unmount()); vi.useRealTimers(); vis.mockRestore(); }
 });
+
+test("PC 앱 창(Electron UA)이면 #bands 에 새 버전 띠 · 일반 브라우저는 GitHub 조회도 띠도 없음", async () => {
+  await start("#_setup/help");
+  expect(calls.some(c => c.url.startsWith("https://api.github.com/"))).toBe(false);
+  expect($("bands").textContent).toBe("");
+  act(() => root!.unmount()); root = null;
+  vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (Macintosh) AppleWebKit/537.36 (KHTML, like Gecko) mycrm-desktop/0.1.1 Chrome/140.0.7339.41 Electron/45.1.0 Safari/537.36");
+  serve(url => url === "/api/state" ? json(200, state) : url === "https://api.github.com/repos/WJY-ador/personal-mycrm/releases/latest"
+    ? json(200, { draft: false, prerelease: false, tag_name: "v0.1.2", html_url: "https://github.com/WJY-ador/personal-mycrm/releases/tag/v0.1.2" })
+    : json(404, {}));
+  try {
+    await start("#_setup/help");
+    expect($("bands").querySelector(".band.update")?.textContent).toContain("지금 v0.1.1, 새 버전 v0.1.2.");
+  } finally { vi.restoreAllMocks(); }
+});
