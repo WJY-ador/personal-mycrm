@@ -929,15 +929,23 @@ def cmd_chat(ctx: Ctx, a) -> int:
         ref_store = kw.pop("ref_store", None) or chat_providers.CliSessionRefStore(ks, sid)
         if not a.fake and not a.consent_only and claude_factory is None and CHAT_CLAUDE_PROVIDER_READY:
             from .chat_launch_authority import LaunchAuthorizationClient
-            from .chat_claude import ClaudeProviderFactory
+            from .chat_claude import ClaudeProviderFactory, ClaudeProviderUnavailable
             cli_path = (cfg.get("summary") or {}).get("cli_path")
             if not cli_path:
                 log({"event": "start", "stopped": "claude-cli"})
                 return EXIT_ERR
             try:
                 auth_client = LaunchAuthorizationClient(server, token_now)
+                # The factory resolves and pins the CLI and asks it for models once per start.
                 claude_factory = ClaudeProviderFactory(auth_client, cli_path=cli_path, server_url=server,
                     agent_home=ctx.paths.home, expected_device_id=sid)
+            except ClaudeProviderUnavailable as exc:
+                if str(exc) != "models-unavailable":
+                    log({"event": "start", "stopped": "claude-runtime"})
+                    return EXIT_ERR
+                # No model list from the CLI: advertise no Claude model, keep the agent running.
+                claude_factory = None
+                log({"event": "start", "claude": "models-unavailable"})
             except Exception:
                 log({"event": "start", "stopped": "claude-runtime"})
                 return EXIT_ERR
