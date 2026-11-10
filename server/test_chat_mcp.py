@@ -19,7 +19,7 @@ from chat_mcp import (
 
 
 EXPECTED = {
-    "read": "state_get help_get me_get me_aggregate_get layout_get decide_preview question_list record_get candidate_list definitions_get person_list person_get person_context_get source_list source_get source_context_get source_reflection_list source_reflection_get activity_list activity_get inbox_list inbox_get trash_list ticket_list_mine ticket_get_mine migration_receipt_get migration_list migration_get migration_item_get migration_apply_preview pc_list token_grant_status token_list",
+    "read": "state_get help_get me_get me_aggregate_get layout_get export_get decide_preview question_list record_get candidate_list definitions_get person_list person_get person_context_get source_list source_get source_context_get source_reflection_list source_reflection_get activity_list activity_get inbox_list inbox_get trash_list ticket_list_mine ticket_get_mine migration_receipt_get migration_list migration_get migration_item_get migration_apply_preview pc_list token_grant_status token_list",
     "write": "layout_set layout_reset display_name_set question_add profile_set record_add record_attach record_title_set candidates_propose definition_propose item_propose person_save source_create source_reflection_save pc_connect",
     "decide": "record_edit record_provenance_set candidate_decide definition_apply definition_archive definition_restore item_decide person_delete source_reflection_review source_reflection_delete inbox_decide trash_move trash_restore feedback_send migration_apply migration_cancel migration_revert migration_token_send pc_forget token_revoke",
     "purge": "trash_purge",
@@ -75,7 +75,7 @@ class ChatMcpScopeTests(unittest.TestCase):
         expected = frozenset((tier, name) for tier, names in EXPECTED.items() if tier != "purge"
                              for name in names.split())
         self.assertEqual(self.allowed, expected)
-        self.assertEqual(len(self.allowed), 68)
+        self.assertEqual(len(self.allowed), 69)
         self.assertIn(("write", "record_add"), self.allowed)
         self.assertIn(("decide", "item_decide"), self.allowed)
         self.assertNotIn(("purge", "trash_purge"), self.allowed)

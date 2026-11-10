@@ -17,6 +17,7 @@ import { OfflineBand, TabsBand } from "./Bands";
 import { LeaveDialog } from "./LeaveDialog";
 import { SCREENS } from "./registry";
 import { SetupNav } from "./SetupNav";
+import { UpdateBand } from "./UpdateBand";
 import { Tabs } from "./Tabs";
 import { reload, reloadState, useAppState, useAutoRefresh } from "./useAppState";
 import { useHash } from "./useHash";
@@ -97,7 +98,7 @@ export function App() {
     <>
       {at("nav-tabs", gate ? null : <Tabs S={S} cur={shown?.cur || ""} />)}
       <SetupNav S={S} cur={gate || !metaOk ? null : shown?.setup ?? null} />
-      {at("bands", band)}
+      {at("bands", <>{band}<UpdateBand /></>)}
       {body}
       {at("ui-mast", gate ? null : <Mast ctx={island} />)}
       {at("foot", gate ? "표시 이름을 정하면 대시보드가 열려요." : loadedAt ? `불러온 시각 ${loadedAt}.` : "")}

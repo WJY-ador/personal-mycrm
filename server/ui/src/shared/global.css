@@ -117,6 +117,11 @@ nav.subtabs a .n.m { color: var(--muted); }
 .bands:empty { padding-top: 0; }
 .band { padding: .6rem .9rem; border-radius: 8px; margin-bottom: .6rem; font-size: .82rem; background: var(--card); border: 1px solid var(--line); }
 .band.fail { background: var(--fail-bg); border-color: color-mix(in srgb, var(--fail) 30%, transparent); }
+/* PC 앱 새 버전 띠 — 정보(주색 옅은 바탕). 좁은 폭에선 버튼 묶음이 글 아래로 내려간다 */
+.band.update { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .8rem; background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+.band.update .update-text { flex: 1 1 16rem; min-width: 0; }
+.band.update .update-acts { display: flex; flex-wrap: wrap; gap: .5rem; }
 
 main#view { padding-top: 1rem; padding-bottom: 1.5rem; }
 

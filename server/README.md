@@ -179,6 +179,7 @@ DATABASE_URL=… .venv/bin/python admin_cli.py delete-cancel  <ticket_id> --acto
 - **사람 HMAC**: 장치가 보낸 `HMAC-SHA256(PC 키, JCS(["person/1", 제공자 코드, 계정 식별자]))` 를 키 공간(`hmac_namespace`, 장치마다 무작위 `hn_…`)과 함께 `people.identity_hmac` 에 둔다. 처음 보는 사람은 별칭 「사람-NNNN」(실명에서 만들지 않는다). 키·실명·대응표는 서버에 오지 않는다. 화면·MCP 엔 별칭과 사람 ID 만.
 - **삭제 보호**: 활동·기록·항목에 연결된 사람 삭제 = `PERSON-IN-USE`(연결 위치 개수를 문구에, 연쇄 삭제·연결 끊기 없음). 출처는 지우는 기능 자체가 없다(FK NO ACTION). `item_links` 대상에 사람·출처·활동이 더해졌다(이름 붙은 CHECK `ck_item_links_target` — 옛 DB 는 `init_schema` 가 정의로 찾아 DROP → ADD).
 - **MCP 읽기 7**(`ALLOWED_TOOLS`, 표시 이름 관문 밖): `activity_list` · `activity_get` · `person_context_get` · `source_context_get` · `me_aggregate_get`(7d·30d·90d·all — 웹 `/api/me/aggregate` 와 같은 서버 함수) · `inbox_list` · `inbox_get`. 원문·원 URL·PC 경로·실명은 응답에 없다(활동은 불투명 원문 ID 만).
+- **꺼내기 읽기**(2026-11-10, facade 전용 `read(op="export_get")` — `ALLOWED_TOOLS` 밖이라 위 7에 들지 않는다): `export_get` 은 확정한 판단·확정 기준·결정만 양식대로 조립한다. 활동·사람 별칭·출처 위치·읽고 든 생각은 싣지 않는다.
 - **주기 파기**(`purge_once`, 서버 시작 + 매일): 기간 지난 승인 대기 → expired(본문 삭제) · 한도 카운터(분 1시간·하루 35일 지난 행).
 - **감사**(`admin_audit`, detail 에 토큰·본문 없음): `device_connect`·`device_reissue`·`device_revoke`·`device_policy` · `migration_apply`(배치당 1행)·`migration_extend`·`migration_close`.
 - **계정 삭제**: `db.DELETE_TABLES` 가 관계(`item_links`·`activity_links`) → 접수 대응표(`import_entries`) → 활동 → 한도 카운터 → 입력원(`import_streams`) 순서로 먼저 지운다(삭제 CLI 절차는 위 절 그대로). PC 의 원문·대응표는 서버 삭제와 별개다.
@@ -322,6 +323,7 @@ DATABASE_URL=… .venv/bin/python migrate_cli.py close  <명세.json> --user <ui
   R5 결함 3(PR B): record_provenance_set · definition_archive · definition_restore.
   PR B 코어 14: display_name_set · me_get · person_list · person_get · person_save · person_delete · source_list · source_get · source_create · source_reflection_list · source_reflection_get · source_reflection_save · source_reflection_review · source_reflection_delete. 목록 limit 기본 50·최대 100, cursor 불투명. `state_get` 응답 모양은 그대로다.
   board 이전 읽기 7: activity_list · activity_get · person_context_get · source_context_get · me_aggregate_get · inbox_list · inbox_get(위 「연결 장치」 절).
+  꺼내기 export_get(2026-11-10, facade 전용 읽기 op — 직접 도구 아님, `read(op="export_get")`): 동결 양식 `server/forms/export@1.json`(headed_note·period_report)대로 확정한 판단·확정 기준·결정만 조립해 돌려준다. 저장하지 않는다.
   도구는 모두 43개(19 + 3 + 14 + 7). 기존 19개의 이름·인자는 그대로다(설명 문구만 일부 갱신 · `definitions_get` 은 초안에 `draft=true` 키 추가) — 쓰기 도구에 `NAME-REQUIRED` 가 늘었다.
   **커넥터 갱신**: 도구가 늘면 ChatGPT 커넥터는 스키마를 다시 승인해야 하고, Claude 커넥터는 다시 연결하거나 새 대화를 열어야 새 도구가 보인다. PR B 배포 뒤 운영 확인 항목.
   웹 `/api/state` 는 같은 `db.state` 에 /app 전용 키를 얹는다 — `user`(email·이름 공유·desk_hidden, PR B `display_name`·`nav` — 항상 `"new"`) · `std`·`sources`·`source_counts`·`structure`·`structure_svg`(PR #20) · `me`·`people`·`reflections`(PR B) · `activity`(「나」 30일 집계)·`inbox`(`pending` 수)·`devices`(활성 수·최대)·`activity_ui`(행동·제공자 표시 이름, 대기 보관 일수)(board 이전 PR — 이 부분만 실패하면 `read.activity` 에 코드만 싣고 나머지는 그대로) · `devices_status`(③-0.2, 위 「장치 상태」 절). MCP `state_get` 에는 넣지 않는다(2단계 키: definitions · items · item_proposals · record_links, journal 행에 notes). 이름·인자는 고정(ChatGPT 는 승인된 스키마를 고정하므로 바꾸면 재승인).

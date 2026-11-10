@@ -26,7 +26,7 @@ class ChatMcpDenied(ValueError):
 # explicit review and coordinated update here plus the exact-set test below.
 _PINNED_TIERS = {
     "state_get": "read", "help_get": "read", "me_get": "read", "me_aggregate_get": "read",
-    "layout_get": "read", "decide_preview": "read", "question_list": "read", "record_get": "read",
+    "layout_get": "read", "export_get": "read", "decide_preview": "read", "question_list": "read", "record_get": "read",
     "candidate_list": "read", "definitions_get": "read", "person_list": "read", "person_get": "read",
     "person_context_get": "read", "source_list": "read", "source_get": "read", "source_context_get": "read",
     "source_reflection_list": "read", "source_reflection_get": "read", "activity_list": "read",

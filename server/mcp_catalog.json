@@ -28,6 +28,8 @@
     "layout_get": {"family": "state", "tier": "read", "direct": false, "keywords": ["화면 배치", "레이아웃", "탭 순서", "요약 블록"]},
     "layout_set": {"family": "state", "tier": "write", "direct": false, "keywords": ["화면 배치", "레이아웃", "탭 순서 바꾸기", "블록 옮기기", "배치 바꾸기"]},
     "layout_reset": {"family": "state", "tier": "write", "direct": false, "keywords": ["화면 배치", "레이아웃", "기본 배치", "기본으로 되돌리기"]},
+    "export_get": {"family": "state", "tier": "read", "direct": false, "keywords": ["꺼내기", "꺼내", "양식", "보고서", "소제목", "정리 글", "내보내기"],
+                   "examples": [{"form": "headed_note", "scope": {"kind": "question"}}, {"form": "period_report", "scope": {"kind": "period", "period": "30d"}}]},
     "display_name_set": {"family": "state", "tier": "write", "keywords": ["이름", "표시 이름", "닉네임", "부를 이름"],
       "examples": [{"display_name": "하루"}]},
     "decide_preview": {"family": "state", "tier": "read", "direct": false, "keywords": ["미리보기", "확인", "확정 전", "삭제 전", "보여 줘"],

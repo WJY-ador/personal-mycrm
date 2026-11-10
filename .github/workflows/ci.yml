@@ -262,6 +262,19 @@ jobs:
           PY
           python server/test_session_wrap.py
 
+      # 꺼내기 양식(2026-11-10) — export_get 조립 규칙(확정만·인용 그대로·ref·빈 절·상한 50·결정성·기간·사용자 경계)·동결 파일 --check·카탈로그(합성 PG).
+      # 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
+      - name: "④-p 꺼내기 양식 시험 (test_export_forms.py)"
+        env:
+          DATABASE_URL: postgresql://postgres:crm@localhost:5432/crm_test_export
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:crm@localhost:5432/crm", autocommit=True) as c:
+              c.execute("CREATE DATABASE crm_test_export")
+          PY
+          python server/test_export_forms.py
+
       # 웹 「대화」 전송 골격(2026-11-04 PR 1) — 실제 uvicorn(스레드) + 장치 WS + SSE · 세션·턴 멱등·TURN-BUSY·재개·WS 인증·한도·스위치·30일 삭제(합성 PG).
       # 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
       - name: "④-o 웹 대화 시험 (test_webchat.py)"

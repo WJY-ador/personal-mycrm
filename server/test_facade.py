@@ -170,7 +170,7 @@ async def test_catalog():
     # 승인 대기 확정(2026-11-04) = facade 전용 1(저장 승인 대기 family, D hmac)
     assert (facade.OPS["inbox_decide"].family, facade.OPS["inbox_decide"].tier, facade.OPS["inbox_decide"].bind) == ("inbox", "decide", "hmac")
     assert {o for o, x in facade.OPS.items() if not x.direct} == {"decide_preview"} | (mig - {"migration_receipt_get"}) | pc | LAYOUT_OPS | EDIT_OPS \
-        | {"inbox_decide"}
+        | {"inbox_decide", "export_get"}
     # 겉면 enum = tier 분할(겹침·빠짐 없음)
     enums = {t: tools[t].input_schema["properties"]["op"]["enum"] for t in facade.TIERS}
     allops = [o for t in facade.TIERS for o in enums[t]]
@@ -281,10 +281,15 @@ async def test_symmetry(S):
                 assert code(d) == code(f), (op, code(d), code(f))
             else:
                 dv, fv = val(d), val(f)
+                dt, ft = [x.text for x in d.content], [x.text for x in f.content]
                 if op == "state_get":   # generated = 호출 시각(초 단위) — 두 호출이 초 경계를 넘으면 달라진다. 그 키만 뺀다
-                    dv.pop("generated", None), fv.pop("generated", None)
+                    dg, fg = dv.pop("generated", None), fv.pop("generated", None)
+                    # 본문 글자 비교도 같은 이유로 generated 값만 직접 호출 값으로 맞춘다(조각 수·나머지 글자는 그대로 비교)
+                    if fg != dg:
+                        assert sum(t.count(json.dumps(fg)) for t in ft) == 1, "generated 값은 본문에 한 번"
+                        ft = [t.replace(json.dumps(fg), json.dumps(dg)) for t in ft]
                 assert dv == fv, op
-                assert [x.text for x in d.content] == [x.text for x in f.content], f"{op} 본문 모양"
+                assert dt == ft, f"{op} 본문 모양"
         # 쓰기 — A 직접 · B facade, 모양 같음
         r3, r4 = db.record_add(S["uid"], "후보용", BODY, S["q"])["id"], db.record_add(S["uid"], "후보용", BODY, S["q"])["id"]
         wa = {
