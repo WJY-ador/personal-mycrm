@@ -33,10 +33,19 @@ jobs:
     outputs:
       matrix: ${{ steps.resolve.outputs.matrix }}
       sources: ${{ steps.sources.outputs.sources }}
-    env:
-      NPM_CONFIG_USERCONFIG: /dev/null
-      NPM_CONFIG_GLOBALCONFIG: /dev/null
     steps:
+      # npm 11 rejects one file loaded as both user and global config.
+      # Give each scope its own empty file; runner.temp is not allowed in job env.
+      - name: Isolate npm configuration
+        shell: bash
+        run: |
+          set -eu
+          : > "$RUNNER_TEMP/mycrm-user.npmrc"
+          : > "$RUNNER_TEMP/mycrm-global.npmrc"
+          {
+            echo "NPM_CONFIG_USERCONFIG=$RUNNER_TEMP/mycrm-user.npmrc"
+            echo "NPM_CONFIG_GLOBALCONFIG=$RUNNER_TEMP/mycrm-global.npmrc"
+          } >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
