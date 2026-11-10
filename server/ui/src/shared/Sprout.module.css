@@ -1,0 +1,13 @@
+/* 기다림 캐릭터 — 글자 한 줄 높이(22px 안팎, 1.4em). 색은 토큰만(--accent 숲 녹색, 눈 = --card). 흔들림은 잎자루(아래 가운데)를 축으로 ±6도, 2.4초.
+   자주 보는 자리라 크기와 각도를 작게 둔다. 움직임 줄이기 = 멈춤 */
+.wrap { display: inline-flex; align-items: center; gap: var(--sp-3); vertical-align: middle; }
+.leaf { width: 1.4em; height: 1.4em; flex: 0 0 auto; transform-origin: 50% 90%; animation: sway 2.4s ease-in-out infinite; }
+.body { fill: var(--accent); }
+.rib { fill: none; stroke: var(--accent-soft); stroke-width: 1.2; stroke-linecap: round; }
+.eye { fill: var(--card); }
+.text { font-size: var(--fs-2); color: var(--muted); }
+@keyframes sway {
+  0%, 100% { transform: rotate(-6deg); }
+  50% { transform: rotate(6deg) translateY(-0.5px); }
+}
+@media (prefers-reduced-motion: reduce) { .leaf { animation: none; } }

@@ -57,7 +57,7 @@ test("src 에 innerHTML·dangerouslySetInnerHTML 0", () => {
 // sessionStorage·console 0 · 이관 토큰 경로(/api/migration/ — PC 업로더 몫)는 화면이 부르지 않는다 · 원문 = 127.0.0.1 링크 한 곳(fetch 0)
 test("저장소 쓰기 = 원문 포트·앱 업데이트 나중에 둘 · console·sessionStorage 0 · 이관 토큰 경로 0 · 127.0.0.1 = 링크 한 곳", () => {
   const src = Object.entries(files);
-  expect(src.flatMap(([p, s]) => [...s.matchAll(/localStorage\.setItem\(([^,]+),/g)].map(m => `${p}:${m[1]}`))).toEqual(["./features/activity/RawBox.tsx:RAW_PORT_KEY", "./shared/desktopUpdate.ts:DISMISS_KEY"]);   // + PC 앱 새 버전 띠 나중에 기록(버전·시각)
+  expect(src.flatMap(([p, s]) => [...s.matchAll(/localStorage\.setItem\(([^,]+),/g)].map(m => `${p}:${m[1]}`))).toEqual(["./features/activity/RawBox.tsx:RAW_PORT_KEY", "./features/webchat/store.ts:MODEL_KEY", "./shared/desktopUpdate.ts:DISMISS_KEY"]);   // + PC 앱 새 버전 띠 나중에 기록(버전·시각) + AI 대화 지난번 모델 선택(PC, 공급자, 모델 이름만)
   expect(src.filter(([, s]) => /sessionStorage|console\.|\/api\/migration\//.test(s)).map(([p]) => p)).toEqual([]);
   expect(src.filter(([, s]) => s.includes("127.0.0.1")).map(([p]) => p)).toEqual(["./features/activity/RawBox.tsx"]);
   expect(src.filter(([, s]) => /fetch\([^)]*127\.0\.0\.1/.test(s))).toEqual([]);

@@ -23,7 +23,7 @@ export function WebchatRoot({ ctx, store = webchat }: ScreenProps & { store?: We
   return (
     <>
       {nav && createPortal(btn, nav)}
-      <Panel s={s} inRef={inRef} />
+      <Panel s={s} inRef={inRef} dev={ctx.state?.devices_status?.state ?? ""} />
     </>
   );
 }
