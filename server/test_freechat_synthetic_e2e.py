@@ -69,6 +69,8 @@ class TlsServer:
                                 ws="websockets", ssl_certfile=str(cert), ssl_keyfile=str(key))
         self.srv = uvicorn.Server(config)
         self.thread = threading.Thread(target=self.srv.run, daemon=True)
+        self.agent_stop = None
+        self.agent_worker = None
 
     def __enter__(self):
         self.thread.start()
@@ -79,8 +81,16 @@ class TlsServer:
         raise RuntimeError("synthetic HTTPS server did not start")
 
     def __exit__(self, *_):
+        if self.agent_stop is not None:
+            self.agent_stop.set()
+        if self.agent_worker is not None:
+            self.agent_worker.join(5)
         self.srv.should_exit = True
         self.thread.join(10)
+        if self.agent_worker is not None and self.agent_worker.is_alive():
+            raise RuntimeError("synthetic agent thread did not stop")
+        if self.thread.is_alive():
+            raise RuntimeError("synthetic TLS server thread did not stop")
 
     @property
     def base(self):
@@ -286,7 +296,55 @@ const runtime=createConsentRuntime({request:post,getInstallationId:async()=>INST
        .replace("REQUEST_ID", json.dumps("synthetic-e2e-session")), encoding="utf-8")
 
 
+def launch_desktop_approval(approval_js, env, process_holder=None):
+    """Report synthetic bridge spawn errors instead of losing them in a thread."""
+    try:
+        process = subprocess.Popen(["node", str(approval_js)], stdin=subprocess.PIPE,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+    except OSError as exc:
+        return "BRIDGE_ERROR:" + type(exc).__name__, None
+    if process_holder is not None:
+        process_holder[0] = process
+    result = process.stdout.readline().strip()
+    if result != "APPROVED":
+        process.wait(timeout=5)
+        result += ":" + process.stderr.read().strip()
+    return result, process
+
+
 class FreechatSyntheticE2ETests(unittest.TestCase):
+    def test_synthetic_server_stops_agent_before_server_thread(self):
+        server = TlsServer.__new__(TlsServer)
+        server.srv = type("Server", (), {"should_exit": False})()
+        server.agent_stop = threading.Event()
+        order = []
+
+        class Worker:
+            def join(self, _timeout):
+                self_state = (server.agent_stop.is_set(), server.srv.should_exit)
+                order.append(("agent", self_state))
+
+            def is_alive(self):
+                return False
+
+        class ServerThread:
+            def join(self, _timeout):
+                order.append(("server", server.srv.should_exit))
+
+            def is_alive(self):
+                return False
+
+        server.agent_worker = Worker()
+        server.thread = ServerThread()
+        server.__exit__(None, None, None)
+        self.assertEqual(order, [("agent", (True, False)), ("server", True)])
+
+    def test_desktop_approval_spawn_error_is_reported(self):
+        with patch("subprocess.Popen", side_effect=FileNotFoundError("synthetic")):
+            result, process = launch_desktop_approval("synthetic.js", {})
+        self.assertEqual(result, "BRIDGE_ERROR:FileNotFoundError")
+        self.assertIsNone(process)
+
     def test_model_approval_consumption_claude_mcp_response_resume_and_lock(self):
         self._run_isolated_provider("claude")
 
@@ -375,7 +433,30 @@ class FreechatSyntheticE2ETests(unittest.TestCase):
                                 models=(model,), timeout=20)
                             factory_kw = {"codex_factory": factory}
                         process_failures = []
+                        provider_exceptions = []
                         if provider_name == "codex":
+                            # The provider intentionally emits generic error codes.
+                            # In this synthetic child only, preserve exception type
+                            # and source location so failures remain diagnosable
+                            # without printing exception values or credentials.
+                            from agent.chat_codex import CodexProvider
+                            original_start = CodexProvider.start_turn
+                            def traced_start(*args, **kwargs):
+                                old_trace = sys.gettrace()
+                                def trace(frame, event, arg):
+                                    if (event == "exception" and "/agent/" in frame.f_code.co_filename
+                                            and len(provider_exceptions) < 30):
+                                        item = (Path(frame.f_code.co_filename).name,
+                                                frame.f_code.co_name, frame.f_lineno, arg[0].__name__)
+                                        if item not in provider_exceptions:
+                                            provider_exceptions.append(item)
+                                    return trace
+                                sys.settrace(trace)
+                                try:
+                                    yield from original_start(*args, **kwargs)
+                                finally:
+                                    sys.settrace(old_trace)
+                            CodexProvider.start_turn = traced_start
                             original_spawn = factory.process_supervisor.spawn
                             def observe_codex_spawn(argv, **kwargs):
                                 try:
@@ -390,14 +471,8 @@ class FreechatSyntheticE2ETests(unittest.TestCase):
                             env = dict(os.environ, SYNTHETIC_BASE=server_url, SYNTHETIC_TOKEN=token,
                                        SYNTHETIC_ORIGIN=os.environ["CRM_PUBLIC_URL"],
                                        SYNTHETIC_COOKIE="crm_session=" + main.site.session_value(uid))
-                            p = subprocess.Popen(["node", str(approval_js)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                                 stderr=subprocess.PIPE, text=True, env=env)
-                            result = p.stdout.readline().strip()
-                            if result != "APPROVED":
-                                p.wait(timeout=5)
-                                result += ":" + p.stderr.read().strip()
+                            result, p = launch_desktop_approval(approval_js, env, node_holder)
                             approvals.append(result)
-                            node_holder[0] = p
                         agent_log = []
                         received = []
                         agent = agent_chat.ChatAgent(srv.ws, token, ref_store=ref_store,
@@ -412,6 +487,8 @@ class FreechatSyntheticE2ETests(unittest.TestCase):
                             original_on(message)
                         agent._on = observed_on
                         worker = threading.Thread(target=agent.run, daemon=True)
+                        srv.agent_stop = stop
+                        srv.agent_worker = worker
                         worker.start()
                         with httpx.Client(base_url=server_url, verify=str(ca), timeout=10,
                                           headers={"origin": os.environ["CRM_PUBLIC_URL"]},
@@ -457,7 +534,7 @@ class FreechatSyntheticE2ETests(unittest.TestCase):
                                 self.assertEqual(row["status"], "done",
                                     f"turn {number} failed, event={err['data'] if err else None}, "
                                     f"fake_cli={cli_diag.read_text() if cli_diag.exists() else None}, "
-                                    f"process_failures={process_failures}, agent_log={agent_log}")
+                                    f"process_failures={process_failures}, provider_exceptions={provider_exceptions}, agent_log={agent_log}")
                                 messages = h.get(f"/api/chat/sessions/{sid}/messages").json()["messages"]
                                 results.append([m["body"] for m in messages if m["turn_id"] == tid and m["role"] == "assistant"])
                             self.assertEqual(results, [["Synthetic state loaded; turn resumed."]] * 2)

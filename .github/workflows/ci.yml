@@ -79,6 +79,33 @@ jobs:
       - name: Install server dependencies
         run: pip install -r server/requirements.txt
 
+      - name: "서버 시험 실행기 안전 가드 시험"
+        run: python .github/scripts/test_run_ci_server_tests.py -v
+
+      # DATABASE_URL and PG* are cleared inside the runner. In particular,
+      # test_db_tx_scope uses only FakePool and does not require a live database.
+      - name: "대화 및 트랜잭션 단위 시험 (DB 없음, 7개 파일)"
+        run: python .github/scripts/run_ci_server_tests.py unit
+
+      # Each invocation checks the exact loopback host, port and DB name before
+      # creating a fresh database. A pre-existing database is never reused.
+      - name: "대화 승인 DB 시험"
+        env:
+          DATABASE_URL: postgresql://postgres:crm@localhost:5432/crm_test_chat_approvals
+        run: python .github/scripts/run_ci_server_tests.py approvals
+
+      - name: "이관 MCP DB 시험"
+        env:
+          DATABASE_URL: postgresql://postgres:crm@localhost:5432/crm_test_migration_mcp
+        run: python .github/scripts/run_ci_server_tests.py migration
+
+      # Marker tests require this exact DB name; run sequentially on one isolated DB.
+      - name: "사용자 변경 표식 DB 시험 (3개 파일)"
+        env:
+          DATABASE_URL: postgresql://postgres:crm@localhost:5432/crm_test_user_change_marker
+          CRM_TEST_DB_PORT: "5432"
+        run: python .github/scripts/run_ci_server_tests.py marker
+
       - name: "① Python 문법 (py_compile)"
         run: python -m py_compile server/*.py
 
@@ -298,6 +325,49 @@ jobs:
       - name: "⑤ crm.py check (참고용)"
         continue-on-error: true
         run: python crm.py check
+
+  # The provider and process supervisor deliberately require Darwin; no mocks or
+  # platform overrides are used for this synthetic two-provider integration test.
+  freechat-macos:
+    name: freechat-macos
+    runs-on: macos-14
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: postgresql://127.0.0.1:55447/crm_test_freechat_e2e
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: server/requirements.txt
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24.22.1"
+      - name: Install verification dependencies
+        run: |
+          pip install -r server/requirements.txt
+          pip install -r packaging/requirements-agent.txt
+      - name: Start dedicated local PostgreSQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew list --versions postgresql@17 >/dev/null || brew install postgresql@17
+          pg_bin="$(brew --prefix postgresql@17)/bin"
+          "$pg_bin/initdb" -D "$RUNNER_TEMP/mycrm-freechat-pg" --auth=trust
+          "$pg_bin/pg_ctl" -D "$RUNNER_TEMP/mycrm-freechat-pg" \
+            -l "$RUNNER_TEMP/mycrm-freechat-pg.log" -o "-h 127.0.0.1 -p 55447" -w start
+      - name: "자유 대화 승인 및 두 provider 통합 시험"
+        run: python .github/scripts/run_ci_server_tests.py freechat --port 55447
+      - name: Stop dedicated PostgreSQL
+        if: always()
+        shell: bash
+        run: |
+          pg_bin="$(brew --prefix postgresql@17)/bin"
+          if test -f "$RUNNER_TEMP/mycrm-freechat-pg/postmaster.pid"; then
+            "$pg_bin/pg_ctl" -D "$RUNNER_TEMP/mycrm-freechat-pg" -m fast -w stop
+          fi
 
   # 로컬 에이전트는 키트와 같은 Python ≥3.9 약속(manifest requires) — 서버 시험(test, 3.13)과 별도 job.
   # 3.9 는 지원 종료라 ubuntu-latest 매니페스트에서 빠질 수 있어 ubuntu-22.04 에 고정. DB·서비스 없음
