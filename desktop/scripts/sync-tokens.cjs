@@ -21,6 +21,11 @@ const COLORS = ['paper', 'card', 'ink', 'muted', 'line', 'accent', 'on-accent', 
 const FONTS = ['serif'];
 const STEP = /^(sp|fs|r)-[0-9a-z]+$/;
 
+// Read a text file with LF line ends: a Windows checkout may turn the files into CRLF (git autocrlf).
+function readText(file) {
+  return fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+}
+
 function blocks(css) {
   const light = new Map();
   const dark = new Map();
@@ -63,12 +68,12 @@ function build(css) {
   ].join('\n');
 }
 
-module.exports = { SOURCE, TARGET, COLORS, build };
+module.exports = { SOURCE, TARGET, COLORS, build, readText };
 
 if (require.main === module) {
-  const want = build(fs.readFileSync(SOURCE, 'utf8'));
+  const want = build(readText(SOURCE));
   if (process.argv.includes('--check')) {
-    const have = fs.existsSync(TARGET) ? fs.readFileSync(TARGET, 'utf8') : '';
+    const have = fs.existsSync(TARGET) ? readText(TARGET) : '';
     if (have !== want) {
       console.error('src/tokens.css differs from server/ui/src/shared/tokens.css — run: node scripts/sync-tokens.cjs');
       process.exit(1);

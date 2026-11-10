@@ -4,14 +4,13 @@
 // window's own CSS brings back colour literals, and they keep the page's CSP as strict as before.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
-const { SOURCE, TARGET, COLORS, build } = require('../scripts/sync-tokens.cjs');
+const { SOURCE, TARGET, COLORS, build, readText } = require('../scripts/sync-tokens.cjs');
 
-const src = name => fs.readFileSync(path.join(__dirname, '..', 'src', name), 'utf8');
+const src = name => readText(path.join(__dirname, '..', 'src', name));
 
 test('src/tokens.css equals what the token source gives (run node scripts/sync-tokens.cjs)', () => {
-  assert.equal(fs.readFileSync(TARGET, 'utf8'), build(fs.readFileSync(SOURCE, 'utf8')));
+  assert.equal(readText(TARGET), build(readText(SOURCE)));
 });
 
 test('the copy carries a light and an OS-dark value for every colour it lists', () => {
