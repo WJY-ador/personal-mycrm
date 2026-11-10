@@ -292,6 +292,21 @@ jobs:
           PY
           python server/test_webchat.py
 
+      # 대화 서버 시험(2026-11-10) — PR 54 의 러너(6c1b199)를 main 에 맞게 줄여 옮겼다. 시험 목록·가드·완료 판정은 러너가 정한다
+      # (돌린 시험 0건, 건너뜀, 완료 표지 없음이면 실패). 러너는 DATABASE_URL 과 PG* 를 스스로 검사해 정리한다
+      - name: "대화 서버 시험 실행기 안전 가드 시험"
+        run: python .github/scripts/test_run_ci_server_tests.py -v
+
+      # DB 없는 7개 파일(승인 HTTP·확인 카드·MCP 게이트웨이·동의 서명·트랜잭션 범위). 동의 서명 시험은 node 를 쓴다
+      - name: "④-q 대화 단위 시험 (DB 없음, 7개 파일)"
+        run: python .github/scripts/run_ci_server_tests.py unit
+
+      # 러너가 정확한 이름·로컬 호스트·포트를 확인한 뒤 DB 를 새로 만든다(이미 있으면 거절 — 그래서 CREATE DATABASE 단계가 따로 없다)
+      - name: "④-r 대화 승인 DB 시험 (test_chat_approvals.py)"
+        env:
+          DATABASE_URL: postgresql://postgres:crm@localhost:5432/crm_test_chat_approvals
+        run: python .github/scripts/run_ci_server_tests.py approvals
+
       # React 화면 묶음(2026-11-03 R1·R5b-2b) — manifest 허용 목록(지연 불러오기 묶음 포함) 서빙·/app 진입 태그·CSP self·인라인 0·manifest 없음·정적 뼈대.
       # 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
       - name: "④-m React 화면 묶음 시험 (test_ui_build.py)"
