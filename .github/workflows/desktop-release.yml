@@ -129,9 +129,16 @@ jobs:
         shell: bash
         # The dist script already passes --publish never; passing it twice turns it into a list that
         # electron-builder no longer reads as "never". The update marker goes only on release-signed mac builds.
+        # mac gets one retry: electron-builder compresses the zip while dmgbuild builds the dmg, and dmgbuild's
+        # last hdiutil detach has failed with "Resource busy" on macos-15-intel. Building them in two calls
+        # would make the second call overwrite latest-mac.yml, so the retry is the smaller change.
         run: |
           marker=""
           if [ -n "${MYCRM_MAC_SIGN_SHA1:-}" ]; then marker="-c.extraMetadata.mycrmMacUpdater=true"; fi
+          if npm run dist -- --${{ matrix.platform }} --${{ matrix.arch }} $marker; then exit 0; fi
+          if [ "${{ matrix.platform }}" != mac ]; then exit 1; fi
+          echo "::warning::mac installer build failed once; detaching dmgbuild leftovers and building again"
+          node scripts/dmg-leftovers.cjs ../release/desktop
           npm run dist -- --${{ matrix.platform }} --${{ matrix.arch }} $marker
       - name: Check update feed, app-update.yml and signing mode
         shell: bash
