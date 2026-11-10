@@ -97,6 +97,15 @@ test("초기 안내는 MyCRM 도구별 권한과 확인 규칙을 명시한다",
   expect(EMPTY).toContain("MyCRM 작업은 기존 도구 권한과 확인 규칙을 따릅니다");
 });
 
+test("Codex 로그인이 필요하면 PC 설정에서 로그인 후 재시도하도록 안내한다", async () => {
+  const { s, es } = mk();
+  await s.toggle(true);
+  es.fire("turn", { turn_id: "ct_1", text: "질문" });
+  es.fire("error", { turn_id: "ct_1", seq: 1, data: { code: "CODEX-LOGIN-REQUIRED" } });
+  expect(s.turns[0].endNote).toBe("PC 앱 설정에서 Codex에 로그인한 뒤 다시 시도하세요.");
+  expect(s.turns[0].endNote).not.toContain("CODEX-LOGIN-REQUIRED");
+});
+
 test("새 세션 충돌과 선택 공급자 미지원은 자동 대체 없이 원인을 알린다", () => {
   expect(errText({ code: "PROVIDER-UNAVAILABLE", msg: "" })).toContain("선택한 AI 또는 모델");
   expect(errText({ code: "SESSION-CONFLICT", msg: "" })).toContain("다른 대화");

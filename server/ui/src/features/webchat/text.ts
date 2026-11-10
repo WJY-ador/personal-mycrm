@@ -10,6 +10,7 @@ export const REPLACED = "다른 탭에서 이 대화를 열었어요. 여기서 
 export const TRIMMED = "앞의 대화는 생략했어요(최근 대화만 보여요).";
 export const END: Record<string, string> = {
   STOPPED: "중지했어요.", "TURN-LIMIT": "답이 너무 길어 멈췄어요.", "TURN-TIMEOUT": "PC 응답이 없어 끝냈어요.",
+  "CODEX-LOGIN-REQUIRED": "PC 앱 설정에서 Codex에 로그인한 뒤 다시 시도하세요.",
   "DEVICE-OFFLINE": "PC 연결이 끊겨 보내지 못했어요.", "BUFFER-LIMIT": "PC 가 보낼 출력이 너무 많아 멈췄어요.", "PC-BUSY": "PC 가 다른 답을 만드는 중이에요.",
 };
 export const ERR: Record<string, string> = {

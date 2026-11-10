@@ -16,8 +16,11 @@ const {createConsentRuntime}=require('./consent-runtime.cjs');
 const {createConsentLockGuard}=require('./consent-lock-guard.cjs');
 const {startChatSidecar}=require('./chat-sidecar.cjs');
 const {findCliCandidates,parseModelIds}=require('./cli-discovery.cjs');
+const {createCodexLogin}=require('./codex-login.cjs');
+const {checkCodexVersion}=require('./codex-version.cjs');
+const CODEX_LOGIN_EXPERIMENT_READY=false;
 let win,dash,tray,supervisor,log,prefs={},binary,home,settingsFile,quitting=false,ready=false;
-let busy=false,trayLive=null,connector=null,pollTimer=null,consentBridge=null,consentRuntime=null,consentLock=null; const commands=new Set();
+let busy=false,trayLive=null,connector=null,pollTimer=null,consentBridge=null,consentRuntime=null,consentLock=null,codexLogin=null; const commands=new Set();
 function stopProcesses(options){consentBridge?.abortPending();return supervisor.stopAll(options);}
 // Login handoff: one pending login (verifier never leaves memory) and a deep link that arrived before the window existed.
 let pendingLogin=null,queuedLink=handoff.findLink(process.argv);
@@ -54,6 +57,7 @@ function snapshot() {
   const codexCandidates=findCliCandidates('codex',{platform:process.platform,home:os.homedir(),pathValue:process.env.PATH||''});
   return {version:app.getVersion(),ready,busy,allowCli:prefs.allowCli===true,autoStart:app.isPackaged&&app.getLoginItemSettings().openAtLogin,
     connection:{connected,cliConfigured,codexCliConfigured,codexModels,expires},codexCandidates,
+    codexLogin:codexLogin?.view()||{enabled:false,status:'idle'},
     pc:connector?.view()||{session:'unknown',revoked:false,registered:false},processes:supervisor?.snapshot()||{}};
 }
 function changed(){if(win&&!win.isDestroyed())win.webContents.send('status',snapshot());refreshTray();}
@@ -253,6 +257,7 @@ async function initialize(){
   settingsFile=path.join(userData,'desktop-preferences.json');prefs=preferences();home=agentHome();
   binary=app.isPackaged?path.join(process.resourcesPath,'agent',process.platform==='win32'?'mycrm-agent.exe':'mycrm-agent'):path.resolve(__dirname,'../../release/agent',process.platform==='win32'?'mycrm-agent.exe':'mycrm-agent');
   log=diagnosticLog(path.join(userData,'logs'));
+  codexLogin=createCodexLogin({spawn,binary,home,enabled:CODEX_LOGIN_EXPERIMENT_READY,onChange:changed});
   ready=await compatibleBinary();supervisor=new Supervisor({binary,home,log,changed});
   win=new BrowserWindow({width:660,height:790,minWidth:520,minHeight:600,title:'MyCRM 연결 장치',show:false,backgroundColor:'#f6f7f9',webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true}});
   win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
@@ -315,6 +320,13 @@ async function initialize(){
     for(const model of models)args.push('--model',model);
     const {code,detail}=await command(args);return {code,detail};
   }));
+  register('codex-login-start',()=>{
+    if(!ready||!connection().codexCliConfigured||quitting)throw new Error('failed');
+    return codexLogin.start();
+  });
+  register('codex-login-cancel',()=>codexLogin.cancel());
+  register('codex-version',()=>checkCodexVersion({spawn,binary,home}));
+  register('codex-help',()=>shell.openExternal('https://developers.openai.com/codex/cli'));
   register('allow-cli',value=>exclusively(async()=>{
     if(typeof value!=='boolean')throw new Error('input');
     await supervisor.stop('jobs');prefs.allowCli=value;savePreferences();return snapshot();
@@ -350,7 +362,9 @@ async function initialize(){
   app.on('before-quit',event=> {
     if(quitting)return;event.preventDefault();quitting=true;clearInterval(pollTimer);changed();
     const pending=[...commands].map(child=>new Promise(resolve=>child.once('close',resolve)));
-    Promise.all([stopProcesses({closing:true}),...pending]).finally(async()=>{consentLock?.dispose();consentRuntime?.dispose();await consentBridge?.close();tray?.destroy();app.quit();});
+    Promise.all([stopProcesses({closing:true}),codexLogin.close(),...pending]).then(async()=>{
+      consentLock?.dispose();consentRuntime?.dispose();await consentBridge?.close();tray?.destroy();app.quit();
+    },()=>{quitting=false;changed();dialog.showErrorBox('MyCRM','연결 장치를 안전하게 종료하지 못했어요. 다시 종료해 주세요.');});
   });
   createDashboard();
   win.on('focus',()=>connector.poll('focus'));

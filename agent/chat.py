@@ -173,9 +173,10 @@ class ChatAgent:
         self.registry = registry or ProviderRegistry.from_providers([provider] if provider is not None else [])
         from .chat_claude import ClaudeProviderFactory
         from .chat_codex import CodexProviderFactory
+        from .chat_codex_app_provider import AppServerCandidateFactory
         if claude_factory is not None and type(claude_factory) is not ClaudeProviderFactory:
             raise ValueError("claude-factory")
-        if codex_factory is not None and type(codex_factory) is not CodexProviderFactory:
+        if codex_factory is not None and type(codex_factory) not in (CodexProviderFactory, AppServerCandidateFactory):
             raise ValueError("codex-factory")
         self.claude_factory = claude_factory
         self.codex_factory = codex_factory

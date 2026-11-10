@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import subprocess
 import sys
 import tempfile
 import threading
@@ -492,6 +493,67 @@ class CliTest(unittest.TestCase):
     def setUp(self):
         self.th = helpers.TempHome()
         self.addCleanup(self.th.cleanup)
+
+    def test_gate_off_chat_import_does_not_require_optional_cryptography(self):
+        code = ("import builtins\nreal=builtins.__import__\n"
+                "def checked(name,*args,**kwargs):\n"
+                " if name=='cryptography' or name.startswith('cryptography.'):\n"
+                "  raise ImportError('synthetic unavailable')\n"
+                " return real(name,*args,**kwargs)\n"
+                "builtins.__import__=checked\nimport agent.chat\nprint('ok')\n")
+        result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), 'ok')
+
+    @unittest.skipUnless(os.name == 'posix' and hasattr(os, 'O_NOFOLLOW'), 'private POSIX storage required')
+    def test_enabled_codex_uses_isolated_app_server_factory(self):
+        from agent import config as config_module
+        from agent.chat_codex_app_provider import AppServerCandidateFactory
+        exe = os.path.join(self.th.root, 'synthetic-codex')
+        with open(exe, 'w', encoding='utf-8') as handle:
+            handle.write('#!/bin/sh\nexit 0\n')
+        os.chmod(exe, 0o700)
+        cfg = helpers.connected_config(self.th, 'https://synthetic.invalid')
+        cfg['summary']['codex_cli_path'] = exe
+        cfg['summary']['codex_models'] = ['synthetic-model']
+        config_module.save(self.th.paths, cfg)
+        captured = {}
+        class SyntheticChatAgent:
+            def __init__(self, *_args, **kwargs): captured.update(kwargs)
+            def run(self): return 'signal'
+        with patch('agent.cli.CHAT_CODEX_PROVIDER_READY', True), \
+             patch('agent.chat_codex_app_provider.APP_SERVER_CANDIDATE_READY', True), \
+             patch('agent.chat_codex_app_provider.resolve_managed_cli',
+                   return_value={'version':'0.168.0','path':exe}), \
+             patch('agent.chat_codex.sys.platform', 'darwin'), \
+             patch('agent.chat.ChatAgent', SyntheticChatAgent):
+            code, _ = helpers.run_cli(['--home', self.th.home, 'chat'],
+                ks_factory=lambda _: helpers.keystore_with_secrets())
+        self.assertEqual(code, 0)
+        factory = captured['codex_factory']
+        self.assertIs(type(factory), AppServerCandidateFactory)
+        self.assertEqual(factory._managed_version, '0.168.0')
+        self.assertEqual(factory._base.codex_home,
+                         os.path.realpath(os.path.join(self.th.home, 'codex-auth')))
+
+    @unittest.skipUnless(os.name == 'posix' and hasattr(os, 'O_NOFOLLOW'), 'private POSIX storage required')
+    def test_candidate_gate_prevents_codex_factory_advertising(self):
+        from agent import config as config_module
+        exe = os.path.join(self.th.root, 'synthetic-codex')
+        with open(exe, 'w', encoding='utf-8') as handle:
+            handle.write('#!/bin/sh\nexit 0\n')
+        os.chmod(exe, 0o700)
+        cfg = helpers.connected_config(self.th, 'https://synthetic.invalid')
+        cfg['summary']['codex_cli_path'] = exe
+        cfg['summary']['codex_models'] = ['synthetic-model']
+        config_module.save(self.th.paths, cfg)
+        with patch('agent.cli.CHAT_CODEX_PROVIDER_READY', True), \
+             patch('agent.chat_codex_app_provider.APP_SERVER_CANDIDATE_READY', False), \
+             patch('agent.chat_codex.sys.platform', 'darwin'):
+            code, out = helpers.run_cli(['--home', self.th.home, 'chat'],
+                ks_factory=lambda _: helpers.keystore_with_secrets())
+        self.assertEqual(code, 1)
+        self.assertIn('codex-runtime', out)
 
     def test_ready_false_normal_chat_connects_without_provider_and_forwards_consent(self):
         self.assertFalse(__import__("agent.cli", fromlist=["CHAT_CLAUDE_PROVIDER_READY"]).CHAT_CLAUDE_PROVIDER_READY)

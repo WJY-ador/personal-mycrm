@@ -108,6 +108,46 @@
       "required": false
     },
     {
+      "path": "agent/chat_codex_app_provider.py",
+      "required": false
+    },
+    {
+      "path": "agent/chat_codex_auth.py",
+      "required": false
+    },
+    {
+      "path": "agent/chat_codex_compat.py",
+      "required": false
+    },
+    {
+      "path": "agent/chat_codex_fingerprint.py",
+      "required": false
+    },
+    {
+      "path": "agent/chat_codex_managed.py",
+      "required": false
+    },
+    {
+      "path": "agent/chat_codex_trust.py",
+      "required": false
+    },
+    {
+      "path": "agent/chat_codex_update.py",
+      "required": false
+    },
+    {
+      "path": "agent/chat_codex_prepare.py",
+      "required": false
+    },
+    {
+      "path": "agent/chat_codex_dynamic.py",
+      "required": false
+    },
+    {
+      "path": "agent/chat_codex_login.py",
+      "required": false
+    },
+    {
       "path": "agent/chat_launch_authority.py",
       "required": false
     },

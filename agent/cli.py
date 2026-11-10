@@ -14,6 +14,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 
 from . import AGENT_VERSION, chat_mcp_bridge, config as _config, contract, hmacid, keystore, osutil, runner, schedule, store as _store
 
@@ -88,6 +89,10 @@ def _parser() -> argparse.ArgumentParser:
     codex_cfg.add_argument("--path", required=True, help="설치된 Codex 실행 파일 절대 경로")
     codex_cfg.add_argument("--model", action="append", required=True,
                            help="구독에서 확인한 모델 ID(여러 번 지정 가능, 최대 20개)")
+
+    sub.add_parser("codex-app-login", help=argparse.SUPPRESS)
+    sub.add_parser("codex-version-status", help=argparse.SUPPRESS)
+    sub.add_parser("codex-prepare-managed", help=argparse.SUPPRESS)
 
     s = sub.add_parser("schedule", help="현재 사용자 예약(1시간마다)")
     s.add_argument("action", choices=("install", "remove"))
@@ -716,6 +721,108 @@ def cmd_configure_codex(ctx: Ctx, a) -> int:
     return EXIT_OK
 
 
+def cmd_codex_version_status(ctx: Ctx, a) -> int:
+    """Return a bounded diagnostic for the selected CLI, without secrets."""
+    from .chat_codex_app_provider import inspect_cli_version
+    from .chat_codex_auth import safe_cli_path
+    try:
+        cfg = _config.load(ctx.paths)
+        from .chat_codex_update import inspect_managed_cli
+        managed_store = ctx.keystore(cfg)
+        managed = inspect_managed_cli(ctx.paths.home, managed_store)
+        cli_path, managed_version = managed['path'], managed['version']
+        with tempfile.TemporaryDirectory(prefix='mycrm-codex-version-') as temporary:
+            env = {'HOME': temporary, 'CODEX_HOME': temporary,
+                   'PATH': safe_cli_path(cli_path, os.environ.get('PATH', '')) if cli_path else '/usr/bin:/bin'}
+            result = inspect_cli_version(cli_path, cwd=temporary, env=env)
+        if result.get('installed_version') == managed_version:
+            result.update(status='supported', recommended_action='none', supported_versions=[managed_version])
+    except Exception as exc:
+        # Never report an absent CLI merely because managed policy verification
+        # or the update service failed. Do not expose raw errors or paths.
+        unverified = isinstance(exc, ValueError) and str(exc) in (
+            'managed-codex-not-ready', 'managed-codex-build-identity-unavailable',
+            'invalid-compatibility-policy', 'managed-cli-version-revoked')
+        expired = isinstance(exc, ValueError) and str(exc) == 'compatibility-policy-expired'
+        setup = isinstance(exc, ValueError) and str(exc) == 'managed-cli-setup-required'
+        result = {'status':'setup_required' if setup else ('policy_expired' if expired else ('policy_unverified' if unverified else 'policy_unavailable')),
+                  'installed_version':None, 'supported_versions':[],
+                  'recommended_action':'start_login' if setup else ('update_mycrm' if (unverified or expired) else 'retry')}
+    ctx.say(json.dumps(result, ensure_ascii=True, separators=(',', ':')))
+    return EXIT_OK
+
+
+def cmd_codex_prepare_managed(ctx: Ctx, a) -> int:
+    """Prepare managed CLI in an isolated child; stdout is a bounded protocol."""
+    import signal
+    from .chat_codex_update import resolve_managed_cli
+    def interrupt(_signum, _frame):
+        raise KeyboardInterrupt()
+    previous = signal.signal(signal.SIGTERM, interrupt)
+    try:
+        # A setup action on a fresh install creates the private (0700) home.
+        ctx.paths.ensure()
+        cfg = _config.load(ctx.paths)
+        result = resolve_managed_cli(ctx.paths.home, ctx.keystore(cfg))
+        ctx.say(json.dumps({'path': result['path'], 'version': result['version']}, separators=(',', ':')))
+        return EXIT_OK
+    except (KeyboardInterrupt, Exception):
+        return EXIT_ERR
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+def cmd_codex_app_login(ctx: Ctx, a) -> int:
+    """Private desktop protocol. Only fixed status words are written to stdout."""
+    import threading
+    from . import chat_codex_login
+    from .chat_codex_prepare import PreparationCancelled, run_preparation
+    def report(status):
+        print(json.dumps({'status': status}, separators=(',', ':')), file=ctx.out, flush=True)
+    if chat_codex_login.APP_SERVER_LOGIN_READY is not True:
+        report('unavailable')
+        return EXIT_ERR
+    cancelled = threading.Event()
+    def read_cancel():
+        try:
+            while True:
+                line = ctx.stdin.readline()
+                if not line or line.strip() == 'cancel':
+                    cancelled.set()
+                    return
+        except Exception:
+            cancelled.set()
+    threading.Thread(target=read_cancel, daemon=True, name='codex-login-cancel').start()
+    try:
+        # A setup action on a fresh install creates the private (0700) home.
+        ctx.paths.ensure()
+        cfg = _config.load(ctx.paths)
+        managed_store = ctx.keystore(cfg)
+        executable = os.path.realpath(sys.executable)
+        argv = ([executable] if getattr(sys, 'frozen', False) else [executable, '-m', 'agent'])
+        argv += ['--home', ctx.paths.home, 'codex-prepare-managed']
+        # The preparation child needs the OS keychain and basic process paths,
+        # never provider API keys or arbitrary inherited configuration.
+        env = {name: os.environ[name] for name in
+               ('HOME', 'PATH', 'TMPDIR', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'LC_CTYPE')
+               if name in os.environ}
+        managed = run_preparation(argv, cancelled=cancelled.is_set, env=env)
+        cli_path, managed_version = managed['path'], managed['version']
+    except PreparationCancelled:
+        report('cancelled')
+        return EXIT_OK
+    except Exception:
+        report('error')
+        return EXIT_ERR
+    if cancelled.is_set():
+        report('cancelled')
+        return EXIT_OK
+    result = chat_codex_login.run_login_session(ctx.paths.home, cli_path,
+        cancelled=cancelled.is_set, report=report, open_browser=ctx.browser_open,
+        managed_store=managed_store, managed_version=managed_version)
+    return EXIT_OK if result in ('completed', 'cancelled') else EXIT_ERR
+
+
 def cmd_schedule(ctx: Ctx, a) -> int:
     try:
         if a.action == "install":
@@ -943,17 +1050,16 @@ def cmd_chat(ctx: Ctx, a) -> int:
                 return EXIT_ERR
         if not a.fake and not a.consent_only and codex_factory is None and CHAT_CODEX_PROVIDER_READY:
             from .chat_launch_authority import LaunchAuthorizationClient
-            from .chat_codex import CodexProviderFactory
+            from .chat_codex_app_provider import AppServerCandidateFactory
             summary = cfg.get("summary") or {}
-            cli_path = summary.get("codex_cli_path")
             models = summary.get("codex_models")
-            if not (isinstance(cli_path, str) and isinstance(models, list) and models):
+            if not (isinstance(models, list) and models):
                 log({"event": "start", "stopped": "codex-runtime"})
                 return EXIT_ERR
             try:
                 auth_client = LaunchAuthorizationClient(server, token_now)
-                codex_factory = CodexProviderFactory(auth_client, cli_path=cli_path, server_url=server,
-                    agent_home=ctx.paths.home, expected_device_id=sid, models=tuple(models))
+                codex_factory = AppServerCandidateFactory(auth_client, cli_path=None, server_url=server,
+                    agent_home=ctx.paths.home, expected_device_id=sid, models=tuple(models), managed_store=ks)
             except Exception:
                 log({"event": "start", "stopped": "codex-runtime"})
                 return EXIT_ERR
@@ -1044,6 +1150,9 @@ def cmd_migrate(ctx: Ctx, a) -> int:
 COMMANDS = {"connect": cmd_connect, "validate": cmd_validate, "run-once": cmd_run_once, "status": cmd_status,
             "schedule": cmd_schedule, "serve": cmd_serve, "disconnect": cmd_disconnect,
             "configure-cli": cmd_configure_cli, "configure-codex": cmd_configure_codex,
+            "codex-app-login": cmd_codex_app_login,
+            "codex-prepare-managed": cmd_codex_prepare_managed,
+            "codex-version-status": cmd_codex_version_status,
             "migrate": cmd_migrate, "chat": cmd_chat,
             "chat-mcp-bridge": cmd_chat_mcp_bridge}
 

@@ -1,5 +1,5 @@
 'use strict';
-const $=id=>document.getElementById(id);let latestDownload=null;
+const $=id=>document.getElementById(id);let latestDownload=null,codexVersionRequested=false,codexVersionRequest=0;
 function say(text){$('message').textContent=text;}
 function state(s){
   $('version').textContent='v'+s.version;$('connection').textContent=s.pc?.revoked?'해제됨':s.connection.connected?'연결됨':'연결 안 됨';
@@ -7,6 +7,7 @@ function state(s){
   $('allow-cli').checked=s.allowCli;$('auto-start').checked=s.autoStart;
   $('cli-state').textContent=s.connection.cliConfigured?' 실행 파일 지정됨':' 실행 파일을 지정해 주세요';
   const codexModels=s.connection.codexModels||[];
+  if(s.ready&&s.connection.codexCliConfigured&&!codexVersionRequested){codexVersionRequested=true;$('codex-version-check').click();}
   $('codex-state').textContent=s.connection.codexCliConfigured
     ?(codexModels.length?'Codex CLI 경로와 모델 ID 저장됨':'Codex CLI 경로 저장됨, 모델 ID 설정 필요')
     :'Codex CLI 경로와 모델 ID 설정 필요';
@@ -21,6 +22,13 @@ function state(s){
   $('process-detail').textContent=Object.entries(s.processes).map(([name,p])=>(name==='jobs'?'대화 정리':'원문 뷰어')+': '+(labels[p.state]||p.state)).join(' · ');
   for(const b of document.querySelectorAll('button'))b.disabled=s.busy;
   for(const id of ['allow-cli','auto-start','codex-models'])$(id).disabled=s.busy;
+  const login=s.codexLogin||{enabled:false,status:'idle'};
+  const loginText={idle:'로그인 기능을 준비하고 있어요.',starting:'로그인을 시작하고 있어요.',waiting:'브라우저에서 로그인해 주세요.',completed:'Codex 구독 로그인을 확인했어요.',cancelled:'로그인을 취소했어요.',unavailable:'로그인 기능을 준비하고 있어요.',error:'로그인을 완료하지 못했어요. 다시 시도해 주세요.'};
+  $('codex-login-state').textContent=loginText[login.status]||loginText.error;
+  const loginPending=login.status==='starting'||login.status==='waiting';
+  $('codex-login-start').disabled=s.busy||!s.ready||!s.connection.codexCliConfigured||!login.enabled||loginPending;
+  $('codex-login-cancel').hidden=!loginPending;
+  $('codex-login-cancel').disabled=s.busy;
   if(!s.ready){$('start').disabled=true;$('sync').disabled=true;say('연결 장치 실행 파일이 없습니다. 공식 설치 패키지로 다시 설치해 주세요.');}
   const pc=s.pc||{};
   $('login').hidden=pc.session!=='none';
@@ -38,7 +46,23 @@ $('connect-form').onsubmit=event=>{event.preventDefault();const token=$('token')
 $('allow-cli').onchange=()=>act(()=>window.mycrm.allowCli($('allow-cli').checked),'실행 설정을 저장했어요. 시작을 누르면 적용됩니다.');
 $('auto-start').onchange=()=>act(()=>window.mycrm.autoStart($('auto-start').checked),'로그인 시 앱 실행 설정을 저장했어요.');
 $('choose-cli').onclick=()=>act(()=>window.mycrm.chooseCli(),'Claude 실행 파일 설정을 확인했어요.');
-$('configure-codex').onclick=()=>act(()=>window.mycrm.configureCodex({models:$('codex-models').value}),'Codex CLI 설정을 저장했어요.');
+$('configure-codex').onclick=async()=>{const value=await act(()=>window.mycrm.configureCodex({models:$('codex-models').value}),'Codex CLI 설정을 저장했어요.');if(value&&!value.canceled&&value.code===0)$('codex-version-check').click();};
+$('codex-version-check').onclick=async()=>{
+  const request=++codexVersionRequest;
+  $('codex-version-state').textContent='CLI 버전을 확인하고 있어요.';
+  const result=await window.mycrm.codexVersion().catch(()=>null);
+  if(request!==codexVersionRequest)return;
+  const v=result?.ok&&result.value;
+  if(!v){$('codex-version-state').textContent='CLI 버전을 확인하지 못했어요. 실행 파일 설정을 확인하고 다시 확인해 주세요.';return;}
+  const installed=v.installed_version?'MyCRM에서 관리하는 Codex CLI: '+v.installed_version+'. ':'MyCRM에서 관리하는 Codex CLI 버전을 확인하지 못했어요. ';
+  const supported=v.supported_versions?.length?'현재 MyCRM에서 검증한 버전: '+v.supported_versions.join(', ')+'. ':'';
+  const oldHelp='MyCRM에서 관리하는 Codex 버전을 확인하지 못했어요. 연결과 MyCRM 업데이트를 확인한 뒤 다시 확인해 주세요.';
+  const next={supported:'이 CLI 버전은 검증됐어요. 대화 기능의 활성화 상태는 별도로 확인해 주세요.',too_old:oldHelp,unverified_newer:'이 CLI 버전은 아직 MyCRM에서 검증하지 않았어요. MyCRM 업데이트를 확인한 뒤 다시 확인해 주세요.',unverified_version:'이 CLI 버전은 아직 MyCRM에서 검증하지 않았어요. MyCRM 업데이트를 확인한 뒤 다시 확인해 주세요.',unavailable:'Codex 실행 파일 설정과 설치 상태를 확인한 뒤 다시 확인해 주세요.',policy_unavailable:'Codex 호환 정보를 가져오지 못했어요. 연결을 확인한 뒤 다시 확인해 주세요.',policy_unverified:'Codex 호환 정보를 확인할 수 없어요. MyCRM 업데이트를 확인한 뒤 다시 확인해 주세요.',policy_expired:'Codex 호환 정보의 유효 기간이 끝났어요. MyCRM 업데이트를 확인한 뒤 다시 확인해 주세요.',setup_required:'Codex 로그인을 시작하면 MyCRM에서 검증된 CLI를 준비해요.'};
+  $('codex-version-state').textContent=installed+supported+(next[v.status]||next.unavailable);
+};
+$('codex-help').onclick=()=>act(()=>window.mycrm.codexHelp());
+$('codex-login-start').onclick=()=>act(()=>window.mycrm.codexLoginStart());
+$('codex-login-cancel').onclick=()=>act(()=>window.mycrm.codexLoginCancel());
 $('start').onclick=()=>act(()=>window.mycrm.start(),'연결 장치를 시작했어요.');
 $('stop').onclick=()=>act(()=>window.mycrm.stop(),'연결 장치를 중지했어요.');
 $('sync').onclick=()=>act(()=>window.mycrm.sync(),'동기화를 마쳤어요.');

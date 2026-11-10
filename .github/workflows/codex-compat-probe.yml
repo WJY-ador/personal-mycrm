@@ -1,0 +1,168 @@
+name: Codex compatibility probes
+
+on:
+  pull_request:
+    paths:
+      - 'agent/chat_codex*.py'
+      - 'agent/codex_compat_probe.py'
+      - 'agent/tests/test_codex_compat_probe.py'
+      - '.github/workflows/codex-compat-probe.yml'
+      - '.github/codex-compat-supported.json'
+      - 'desktop/scripts/codex-compat-release-plan.cjs'
+      - 'desktop/scripts/codex-compat-collect.cjs'
+      - 'desktop/scripts/codex-compat-evidence-select.cjs'
+      - 'desktop/scripts/codex-compat-publish-order.cjs'
+      - 'desktop/scripts/codex-compat-versions.cjs'
+      - '.github/workflows/codex-compat-one-source.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact stable Codex CLI version to test
+        required: true
+        default: '0.167.0'
+  schedule:
+    - cron: '17 3 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  versions:
+    name: Resolve exact stable versions
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+      sources: ${{ steps.sources.outputs.sources }}
+    steps:
+      # npm 11 rejects one file loaded as both user and global config.
+      # Give each scope its own empty file; runner.temp is not allowed in job env.
+      - name: Isolate npm configuration
+        shell: bash
+        run: |
+          set -eu
+          : > "$RUNNER_TEMP/mycrm-user.npmrc"
+          : > "$RUNNER_TEMP/mycrm-global.npmrc"
+          {
+            echo "NPM_CONFIG_USERCONFIG=$RUNNER_TEMP/mycrm-user.npmrc"
+            echo "NPM_CONFIG_GLOBALCONFIG=$RUNNER_TEMP/mycrm-global.npmrc"
+          } >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24'
+      - name: Resolve exact version
+        id: resolve
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -eu
+          if [ "$GITHUB_EVENT_NAME" = 'schedule' ]; then
+            npm view @openai/codex versions --json > "$RUNNER_TEMP/codex-versions.json"
+            REQUESTED_VERSIONS_FILE="$RUNNER_TEMP/codex-versions.json" node - <<'NODE' > "$RUNNER_TEMP/codex-recent.json"
+          const versions = JSON.parse(require('node:fs').readFileSync(process.env.REQUESTED_VERSIONS_FILE,'utf8'));
+          if (!Array.isArray(versions)) process.exit(1);
+          const stable = versions.filter(v => typeof v === 'string' && /^(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})$/.test(v));
+          stable.sort((a,b) => { const x=a.split('.').map(Number), y=b.split('.').map(Number);
+            return (x[0]-y[0]) || (x[1]-y[1]) || (x[2]-y[2]); });
+          if (!stable.length) process.exit(1);
+          process.stdout.write(JSON.stringify([...new Set(['0.166.0',...stable.slice(-3)])]));
+          NODE
+          else
+            version="${REQUESTED_VERSION:-0.167.0}"
+            CODEX_REQUESTED_VERSION="$version" node - <<'NODE' > "$RUNNER_TEMP/codex-recent.json"
+          const v = process.env.CODEX_REQUESTED_VERSION;
+          if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(v)) process.exit(1);
+          process.stdout.write(JSON.stringify([...new Set(['0.166.0', v])]));
+          NODE
+          fi
+          # Prior policies supply candidates only. Every version must pass the
+          # same current-source, both-architecture probes before it can be signed.
+          # Failure to enumerate or download policies fails closed: silently
+          # falling back to recent versions could strand existing installations.
+          mkdir "$RUNNER_TEMP/codex-prior-policies"
+          gh api --paginate "repos/$GH_REPO/releases" --jq \
+            '.[] | select(.tag_name == "codex-compat-policy") | .assets[].name' > "$RUNNER_TEMP/codex-prior-assets"
+          if grep -Eq '^darwin-(arm64|x64)-[0-9a-f]{64}\.json$' "$RUNNER_TEMP/codex-prior-assets"; then
+            gh release download codex-compat-policy --repo "$GH_REPO" --pattern 'darwin-*.json' --dir "$RUNNER_TEMP/codex-prior-policies"
+          fi
+          MYCRM_PRIOR_POLICIES_DIR="$RUNNER_TEMP/codex-prior-policies" \
+          MYCRM_RECENT_VERSIONS="$(cat "$RUNNER_TEMP/codex-recent.json")" \
+            node desktop/scripts/codex-compat-versions.cjs >> "$GITHUB_OUTPUT"
+      - name: Resolve supported immutable source commits
+        id: sources
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node desktop/scripts/codex-compat-release-plan.cjs >> "$GITHUB_OUTPUT"
+  source:
+    needs: versions
+    strategy:
+      fail-fast: false
+      matrix:
+        source: ${{ fromJSON(needs.versions.outputs.sources) }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/codex-compat-one-source.yml
+    with:
+      source: ${{ matrix.source }}
+      versions: ${{ needs.versions.outputs.matrix }}
+    secrets:
+      MYCRM_COMPAT_SIGNING_KEY: ${{ secrets.MYCRM_COMPAT_SIGNING_KEY }}
+  publish-verified-policies:
+    if: >-
+      always() && needs.source.result != 'cancelled' &&
+      vars.MYCRM_COMPAT_PUBLISH_ENABLED == 'true' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    needs: [source]
+    runs-on: ubuntu-latest
+    # Serializes publish steps across scheduled, manual and re-run workflows.
+    concurrency:
+      group: codex-compat-policy-publication
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: codex-signed-policies-*
+          path: ${{ runner.temp }}/compat-policy-artifacts
+      - name: Reject conflicting policy evidence and collect assets
+        run: node desktop/scripts/codex-compat-collect.cjs "$RUNNER_TEMP/compat-policy-artifacts" "$RUNNER_TEMP/compat-policies"
+      - name: Publish verified policy assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -eu
+          if ! gh release view codex-compat-policy --json isDraft,isPrerelease,assets > "$RUNNER_TEMP/compat-release.json"; then
+            gh release create codex-compat-policy --prerelease --target "$GITHUB_SHA" \
+              --title 'Codex compatibility policies' --notes 'Signed compatibility policy assets for MyCRM.'
+            gh release view codex-compat-policy --json isDraft,isPrerelease,assets > "$RUNNER_TEMP/compat-release.json"
+          fi
+          node -e 'const x=require(process.argv[1]); if(x.isDraft || !x.isPrerelease) process.exit(1)' "$RUNNER_TEMP/compat-release.json"
+          mkdir "$RUNNER_TEMP/compat-current"
+          for file in "$RUNNER_TEMP"/compat-policies/darwin-*.json; do
+            name="$(basename "$file")"
+            present="$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.assets.some(a=>a.name===process.argv[2])?"yes":"no")' "$RUNNER_TEMP/compat-release.json" "$name")"
+            if [ "$present" = 'yes' ]; then
+              gh release download codex-compat-policy --pattern "$name" --dir "$RUNNER_TEMP/compat-current"
+              decision="$(node desktop/scripts/codex-compat-publish-order.cjs "$file" "$RUNNER_TEMP/compat-current/$name")"
+            else
+              decision="$(node desktop/scripts/codex-compat-publish-order.cjs "$file")"
+            fi
+            if [ "$decision" = 'publish' ]; then
+              gh release upload codex-compat-policy "$file" --clobber
+            else
+              echo "::notice::Existing compatibility policy is the same or newer: $name"
+            fi
+          done
