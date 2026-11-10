@@ -1,4 +1,5 @@
 // PC 앱 새 버전 띠 — 렌더·링크·나중에·6시간 타이머·창이 다시 보일 때 1시간 간격·겹침 없음·일반 브라우저와 실패는 띠 없음. fetch 는 가짜.
+// 앱 다리(window.mycrmDesktop.update)가 있으면 앱 상태만 그린다 — 다리 시험은 아래 절. 다리도 가짜.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -25,7 +26,10 @@ beforeEach(() => {
   localStorage.clear();
   host = document.createElement("div"); document.body.replaceChildren(host);
 });
-afterEach(() => { act(() => root?.unmount()); root = null; vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => {
+  act(() => root?.unmount()); root = null; vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks();
+  delete (window as { mycrmDesktop?: unknown }).mycrmDesktop;
+});
 
 async function mount(ua: string) { await act(async () => { root = createRoot(host); root.render(<UpdateBand ua={ua} />); }); await flush(); }
 async function seen(state: DocumentVisibilityState) { visibility = state; await act(async () => { document.dispatchEvent(new Event("visibilitychange")); }); await flush(); }
@@ -117,4 +121,143 @@ test("확인이 겹치지 않는다 — 진행 중이면 타이머·다시 보�
   expect(f).toHaveBeenCalledTimes(1);
   await act(async () => { finish(new Response(JSON.stringify(rel("v0.1.2")), { status: 200 })); }); await flush();
   expect(band()).not.toBeNull();
+});
+
+// ── 앱 다리 ──
+const ST = { inApp: true, phase: "available", current: "0.2.0", version: "0.2.1", percent: null, reason: null };
+function fakeBridge(first: unknown = ST) {
+  const subs = new Set<(s: unknown) => void>();
+  const api = {
+    get: vi.fn(async (..._a: unknown[]) => first),
+    onChange: vi.fn((cb: (s: unknown) => void) => { subs.add(cb); return () => { subs.delete(cb); }; }),
+    download: vi.fn(async (..._a: unknown[]) => {}),
+    install: vi.fn(async (..._a: unknown[]) => {}),
+  };
+  (window as { mycrmDesktop?: unknown }).mycrmDesktop = { update: api };
+  const emit = async (s: unknown) => { await act(async () => { for (const cb of subs) cb(s); }); await flush(); };
+  return { api, subs, emit };
+}
+const text = () => band()?.querySelector(".update-text")?.textContent;
+const buttons = () => [...band()!.querySelectorAll("button, a")].map(e => e.textContent);
+const press = async (label: string) => {
+  const el = [...band()!.querySelectorAll("button")].find(b => b.textContent === label)!;
+  await act(async () => { el.click(); }); await flush();
+};
+
+test("다리 = 앱 상태를 그린다 · GitHub 직접 조회 없음 · 일반 UA 여도 다리를 따른다 · 구독하고 언마운트 때 해제", async () => {
+  const { api, subs } = fakeBridge();
+  await mount(CHROME);
+  expect(f).not.toHaveBeenCalled();
+  expect(api.get).toHaveBeenCalledTimes(1); expect(api.onChange).toHaveBeenCalledTimes(1); expect(subs.size).toBe(1);
+  expect(band()?.getAttribute("role")).toBe("region");
+  expect(band()?.getAttribute("aria-label")).toBe("MyCRM 앱 업데이트");
+  expect(band()?.hasAttribute("aria-live")).toBe(false);
+  expect(text()).toBe("MyCRM 앱 새 버전이 나왔어요. 지금 v0.2.0, 새 버전 v0.2.1.");
+  expect(buttons()).toEqual(["지금 업데이트", "나중에"]);
+  expect(band()!.querySelector("button.primary")?.getAttribute("aria-label")).toBe("MyCRM 앱 v0.2.1 지금 업데이트");
+  await act(async () => { vi.advanceTimersByTime(CHECK_EVERY_MS); }); await flush();
+  expect(f).not.toHaveBeenCalled();
+  act(() => root?.unmount()); root = null;
+  expect(subs.size).toBe(0);
+});
+
+test("다리 상태별 띠 — 지금 업데이트 = download() · 받는 중 진행률 · 다시 시작 = install() · 오류 = 다시 시도·직접 내려받기 · idle·checking = 없음", async () => {
+  const { api, emit } = fakeBridge();
+  await mount(APP);
+  await press("지금 업데이트");
+  expect(api.download).toHaveBeenCalledTimes(1); expect(api.download).toHaveBeenCalledWith();
+  await emit({ ...ST, phase: "downloading", percent: null });
+  expect(text()).toBe("새 버전을 받고 있어요."); expect(band()!.querySelector(".update-acts")).toBeNull();
+  await emit({ ...ST, phase: "downloading", percent: 40 });
+  expect(text()).toBe("새 버전을 받고 있어요. 40%"); expect(buttons()).toEqual([]);
+  await emit({ ...ST, phase: "downloaded" });
+  expect(text()).toBe("새 버전을 받았어요. 다시 시작하면 설치돼요.");
+  expect(buttons()).toEqual(["다시 시작", "나중에"]);
+  await press("다시 시작");
+  expect(api.install).toHaveBeenCalledTimes(1); expect(api.install).toHaveBeenCalledWith();
+  await emit({ ...ST, phase: "error", reason: "install" });
+  expect(text()).toBe("업데이트를 설치하지 못했어요.");
+  await emit({ ...ST, phase: "error", version: null, reason: "network" });
+  expect(text()).toBe("업데이트를 받지 못했어요.");
+  expect(buttons()).toEqual(["다시 시도", "직접 내려받기"]);
+  const a = band()!.querySelector("a")!;
+  expect([a.getAttribute("href"), a.target, a.rel, a.className]).toEqual(["https://github.com/WJY-ador/personal-mycrm/releases", "_blank", "noopener noreferrer", "btn"]);
+  await press("다시 시도");
+  expect(api.download).toHaveBeenCalledTimes(2); expect(api.download).toHaveBeenLastCalledWith();
+  for (const phase of ["idle", "checking"]) { await emit({ ...ST, phase, version: null }); expect(band()).toBeNull(); }
+  expect(f).not.toHaveBeenCalled();
+});
+
+test("다리 inApp=false — 지금 문구 · 내려받기 = 웹 상수로 만든 릴리스 페이지 · 나중에", async () => {
+  fakeBridge({ ...ST, inApp: false });
+  await mount(APP);
+  expect(text()).toBe("MyCRM 앱 새 버전이 나왔어요. 지금 v0.2.0, 새 버전 v0.2.1.");
+  expect(buttons()).toEqual(["내려받기", "나중에"]);
+  const a = band()!.querySelector("a")!;
+  expect([a.getAttribute("href"), a.target, a.rel, a.className, a.getAttribute("aria-label")]).toEqual(
+    ["https://github.com/WJY-ador/personal-mycrm/releases/tag/v0.2.1", "_blank", "noopener noreferrer", "btn primary", "MyCRM 앱 v0.2.1 내려받기"]);
+  expect(f).not.toHaveBeenCalled();
+});
+
+test("다리 나중에 — v 붙은 꼴로 기록 · 같은 버전 24시간 · 옛 기록(v 붙음)도 맞는다 · 받는 중은 나중에와 상관없이 보인다", async () => {
+  const { emit } = fakeBridge();
+  await mount(APP);
+  await press("나중에");
+  expect(band()).toBeNull();
+  expect(JSON.parse(localStorage.getItem(DISMISS_KEY)!)).toEqual({ version: "v0.2.1", at: Date.now() });
+  await emit({ ...ST });                                       // 같은 버전 다시 알림 = 숨김 유지
+  expect(band()).toBeNull();
+  await emit({ ...ST, phase: "downloading", percent: 5 });
+  expect(text()).toBe("새 버전을 받고 있어요. 5%");
+  await emit({ ...ST, version: "0.2.2" });                     // 더 새 버전 = 바로
+  expect(text()).toContain("새 버전 v0.2.2");
+  act(() => root?.unmount()); root = null;
+  localStorage.setItem(DISMISS_KEY, JSON.stringify({ version: "v0.2.1", at: Date.now() }));   // 옛 길이 남긴 기록
+  fakeBridge();
+  const timeout = vi.spyOn(window, "setTimeout");
+  await mount(APP);
+  expect(band()).toBeNull();
+  const wake = timeout.mock.calls.find(c => c[1] === 24 * 60 * 60 * 1000)?.[0] as (() => void) | undefined;   // 알림이 없어도 24시간 뒤 다시
+  expect(wake).toBeTypeOf("function");
+  vi.setSystemTime(Date.now() + 24 * 60 * 60 * 1000);
+  await act(async () => { wake!(); }); await flush();
+  expect(text()).toContain("새 버전 v0.2.1");
+});
+
+test("다리 값 모양이 틀리면 띠 없음(오류 문구 없음) · 다리 호출이 던지거나 거절해도 화면은 그대로", async () => {
+  const { api, emit } = fakeBridge({ ...ST, version: "v0.2.1" });
+  await mount(APP);
+  expect(band()).toBeNull(); expect(host.textContent).toBe(""); expect(f).not.toHaveBeenCalled();
+  await emit(ST);
+  expect(band()).not.toBeNull();
+  await emit({ ...ST, inApp: false, phase: "downloading", percent: 3 });   // 계약 밖 조합 = 띠를 내린다
+  expect(band()).toBeNull();
+  await emit(ST);
+  api.download.mockImplementation(async () => { throw new Error("ipc"); });
+  await press("지금 업데이트");
+  api.download.mockImplementation(() => { throw new Error("sync"); });
+  await press("지금 업데이트");
+  expect(text()).toBe("MyCRM 앱 새 버전이 나왔어요. 지금 v0.2.0, 새 버전 v0.2.1.");
+  act(() => root?.unmount()); root = null;
+  const b = fakeBridge();
+  b.api.get.mockImplementation(async () => { throw new Error("ipc"); });
+  b.api.onChange.mockImplementation(() => { throw new Error("ipc"); });
+  await mount(APP);
+  expect(band()).toBeNull(); expect(f).not.toHaveBeenCalled();
+  expect(() => act(() => root?.unmount())).not.toThrow(); root = null;
+});
+
+test("다리 — 먼저 온 알림이 늦게 끝난 get() 보다 우선 · 반쪽 다리는 옛 길", async () => {
+  let done: (s: unknown) => void = () => {};
+  const { api, emit } = fakeBridge();
+  api.get.mockImplementation(() => new Promise(r => { done = r; }));
+  await mount(APP);
+  await emit({ ...ST, phase: "downloading", percent: 70 });
+  await act(async () => { done(ST); }); await flush();
+  expect(text()).toBe("새 버전을 받고 있어요. 70%");
+  act(() => root?.unmount()); root = null;
+  (window as { mycrmDesktop?: unknown }).mycrmDesktop = { update: { get: api.get, onChange: api.onChange } };
+  reply = ok("v0.1.2"); await mount(APP);
+  expect(f).toHaveBeenCalledTimes(1);
+  expect(text()).toBe("MyCRM 앱 새 버전이 나왔어요. 지금 v0.1.1, 새 버전 v0.1.2.");
 });
