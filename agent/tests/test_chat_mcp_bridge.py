@@ -71,36 +71,36 @@ class McpStdioBridgeTest(unittest.TestCase):
         return json.loads(self.bridge.handle_line(raw))
 
     def test_tools_list_uses_authorized_ops_and_surface_schema(self):
+        # Claude Code adds mcp__my-crm__ itself; the bridge must list bare names for it.
         response = self.message("tools/list")
         self.assertEqual(response["id"], 1)
         tools = response["result"]["tools"]
-        self.assertEqual([x["name"] for x in tools], ["mcp__my-crm__find", "mcp__my-crm__read",
-                                                         "mcp__my-crm__write", "mcp__my-crm__decide"])
+        self.assertEqual([x["name"] for x in tools], ["find", "read", "write", "decide"])
         by_tool = {x["name"]: x for x in tools}
-        self.assertEqual(by_tool["mcp__my-crm__find"]["annotations"], {"readOnlyHint": True})
-        self.assertEqual(by_tool["mcp__my-crm__read"]["annotations"], {"readOnlyHint": True})
-        self.assertNotIn("annotations", by_tool["mcp__my-crm__write"])
-        self.assertNotIn("annotations", by_tool["mcp__my-crm__decide"])
+        self.assertEqual(by_tool["find"]["annotations"], {"readOnlyHint": True})
+        self.assertEqual(by_tool["read"]["annotations"], {"readOnlyHint": True})
+        self.assertNotIn("annotations", by_tool["write"])
+        self.assertNotIn("annotations", by_tool["decide"])
         by_name = {x["name"]: x["inputSchema"] for x in tools}
-        self.assertEqual(by_name["mcp__my-crm__read"]["properties"]["op"]["enum"], ["record_get"])
-        self.assertEqual(by_name["mcp__my-crm__write"]["properties"]["op"]["enum"], ["record_add"])
-        self.assertEqual(by_name["mcp__my-crm__decide"]["properties"]["op"]["enum"], ["candidate_decide"])
+        self.assertEqual(by_name["read"]["properties"]["op"]["enum"], ["record_get"])
+        self.assertEqual(by_name["write"]["properties"]["op"]["enum"], ["record_add"])
+        self.assertEqual(by_name["decide"]["properties"]["op"]["enum"], ["candidate_decide"])
         self.assertNotIn("purge", [x["name"] for x in tools])
         self.assertEqual(self.client.calls, [("authorize", "cs_synthetic", "ct_synthetic")])
 
     def test_tool_call_forwards_bound_locator_and_rejects_model_identity_fields(self):
-        result = self.message("tools/call", {"name": "mcp__my-crm__read",
+        result = self.message("tools/call", {"name": "read",
                                               "arguments": {"op": "record_get", "params": {"record_id": "r_synthetic"}}})
         self.assertEqual(result["result"]["content"][0]["text"], '{"result":{"synthetic":true}}')
         self.assertEqual(self.client.calls[-1], ("call", "cs_synthetic", "ct_synthetic", "read", "record_get",
                                                   {"record_id": "r_synthetic"}, ""))
-        denied = self.message("tools/call", {"name": "mcp__my-crm__read",
+        denied = self.message("tools/call", {"name": "read",
                                               "arguments": {"session_id": "cs_attacker", "params": {}}}, 2)
         self.assertIn("error", denied)
         self.assertEqual(sum(c[0] == "call" for c in self.client.calls), 1)
 
     def test_denied_or_unknown_ops_never_reach_http_dispatch(self):
-        response = self.message("tools/call", {"name": "mcp__my-crm__decide", "arguments": {"op": "trash_purge", "params": {}}})
+        response = self.message("tools/call", {"name": "decide", "arguments": {"op": "trash_purge", "params": {}}})
         self.assertIn("error", response)
         self.assertFalse(any(c[0] == "call" for c in self.client.calls))
 
@@ -119,6 +119,54 @@ class McpStdioBridgeTest(unittest.TestCase):
     def test_line_limit_and_malformed_json_fail_closed(self):
         self.assertIsNone(self.bridge.handle_line("x" * (256 * 1024 + 1)))
         self.assertIsNone(self.bridge.handle_line("{"))
+
+    def test_tool_call_accepts_cli_meta_without_forwarding_it(self):
+        # Shape seen from the real CLI 2.1.322 (probe 2026-11-10).
+        result = self.message("tools/call", {"name": "read", "arguments": {"op": "record_get", "params": {}},
+                                              "_meta": {"claudecode/toolUseId": "toolu_synthetic", "progressToken": 2}})
+        self.assertIn("result", result)
+        self.assertEqual(self.client.calls[-1], ("call", "cs_synthetic", "ct_synthetic", "read", "record_get", {}, ""))
+        self.assertNotIn("toolu_synthetic", repr(self.client.calls))
+        for bad in ({"name": "read", "arguments": {"op": "record_get"}, "_meta": "x"},
+                    {"name": "read", "arguments": {"op": "record_get"}, "extra": {}},
+                    {"name": "read", "_meta": {}}):
+            with self.subTest(params=bad):
+                self.assertIn("error", self.message("tools/call", bad, 9))
+        self.assertEqual(sum(c[0] == "call" for c in self.client.calls), 1)
+
+    def test_claude_rejects_prefixed_names_and_codex_keeps_them(self):
+        prefixed = self.message("tools/call", {"name": "mcp__my-crm__read",
+                                                "arguments": {"op": "record_get", "params": {}}})
+        self.assertEqual(prefixed["error"]["message"], "MyCRM tool call denied")
+        self.assertFalse(any(c[0] == "call" for c in self.client.calls))
+
+        class CodexClient(FakeLaunchClient):
+            def authorize(self, path, session_id, turn_id, provider, model):
+                self.calls.append(("authorize", session_id, turn_id))
+                if provider != "codex":
+                    raise RuntimeError("denied")
+                return self.scope
+        client = CodexClient()
+        bridge = McpStdioBridge(client, "/api/chat/launch-authorization", "cs_synthetic",
+                                "ct_synthetic", "codex", "claude-synthetic", "d-synthetic")
+        listed = json.loads(bridge.handle_line(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})))
+        self.assertEqual([x["name"] for x in listed["result"]["tools"]],
+                         ["mcp__my-crm__find", "mcp__my-crm__read", "mcp__my-crm__write", "mcp__my-crm__decide"])
+        bare = json.loads(bridge.handle_line(json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": {"name": "read", "arguments": {"op": "record_get", "params": {}}}})))
+        self.assertIn("error", bare)
+        ok = json.loads(bridge.handle_line(json.dumps({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+            "params": {"name": "mcp__my-crm__read", "arguments": {"op": "record_get", "params": {}}}})))
+        self.assertIn("result", ok)
+
+    def test_unknown_request_gets_method_not_found_at_once(self):
+        # Claude Code 2.1.322 sends server/discover before initialize and waits ~3 s for a reply.
+        response = self.message("server/discover", {}, msg_id=0)
+        self.assertEqual(response, {"jsonrpc": "2.0", "id": 0,
+                                    "error": {"code": -32601, "message": "Method not found"}})
+        self.assertIsNone(self.bridge.handle_line('{"jsonrpc":"2.0","method":"server/discover"}'))
+        self.assertIsNone(self.bridge.handle_line('{"jsonrpc":"2.0","id":{"x":1},"method":"server/discover"}'))
+        self.assertEqual(self.client.calls, [])
 
     def test_family_surface_schema_is_pinned_to_server_catalog(self):
         catalog = json.loads((Path(__file__).resolve().parents[2] / "server" / "mcp_catalog.json").read_text())
@@ -161,7 +209,7 @@ class McpStdioBridgeTest(unittest.TestCase):
                     "--device-id", "is_" + "a" * 24, "--provider", "claude",
                     "--model", "claude-synthetic", "--authorization-path", "/api/chat/launch-authorization"]
             input_data = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
-                "name": "mcp__my-crm__read", "arguments": {"op": "record_get", "params": {"record_id": "r_fake"}}}}) + "\n"
+                "name": "read", "arguments": {"op": "record_get", "params": {"record_id": "r_fake"}}}}) + "\n"
             from agent.chat_mcp_bridge import main
             self.assertEqual(main(argv, home=home, keystore_factory=lambda _service: SyntheticKeyStore(_service),
                                   opener=opener, stdin=io.StringIO(input_data), stdout=stdout), 0)
@@ -198,7 +246,7 @@ class McpStdioBridgeTest(unittest.TestCase):
         bridge = McpStdioBridge(client, "/api/chat/launch-authorization", "cs_old", "ct_old",
                                 "claude", "claude-synthetic", "d-synthetic")
         response = json.loads(bridge.handle_line(json.dumps({"jsonrpc": "2.0", "id": 7,
-            "method": "tools/call", "params": {"name": "mcp__my-crm__read",
+            "method": "tools/call", "params": {"name": "read",
             "arguments": {"op": "record_get", "params": {"record_id": "r_fake"}}}})))
         self.assertEqual(response["error"]["message"], "MyCRM tool call denied")
         self.assertEqual(len(opener.requests), 2)
