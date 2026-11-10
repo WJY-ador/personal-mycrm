@@ -148,7 +148,7 @@ class AgentTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="chat-e2e-") as home:
             cli = os.path.join(home, "fake-claude")
             script = "#!" + sys.executable + "\nimport json\n"
-            script += "print(json.dumps({'type':'system','subtype':'init','session_id':'fixture-session','cwd':'.','tools':['mcp__my-crm__find','mcp__my-crm__read'],'mcp_servers':[{'name':'my-crm','status':'connected'}],'model':'claude-synthetic','permissionMode':'default'}),flush=True)\n"
+            script += "print(json.dumps({'type':'system','subtype':'init','session_id':'fixture-session','cwd':'.','tools':['mcp__my-crm__find','mcp__my-crm__read'],'mcp_servers':[{'name':'my-crm','status':'connected','source':'dynamic'}],'model':'claude-synthetic','permissionMode':'dontAsk','apiKeySource':'none'}),flush=True)\n"
             script += "print(json.dumps({'type':'assistant','session_id':'fixture-session','message':{'role':'assistant','content':[{'type':'text','text':'synthetic reply'}]}}),flush=True)\n"
             script += "print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_id':'fixture-session'}),flush=True)\n"
             with open(cli, "w") as f: f.write(script)

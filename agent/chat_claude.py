@@ -36,11 +36,23 @@ _DENIED_TOOLS = {"purge", "trash_purge"}  # exact MyCRM aliases after _TOOL_PREF
 _ENV_ALLOW = {"HOME", "PATH", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL"}
 _FORBIDDEN_ENV = {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "ANTHROPIC_BASE_URL",
                   "OPENAI_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX"}
+# Belt-and-braces deny list. It is NOT the isolation layer: `--tools ""` is. Without `--tools ""`
+# CLI 2.1.322 still exposed 13 other built-ins (ToolSearch, SendMessage, Cron*, *Worktree, ...)
+# that no deny list here names (probe 2026-11-10, r12). The subagent tool is now "Agent";
+# "Task" is kept as the older name. "TaskOutput" no longer exists in the CLI and was dropped.
 _DISALLOWED_BUILTINS = (
     "Bash", "PowerShell", "Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep",
-    "WebFetch", "WebSearch", "Task", "TaskOutput", "TaskStop", "Skill",
+    "WebFetch", "WebSearch", "Agent", "Task", "TaskStop", "Skill",
     "EnterPlanMode", "ExitPlanMode", "AskUserQuestion",
 )
+# Full model IDs only. Aliases (sonnet, opus, ...) are reported back by the CLI as the resolved ID,
+# so an alias can never pass the init model check. Kept within agent/chat_providers.py (<=100
+# chars) and server/webchat.py MODEL_RE.
+_MODEL_ID = re.compile(r"^claude-[a-z0-9]+(?:-[a-z0-9]+)*$")
+MAX_MODEL_ID_CHARS = 100
+MAX_ADVERTISED_MODELS = 16  # server/webchat.py _normalize_capabilities accepts 1..16 per provider
+_MODEL_QUERY_ID = "mycrm-models-1"
+MODEL_QUERY_TIMEOUT = 15.0
 # No authenticated desktop/server launch authority exists yet. Do not let an injected
 # verifier (including a test lambda) turn this candidate into an executable provider.
 _TRUSTED_LAUNCH_VERIFIER = None
@@ -188,12 +200,161 @@ def _validate_launch(launch_context, verifier, model, cli_path, *, verify_files=
         return None
 
 
+def _valid_model_id(model):
+    return (isinstance(model, str) and len(model) <= MAX_MODEL_ID_CHARS
+            and bool(_MODEL_ID.fullmatch(model)))
+
+
+def _cli_file_trusted(st):
+    trusted = {0, os.getuid()} if hasattr(os, "getuid") else None
+    return trusted is None or st.st_uid in trusted
+
+
+def resolve_cli_path(cli_path):
+    """Follow the configured CLI link once per agent start and return the real file to pin.
+
+    Installers keep a stable link (for example ~/.local/bin/claude -> .../versions/<v>) and point
+    it at a new file on update. Only this function follows links. Every later check opens the
+    resolved path with O_NOFOLLOW and re-hashes it (`_file_matches_pin`), so a file replaced
+    after this point fails closed; the next agent start resolves and pins again.
+    The link itself, the final file and the final file's directory must be owned by the user
+    or root, and the file and directory must not be group/other-writable.
+    """
+    if not isinstance(cli_path, str) or not os.path.isabs(cli_path) or "\x00" in cli_path:
+        raise ClaudeProviderUnavailable("cli-unavailable")
+    try:
+        configured = os.lstat(cli_path)
+        resolved = os.path.realpath(cli_path)
+        target = os.lstat(resolved)
+        parent = os.lstat(os.path.dirname(resolved))
+    except OSError:
+        raise ClaudeProviderUnavailable("cli-unavailable") from None
+    if (not (stat.S_ISREG(configured.st_mode) or stat.S_ISLNK(configured.st_mode))
+            or not _cli_file_trusted(configured)
+            or not stat.S_ISREG(target.st_mode) or not target.st_mode & 0o111
+            or target.st_mode & 0o022 or not _cli_file_trusted(target)
+            or not stat.S_ISDIR(parent.st_mode) or parent.st_mode & 0o022
+            or not _cli_file_trusted(parent)):
+        raise ClaudeProviderUnavailable("cli-unavailable")
+    return resolved
+
+
+def models_from_initialize(message):
+    """Keep only resolved full model IDs from a control_response to `initialize`.
+
+    Everything else in the response (account, commands, agents, ...) is dropped here and never
+    returned, logged or stored. Order follows the CLI (recommended aliases first); duplicates are
+    removed and the list is cut at MAX_ADVERTISED_MODELS.
+    """
+    if not isinstance(message, dict) or message.get("type") != "control_response":
+        return ()
+    outer = message.get("response")
+    if (not isinstance(outer, dict) or outer.get("request_id") != _MODEL_QUERY_ID
+            or outer.get("subtype") != "success"):
+        return ()
+    inner = outer.get("response")
+    rows = inner.get("models") if isinstance(inner, dict) else None
+    if not isinstance(rows, list):
+        return ()
+    models = []
+    for row in rows:
+        model = row.get("resolvedModel") if isinstance(row, dict) else None
+        if _valid_model_id(model) and model not in models:
+            models.append(model)
+        if len(models) == MAX_ADVERTISED_MODELS:
+            break
+    return tuple(models)
+
+
+def query_cli_models(cli_path, env, cwd, process_supervisor, *, timeout=MODEL_QUERY_TIMEOUT):
+    """Ask the pinned CLI which models this login can use, without starting a model turn.
+
+    Sends only a stream-json `initialize` control request: no user message, so no API request and
+    no subscription usage (probe 2026-11-10: no API dispatch in the debug log, no transcript with
+    --no-session-persistence, answer in ~0.5 s). Returns () on any failure; callers must then
+    advertise no Claude model rather than invent one.
+    """
+    argv = [cli_path, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+            "--restricted", "--strict-mcp-config", "--tools", "", "--permission-mode", "dontAsk",
+            "--permission-prompts", "none", "--disable-slash-commands", "--no-session-persistence"]
+    request = {"type": "control_request", "request_id": _MODEL_QUERY_ID, "request": {"subtype": "initialize"}}
+    proc = None
+    lines = queue.Queue()
+    try:
+        proc = process_supervisor.spawn(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                        stderr=subprocess.DEVNULL, cwd=cwd, env=env, shell=False, close_fds=True)
+        proc.stdin.write((json.dumps(request, separators=(",", ":")) + "\n").encode("utf-8"))
+        proc.stdin.flush()
+
+        def read_lines():
+            total = 0
+            try:
+                while total <= MAX_STREAM_BYTES:
+                    line = proc.stdout.readline(MAX_LINE_BYTES + 1)
+                    if not line or len(line) > MAX_LINE_BYTES:
+                        break
+                    total += len(line)
+                    lines.put(line)
+            except Exception:
+                pass
+            lines.put(None)
+
+        threading.Thread(target=read_lines, name="claude-models", daemon=True).start()
+        deadline = time.monotonic() + timeout
+        while True:
+            remain = deadline - time.monotonic()
+            if remain <= 0:
+                return ()
+            try:
+                line = lines.get(timeout=remain)
+            except queue.Empty:
+                return ()
+            if line is None:
+                return ()
+            try:
+                message = json.loads(line.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                return ()
+            if isinstance(message, dict) and message.get("type") == "control_response":
+                return models_from_initialize(message)
+    except Exception:
+        return ()
+    finally:
+        if proc is not None:
+            try:
+                proc.stdin.close()
+            except Exception:
+                pass
+            try:
+                process_supervisor.terminate_tree(proc)
+            except Exception:
+                pass
+            try:
+                if proc.stdout:
+                    proc.stdout.close()
+            except Exception:
+                pass
+
+
 def build_argv(cli_path: str, model: str, tools: tuple[str, ...], config_path: str, resume: str | None = None,
                approval_outcomes=()) -> list[str]:
-    """Fixed argument vector: prompt is stdin-only; never use a shell."""
+    """Fixed argument vector: prompt is stdin-only; never use a shell.
+
+    Load-bearing flags (CLI 2.1.322 probe, 2026-11-10; do not drop any of them):
+    - `--tools ""` removes every built-in tool. It is the isolation layer; the deny list is not.
+    - `--restricted` ignores user/project/local settings (hooks, plugins, skills, CLAUDE.md) and
+      confines file tools to the working directory. Without it the user's hooks ran.
+    - `--permission-mode dontAsk` denies any tool outside --allowedTools. The organisation's remote
+      managed settings can set defaultMode=bypassPermissions; this flag overrides it, and with
+      `--restricted` a missing mode makes the CLI refuse to start instead.
+    - `--strict-mcp-config` keeps the user's own MCP servers and claude.ai connectors out.
+    - `--system-prompt-snapshot off`: with the default (on) a resumed session reuses the first
+      turn's system prompt and silently drops this turn's --append-system-prompt, so approval
+      outcomes of later turns would never reach the model.
+    """
     if not isinstance(cli_path, str) or not os.path.isabs(cli_path) or not os.path.isfile(cli_path) or not os.access(cli_path, os.X_OK):
         raise ClaudeProviderUnavailable("cli-unavailable")
-    if not isinstance(model, str) or not model or len(model) > 120 or "\x00" in model:
+    if not _valid_model_id(model):
         raise ClaudeProviderUnavailable("model-unavailable")
     if not tools or any(not isinstance(t, str) or not t.startswith(_TOOL_PREFIX) or t[len(_TOOL_PREFIX):] in _DENIED_TOOLS for t in tools):
         raise ClaudeProviderUnavailable("tool-scope")
@@ -201,7 +362,7 @@ def build_argv(cli_path: str, model: str, tools: tuple[str, ...], config_path: s
             "--model", model, "--restricted", "--strict-mcp-config", "--tools", "",
             "--disallowedTools", *_DISALLOWED_BUILTINS, "--mcp-config", config_path,
             "--permission-mode", "dontAsk", "--permission-prompts", "none",
-            "--disable-slash-commands", "--allowedTools", *tools]
+            "--disable-slash-commands", "--system-prompt-snapshot", "off", "--allowedTools", *tools]
     # Claude CLI persistence stays enabled because follow-up turns use --resume.
     # Its local transcript retention is therefore separate from server retention.
     if resume is not None:
@@ -501,7 +662,7 @@ class ClaudeProvider:
         return (isinstance(tools, list) and set(tools) == set(expected_tools)
                 and isinstance(servers, list) and len(servers) == 1
                 and servers[0].get("name") == _SERVER_NAME and servers[0].get("status") == "connected"
-                and obj.get("permissionMode") not in ("bypassPermissions", "acceptEdits"))
+                and obj.get("permissionMode") == "dontAsk")
 
     def _terminate(self, proc):
         self.process_supervisor.terminate_tree(proc)
@@ -607,7 +768,7 @@ class ClaudeProviderFactory:
     name = "claude"
 
     def __init__(self, authorization_client, *, cli_path, server_url, agent_home, expected_device_id, env=None,
-                 temp_parent=None, models=("claude-sonnet-4-5",), popen=subprocess.Popen,
+                 temp_parent=None, models=None, popen=subprocess.Popen,
                  process_supervisor=None, timeout=300):
         if type(authorization_client) is not LaunchAuthorizationClient:
             raise ClaudeProviderUnavailable("launch-authority-required")
@@ -617,27 +778,52 @@ class ClaudeProviderFactory:
             raise ClaudeProviderUnavailable("platform")
         if authorization_client.server_origin != server_url.rstrip("/"):
             raise ClaudeProviderUnavailable("server-binding")
-        if not isinstance(cli_path, str) or not os.path.isabs(cli_path) or not _file_matches_pin(cli_path, self._hash(cli_path)):
+        # Pin the resolved file once per process start (see resolve_cli_path).
+        cli_path = resolve_cli_path(cli_path)
+        cli_sha256 = self._hash(cli_path)
+        if not cli_sha256 or not _file_matches_pin(cli_path, cli_sha256):
             raise ClaudeProviderUnavailable("cli-unavailable")
         if not _private_dir(agent_home):
             raise ClaudeProviderUnavailable("agent-home")
         self.authorization_client = authorization_client
         self.cli_path = cli_path
-        self.cli_sha256 = self._hash(cli_path)
+        self.cli_sha256 = cli_sha256
         self.server_url = server_url
         self.agent_home = agent_home
         if not isinstance(expected_device_id, str) or not expected_device_id:
             raise ClaudeProviderUnavailable("device-binding")
         self.expected_device_id = expected_device_id
-        self.models = tuple(models)
-        if not self.models or any(not isinstance(model, str) or not model for model in self.models):
-            raise ClaudeProviderUnavailable("models")
         self.env = self._clean_env(dict(os.environ if env is None else env))
         self.temp_parent = temp_parent
         self.popen, self.process_supervisor, self.timeout = popen, process_supervisor, timeout
+        if models is None:
+            # Asked once per agent start, together with the CLI pin: the list changes with the CLI
+            # version or the account plan, and both are re-read at the next start. The query costs
+            # no model turn. On failure nothing is advertised (never a made-up default).
+            models = self._query_models()
+        self.models = tuple(models)
+        if (not self.models or len(self.models) > MAX_ADVERTISED_MODELS
+                or len(set(self.models)) != len(self.models)
+                or any(not _valid_model_id(model) for model in self.models)):
+            raise ClaudeProviderUnavailable("models-unavailable")
         self.verifier = _ServerLaunchVerifier(authorization_client)
         global _TRUSTED_LAUNCH_VERIFIER
         _TRUSTED_LAUNCH_VERIFIER = self.verifier
+
+    def _query_models(self):
+        owner = tempfile.TemporaryDirectory(prefix="chat-claude-models-", dir=self.temp_parent)
+        try:
+            os.chmod(owner.name, 0o700)
+            cwd, runtime = os.path.join(owner.name, "work"), os.path.join(owner.name, "runtime")
+            os.mkdir(cwd, 0o700); os.mkdir(runtime, 0o700)
+            env = dict(self.env)
+            env["TMPDIR"] = runtime
+            supervisor = self.process_supervisor or MacOSProcessSupervisor(popen=self.popen)
+            return query_cli_models(self.cli_path, env, cwd, supervisor)
+        except Exception:
+            return ()
+        finally:
+            owner.cleanup()
 
     @staticmethod
     def _hash(path):

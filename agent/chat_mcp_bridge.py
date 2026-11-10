@@ -20,6 +20,13 @@ from .chat_launch_authority import AUTH_PATH, LaunchAuthorizationDenied
 SERVER_NAME = "my-crm"
 TOOL_PREFIX = "mcp__my-crm__"
 SURFACES = ("find", "read", "write", "decide")
+# Claude Code namespaces MCP tools as mcp__<server>__<name> itself (CLI 2.1.322 probe, 2026-11-10):
+# a server-side name that already carries the prefix becomes mcp__my-crm__mcp__my-crm__find, which
+# never matches the adapter's --allowedTools or its init check. Claude therefore gets bare names.
+# Codex keeps the prefixed names its enabled_tools config expects (agent/chat_codex.py); that
+# naming has not been probed against a real Codex CLI yet.
+_PROVIDER_TOOL_PREFIX = {"claude": "", "codex": TOOL_PREFIX}
+JSONRPC_METHOD_NOT_FOUND = -32601
 FAMILIES = ("state", "question", "record", "candidate", "definition", "person", "source",
             "activity", "inbox", "trash", "desk", "migration", "pc")
 MAX_LINE_BYTES = 256 * 1024
@@ -44,8 +51,14 @@ def _private_home(path):
         return False
 
 
-def surface_schemas(operations):
-    """Build the same public facade surface as server/main.py, scoped by the grant."""
+def surface_schemas(operations, name_prefix=TOOL_PREFIX):
+    """Build the same public facade surface as server/main.py, scoped by the grant.
+
+    `operations` keys are always the grant's prefixed names; `name_prefix` only sets the
+    MCP-visible tool names (bare for Claude Code, prefixed for Codex).
+    """
+    if name_prefix not in _PROVIDER_TOOL_PREFIX.values():
+        raise ValueError("tool-prefix")
     by_tier = defaultdict(list)
     for full_name, tier in operations.items():
         if not isinstance(full_name, str) or not full_name.startswith(TOOL_PREFIX):
@@ -57,7 +70,7 @@ def surface_schemas(operations):
             by_tier[tier].append(op)
     out = []
     # `find` only describes non-purge operations; server/chat_mcp filters its result.
-    out.append({"name": TOOL_PREFIX + "find", "description": (
+    out.append({"name": name_prefix + "find", "description": (
                     "이 서버의 할 일(op)을 찾는다. 인자 없음 = 묶음 목록, query = 말로 찾기(최대 8), "
                     "op = 그 op 의 설명·input_schema·examples·rule. 찾은 op 은 등급 도구(read·write·decide·purge)로 부른다. "
                     "확정·삭제는 decide_preview → decide/purge."),
@@ -87,7 +100,7 @@ def surface_schemas(operations):
         required = ["op"]
         if tier == "decide":
             props["bind"] = {"type": "string", "description": "read(op=\"decide_preview\") 가 준 bind. 없거나 낡으면 거절된다", "default": ""}
-        tool = {"name": TOOL_PREFIX + tier, "description": descriptions[tier],
+        tool = {"name": name_prefix + tier, "description": descriptions[tier],
                 "inputSchema": {"type": "object", "properties": props, "required": required,
                                 "additionalProperties": False}}
         if tier == "read":
@@ -113,6 +126,7 @@ class McpStdioBridge:
         self.authorization_path, self.session_id, self.turn_id = authorization_path, session_id, turn_id
         self.provider, self.model = provider, model
         self.expected_device_id = expected_device_id
+        self.name_prefix = _PROVIDER_TOOL_PREFIX[provider]
         self._anchor = None
 
     def _authorization(self):
@@ -143,8 +157,16 @@ class McpStdioBridge:
         request_id = message.get("id")
         if method == "notifications/initialized" and "id" not in message:
             return None
-        if method not in ("initialize", "ping", "tools/list", "tools/call") or request_id is None:
-            return None
+        if request_id is None:
+            return None  # notifications never get a reply
+        if method not in ("initialize", "ping", "tools/list", "tools/call"):
+            # Claude Code 2.1.322 opens with `server/discover`; without an answer it waits ~3 s
+            # before falling back to `initialize`. Answer every unknown request at once.
+            if type(request_id) not in (str, int) or isinstance(request_id, bool):
+                return None
+            response = {"jsonrpc": "2.0", "id": request_id,
+                        "error": {"code": JSONRPC_METHOD_NOT_FOUND, "message": "Method not found"}}
+            return json.dumps(response, ensure_ascii=False, separators=(",", ":"))
         try:
             params = message.get("params", {})
             if not isinstance(params, dict):
@@ -156,7 +178,7 @@ class McpStdioBridge:
                 result = {}
             elif method == "tools/list":
                 auth = self._authorization()
-                result = {"tools": surface_schemas(auth.tools)}
+                result = {"tools": surface_schemas(auth.tools, self.name_prefix)}
             else:
                 result = self._call_tool(params)
             response = {"jsonrpc": "2.0", "id": request_id, "result": result}
@@ -167,13 +189,19 @@ class McpStdioBridge:
         return encoded if len(encoded.encode("utf-8")) <= MAX_LINE_BYTES else None
 
     def _call_tool(self, params):
-        if set(params) != {"name", "arguments"}:
+        # Claude Code 2.1.322 adds MCP `_meta` (toolUseId, progressToken) to every tools/call.
+        # It is accepted only as an object and never forwarded.
+        if not {"name", "arguments"} <= set(params) <= {"name", "arguments", "_meta"}:
+            raise ValueError("call-shape")
+        if "_meta" in params and not isinstance(params["_meta"], dict):
             raise ValueError("call-shape")
         name, args = params["name"], params["arguments"]
-        if not isinstance(name, str) or not name.startswith(TOOL_PREFIX) or not isinstance(args, dict):
+        # Only the exact name form this provider was given in tools/list is accepted.
+        if (not isinstance(name, str) or not isinstance(args, dict)
+                or name not in {self.name_prefix + surface for surface in SURFACES}):
             raise ValueError("call-shape")
         auth = self._authorization()  # Fresh server grant check before each tool dispatch.
-        tail = name[len(TOOL_PREFIX):]
+        tail = name[len(self.name_prefix):]
         if tail == "find":
             if auth.tools.get(TOOL_PREFIX + "find") != "read":
                 raise ValueError("find-scope")
