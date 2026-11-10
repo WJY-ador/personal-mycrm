@@ -138,6 +138,36 @@ def _fill_assets(html: str) -> str:
     return re.sub(r"\{\{asset:([A-Za-z0-9._-]+)\}\}", lambda m: asset_url(m.group(1)), html)
 
 
+# ── 색·글꼴 토큰(디자인 1, 2026-11-10) ─────────────────
+# 정본 = 웹 화면 묶음의 server/ui/src/shared/tokens.css 하나. 서버가 그리는 페이지(시작·도움말·처리방침·설치·_page·운영 화면)는
+# 시작 때 1회 읽어 인라인 <style> 맨 앞에 넣는다 — 값은 정본에서만 고친다. 인라인 <style> 은 이미 쓰던 방식이라 CSP(style-src 없음)는 그대로다.
+# 런타임에 읽히는 근거: Render 는 rootDir 없이 레포 전체를 올려 레포 루트에서 실행한다(render.yaml, GUIDES_DIR 와 같은 근거). tokens.css 는 git 에 있다(.gitignore 는 dist·node_modules 만).
+# 파일이 없으면 로그 1줄 + 빈 문자열(자산·화면 묶음과 같은 규칙 — 서버는 뜨고 색만 브라우저 기본값). 주석은 뗀다(정본 주석의 글자가 <style> 안에 들어가지 않게).
+TOKENS_FILE = Path(__file__).parent / "ui" / "src" / "shared" / "tokens.css"
+TOKENS_SLOT = "{{tokens}}"
+
+
+def load_tokens(p: Path) -> str:
+    try:
+        css = p.read_text(encoding="utf-8")
+    except OSError as e:
+        print(f"[web] 색 토큰 파일을 못 읽었어요({type(e).__name__}) — 서버 페이지는 색 없이 떠요: {p}", flush=True)
+        return ""
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S).strip()
+    if "<" in css:   # 토큰 파일에 태그 글자가 있으면 넣지 않는다(</style> 탈출 방지)
+        print(f"[web] 색 토큰 파일에 '<' 가 있어 넣지 않아요: {p}", flush=True)
+        return ""
+    return css
+
+
+TOKENS_CSS = load_tokens(TOKENS_FILE)
+
+
+def _fill_tokens(html: str) -> str:
+    """{{tokens}} → 토큰 정본(TOKENS_CSS). 시작 화면(root)과 _doc_page(start.html 의 앞부분을 복사)가 부른다."""
+    return html.replace(TOKENS_SLOT, TOKENS_CSS, 1)
+
+
 # ── React 화면 묶음(server/ui, 2026-11-03 R1~) ─────────────────
 # 빌드 산출물 dist/.vite/manifest.json 을 시작 때 1회 읽어 허용 목록을 만든다(진입 + 화면별 지연 불러오기 묶음·CSS 전부). 요청 name 은 이 dict 키 조회만 —
 # 경로를 잇지 않는다. 파일 이름에 내용 해시가 있어 1년 immutable. /app 의 <!--{{ui}}--> 자리는 진입 <link>·<script type="module" src> 로 채운다(인라인 0).
@@ -234,8 +264,9 @@ def _page(title: str, body: str, status: int = 200, head: str = "", headers: dic
     head = <head> 에 더할 조각(앱 넘김의 meta refresh — 동적 값은 _esc). headers = 응답 헤더 추가(cache-control 등)."""
     t = _esc(title)
     return _html_resp(f"""<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">{head}
-<title>{t}</title><style>body{{font-family:system-ui,sans-serif;max-width:520px;margin:15vh auto;padding:0 20px;color:#2B2824;background:#FBF8F4;line-height:1.6}}
-a{{color:#E4705A}}</style></head><body><h2>{t}</h2>{body}</body></html>""", status, headers)
+<title>{t}</title><style>{TOKENS_CSS}
+body{{font-family:system-ui,sans-serif;max-width:520px;margin:15vh auto;padding:0 20px;color:var(--ink);background:var(--paper);line-height:1.6}}
+a{{color:var(--accent)}}</style></head><body><h2>{t}</h2>{body}</body></html>""", status, headers)
 
 
 # ── 도움말: guides 마크다운 → HTML ─────────────────────
@@ -397,10 +428,10 @@ THEME_TOGGLE = '<button type="button" class="theme-toggle" data-theme-toggle hid
 
 
 def _doc_page(title: str, toc_html: str, body_html: str, foot: str, extra_css: str = "") -> str:
-    """/help·/privacy·/download 공통 껍데기. 맨 위 링크 자리는 <!--nav--> — 요청마다 세션 보고 바꾼다. 토큰·글꼴은 start.html 의 :root 블록을 그대로 쓴다.
+    """/help·/privacy·/download 공통 껍데기. 맨 위 링크 자리는 <!--nav--> — 요청마다 세션 보고 바꾼다. 토큰은 start.html 앞부분의 {{tokens}} 자리(정본 tokens.css), 제목 글꼴은 start.html 의 --serif 덮어쓰기를 그대로 쓴다.
     title·foot 은 우리 상수(HTML 조각), toc_html·body_html 은 md_to_html 결과(escape 끝난 것). toc_html 이 비면 목차 칸을 그리지 않는다."""
     style = START_HTML.read_text(encoding="utf-8").split("<style>", 1)[1]
-    css = style.split(".bands {", 1)[0]   # 주석·:root 토큰(라이트·다크 토글)·기본(body·a·focus·.wrap·☀/☾)까지 — 배경·데모(start 전용)는 안 온다
+    css = _fill_tokens(style.split(".bands {", 1)[0])   # 토큰 정본(라이트·다크 토글)·주석·기본(body·a·focus·.wrap·☀/☾)까지 — 배경·데모(start 전용)는 안 온다
     toc = f'  <nav class="toc" aria-label="목차">{toc_html}</nav>\n' if toc_html else ""
     return f"""<!doctype html>
 <html lang="ko">
@@ -617,61 +648,63 @@ ADMIN_LABELS = {"bootstrap": "첫 지정", "recover": "복구(CLI)", "role_grant
 POLICY_MAX_BYTES = 4 * 1024   # 장치 허용 규칙(policy) JSON 상한 — WRITE_LIMITS 밖이라 웹이 write_gate 전에 직접 센다
 TRANSFORM_LABELS = {"board-likes/1": "좋아요 활동(바로 저장)", "self-text/1": "내 글(승인 대기)", "self-summary/1": "AI 요약(승인 대기)",
                     "session-wrap/1": "세션 정리(승인 대기)"}
-_ADMIN_CSS = """body{font-family:system-ui,sans-serif;margin:0;color:#2B2824;background:#FBF8F4;line-height:1.5;font-size:14px}
+# 운영 화면 색 = 토큰 정본(TOKENS_CSS, 밝은 값 — 스크립트 0 이라 data-theme 가 붙지 않는다). 색 글자값을 여기 다시 쓰지 않는다(test_download F).
+_ADMIN_CSS = TOKENS_CSS + """
+body{font-family:system-ui,sans-serif;margin:0;color:var(--ink);background:var(--paper);line-height:1.5;font-size:14px}
 .wrap{max-width:1180px;margin:0 auto;padding:24px 16px 48px}
 h1{font-size:20px;margin:0 0 4px}h2{font-size:16px;margin:28px 0 8px}
-a{color:#B4462F}.bar{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;padding:10px 12px;border:1px solid #E4DCD2;border-radius:8px;background:#fff}
-.bar .warn{color:#B4462F;font-weight:600}.tbl{overflow-x:auto}
-table{border-collapse:collapse;width:100%;background:#fff;border:1px solid #E4DCD2}
-th,td{border-bottom:1px solid #EEE7DE;padding:6px 8px;text-align:left;vertical-align:top;white-space:nowrap}
-th{font-size:12px;color:#6B635A;font-weight:600}td.email{white-space:normal;word-break:break-all}
+a{color:var(--accent)}.bar{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card)}
+.bar .warn{color:var(--fail);font-weight:600}.tbl{overflow-x:auto}
+table{border-collapse:collapse;width:100%;background:var(--card);border:1px solid var(--line)}
+th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top;white-space:nowrap}
+th{font-size:12px;color:var(--muted);font-weight:600}td.email{white-space:normal;word-break:break-all}
 .acts{display:flex;flex-wrap:wrap;gap:4px}form{margin:0}
-button{font:inherit;font-size:12px;padding:3px 8px;border:1px solid #CFC4B7;border-radius:5px;background:#FBF8F4;color:#2B2824;cursor:pointer}
-button.danger{border-color:#D9A496;color:#9A3520}.tag{font-size:12px;padding:1px 6px;border-radius:4px;background:#EEE7DE}
-.tag.admin{background:#DCEBE3;color:#186A4B}.tag.blocked{background:#F6DDD6;color:#9A3520}.muted{color:#8A8178}
-.tag.over{background:#F6DDD6;color:#9A3520}.tag.due{background:#FBEBD0;color:#8A5A12}.tag.pub{background:#DCEBE3;color:#186A4B}
-.tag.int{background:#E6E1F2;color:#4D3F86}.tag.st-done,.tag.st-wontfix{background:#EEE7DE;color:#6B635A}.tag.st-open{background:#FBEBD0;color:#8A5A12}
-dl.meta{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px;margin:12px 0;padding:10px 12px;background:#fff;border:1px solid #E4DCD2;border-radius:8px}
-dl.meta dt{color:#6B635A;font-size:12px}dl.meta dd{margin:0;word-break:break-all}
-pre.txt{white-space:pre-wrap;word-break:break-word;background:#fff;border:1px solid #E4DCD2;border-radius:8px;padding:12px;font:inherit;margin:0}
+button{font:inherit;font-size:12px;padding:3px 8px;border:1px solid var(--line);border-radius:5px;background:var(--paper);color:var(--ink);cursor:pointer}
+button.danger{border-color:var(--fail);color:var(--fail)}.tag{font-size:12px;padding:1px 6px;border-radius:4px;background:var(--memo-bg)}
+.tag.admin{background:var(--mine-bg);color:var(--mine)}.tag.blocked{background:var(--fail-bg);color:var(--fail)}.muted{color:var(--muted)}
+.tag.over{background:var(--fail-bg);color:var(--fail)}.tag.due{background:var(--warn-bg);color:var(--warn)}.tag.pub{background:var(--mine-bg);color:var(--mine)}
+.tag.int{background:var(--ai-bg);color:var(--ai)}.tag.st-done,.tag.st-wontfix{background:var(--memo-bg);color:var(--memo)}.tag.st-open{background:var(--warn-bg);color:var(--warn)}
+dl.meta{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px;margin:12px 0;padding:10px 12px;background:var(--card);border:1px solid var(--line);border-radius:8px}
+dl.meta dt{color:var(--muted);font-size:12px}dl.meta dd{margin:0;word-break:break-all}
+pre.txt{white-space:pre-wrap;word-break:break-word;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;font:inherit;margin:0}
 .path{display:flex;flex-wrap:wrap;gap:4px}.path button{font-size:13px;padding:5px 12px}
-.path button.cur{background:#186A4B;border-color:#186A4B;color:#fff;cursor:default}
-form.edit textarea{width:100%;box-sizing:border-box;font:inherit;padding:8px;border:1px solid #CFC4B7;border-radius:6px}
+.path button.cur{background:var(--accent);border-color:var(--accent);color:var(--on-accent);cursor:default}
+form.edit textarea{width:100%;box-sizing:border-box;font:inherit;padding:8px;border:1px solid var(--line);border-radius:6px}
 form.edit div{display:flex;gap:12px;align-items:center;justify-content:flex-end;margin-top:4px}form.bar label{font-size:13px}
 .shell{display:grid;grid-template-columns:232px minmax(0,1fr);gap:0 24px;max-width:1320px;margin:0 auto;padding:20px 16px 48px}
 .shell>.wrap{max-width:none;margin:0;padding:0;min-width:0}
-nav.side{align-self:start;position:sticky;top:12px;border:1px solid #E4DCD2;border-radius:8px;background:#fff;padding:12px}
-nav.side .brand{font-size:12px;color:#6B635A;font-weight:600;letter-spacing:.02em;margin:0 0 8px}
-form.qf{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 10px}form.qf label{width:100%;font-size:12px;color:#6B635A}
+nav.side{align-self:start;position:sticky;top:12px;border:1px solid var(--line);border-radius:8px;background:var(--card);padding:12px}
+nav.side .brand{font-size:12px;color:var(--muted);font-weight:600;letter-spacing:.02em;margin:0 0 8px}
+form.qf{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 10px}form.qf label{width:100%;font-size:12px;color:var(--muted)}
 form.qf input{flex:1;min-width:0}nav.side ul{list-style:none;margin:0;padding:0}
-nav.side li a{display:block;padding:6px 8px;border-left:3px solid transparent;border-radius:0 5px 5px 0;text-decoration:none;color:#2B2824}
-nav.side li a:hover{background:#FBF8F4}nav.side li a[aria-current=page]{border-left-color:#B4462F;background:#F7ECE7;color:#9A3520;font-weight:600}
-nav.side a.home{display:block;margin:10px 0 0;padding:8px 8px 0;border-top:1px solid #EEE7DE;color:#B4462F;text-decoration:none;font-size:13px}
-nav.crumbs{font-size:12px;color:#6B635A;margin:0 0 10px}nav.crumbs a{color:#6B635A}nav.crumbs span[aria-current]{color:#2B2824;font-weight:600}
-td.api,span.api{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:#4A443E}
+nav.side li a{display:block;padding:6px 8px;border-left:3px solid transparent;border-radius:0 5px 5px 0;text-decoration:none;color:var(--ink)}
+nav.side li a:hover{background:var(--paper)}nav.side li a[aria-current=page]{border-left-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:600}
+nav.side a.home{display:block;margin:10px 0 0;padding:8px 8px 0;border-top:1px solid var(--line);color:var(--accent);text-decoration:none;font-size:13px}
+nav.crumbs{font-size:12px;color:var(--muted);margin:0 0 10px}nav.crumbs a{color:var(--muted)}nav.crumbs span[aria-current]{color:var(--ink);font-weight:600}
+td.api,span.api{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:var(--ink)}
 .tbl.fit th,.tbl.fit td{white-space:normal}.tbl.fit td.api{overflow-wrap:anywhere;min-width:7em}.tbl.fit td.num{white-space:nowrap}
-ul.found{list-style:none;padding:0;margin:8px 0}ul.found li{padding:8px 10px;margin:0 0 6px;border:1px solid #E4DCD2;border-radius:8px;background:#fff}
+ul.found{list-style:none;padding:0;margin:8px 0}ul.found li{padding:8px 10px;margin:0 0 6px;border:1px solid var(--line);border-radius:8px;background:var(--card)}
 ul.found .tag{margin-right:6px}ul.found .note{display:block;margin-top:2px}
 @media (max-width:760px){.shell{grid-template-columns:1fr;padding:12px 12px 40px}nav.side{position:static;margin:0 0 16px}}
 .bar b{font-variant-numeric:tabular-nums}td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
-.barw{display:inline-block;width:160px;max-width:30vw;height:10px;background:#EEE7DE;border-radius:3px;vertical-align:middle}
-.barf{display:block;height:100%;background:#D98B76;border-radius:3px}
-.chips{display:flex;flex-wrap:wrap;gap:6px 8px;margin:8px 0}.chips a{padding:3px 9px;border:1px solid #E4DCD2;border-radius:5px;background:#fff;text-decoration:none}
-.chips a[aria-current=page]{border-color:#B4462F;color:#B4462F;font-weight:600}
-form.rq{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin:12px 0;padding:10px 12px;border:1px solid #E4DCD2;border-radius:8px;background:#fff}
-form.rq label{display:flex;flex-direction:column;gap:2px;font-size:12px;color:#6B635A}
-select,input{font:inherit;font-size:13px;padding:3px 6px;border:1px solid #CFC4B7;border-radius:5px;background:#fff;color:#2B2824}
-ul.tree{list-style:none;padding:0;margin:0}ul.tree>li{margin:0 0 10px;padding:8px 10px;border:1px solid #E4DCD2;border-radius:8px;background:#fff}
+.barw{display:inline-block;width:160px;max-width:30vw;height:10px;background:var(--line);border-radius:3px;vertical-align:middle}
+.barf{display:block;height:100%;background:var(--accent);border-radius:3px}
+.chips{display:flex;flex-wrap:wrap;gap:6px 8px;margin:8px 0}.chips a{padding:3px 9px;border:1px solid var(--line);border-radius:5px;background:var(--card);text-decoration:none}
+.chips a[aria-current=page]{border-color:var(--accent);color:var(--accent);font-weight:600}
+form.rq{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin:12px 0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card)}
+form.rq label{display:flex;flex-direction:column;gap:2px;font-size:12px;color:var(--muted)}
+select,input{font:inherit;font-size:13px;padding:3px 6px;border:1px solid var(--line);border-radius:5px;background:var(--card);color:var(--ink)}
+ul.tree{list-style:none;padding:0;margin:0}ul.tree>li{margin:0 0 10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card)}
 ul.tree ul{margin:6px 0 0;padding-left:18px}ul.tree ul li{margin:2px 0}.nm{font-family:ui-monospace,Menlo,monospace;font-weight:600}
-.lbl{color:#186A4B}.note{font-size:12px;color:#6B635A}.note.warn{color:#B4462F;font-weight:600}
-.dmo{background:#fff;border:1px solid #E4DCD2;border-radius:8px;padding:8px}.dmo svg{display:block;width:100%;height:auto;max-width:760px;margin:0 auto}
+.lbl{color:var(--accent)}.note{font-size:12px;color:var(--muted)}.note.warn{color:var(--warn);font-weight:600}
+.dmo{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px}.dmo svg{display:block;width:100%;height:auto;max-width:760px;margin:0 auto}
 .dmo a{text-decoration:none}.dmo a:hover circle,.dmo a:focus-visible circle{stroke-width:3}.dmo a:hover line,.dmo a:hover path{stroke-width:2.4}
-.legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:#6B635A;margin:8px 0}
+.legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--muted);margin:8px 0}
 .legend i{display:inline-block;width:11px;height:11px;border-radius:50%;border:1.5px solid;vertical-align:-1px;margin-right:4px}
 .legend .o-core{background:var(--dmo-core-bg);border-color:var(--dmo-core-line)}.legend .o-standard{background:var(--dmo-standard-bg);border-color:var(--dmo-standard-line)}
 .legend .o-template{background:var(--dmo-template-bg);border-color:var(--dmo-template-line)}.legend .o-custom{background:var(--dmo-custom-bg);border-color:var(--dmo-custom-line)}
-ul.tree li:target,tr:target td{background:#FFF5E8}ul.tree>li:target{border-color:#B4462F;box-shadow:0 0 0 1px #B4462F}
-.err{color:#9A3520;font-weight:600}td.long{white-space:normal;word-break:break-word;min-width:16em}.tag.lock{background:#DCEBE3;color:#186A4B}
+ul.tree li:target,tr:target td{background:var(--warn-bg)}ul.tree>li:target{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.err{color:var(--fail);font-weight:600}td.long{white-space:normal;word-break:break-word;min-width:16em}.tag.lock{background:var(--mine-bg);color:var(--mine)}
 @media (max-width:600px){.wrap{padding:16px 12px 40px}th,td{padding:5px 6px}}"""
 _ADMIN_CSS += structure_svg.tokens_css(dark_media=False)   # DMO 그래프 토큰(--dmo-*) — 운영 화면은 밝게 고정(OS 미추종, 스크립트 0 이라 토글 없음)
 
@@ -1283,7 +1316,7 @@ class Web:
         """시작 화면. 세션 있으면 /app. ?out=1(로그아웃 직후)일 때만 <!--out-->…<!--/out--> 띠를 남기고 [로그인]을 /login?fresh=1 로."""
         if await self.uid_of(request) is not None:
             return RedirectResponse("/app", status_code=302)
-        html = _fill_assets(START_HTML.read_text(encoding="utf-8"))
+        html = _fill_tokens(_fill_assets(START_HTML.read_text(encoding="utf-8")))
         if request.query_params.get("out") == "1":
             html = html.replace('href="/login"', 'href="/login?fresh=1"', 1)
         else:
