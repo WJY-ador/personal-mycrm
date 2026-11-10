@@ -1,11 +1,11 @@
 'use strict';
-const {app,BrowserWindow,Menu,Tray,nativeImage,ipcMain,shell,dialog,net,session,Notification,safeStorage,powerMonitor} = require('electron');
+const {app,BrowserWindow,Menu,Tray,nativeImage,ipcMain,shell,dialog,net,session,Notification,safeStorage,powerMonitor,autoUpdater:nativeUpdater} = require('electron');
 const {spawn} = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {pathToFileURL} = require('node:url');
-const {HOSTED,RELEASES,DASHBOARD,safeExternal,inAppAllowed,externalHttps,agentHome,checkUpdate} = require('./policy.cjs');
+const {PACKAGE,HOSTED,RELEASES,DASHBOARD,safeExternal,inAppAllowed,externalHttps,agentHome,checkUpdate} = require('./policy.cjs');
 const {Supervisor,diagnosticLog} = require('./supervisor.cjs');
 const {OutputTail,failureLine,hasLiveProcess} = require('./sidecar.cjs');
 const handoff = require('./handoff.cjs');
@@ -17,8 +17,11 @@ const {createConsentLockGuard}=require('./consent-lock-guard.cjs');
 const {startChatSidecar}=require('./chat-sidecar.cjs');
 const {findCliCandidates,parseModelIds}=require('./cli-discovery.cjs');
 const {AutoRun,readPreferences,startConnection,startAutomatically,addChat,stopChatForLock,startProcesses:launchProcesses}=require('./autorun.cjs');
+const {createUpdater,inAppSupported,trustedSender,registerDashboardBridge,CHANNELS:UPDATE}=require('./updater.cjs');
 let win,dash,tray,supervisor,log,prefs={},binary,home,settingsFile,quitting=false,ready=false;
 let busy=false,trayLive=null,connector=null,pollTimer=null,consentBridge=null,consentRuntime=null,consentLock=null,autorun=null; const commands=new Set();
+// installing: an in-app update is quitting the app (set on 'before-quit-for-update'); the windows' close no longer hides them.
+let updater=null,installing=false;
 function stopProcesses(options){consentBridge?.abortPending();return supervisor.stopAll(options);}
 // Login handoff: one pending login (verifier never leaves memory) and a deep link that arrived before the window existed.
 let pendingLogin=null,queuedLink=handoff.findLink(process.argv);
@@ -120,14 +123,14 @@ function openInBrowser(){
   leave(target);
 }
 function createDashboard(){
-  dash=new BrowserWindow({width:1200,height:800,minWidth:720,minHeight:520,title:'MyCRM',backgroundColor:'#ffffff',webPreferences:{partition:'persist:dashboard',nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true}});
+  dash=new BrowserWindow({width:1200,height:800,minWidth:720,minHeight:520,title:'MyCRM',backgroundColor:'#ffffff',webPreferences:{partition:'persist:dashboard',preload:path.join(__dirname,'dash-preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true}});
   const wc=dash.webContents;
   wc.session.setPermissionRequestHandler((_wc,_p,callback)=>callback(false));
   wc.setWindowOpenHandler(({url})=>{if(handoff.isLoginNav(url,HOSTED))startLogin(handoff.wantsFresh(url));else if(inAppAllowed(url))wc.loadURL(url).catch(()=>{});else leave(url);return {action:'deny'};});
   wc.on('will-navigate',(e,url)=>guard(e,e.url||url));
   // Subframes (captcha, provider widgets) are not gated; only top-level navigation is.
   wc.on('will-redirect',(e,url,_inPlace,isMainFrame)=>{if(e.isMainFrame??isMainFrame)guard(e,e.url||url);});
-  dash.on('close',event=>{if(!quitting){event.preventDefault();dash.hide();}});
+  dash.on('close',event=>{if(!quitting&&!installing){event.preventDefault();dash.hide();}});
   dash.on('focus',()=>{connector?.poll('focus');autorun?.nudge('focus');});
   if(queuedLink){const link=queuedLink;queuedLink=null;deepLink(link);}else dash.loadURL(DASHBOARD).catch(()=>{});
 }
@@ -206,6 +209,25 @@ async function forgetLocal(){
   try{const {code}=await command(['disconnect','--local-only']);log('connect','forget-local',code);return {code};}
   catch{return {code:-1};}
 }
+// In-app update install, before quitAndInstall (plan 0.2.4). Takes the app lock and keeps it until the app quits or
+// abort(): busy also holds the automatic start, connection delivery and every button. The processes stop the way the
+// token install does — not userStop, so the saved autoRun is unchanged and the reinstalled app starts them again.
+// The windows let the updater close them only from 'before-quit-for-update' (initialize): on macOS Squirrel first fetches
+// and checks the update, and a window closed before that would be gone if it fails. before-quit then runs the usual
+// cleanup (it is not skipped, because quitting is not set here). abort() undoes this when the app did not quit.
+async function prepareInstall(){
+  if(busy||quitting||installing)throw new Error('busy');
+  busy=true;changed();
+  const live=Object.entries(supervisor.snapshot()).filter(([,p])=>hasLiveProcess({p})).map(([k])=>k);
+  const restart=async()=>{if(live.length&&!quitting&&connection().connected)await startProcesses(live).catch(()=>log('update','restart-failed'));};
+  const release=()=>{busy=false;changed();};
+  try{
+    await stopProcesses();
+    await Promise.all([...commands].map(child=>new Promise(resolve=>child.once('close',resolve))));
+  }catch(e){await restart();release();throw e;}
+  if(quitting){release();throw new Error('closing');}
+  return {quitting:()=>quitting,abort:async()=>{installing=false;await restart();release();}};
+}
 function notify({title,body}){try{if(Notification.isSupported())new Notification({title,body}).show();}catch{}}
 function connectionStore(file){
   return {
@@ -259,7 +281,7 @@ async function initialize(){
   win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
   win.webContents.on('will-navigate',e=>e.preventDefault());
   win.webContents.session.setPermissionRequestHandler((_wc,_p,callback)=>callback(false));
-  win.on('close',event=>{if(!quitting){event.preventDefault();win.hide();}});
+  win.on('close',event=>{if(!quitting&&!installing){event.preventDefault();win.hide();}});
   connector=new Connector({hosted:HOSTED,request,store:connectionStore(path.join(userData,'desktop-connection.json')),install,forgetLocal,
     exclusive:exclusively,canDeliver:()=>ready&&!busy&&!quitting,connection,notify,log,client:grants.clientInfo(os.hostname(),process.platform),changed});
   consentBridge=new ConsentBridge({directory:path.join(userData,'chat-ipc'),handler:async(input,signal)=>await consentRuntime?.handle(input,signal)===true});
@@ -348,11 +370,25 @@ async function initialize(){
   }));
   // A disconnect made here is a release: automatic connection does not bring this PC back; a conversation does.
   register('disconnect',()=>exclusively(async()=>{await stopProcesses();const {code,detail}=await command(['disconnect']);log('disconnect','completed',code);if(code===0)connector.released();return {code,detail};}));
-  register('update',()=>checkUpdate(app.getVersion()));
-  register('download',url=>external(url));
+  // Updates: updater.cjs is the only place that checks. The connection window and the dashboard draw its state.
+  updater=createUpdater({inApp:inAppSupported({isPackaged:app.isPackaged,platform:process.platform,pkg:PACKAGE}),current:app.getVersion(),
+    load:()=>require('electron-updater').autoUpdater,checkRelease:checkUpdate,powerMonitor,prepare:prepareInstall,log});
+  updater.subscribe(value=>{
+    if(win&&!win.isDestroyed())win.webContents.send('update-changed',value);
+    if(dash&&!dash.isDestroyed())dash.webContents.send(UPDATE.changed);
+  });
+  // Electron sends this right before it closes the windows for the install (macOS); electron-updater sends it before its
+  // quit (Windows). Only an in-app build calls quitAndInstall.
+  if(updater.state().inApp)nativeUpdater.on('before-quit-for-update',()=>{installing=true;});
+  registerDashboardBridge({ipcMain,updater,trusted:event=>trustedSender(event,dash&&!dash.isDestroyed()?dash.webContents:null,inAppAllowed)});
+  register('update-state',()=>updater.state());
+  register('update',async()=>({checked:await updater.check()}));
+  register('update-download',()=>{updater.download().catch(()=>{});});
+  register('update-install',()=>{updater.install().catch(()=>{});});
+  register('releases',()=>external(RELEASES));
   app.on('activate',showDashboard);
   app.on('before-quit',event=> {
-    if(quitting)return;event.preventDefault();quitting=true;clearInterval(pollTimer);changed();
+    if(quitting)return;event.preventDefault();quitting=true;clearInterval(pollTimer);updater?.dispose();changed();
     const pending=[...commands].map(child=>new Promise(resolve=>child.once('close',resolve)));
     Promise.all([stopProcesses({closing:true}),...pending]).finally(async()=>{consentLock?.dispose();consentRuntime?.dispose();await consentBridge?.close();tray?.destroy();app.quit();});
   });
@@ -364,6 +400,7 @@ async function initialize(){
   const icon=nativeImage.createFromDataURL('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAIElEQVR42mNkYPj/n4ECwESJ5lEDRg0YNWDUgFEDBg0AADMSAh/0xSqxAAAAAElFTkSuQmCC');
   tray=new Tray(icon);tray.setToolTip('MyCRM');refreshTray();tray.on('double-click',showDashboard);tray.on('click',showDashboard);
   autorun.nudge('startup');
+  updater.start();
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {label:'MyCRM',submenu:[{label:'대시보드',accelerator:'CmdOrCtrl+1',click:showDashboard},{label:'연결 장치',accelerator:'CmdOrCtrl+2',click:show},{type:'separator'},{label:'종료',accelerator:process.platform==='darwin'?'Command+Q':'Alt+F4',click:()=>app.quit()}]},
     {role:'editMenu'},

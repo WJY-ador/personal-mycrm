@@ -58,6 +58,7 @@ function agentHome(platform=process.platform, env=process.env, home=os.homedir()
   if (platform === 'win32') return p.join(env.APPDATA || home,'my-crm-agent');
   return p.join(home,'.local','share','my-crm-agent');
 }
+// GitHub releases/latest. Called only by updater.cjs, for builds that announce a new release without installing it.
 function checkUpdate(current) {
   return new Promise((resolve,reject) => {
     const req = https.get('https://api.github.com/repos/WJY-ador/personal-mycrm/releases/latest', {
@@ -81,4 +82,5 @@ function checkUpdate(current) {
     req.on('error',reject);
   });
 }
-module.exports={HOSTED,PRODUCTION,hostedBase,RELEASES,DASHBOARD,safeExternal,inAppAllowed,externalHttps,newerVersion,agentHome,checkUpdate};
+// PACKAGE: the packaged package.json (build markers such as mycrmDevHosted and mycrmMacUpdater; updater.cjs).
+module.exports={PACKAGE:pkg,HOSTED,PRODUCTION,hostedBase,RELEASES,DASHBOARD,safeExternal,inAppAllowed,externalHttps,newerVersion,agentHome,checkUpdate};

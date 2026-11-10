@@ -1,5 +1,5 @@
 'use strict';
-const $=id=>document.getElementById(id);let latestDownload=null;
+const $=id=>document.getElementById(id);
 function say(text){$('message').textContent=text;}
 function state(s){
   $('version').textContent='v'+s.version;$('connection').textContent=s.pc?.revoked?'해제됨':s.connection.connected?'연결됨':'연결 안 됨';
@@ -45,42 +45,35 @@ $('stop').onclick=()=>act(()=>window.mycrm.stop(),'연결 장치를 중지했어
 $('sync').onclick=()=>act(()=>window.mycrm.sync(),'동기화를 마쳤어요.');
 $('disconnect').onclick=()=>act(()=>window.mycrm.disconnect(),'연결을 해제했어요. 기존 데이터는 보존됩니다.');
 $('logs').onclick=()=>act(()=>window.mycrm.logs());
-let updateCheckId=0,updateInFlight=false,lastAvailableVersion=null;
-async function checkForUpdate(){
-  if(updateInFlight)return;
-  updateInFlight=true;
-  const id=++updateCheckId;
-  if(!lastAvailableVersion){$('update-state').textContent='업데이트를 확인하고 있어요.';$('download').hidden=true;latestDownload=null;}
-  try {
-    const response=await window.mycrm.update();
-    if(id!==updateCheckId)return;
-    if(!response.ok||!response.value)throw new Error('update-unavailable');
-    const result=response.value;
-    if(result.state==='available'){
-      lastAvailableVersion=result.version;
-      $('update-badge').textContent='새 버전 '+result.version;$('update-badge').hidden=false;
-      latestDownload=result.url;$('download').hidden=false;
-      $('update-state').textContent='새 버전 '+result.version+'을 받을 수 있어요. 앱을 종료한 뒤 설치하세요.';
-    }else if(result.state==='not-published'){
-      $('update-badge').hidden=true;
-      lastAvailableVersion=null;latestDownload=null;$('download').hidden=true;
-      $('update-state').textContent='아직 게시된 안정 버전이 없습니다.';
-    }else if(result.state==='current'){
-      $('update-badge').hidden=true;
-      lastAvailableVersion=null;latestDownload=null;$('download').hidden=true;
-      $('update-state').textContent='게시된 최신 안정 버전: '+result.version;
-    }else throw new Error('update-invalid');
-  }catch{
-    if(id===updateCheckId)$('update-state').textContent=lastAvailableVersion
-      ?'새 버전 '+lastAvailableVersion+'을 받을 수 있어요. 최신 상태를 다시 확인하지 못했어요.'
-      :'업데이트를 확인하지 못했어요. 네트워크를 확인하고 다시 시도해 주세요.';
-  }finally{
-    updateInFlight=false;
+// Updates: the app's updater (updater.cjs) checks, downloads and installs; this panel draws its state and never asks
+// GitHub itself. The panel has its own download and restart buttons for a user who closed the dashboard band.
+let update=null,checkResult=null;
+function showUpdate(u){
+  if(!u||typeof u!=='object')return;update=u;
+  if(u.phase==='checking')checkResult=null;   // a new check replaces the last manual result
+  const v=x=>'v'+x;
+  $('update-badge').hidden=!u.version;if(u.version)$('update-badge').textContent='새 버전 '+v(u.version);
+  let text,primary=null,restart=false,page=false;
+  if(u.phase==='checking')text='업데이트를 확인하고 있어요.';
+  else if(u.phase==='available'){
+    text='새 버전이 나왔어요. 지금 '+v(u.current)+', 새 버전 '+v(u.version)+'.';
+    if(u.inApp)primary='지금 업데이트';else{text+=' 다운로드 페이지에서 받아, 앱을 종료한 뒤 설치하세요.';page=true;}
+    if(checkResult==='failed')text+=' 최신 상태를 다시 확인하지 못했어요.';
   }
+  else if(u.phase==='downloading')text='새 버전을 받고 있어요. '+(u.percent??0)+'%';
+  else if(u.phase==='downloaded'){text='새 버전을 받았어요. 다시 시작하면 설치돼요.';restart=true;}
+  else if(u.phase==='error'){text=u.reason==='install'?'업데이트를 설치하지 못했어요.':'업데이트를 받지 못했어요.';primary='다시 시도';page=true;}
+  else text=checkResult==='ok'?'최신 버전을 쓰고 있어요. 지금 '+v(u.current)+'.'
+    :checkResult==='failed'?'업데이트를 확인하지 못했어요. 네트워크를 확인하고 다시 시도해 주세요.'
+    :'새 버전이 나오면 여기와 대시보드에 알려 드려요.';
+  $('update-state').textContent=text;
+  $('update-download').hidden=!primary;if(primary)$('update-download').textContent=primary;
+  $('update-install').hidden=!restart;$('download').hidden=!page;
 }
-$('update').onclick=checkForUpdate;
-$('download').onclick=()=>act(()=>window.mycrm.download(latestDownload));
-window.mycrm.onStatus(state);refresh();checkForUpdate();
-// The app may remain open for days. Retry periodically without interrupting work.
-const updateTimer=setInterval(checkForUpdate,6*60*60*1000);
-window.addEventListener('pagehide',()=>clearInterval(updateTimer),{once:true});
+$('update').onclick=async()=>{const r=await act(()=>window.mycrm.checkUpdate());if(r&&r.checked!=='skipped'){checkResult=r.checked;showUpdate(update);}};
+$('update-download').onclick=()=>act(()=>window.mycrm.downloadUpdate());
+$('update-install').onclick=()=>act(()=>window.mycrm.installUpdate());
+$('download').onclick=()=>act(()=>window.mycrm.openReleases());
+window.mycrm.onUpdate(showUpdate);
+window.mycrm.onStatus(state);refresh();
+window.mycrm.updateState().then(r=>{if(r?.ok)showUpdate(r.value);},()=>{});

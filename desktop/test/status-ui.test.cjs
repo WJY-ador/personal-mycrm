@@ -10,7 +10,7 @@ function render(processes){
  const element=id=>{if(!nodes.has(id))nodes.set(id,{id,textContent:'',value:'',hidden:false,disabled:false,checked:false});return nodes.get(id);};
  let show;
  const status={version:'0.1.2',pc:{session:'ok',registered:true},connection:{connected:true},processes,ready:true,busy:false,codexCandidates:[]};
- const mycrm={status:async()=>({ok:true,value:status}),onStatus:fn=>{show=fn;},update:async()=>({ok:false})};
+ const mycrm={status:async()=>({ok:true,value:status}),onStatus:fn=>{show=fn;},updateState:async()=>({ok:false}),onUpdate:()=>{}};
  vm.runInNewContext(source,{window:{mycrm,addEventListener:()=>{}},document:{getElementById:element,querySelectorAll:()=>[],activeElement:null},
   console,setInterval:()=>1,clearInterval:()=>{}});
  show(status);return element('process-detail').textContent;
