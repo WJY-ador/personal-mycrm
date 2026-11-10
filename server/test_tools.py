@@ -1725,7 +1725,7 @@ async def test_start_assets():
             assert r.status_code == 200 and "{{asset:" not in r.text and "start-bg" not in r.text, r.status_code
             assert re.findall(r'/assets/[^"?]+', r.text) == ["/assets/theme.js"] and "data-theme-toggle" in r.text, "도움말은 theme.js·토글만"
             assert f'/assets/theme.js?v={web.ASSETS["theme.js"][2]}' in r.text
-            # 기본 밝은 화면: OS 다크 설정·?theme 를 따르지 않는다. 어두운 화면은 토글(data-theme="dark")로만
+            # 어두운 화면 = data-theme="dark"(theme.js 가 고른 값, 없으면 OS 설정으로 붙인다 — 결정 5). CSS 는 OS 설정을 직접 보지 않고 ?theme 도 따르지 않는다
             for f in ("start.html",):   # app.html 몫은 test_web_home.py B1(③-0.2)
                 src = (HERE / f).read_text(encoding="utf-8")
                 assert "prefers-color-scheme" not in src and "dataset.theme" not in src and src.count(':root[data-theme="dark"] {') >= 1, f
@@ -1745,11 +1745,11 @@ async def test_start_assets():
     files = [*(f for f in HERE.glob("*.html") if f.name != "app.html"), *HERE.glob("*.py"), *adir.glob("*")]   # app.html 은 test_web_home.py B2
     hits = [(f.name, n) for f in files for n in needles if n in f.read_bytes()]
     assert not hits, hits
-    # theme.js: 외부 주소·네트워크 호출 0, localStorage 는 try 안에서만, OS 설정 미추종
+    # theme.js: 외부 주소·네트워크 호출 0, localStorage 는 try 안에서만, 고른 값이 없으면 OS 설정을 따른다(디자인1 결정 5)
     tj = (adir / "theme.js").read_text(encoding="utf-8")
     assert not re.search(r"https?:|fetch\(|XMLHttpRequest|import\(|sendBeacon|WebSocket|\.src\s*=", tj), "theme.js 외부 요청 금지"
     assert all("try {" in ln for ln in tj.splitlines() if "localStorage." in ln), "localStorage 는 try/catch 안에서"
-    assert "prefers-color-scheme" not in tj and "matchMedia" not in tj, "OS 설정 미추종"
+    assert "prefers-color-scheme: dark" in tj and "matchMedia" in tj, "고른 값이 없으면 OS 설정을 따른다(결정 5)"
     # 데모 낡음: 촬영 때 app.html 과 지금이 다르면 경고만(실패 아님) — tools/start-visuals/README.md 로 다시 찍는다
     meta = json.loads((adir / "start-demo.json").read_text(encoding="utf-8"))
     assert set(meta) == {"light", "dark"}, meta.keys()
