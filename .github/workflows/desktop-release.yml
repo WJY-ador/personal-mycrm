@@ -105,6 +105,12 @@ jobs:
           printf '%s' "$MAC_SIGN_P12_BASE64" | base64 --decode > "$p12"
           security create-keychain -p "$keychain_password" "$keychain"
           echo "keychain=$keychain" >> "$GITHUB_OUTPUT"
+          # On the macOS 15 runner codesign finds the key only through the user search list; --keychain
+          # alone fails with "The specified item could not be found in the keychain". The runner is
+          # discarded after the job, and delete-keychain below also drops it from the list.
+          search=("$keychain")
+          while IFS= read -r k; do search+=("$k"); done < <(security list-keychains -d user | sed 's/^ *"//; s/"$//')
+          security list-keychains -d user -s "${search[@]}"
           security set-keychain-settings -lut 21600 "$keychain"
           security unlock-keychain -p "$keychain_password" "$keychain"
           security import "$p12" -k "$keychain" -P "$MAC_SIGN_P12_PASSWORD" -T /usr/bin/codesign > /dev/null
