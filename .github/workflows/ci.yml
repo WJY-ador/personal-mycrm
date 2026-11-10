@@ -330,7 +330,7 @@ jobs:
   # platform overrides are used for this synthetic two-provider integration test.
   freechat-macos:
     name: freechat-macos
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 20
     env:
       DATABASE_URL: postgresql://127.0.0.1:55447/crm_test_freechat_e2e
