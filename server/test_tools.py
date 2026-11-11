@@ -3224,7 +3224,7 @@ async def test_optional_consent():
                      "표시 이름", "사람", "출처 요약/반응", "삭제 요청", "1년"):   # v5(PR B)
             assert word in r.text, word
         basis = r.text[r.text.index("처리 근거"):r.text.index('id="privacy-2"')]
-        assert "<table>" in basis and basis.count("<tr>") == 7, basis   # v5: 삭제 뒤 contact 1년(정당한 이익) 행 · v6: 연결 장치 행 · v7: 웹 대화 행 추가
+        assert "<table>" in basis and basis.count("<tr>") == 8, basis   # v5: 삭제 뒤 contact 1년(정당한 이익) 행 · v6: 연결 장치 행 · v7: 웹 대화 행 추가 · v8: 웹 AI 대화 행 추가
         assert r.status_code == 200 and "지금은 모으지 않습니다" not in r.text and "v1 · 2026-10-18" not in r.text
         assert "v2 · 2026-10-19" not in r.text and "v3 · 2026-10-19" not in r.text and "처리방침에 동의하기 전" not in r.text
         assert "로그인한 뒤 「문의」에서" not in r.text, "문의 경로는 계정 메뉴 「문의 보내기」"
