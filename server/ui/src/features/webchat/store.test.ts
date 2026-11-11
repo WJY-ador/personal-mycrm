@@ -231,6 +231,17 @@ test("PC 허용 끝: 창 닫힘(취소, 응답 없음) · 시간 초과 · PC �
   }
 });
 
+test("PC 앱이 허용하지 않음을 알리면(prompt declined) 폴링을 멈추고 declined 로 끝낸다 · 세션을 만들지 않는다", async () => {
+  const { s } = mk(false);
+  await s.toggle(true);
+  s.input = "질문";
+  s.api.grantStatus = vi.fn(async () => grantOf({ prompt: "declined" }));
+  await s.send();
+  expect([s.grantNote, s.sid, s.input, s.waiting()]).toEqual(["declined", "", "질문", false]);
+  expect(s.api.grantStatus).toHaveBeenCalledTimes(1);
+  expect(s.api.create).not.toHaveBeenCalled();
+});
+
 test("허용 요청 실패와 세션 생성 실패는 문구로 알리고 글을 남긴다", async () => {
   const { s } = mk(false);
   await s.toggle(true);

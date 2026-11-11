@@ -11,7 +11,7 @@ import { BUSY_NEW, PAST_END, REPLACED, TEXT_MAX, TRIMMED, endText, errText } fro
 export type Tool = { name: string; input?: unknown; ok?: boolean; summary?: string };
 export type Turn = { id: string; user: string; answer: string; tools: Tool[]; end: "" | "done" | "error"; endNote: string; last: number };
 export type Choice = { device: string; provider: string; model: string | null };
-export type GrantNote = "" | "asking" | "none" | "open" | "approved" | "closed" | "expired" | "offline";
+export type GrantNote = "" | "asking" | "none" | "open" | "approved" | "closed" | "declined" | "expired" | "offline";
 type Ev = { turn_id: string; seq?: number; data?: Record<string, unknown>; text?: string };
 
 export const MODEL_KEY = "mycrm-webchat-model";
@@ -252,6 +252,7 @@ export class WebchatStore {
       if (g.state === "approved") break;
       if (g.state === "expired" || g.state === "consumed") { this.grantNote = "expired"; this.emit(); return false; }
       if (g.connected === false) { this.grantNote = "offline"; this.emit(); return false; }
+      if (g.prompt === "declined") { this.grantNote = "declined"; this.emit(); return false; }   // PC 앱이 허용하지 않음을 알렸다 — 폴링 멈춤
       if (g.prompt === "closed") { this.grantNote = "closed"; this.emit(); return false; }
       this.grantNote = g.prompt === "open" ? "open" : "none"; this.emit();
       await this.sleep(GRANT_POLL_MS);

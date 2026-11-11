@@ -27,13 +27,14 @@ export const providerName = (p: string) => PROVIDER[p] || p;
 export const modelLabel = (provider: string, model: string | null) => `${providerName(provider)}, ${model || "기본 모델"}`;
 export const pcLabel = (i: number) => `PC ${i + 1}`;
 
-// PC 허용(grant) 대기 — PC 의 취소는 서버에 오지 않는다. 창이 승인 없이 끝난 것(취소, 시간 초과)을 한 문장으로 둔다
+// PC 허용(grant) 대기 — 새 PC 앱은 허용하지 않음을 서버에 알린다(declined). 0.1.3 이하 앱의 취소, 시간 초과는 closed 한 문장으로 둔다
 export const GRANT: Record<string, string> = {
   asking: "PC 앱에 허용을 요청하는 중이에요.",
   none: "PC 앱에서 허용을 눌러 주세요. 허용 창이 곧 떠요.",
   open: "PC 앱에 허용 창이 떴어요. 허용을 눌러 주세요.",
   approved: "허용됐어요. 대화를 시작해요.",
   closed: "PC 앱에서 허용하지 않았거나 허용 창이 닫혔어요.",
+  declined: "PC 앱에서 허용하지 않았어요. 다시 시작하려면 새 대화를 여세요.",
   expired: "허용을 기다리는 시간(5분)이 지났어요.",
   offline: "PC 앱이 꺼져 있거나 연결이 끊겼어요. PC 앱을 켠 뒤 다시 요청하세요.",
 };
@@ -50,15 +51,22 @@ export const PAST_NOTE = "지난 대화예요. 읽기만 할 수 있어요. 이�
 export const PAST_EMPTY = "이 대화에는 남은 메시지가 없어요.";
 export const BUSY_NEW = "답이 끝난 뒤 새 대화를 시작할 수 있어요.";
 
-// 확인 카드 — 확인 카드 대상 op(server/webchat.py CHAT_APPROVABLE_OPS) 10개. 모르는 op = op 이름 그대로
+// 확인 카드 — 확인 카드 대상 op(server/webchat.py CHAT_CARD_OPS) 24개 = decide 10 + write 14. 모르는 op = op 이름 그대로.
+// 키 집합은 서버, agent/chat_approval_context.py 와 같아야 한다(server/test_chat_injection.py 가 대조한다)
 export const OP_NAME: Record<string, string> = {
   record_edit: "기록 고치기", record_provenance_set: "기록 작성자 표시 바꾸기", candidate_decide: "판단 후보 정하기",
   definition_archive: "자료 종류 보관하기", definition_restore: "자료 종류 보관 풀기", person_delete: "사람 지우기",
   source_reflection_review: "읽고 든 생각 검토 표시 바꾸기", source_reflection_delete: "읽고 든 생각 지우기",
   trash_move: "휴지통으로 옮기기", trash_restore: "휴지통에서 되살리기",
+  layout_set: "화면 배치 바꾸기", layout_reset: "화면 배치 처음으로", display_name_set: "표시 이름 바꾸기",
+  question_add: "질문 더하기", profile_set: "프로필 항목 저장하기", record_add: "기록 남기기",
+  record_attach: "기록 붙일 곳 정하기", record_title_set: "기록 제목 바꾸기", candidates_propose: "판단 후보 제안하기",
+  definition_propose: "자료 종류 제안하기", item_propose: "항목 제안하기", person_save: "사람 저장하기",
+  source_create: "출처 만들기", source_reflection_save: "읽고 든 생각 저장하기",
 };
 export const CARD_HEAD = "확인이 필요한 작업";
 export const CARD_MORE = "자세히";
+export const CARD_SHOWN = "실행할 내용";
 export const CARD_RAW: Record<string, string> = { shown: "화면에 보인 내용(원본)", impact: "영향(원본)", params: "실행할 매개변수(원본)", result: "실행 결과(원본)" };
 export const CARD_STATUS: Record<string, string> = { pending: "확인 대기", confirmed: "확인해 실행함", cancelled: "취소함" };
 export const CARD_IRREVERSIBLE = "되돌릴 수 없음";

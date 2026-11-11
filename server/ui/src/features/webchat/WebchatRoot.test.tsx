@@ -195,6 +195,39 @@ test("확인 카드 = op 한국어 제목 · shown 의 이름과 값이 빠짐�
   expect(el.textContent).toContain('"updated": 1');
 });
 
+test("PC 앱이 허용하지 않음(declined) = 새 대화 안내 문구, 대기 캐릭터 없음", async () => {
+  const { s } = mk();
+  s.sleep = async () => {};
+  s.api.grantStatus = vi.fn(async (request_id: string) => ({ request_id, device_id: "is_1", provider: "claude", model: "sonnet", state: "pending" as const, prompt: "declined" as const, expires_at: "", connected: true }));
+  await open(s);
+  await act(async () => { s.pick(s.choices()[1]); });
+  await type("질문");
+  await act(async () => { btn("보내기").click(); }); await flush(); await flush();
+  const box = aside().querySelector("[aria-label='PC 허용']") as HTMLElement;
+  expect(box.querySelector("[role=alert]")?.textContent).toBe(GRANT.declined);
+  expect(GRANT.declined).toBe("PC 앱에서 허용하지 않았어요. 다시 시작하려면 새 대화를 여세요.");
+  expect(box.querySelector("svg[data-sprout]")).toBeNull();
+  expect(s.api.create).not.toHaveBeenCalled();
+});
+
+test("write 카드 = 한국어 제목 · 긴 본문을 자르지 않고 높이 제한 스크롤 상자 안에 전부 보인다", async () => {
+  const { s } = mk();
+  const long = "가".repeat(5000) + "끝";
+  const shown = { "본문": long, "제목": "회의 메모", "질문 ID": "", "출처 메모": "대화에서 입력", "모르는_키": "그대로" };
+  const card: Approval = { id: "ca_1", turn_id: "ct_1", op: "record_add", params: { text: long }, shown, impact: { tier: "write" }, irreversible: false, status: "pending", created_at: "", expires_at: "2026-11-08T00:05:00Z", finished_at: null, result: null };
+  s.api.approvals = vi.fn().mockResolvedValue({ approvals: [card] });
+  await open(s);
+  await type("남겨 줘"); await send(); await flush();
+  const art = el.querySelector("article") as HTMLElement;
+  expect(art.querySelector("h5")?.textContent).toBe(OP_NAME.record_add);
+  const box = art.querySelector("[data-shown]") as HTMLElement;
+  expect(box.getAttribute("role")).toBe("region");
+  expect(box.tabIndex).toBe(0);
+  expect(box.querySelector("blockquote")?.textContent).toBe(long);   // 자르지 않는다
+  for (const k of Object.keys(shown)) expect(box.textContent).toContain(k);
+  expect(box.textContent).toContain("빈 값");
+});
+
 test("확인 카드: 모르는 op = op 이름 그대로 · 승인 목록 오류를 표시하고 다시 불러올 수 있다 · 빈 목록이면 상자가 없다", async () => {
   const { s } = mk();
   s.api.approvals = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValue({ approvals: [{ id: "ap_x", turn_id: "ct_1", op: "new_op", params: {}, shown: "한 줄", impact: {}, irreversible: false, status: "pending", created_at: "", expires_at: "", finished_at: null, result: null }] });

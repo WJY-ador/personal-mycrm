@@ -48,6 +48,21 @@ class ChatMcpRouteTests(unittest.TestCase):
             with self.subTest(raw=raw), self.assertRaises(db.CrmError):
                 asyncio.run(webchat.Routes._chat_mcp_body(Request(raw)))
 
+    def test_body_limit_is_chat_specific_96_kib(self):
+        """F8(2026-11-11): 기록 쓰기 상한 64 KiB 원문이 JSON 이스케이프 뒤에도 들어가고, 96 KiB 를 넘으면 거절. 동의 경로 4 KiB 는 그대로."""
+        self.assertEqual((webchat.CHAT_MCP_BODY_MAX, webchat.CONSENT_BODY_MAX), (96 * 1024, 4 * 1024))
+        ids = f'"session_id":"{self.session_id}","turn_id":"{self.turn_id}"'
+        def body(text):
+            return ('{' + ids + ',"tool":"write","op":"record_add","params":' + json.dumps({"text": text}, ensure_ascii=False) + '}').encode()
+        text = "가" * (64 * 1024 // 3)
+        self.assertLessEqual(len(text.encode()), 64 * 1024)
+        parsed = asyncio.run(webchat.Routes._chat_mcp_body(Request(body(text))))
+        self.assertEqual(parsed["params"]["text"], text)
+        raw = body("a" * webchat.CHAT_MCP_BODY_MAX)
+        with self.assertRaises(db.CrmError) as error:
+            asyncio.run(webchat.Routes._chat_mcp_body(Request(raw)))
+        self.assertEqual(error.exception.code, "TEXT-LIMIT")
+
     def test_list_and_find_bodies_have_narrow_shapes(self):
         ids = f'"session_id":"{self.session_id}","turn_id":"{self.turn_id}"'
         listing = asyncio.run(webchat.Routes._chat_mcp_body(Request(('{' + ids + ',"tool":"list","params":{}}').encode())))
@@ -86,7 +101,7 @@ class ChatMcpRouteTests(unittest.TestCase):
                 return {"synthetic": True}
 
         body = {"session_id": self.session_id, "turn_id": self.turn_id,
-                "tool": "write", "op": "question_add", "params": {"text": "synthetic"}}
+                "tool": "read", "op": "state_get", "params": {}}
         with patch("db.pool", return_value=pool), patch("webchat._chat_mcp_scope", side_effect=scope), \
              patch("chat_mcp_gateway.ChatMcpGateway", FakeGateway):
             result = webchat._chat_mcp_execute({"id": "synthetic-device"}, "Bearer synthetic", body)
@@ -126,7 +141,7 @@ class ChatMcpRouteTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 webchat._chat_mcp_execute({"id": "synthetic-device"}, "Bearer synthetic",
                                           {"session_id": self.session_id, "turn_id": self.turn_id,
-                                           "tool": "write", "op": "question_add", "params": {"text": "x"}})
+                                           "tool": "read", "op": "state_get", "params": {}})
         self.assertEqual(connection.events[-1][0], "rollback")
 
     def test_facade_trusted_path_blocks_unconfirmed_decide_and_purge(self):

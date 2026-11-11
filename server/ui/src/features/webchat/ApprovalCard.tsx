@@ -1,10 +1,10 @@
 // 확인 카드 — 무엇을 하려는지 한 줄 제목(op 한국어 이름) · 상태 · 바뀌는 내용(서버 shown 을 이름과 값의 줄로, 원문은 인용 꼴로).
-// shown 은 고쳐 쓰지 않는다: 서버가 준 순서 그대로, 값을 요약하거나 빼지 않는다(표현만 바꾼다). 원본 JSON(shown, impact, params, 결과)은 "자세히" 안에 접는다.
+// shown 은 고쳐 쓰지 않는다: 서버가 준 순서 그대로, 값을 요약하거나 빼지 않는다(표현만 바꾼다). 긴 값은 높이 제한 상자 안에서 스크롤로 전부 보인다. 원본 JSON(shown, impact, params, 결과)은 "자세히" 안에 접는다.
 // 버튼과 서버 계약(취소, 확인하고 실행)은 그대로.
 import { mdhm } from "../../shared/date";
 import type { Approval } from "./api";
 import type { WebchatStore } from "./store";
-import { CARD_EMPTY, CARD_HEAD, CARD_IRREVERSIBLE, CARD_MORE, CARD_NULL, CARD_RAW, CARD_STATUS, OP_NAME } from "./text";
+import { CARD_EMPTY, CARD_HEAD, CARD_IRREVERSIBLE, CARD_MORE, CARD_NULL, CARD_RAW, CARD_SHOWN, CARD_STATUS, OP_NAME } from "./text";
 import css from "./Webchat.module.css";
 
 const QUOTE = /인용|원문|본문|문장|^전$|^후$/;   // 사용자가 쓴 글을 그대로 옮긴 값 — 인용 꼴
@@ -37,7 +37,7 @@ function Card({ a, s }: { a: Approval; s: WebchatStore }) {
     <article className={css.approval} data-op={a.op}>
       <h5>{OP_NAME[a.op] || a.op}</h5>
       <p className={css.approvalMeta}>{CARD_STATUS[a.status] || a.status}{when}{a.irreversible ? `, ${CARD_IRREVERSIBLE}` : ""}</p>
-      <div className={css.shown} data-shown=""><Shown v={a.shown} /></div>
+      <div className={css.shown} data-shown="" tabIndex={0} role="region" aria-label={CARD_SHOWN}><Shown v={a.shown} /></div>
       <details className={css.raw}><summary>{CARD_MORE}</summary>
         {raw.map(([k, v]) => <div key={k}><h6>{CARD_RAW[k]}</h6><pre>{jsonText(v)}</pre></div>)}
       </details>
