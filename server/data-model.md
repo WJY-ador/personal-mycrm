@@ -186,3 +186,13 @@ Postgres 전환은 끝났다(2026-10-18, `db.py` psycopg 판). 후보 revision �
 - v1 행(`{"v":1,"tabs","blocks"}`)은 읽을 때 v2 로 올려 돌려준다(쓰기 없음). 다음 저장부터 v2. v1 모양 저장은 거절.
 - 대화: `layout_get`(read) · `layout_set(page, layout, version)`(write — 그 페이지만 바꾼다) · `layout_reset(page)`(write). 웹 `GET·PUT·DELETE /api/me/layout` 은 v2 전체. 버전 불일치 `LAYOUT-STALE`.
 
+
+## 웹 대화 확인 카드, PC 허용 거절 (2026-11-11 대화 하나로 F)
+- 표 정의는 `schema.sql` 의 `chat_approvals`, `chat_provider_grants`. 두 열은 `ALTER TABLE … ADD COLUMN IF NOT EXISTS` 로 schema.sql 안에 있다 — 서버 시작(`main.lifespan` → `db.init_schema`)이 schema.sql 전체를 실행하므로 운영 DB 에도 그때 붙는다. 옛 행은 기본값(아래)으로 읽힌다.
+- `chat_approvals.kind`(`decide`, `write`, 기본 `decide`): 카드 종류. 옛 행은 decide 다.
+  - decide 카드 = 기존 그대로(`CHAT_APPROVABLE_OPS` 10개, facade `decide_preview` 와 같은 preview, bind).
+  - write 카드 = 자유 대화의 write 등급 op 전부(`pc_connect` 제외 14개, 판정은 `chat_mcp._PINNED_TIERS` 등급). 모델이 부르면 실행하지 않고 카드만 만든다. `params` = facade 검증, 정규화를 거친 값, `preview` = `{op, shown, impact:{tier:"write"}, irreversible:false, hash}`. shown 은 정규화 params 의 모든 키(아는 키는 한국어 이름표, 모르는 키는 키 이름, 값은 자르지 않음). hash = sha256(op ∥ 정규화 params). facade PREVIEWS, bind 와 무관하다.
+  - 확정(웹 카드)은 저장한 params 를 다시 정규화해 hash, shown 이 같을 때만 `facade.dispatch("write", …)` 로 실행한다. 다르면 `APPROVAL-STALE`. 한 번만 확정, 한도(대기 20, 세션 100행, 600초)는 decide 와 같다.
+  - 다음 턴 outcomes = `{id, op, status, created?}`. created 는 확정된 write 의 생성 id 만(op별 허용 키 `id`, `source_id`, `object_id`, `proposal_id`, `item_id`, 값은 생성기 모양 정규식). 글이나 그 밖의 값은 넣지 않는다.
+  - outcomes 크기(F13): 최신 행부터 담고, agent 꼴 JSON(압축) 바이트가 `APPROVAL_OUTCOMES_JSON_MAX`(13 KiB)를 넘기 전에서 오래된 행을 뺀다. 개수 상한 100 그대로. agent 고정 문구 + 이 값 <= 16 KiB - 1 KiB 를 시험이 대조한다.
+- `chat_provider_grants.close_reason`(NULL, `declined`, `locked`, `failed`): PC 앱이 동의 창이 허용 없이 끝났다고 장치 WS `consent.result` 로 알린 이유. 그 연결의 사용자, 장치의 pending grant 에만, 처음 한 번만 쓴다(멱등). 쓰면서 그 grant 의 issued challenge 를 revoked 로 바꾼다. 값이 있는 grant 는 challenge 발급, 서명 검증, 소비가 모두 거절된다. 상태 조회 prompt: declined → `declined`, locked, failed → `closed`. state CHECK 는 그대로(pending 행에 이유만 붙는다).
