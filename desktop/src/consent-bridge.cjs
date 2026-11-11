@@ -14,6 +14,14 @@ const MAX_LINE=8192;
 const REQUEST_ID=/^[A-Za-z0-9_-]{1,64}$/;
 const TOKEN=/^[A-Za-z0-9_-]{43}$/;
 const BEARER=/^Bearer [A-Za-z0-9._~+/-]{16,500}$/;
+// Reply contract: {"ok":true} or {"ok":false,"reason":"declined"|"locked"|"failed"}.
+// Anything the handler returns other than ok===true becomes a refusal; an unknown reason becomes "failed".
+const REASONS=new Set(['declined','locked','failed']);
+function reply(result){
+ if(result&&typeof result==='object'&&result.ok===true)return {ok:true};
+ const reason=result&&typeof result==='object'&&typeof result.reason==='string'&&REASONS.has(result.reason)?result.reason:'failed';
+ return {ok:false,reason};
+}
 
 function validDirectory(directory,uid){
  return fs.lstat(directory).then(st=>st.isDirectory()&&!st.isSymbolicLink()
@@ -58,32 +66,32 @@ class ConsentBridge{
   socket.on('close',()=>{aborter.abort();this.aborters.delete(aborter);this.clients.delete(socket);});
   socket.setTimeout(5000,()=>socket.destroy());
   let raw=Buffer.alloc(0),settled=false;
-  const finish=async(ok)=>{
+  const finish=async(result)=>{
    if(settled)return;settled=true;
-   try{socket.end(JSON.stringify({ok:ok===true})+'\n');}catch{socket.destroy();}
+   try{socket.end(JSON.stringify(reply(result))+'\n');}catch{socket.destroy();}
   };
   socket.on('data',chunk=>{
    if(settled)return;
    raw=Buffer.concat([raw,chunk]);
-   if(raw.length>MAX_LINE){void finish(false);return;}
+   if(raw.length>MAX_LINE){void finish(null);return;}
    const newline=raw.indexOf(10);
    if(newline<0)return;
-   if(newline!==raw.length-1){void finish(false);return;}
+   if(newline!==raw.length-1){void finish(null);return;}
    let request;
-   try{request=JSON.parse(raw.subarray(0,newline).toString('utf8'));}catch{void finish(false);return;}
+   try{request=JSON.parse(raw.subarray(0,newline).toString('utf8'));}catch{void finish(null);return;}
    if(!request||typeof request!=='object'||Array.isArray(request)
       ||Object.keys(request).sort().join(',')!=='device_bearer,request_id,token,version'
       ||request.version!==1||typeof request.token!=='string'||!TOKEN.test(request.token)
       ||!crypto.timingSafeEqual(Buffer.from(request.token),Buffer.from(this.token||''))
       ||typeof request.request_id!=='string'||!REQUEST_ID.test(request.request_id)
       ||typeof request.device_bearer!=='string'||!BEARER.test(request.device_bearer)){
-    void finish(false);return;
+    void finish(null);return;
    }
    // A native prompt can remain open until the server challenge expires. Keep the
    // IPC channel alive for that interval; child exit still aborts the handler.
    socket.setTimeout(360000,()=>socket.destroy());
    Promise.resolve().then(()=>this.handler(Object.freeze({request_id:request.request_id,device_bearer:request.device_bearer}),aborter.signal))
-    .then(ok=>finish(ok===true),()=>finish(false));
+    .then(result=>finish(result),()=>finish(null));
   });
   socket.on('error',()=>{settled=true;});
  }
@@ -99,4 +107,4 @@ class ConsentBridge{
  }
 }
 
-module.exports=Object.freeze({ConsentBridge,MAX_LINE});
+module.exports=Object.freeze({ConsentBridge,MAX_LINE,reply});

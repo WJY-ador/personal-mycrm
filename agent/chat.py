@@ -4,6 +4,7 @@
 - 연결: wss://<서버>/api/device/chat/ws · Authorization: Bearer <장치 토큰>. 장치당 1연결(새 연결이 옛 연결을 대체).
 - 서버→PC turn.start{session_id, turn_id, text, cli_session_ref?, approval_outcomes?} · turn.stop{turn_id} · ack{turn_id, seq} · ping
 - PC→서버 hello{agent_version, providers[]} · event{turn_id, seq, kind, data} · session_ref{session_id, cli_session_ref} · pong
+  · consent.result{request_id, outcome} — PC 앱 동의 창이 거절·실패했을 때만, outcome ∈ declined·locked·failed. 보내기 실패는 무시한다.
 - kind = delta{text} · tool_call{name, input?} · tool_result{name, ok, summary?} · done{} · error{code}. 중지 = error{code:"STOPPED"}.
 - seq 는 턴 안에서 1부터. delta 는 최대 COALESCE_SEC(0.5초) 묶음. ack(누적) 전 이벤트만 턴당 BUFFER_MAX(256KB) 보유,
   재연결 때 그대로 다시 보낸다(서버가 (turn_id, seq) 중복을 무시). 버퍼가 차면 공급자를 멈추고 error{code:"BUFFER-LIMIT"} 로 끝낸다.
@@ -43,6 +44,8 @@ RECV_TICK = 1.0
 SEEN_MAX = 1000
 KINDS = ("delta", "tool_call", "tool_result", "done", "error")
 TERMINAL = ("done", "error")
+# PC→서버 consent.result{request_id, outcome} 의 outcome 고정 목록(agent/consent_bridge.REASONS 와 같다). 거절일 때만 보낸다.
+CONSENT_OUTCOMES = frozenset({"declined", "locked", "failed"})
 
 
 def ws_url(server_url: str) -> str:
@@ -348,10 +351,25 @@ class ChatAgent:
                 self.consent_pending.add(request_id)
 
             def forward():
+                # Only a refusal is reported. An approval is already known to the server through the
+                # signed challenge verification, so (True, None) sends nothing. A lost report is
+                # harmless: the server still closes the grant on its own timeout.
+                outcome = "failed"
                 try:
                     token = self.token_fn()
                     if isinstance(token, str) and token:
-                        self.consent_request(request_id, "Bearer " + token)
+                        result = self.consent_request(request_id, "Bearer " + token)
+                        if type(result) is tuple and len(result) == 2 and result[0] is True and result[1] is None:
+                            outcome = None
+                        elif (type(result) is tuple and len(result) == 2 and result[0] is False
+                              and isinstance(result[1], str) and result[1] in CONSENT_OUTCOMES):
+                            outcome = result[1]
+                except Exception:
+                    outcome = "failed"
+                try:
+                    if outcome is not None:
+                        self._send(_dumps({"type": "consent.result", "request_id": request_id,
+                                           "outcome": outcome}))
                 except Exception:
                     pass
                 finally:
