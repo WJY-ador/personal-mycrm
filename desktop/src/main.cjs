@@ -12,7 +12,7 @@ const handoff = require('./handoff.cjs');
 const grants = require('./grants.cjs');
 const {Connector} = require('./connector.cjs');
 const {ConsentBridge}=require('./consent-bridge.cjs');
-const {createConsentRuntime}=require('./consent-runtime.cjs');
+const {createConsentRuntime,REVOKE_NONE_EXIT}=require('./consent-runtime.cjs');
 const {createConsentLockGuard}=require('./consent-lock-guard.cjs');
 const {startChatSidecar}=require('./chat-sidecar.cjs');
 const {findCliCandidates,parseModelIds}=require('./cli-discovery.cjs');
@@ -135,9 +135,9 @@ function createDashboard(){
   if(queuedLink){const link=queuedLink;queuedLink=null;deepLink(link);}else dash.loadURL(DASHBOARD).catch(()=>{});
 }
 async function external(url){if(!safeExternal(url))throw new Error('url');await shell.openExternal(url);}
-function command(args,input) {
+function command(args,input,extraEnv={}) {
   return new Promise((resolve,reject)=> {
-    const env={...process.env,PYTHONNOUSERSITE:'1',PYTHONDONTWRITEBYTECODE:'1'};
+    const env={...process.env,PYTHONNOUSERSITE:'1',PYTHONDONTWRITEBYTECODE:'1',...extraEnv};
     delete env.MYCRM_JOBS_ALLOW_REAL_CLI;
     const child=spawn(binary,['--home',home,...args],{env,shell:false,windowsHide:true,stdio:['pipe','pipe','pipe']});
     commands.add(child);let done=false;const output=new OutputTail();
@@ -184,8 +184,22 @@ function consentRequest(pathname,body,authorization){
     'Origin':origin,'Authorization':authorization,'Content-Type':'application/json',
   });
 }
+// Stored-token consent revoke (R5): runs the agent once with the bridge capability in its env (never argv). The agent
+// sends its device token back over the bridge and the runtime calls keys/revoke. Windows has no bridge, so no consent
+// key can be made from this installation there: nothing to revoke.
+async function runConsentRevokeAgent(){
+  if(process.platform==='win32')return REVOKE_NONE_EXIT;
+  if(!ready||quitting||!consentBridge)return -1;
+  const env=await consentBridge.start();
+  const {code}=await command(['chat-consent-revoke'],null,env);
+  return code;
+}
 async function startChatAgent(){
   if(!consentBridge)throw new Error('bridge');
+  // R5: chat runs only after this run confirmed the stored revoke; otherwise one more try, then this start is refused.
+  if(!consentRuntime||!await consentRuntime.ensureStartRevoked()){
+    log('consent','chat-start-revoke-unconfirmed');throw new Error('consent-start-revoke-unconfirmed');
+  }
   await startChatSidecar(supervisor,consentBridge);
 }
 // One start for the button and the automatic start (autorun.cjs). The caller holds the app lock.
@@ -250,6 +264,7 @@ const FAILURES={
   'consent-lock-unsupported':'이 운영체제에서는 화면 잠금 상태를 확인할 수 없어 AI 대화를 사용할 수 없어요.',
   'consent-lock-locked':'화면 잠금을 풀고 PC를 다시 시작해 주세요.',
   'consent-lock-revoke-unconfirmed':'화면 잠금 뒤 PC 승인을 폐기했는지 확인하지 못해 대화를 막았어요. 연결을 확인한 뒤 다시 시도해 주세요.',
+  'consent-start-revoke-unconfirmed':'지난 실행의 PC 승인을 폐기했는지 확인하지 못해 대화를 시작하지 않았어요. 로그인과 연결을 확인한 뒤 다시 시도해 주세요.',
   default:'작업을 완료하지 못했어요. 연결 상태와 진단 로그를 확인해 주세요.',
 };
 function register(name,fn) {
@@ -284,7 +299,8 @@ async function initialize(){
   win.on('close',event=>{if(!quitting&&!installing){event.preventDefault();win.hide();}});
   connector=new Connector({hosted:HOSTED,request,store:connectionStore(path.join(userData,'desktop-connection.json')),install,forgetLocal,
     exclusive:exclusively,canDeliver:()=>ready&&!busy&&!quitting,connection,notify,log,client:grants.clientInfo(os.hostname(),process.platform),changed});
-  consentBridge=new ConsentBridge({directory:path.join(userData,'chat-ipc'),handler:async(input,signal)=>consentRuntime?await consentRuntime.handle(input,signal):{ok:false,reason:'failed'}});
+  consentBridge=new ConsentBridge({directory:path.join(userData,'chat-ipc'),handler:async(input,signal)=>consentRuntime?await consentRuntime.handle(input,signal):{ok:false,reason:'failed'},
+    revokeHandler:async input=>consentRuntime?await consentRuntime.revokeWith(input):{ok:false,reason:'failed'}});
   consentRuntime=createConsentRuntime({
     request:consentRequest,
     getInstallationId:async()=>{
@@ -292,6 +308,8 @@ async function initialize(){
       try{return await connector.installation();}catch{return null;}
     },
     safeStorage,keyFile:path.join(userData,'consent-signing-key.json'),app,dialog,powerMonitor,
+    getRevokeInstallationId:async()=>connector?.record?.installationId||null,
+    runRevokeAgent:runConsentRevokeAgent,
     trustedWindow:()=>win,allowedUrl:PAGE,
     focusWindow:async target=>{
       if(quitting||!target||target.isDestroyed())return false;
@@ -300,6 +318,9 @@ async function initialize(){
       return target.isFocused()===true;
     },
   });
+  // R5: a restart must not keep the previous run's consent alive. Revoke this installation's server consent key once
+  // at start. A failure is logged only; it does not hold the app or the lock guard. An approval waits for this to end.
+  consentRuntime.revokeAtStart().then(outcome=>log('consent','start-revoke-'+outcome));
   consentLock=createConsentLockGuard({powerMonitor,platform:process.platform,onLock:async()=>{
     consentBridge?.abortPending();
     const stopped=supervisor?stopChatForLock(supervisor,autorun):Promise.resolve();

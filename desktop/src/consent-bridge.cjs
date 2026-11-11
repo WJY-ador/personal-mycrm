@@ -14,6 +14,7 @@ const MAX_LINE=8192;
 const REQUEST_ID=/^[A-Za-z0-9_-]{1,64}$/;
 const TOKEN=/^[A-Za-z0-9_-]{43}$/;
 const BEARER=/^Bearer [A-Za-z0-9._~+/-]{16,500}$/;
+// Requests: approval {version:1,token,request_id,device_bearer} or revoke {version:1,token,kind:"revoke",device_bearer}.
 // Reply contract: {"ok":true} or {"ok":false,"reason":"declined"|"locked"|"failed"}.
 // Anything the handler returns other than ok===true becomes a refusal; an unknown reason becomes "failed".
 const REASONS=new Set(['declined','locked','failed']);
@@ -29,9 +30,10 @@ function validDirectory(directory,uid){
 }
 
 class ConsentBridge{
- constructor({directory,uid=process.getuid?.(),handler,platform=process.platform}={}){
-  if(typeof directory!=='string'||!path.isAbsolute(directory)||typeof handler!=='function')throw new TypeError('bridge options');
-  Object.assign(this,{directory,uid,handler,platform});
+ constructor({directory,uid=process.getuid?.(),handler,revokeHandler=null,platform=process.platform}={}){
+  if(typeof directory!=='string'||!path.isAbsolute(directory)||typeof handler!=='function'
+     ||(revokeHandler!==null&&typeof revokeHandler!=='function'))throw new TypeError('bridge options');
+  Object.assign(this,{directory,uid,handler,revokeHandler,platform});
   this.server=null;this.socketPath=null;this.token=null;
   this.clients=new Set();
   this.aborters=new Set();
@@ -79,6 +81,21 @@ class ConsentBridge{
    if(newline!==raw.length-1){void finish(null);return;}
    let request;
    try{request=JSON.parse(raw.subarray(0,newline).toString('utf8'));}catch{void finish(null);return;}
+   // Revoke request from a one-shot `chat-consent-revoke` run (app start, screen lock): the device token only.
+   // It runs while the screen is locked and is not cancelled by abortPending (a lock stops chat at the same moment).
+   if(request&&typeof request==='object'&&!Array.isArray(request)
+      &&Object.keys(request).sort().join(',')==='device_bearer,kind,token,version'){
+    if(request.version!==1||request.kind!=='revoke'||typeof request.token!=='string'||!TOKEN.test(request.token)
+       ||!crypto.timingSafeEqual(Buffer.from(request.token),Buffer.from(this.token||''))
+       ||typeof request.device_bearer!=='string'||!BEARER.test(request.device_bearer)||!this.revokeHandler){
+     void finish(null);return;
+    }
+    socket.setTimeout(30000,()=>socket.destroy());
+    const revoke=this.revokeHandler;
+    Promise.resolve().then(()=>revoke(Object.freeze({device_bearer:request.device_bearer})))
+     .then(result=>finish(result),()=>finish(null));
+    return;
+   }
    if(!request||typeof request!=='object'||Array.isArray(request)
       ||Object.keys(request).sort().join(',')!=='device_bearer,request_id,token,version'
       ||request.version!==1||typeof request.token!=='string'||!TOKEN.test(request.token)

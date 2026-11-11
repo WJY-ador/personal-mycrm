@@ -156,3 +156,62 @@ test('desktop main passes the runtime result object to the bridge instead of a b
  assert.doesNotMatch(line,/===\s*true/);
  assert.match(line,/consentRuntime\.handle\(input,signal\)/);
 });
+
+test('R5: revoke request carries only the device token, needs the capability, and abortPending does not cancel it',{skip:process.platform==='win32'},async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'mycrm-consent-bridge-revoke-'));
+ await fs.chmod(root,0o700);
+ const approvals=[],revokes=[];
+ let releaseRevoke;
+ const bridge=new ConsentBridge({directory:root,uid:process.getuid?.(),handler:async request=>{approvals.push(request);return {ok:true};},
+  revokeHandler:async request=>{revokes.push(request);if(releaseRevoke)await new Promise(resolve=>{releaseRevoke=resolve;});return {ok:true};}});
+ try{
+  const env=await bridge.start();
+  const request={version:1,token:env.MYCRM_CHAT_BRIDGE_TOKEN,kind:'revoke',device_bearer:'Bearer synthetic-device-token'};
+  assert.deepEqual(await send(env.MYCRM_CHAT_BRIDGE_SOCKET,request),{ok:true});
+  assert.deepEqual(revokes,[{device_bearer:'Bearer synthetic-device-token'}]);
+  for(const bad of [{...request,token:'wrong'},{...request,kind:'approve'},{...request,version:2},
+   {...request,device_bearer:'synthetic-device-token'},{...request,request_id:'session_request_1'}]){
+   assert.deepEqual(await send(env.MYCRM_CHAT_BRIDGE_SOCKET,bad),{ok:false,reason:'failed'});
+  }
+  assert.equal(revokes.length,1);
+  assert.equal(approvals.length,0);
+  releaseRevoke=true;
+  const pending=send(env.MYCRM_CHAT_BRIDGE_SOCKET,request);
+  while(revokes.length<2)await new Promise(resolve=>setImmediate(resolve));
+  bridge.abortPending();   // a screen lock aborts approvals at the same moment
+  releaseRevoke();
+  assert.deepEqual(await pending,{ok:true});
+ }finally{
+  await bridge.close();
+  await fs.rm(root,{recursive:true,force:true});
+ }
+});
+
+test('R5: a bridge without a revoke handler refuses revoke requests',{skip:process.platform==='win32'},async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'mycrm-consent-bridge-norevoke-'));
+ await fs.chmod(root,0o700);
+ const bridge=new ConsentBridge({directory:root,uid:process.getuid?.(),handler:async()=>({ok:true})});
+ try{
+  const env=await bridge.start();
+  assert.deepEqual(await send(env.MYCRM_CHAT_BRIDGE_SOCKET,{version:1,token:env.MYCRM_CHAT_BRIDGE_TOKEN,kind:'revoke',
+   device_bearer:'Bearer synthetic-device-token'}),{ok:false,reason:'failed'});
+ }finally{
+  await bridge.close();
+  await fs.rm(root,{recursive:true,force:true});
+ }
+});
+
+test('R5: desktop main wires the revoke handler and starts one revoke at app start without awaiting it',()=>{
+ const main=require('node:fs').readFileSync(path.join(__dirname,'..','src','main.cjs'),'utf8');
+ assert.match(main,/revokeHandler:async input=>consentRuntime\?await consentRuntime\.revokeWith\(input\)/);
+ const starts=main.split('\n').filter(l=>l.includes('revokeAtStart('));
+ assert.equal(starts.length,1);
+ assert.doesNotMatch(starts[0],/await\s+consentRuntime\.revokeAtStart/);
+ assert.match(starts[0],/log\('consent','start-revoke-'\+outcome\)/);
+ assert.match(main,/command\(\['chat-consent-revoke'\],null,env\)/);
+ const start=main.slice(main.indexOf('async function startChatAgent('));
+ const gate=start.indexOf('ensureStartRevoked()'),launch=start.indexOf('startChatSidecar(');
+ assert.ok(gate>0&&gate<launch);
+ assert.match(start.slice(gate,launch),/throw new Error\('consent-start-revoke-unconfirmed'\)/);
+ assert.match(main,/'consent-start-revoke-unconfirmed':'/);
+});
