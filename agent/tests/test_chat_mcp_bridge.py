@@ -81,6 +81,10 @@ class McpStdioBridgeTest(unittest.TestCase):
         self.assertEqual(by_tool["read"]["annotations"], {"readOnlyHint": True})
         self.assertNotIn("annotations", by_tool["write"])
         self.assertNotIn("annotations", by_tool["decide"])
+        # F5: a write waits for the person's card; pending is not done; chained writes use created ids next turn.
+        for phrase in ("카드로 확인한 뒤 실행", "pending_confirmation은 완료가 아니다", "다음 턴에 created id"):
+            self.assertIn(phrase, by_tool["write"]["description"])
+        self.assertNotIn("bind", by_tool["write"]["inputSchema"]["properties"])
         by_name = {x["name"]: x["inputSchema"] for x in tools}
         self.assertEqual(by_name["read"]["properties"]["op"]["enum"], ["record_get"])
         self.assertEqual(by_name["write"]["properties"]["op"]["enum"], ["record_add"])

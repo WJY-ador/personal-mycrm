@@ -234,6 +234,50 @@ class AgentTest(unittest.TestCase):
         self.assertEqual(calls, [("request_test_1", "Bearer synthetic-device-token")])
         release.set()
 
+    def _consent_result_messages(self, consent, token="synthetic-device-token", send_raises=False):
+        sent = []
+
+        class Socket:
+            def send_text(self, message):
+                if send_raises:
+                    raise chat.wsclient.WsError("synthetic send failure")
+                sent.append(json.loads(message))
+
+        agent = chat.ChatAgent("ws://unused", lambda: token, chat.FakeProvider(), consent_request=consent)
+        agent.ws = Socket()
+        agent._on({"type": "consent.request", "request_id": "request_test_1"})
+        for _ in range(200):
+            with agent.consent_lock:
+                if not agent.consent_pending:
+                    break
+            time.sleep(0.01)
+        with agent.consent_lock:
+            self.assertEqual(agent.consent_pending, set())
+        return sent
+
+    def test_consent_refusal_is_reported_to_server_only_when_not_approved(self):
+        self.assertEqual(self._consent_result_messages(lambda rid, auth: (True, None)), [])
+        for reason in ("declined", "locked", "failed"):
+            with self.subTest(reason=reason):
+                self.assertEqual(self._consent_result_messages(lambda rid, auth, r=reason: (False, r)),
+                                 [{"type": "consent.result", "request_id": "request_test_1", "outcome": reason}])
+
+    def test_consent_malformed_result_exception_or_missing_token_reports_failed(self):
+        def boom(rid, auth):
+            raise RuntimeError("synthetic bridge failure")
+        failed = [{"type": "consent.result", "request_id": "request_test_1", "outcome": "failed"}]
+        for consent in (lambda rid, auth: (False, "other"), lambda rid, auth: (False, None),
+                        lambda rid, auth: (True, "declined"), lambda rid, auth: True, lambda rid, auth: None,
+                        lambda rid, auth: [False, "declined"], boom):
+            with self.subTest(consent=consent):
+                self.assertEqual(self._consent_result_messages(consent), failed)
+        calls = []
+        self.assertEqual(self._consent_result_messages(lambda rid, auth: calls.append(rid), token=""), failed)
+        self.assertEqual(calls, [])
+
+    def test_consent_result_send_failure_is_ignored(self):
+        self.assertEqual(self._consent_result_messages(lambda rid, auth: (False, "declined"), send_raises=True), [])
+
     def test_rejects_missing_or_changed_provider_binding_without_fallback(self):
         got = {}
 
@@ -511,7 +555,7 @@ class CliTest(unittest.TestCase):
             bridge_calls.append((socket_path, bridge_token, request_id, authorization))
             consented.set()
             stopping.set()
-            return True
+            return (True, None)
         env = {"MYCRM_CHAT_BRIDGE_SOCKET": "/synthetic/chat.sock",
                "MYCRM_CHAT_BRIDGE_TOKEN": "synthetic-desktop-bridge-token"}
         with patch.dict(os.environ, env), patch("agent.consent_bridge.request_approval", request_approval):

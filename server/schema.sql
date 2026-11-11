@@ -1026,6 +1026,8 @@ CREATE TABLE IF NOT EXISTS chat_approvals (
   CHECK ((state = 'pending') = (finished_at IS NULL))
 );
 ALTER TABLE chat_approvals ADD COLUMN IF NOT EXISTS result jsonb CHECK (result IS NULL OR jsonb_typeof(result) = 'object');
+-- 대화 하나로 F(2026-11-11): write 등급 카드. 기존 행은 decide 로 읽는다. preview = {op, shown, impact, irreversible, hash}(write) 또는 facade preview(decide)
+ALTER TABLE chat_approvals ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'decide' CHECK (kind IN ('decide','write'));
 CREATE INDEX IF NOT EXISTS ix_chat_approvals_session ON chat_approvals (user_id, session_id, created_at);
 
 CREATE TABLE IF NOT EXISTS chat_events (
@@ -1069,6 +1071,9 @@ CREATE TABLE IF NOT EXISTS chat_provider_grants (
   CHECK ((state = 'consumed') = (consumed_at IS NOT NULL))
 );
 CREATE INDEX IF NOT EXISTS ix_chat_provider_grants_created ON chat_provider_grants (created_at);
+-- 대화 하나로 F9(2026-11-11): PC 동의 창이 허용 없이 끝난 이유(PC 앱이 consent.result 로 알린다). 권한을 줄이기만 한다.
+-- 값이 있으면 그 grant 는 challenge 발급, 서명 검증, 소비가 모두 거절된다. pending grant 에만 쓴다. state CHECK 는 그대로
+ALTER TABLE chat_provider_grants ADD COLUMN IF NOT EXISTS close_reason text CHECK (close_reason IN ('declined','locked','failed'));
 
 CREATE TABLE IF NOT EXISTS desktop_consent_keys (
   id               text PRIMARY KEY CHECK (id ~ '^ck_[0-9a-f]{24}$'),

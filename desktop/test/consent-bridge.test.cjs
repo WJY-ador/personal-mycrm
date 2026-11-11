@@ -23,7 +23,7 @@ test('private local bridge authenticates supervised child and forwards only a va
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'mycrm-consent-bridge-'));
  await fs.chmod(root,0o700);
  const calls=[];
- const bridge=new ConsentBridge({directory:root,uid:process.getuid?.(),handler:async request=>{calls.push(request);return true;}});
+ const bridge=new ConsentBridge({directory:root,uid:process.getuid?.(),handler:async request=>{calls.push(request);return {ok:true};}});
  try{
   const env=await bridge.start();
   const stat=await fs.stat(env.MYCRM_CHAT_BRIDGE_SOCKET);
@@ -32,9 +32,9 @@ test('private local bridge authenticates supervised child and forwards only a va
   const request={version:1,token:env.MYCRM_CHAT_BRIDGE_TOKEN,request_id:'session_request_1',device_bearer:'Bearer synthetic-device-token'};
   assert.deepEqual(await send(env.MYCRM_CHAT_BRIDGE_SOCKET,request),{ok:true});
   assert.deepEqual(calls,[{request_id:'session_request_1',device_bearer:'Bearer synthetic-device-token'}]);
-  assert.deepEqual(await send(env.MYCRM_CHAT_BRIDGE_SOCKET,{...request,token:'wrong'}),{ok:false});
+  assert.deepEqual(await send(env.MYCRM_CHAT_BRIDGE_SOCKET,{...request,token:'wrong'}),{ok:false,reason:'failed'});
   assert.equal(calls.length,1);
-  assert.deepEqual(await send(env.MYCRM_CHAT_BRIDGE_SOCKET,{...request,request_id:'bad id'}),{ok:false});
+  assert.deepEqual(await send(env.MYCRM_CHAT_BRIDGE_SOCKET,{...request,request_id:'bad id'}),{ok:false,reason:'failed'});
   assert.equal(calls.length,1);
  }finally{
   await bridge.close();
@@ -115,4 +115,44 @@ test('Windows bridge refuses startup before creating a socket or invoking the ha
   assert.equal(bridge.socketPath,null);
   assert.throws(()=>bridge.childEnv(),/bridge unavailable/);
  }finally{await bridge.close();await fs.rm(root,{recursive:true,force:true});}
+});
+
+test('bridge reply is {ok:true} or {ok:false,reason} with reason from the fixed list only',()=>{
+ const {reply}=require('../src/consent-bridge.cjs');
+ assert.deepEqual(reply({ok:true}),{ok:true});
+ assert.deepEqual(reply({ok:true,reason:'declined'}),{ok:true});
+ for(const reason of ['declined','locked','failed'])assert.deepEqual(reply({ok:false,reason}),{ok:false,reason});
+ for(const result of [true,false,undefined,null,{},{ok:false},{ok:'true'},{ok:false,reason:'DECLINED'},{ok:false,reason:'other'},
+   {ok:false,reason:['declined']},'declined'])
+  assert.deepEqual(reply(result),{ok:false,reason:'failed'},JSON.stringify(result));
+});
+
+test('bridge forwards the handler refusal reason and turns a handler throw into failed',{skip:process.platform==='win32'},async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'mycrm-consent-bridge-reason-'));
+ await fs.chmod(root,0o700);
+ const results=[{ok:false,reason:'declined'},{ok:false,reason:'locked'},{ok:false,reason:'surprise'},true];
+ let i=0;
+ const bridge=new ConsentBridge({directory:root,uid:process.getuid?.(),handler:async()=>{
+  const r=results[i++];if(r===undefined)throw new Error('synthetic handler failure');return r;
+ }});
+ try{
+  const env=await bridge.start();
+  const request={version:1,token:env.MYCRM_CHAT_BRIDGE_TOKEN,request_id:'session_request_1',device_bearer:'Bearer synthetic-device-token'};
+  assert.deepEqual(await send(env.MYCRM_CHAT_BRIDGE_SOCKET,request),{ok:false,reason:'declined'});
+  assert.deepEqual(await send(env.MYCRM_CHAT_BRIDGE_SOCKET,request),{ok:false,reason:'locked'});
+  assert.deepEqual(await send(env.MYCRM_CHAT_BRIDGE_SOCKET,request),{ok:false,reason:'failed'});
+  assert.deepEqual(await send(env.MYCRM_CHAT_BRIDGE_SOCKET,request),{ok:false,reason:'failed'});
+  assert.deepEqual(await send(env.MYCRM_CHAT_BRIDGE_SOCKET,request),{ok:false,reason:'failed'});
+ }finally{
+  await bridge.close();
+  await fs.rm(root,{recursive:true,force:true});
+ }
+});
+
+test('desktop main passes the runtime result object to the bridge instead of a boolean',()=>{
+ const main=require('node:fs').readFileSync(path.join(__dirname,'..','src','main.cjs'),'utf8');
+ const line=main.split('\n').find(l=>l.includes('new ConsentBridge('));
+ assert.ok(line);
+ assert.doesNotMatch(line,/===\s*true/);
+ assert.match(line,/consentRuntime\.handle\(input,signal\)/);
 });

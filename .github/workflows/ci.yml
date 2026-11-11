@@ -307,6 +307,13 @@ jobs:
           DATABASE_URL: postgresql://postgres:crm@localhost:5432/crm_test_chat_approvals
         run: python .github/scripts/run_ci_server_tests.py approvals
 
+      # 대화 주입 시험(2026-11-11 대화 하나로 F) — 지시문이 든 합성 기록을 읽은 모델이 그대로 부른다고 치고 route 수준에서 본다.
+      # write 14개 = 카드만, 막힌 decide·purge·pc_connect = 거절, 모델 bind 무시, STALE·남의 확정·두 번 확정, created = id 만, 서버·agent·화면 승인 집합 대조
+      - name: "④-s 대화 주입 시험 (test_chat_injection.py)"
+        env:
+          DATABASE_URL: postgresql://postgres:crm@localhost:5432/crm_test_chat_injection
+        run: python .github/scripts/run_ci_server_tests.py injection
+
       # React 화면 묶음(2026-11-03 R1·R5b-2b) — manifest 허용 목록(지연 불러오기 묶음 포함) 서빙·/app 진입 태그·CSP self·인라인 0·manifest 없음·정적 뼈대.
       # 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
       - name: "④-m React 화면 묶음 시험 (test_ui_build.py)"

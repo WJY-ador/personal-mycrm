@@ -153,12 +153,21 @@ test('trustedSender ignores Origin headers and labels: only object identity and 
   assert.equal(approval.trustedSender({sender:wc,senderFrame:mainFrame},null,PAGE),false);
 });
 
-test('dialog cancel, dismiss, throw or odd result yields no signature and no key',async t=>{
-  for(const onDialog of [()=>({response:0}),()=>({response:'1'}),()=>({response:2}),()=>null,()=>{throw new Error('x');}]){
+test('dialog cancel or close is DECLINED; throw or odd result is CANCELED; neither signs or creates a key',async t=>{
+  // cancelId is 0, so both the 취소 button and closing the dialog arrive as response 0.
+  for(const [onDialog,code] of [[()=>({response:0}),'DECLINED'],[()=>({response:0,checkboxChecked:false}),'DECLINED'],
+    [()=>({response:'1'}),'CANCELED'],[()=>({response:'0'}),'CANCELED'],[()=>({response:2}),'CANCELED'],[()=>({}),'CANCELED'],
+    [()=>null,'CANCELED'],[()=>{throw new Error('x');},'CANCELED']]){
     const f=await fixture(t,{onDialog});
-    assertNoSignature(await f.api.approve(f.event,{...CLAIMS}),'CANCELED');
+    assertNoSignature(await f.api.approve(f.event,{...CLAIMS}),code);
     assert.equal(fsSync.existsSync(f.keyFile),false);
   }
+});
+
+test('abort while the dialog is open stays CANCELED even when the person pressed 취소',async t=>{
+  const controller=new AbortController();
+  const f=await fixture(t,{onDialog:()=>{controller.abort();return {response:0};}});
+  assertNoSignature(await f.api.approve(f.event,{...CLAIMS},{signal:controller.signal}),'CANCELED');
 });
 
 test('idle state other than exactly active before the dialog fails closed without a dialog',async t=>{
@@ -274,5 +283,5 @@ test('one dialog at a time',async t=>{
   await new Promise(r=>setImmediate(r));
   assertNoSignature(await f.api.approve(f.event,{...CLAIMS}),'BUSY');
   release();
-  assertNoSignature(await first,'CANCELED');
+  assertNoSignature(await first,'DECLINED');
 });

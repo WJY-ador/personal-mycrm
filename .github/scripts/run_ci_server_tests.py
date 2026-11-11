@@ -3,6 +3,7 @@
 PR 54(커밋 6c1b199)의 러너를 main에 맞게 줄인 것이다. main에 있는 시험 파일만 넣는다.
   unit      DB 없는 시험 7개(승인 HTTP, 확인 카드, MCP 게이트웨이 셋, 동의 서명, 트랜잭션 범위)
   approvals 대화 승인 DB 시험 1개(crm_test_chat_approvals를 새로 만들어 돌린다)
+  injection 대화 주입 DB 시험 1개(crm_test_chat_injection, 2026-11-11 대화 하나로 F)
 넣지 않은 것: test_freechat_synthetic_e2e(darwin 전용 공급자와 macOS 잡이 필요), test_migration_mcp(test_migration_path가 부른다),
 test_user_change_marker_*(대화가 아니다).
 """
@@ -26,6 +27,7 @@ UNIT_TESTS = (
 )
 DB_TESTS = {
     "approvals": ("crm_test_chat_approvals", ("test_chat_approvals.py",)),
+    "injection": ("crm_test_chat_injection", ("test_chat_injection.py",)),
 }
 
 

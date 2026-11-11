@@ -42,12 +42,12 @@ class ServerCiRunnerTests(unittest.TestCase):
             runner.verify_result("test_consent_signature.py", "전부 통과(0건)\n")
         runner.verify_result("test_consent_signature.py", "전부 통과(19건)\n")
 
-    def test_eight_modules_are_registered_once_and_exist(self):
+    def test_nine_modules_are_registered_once_and_exist(self):
         modules = list(runner.UNIT_TESTS)
         for _database, filenames in runner.DB_TESTS.values():
             modules.extend(filenames)
-        self.assertEqual(len(modules), 8)
-        self.assertEqual(len(set(modules)), 8)
+        self.assertEqual(len(modules), 9)
+        self.assertEqual(len(set(modules)), 9)
         for name in modules:
             self.assertTrue((runner.ROOT / "server" / name).is_file(), name)
 

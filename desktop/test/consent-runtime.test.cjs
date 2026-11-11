@@ -41,7 +41,7 @@ function fixture({dialogResult=1,locked=false,requestOverride,onDialog}={}){
 
 test('supervised request bootstraps OS key, shows native approval, signs server claims and verifies once',async()=>{
  const f=fixture();
- assert.equal(await f.runtime.handle({request_id:'request_test_1',device_bearer:'Bearer synthetic-device-token'}),true);
+ assert.deepEqual(await f.runtime.handle({request_id:'request_test_1',device_bearer:'Bearer synthetic-device-token'}),{ok:true});
  assert.deepEqual(f.calls.map(x=>x.path),[
   '/api/chat/consent/keys/begin','/api/chat/consent/keys/activate',
   '/api/chat/consent/challenges/issue','/api/chat/consent/challenges/verify',
@@ -65,13 +65,13 @@ test('screen lock revokes the active server key, then the same protected key can
   }
   return {status:404,body:null};
  }});
- assert.equal(await f.runtime.handle({request_id:'request_test_1',device_bearer:'Bearer synthetic-device-token'}),true);
+ assert.deepEqual(await f.runtime.handle({request_id:'request_test_1',device_bearer:'Bearer synthetic-device-token'}),{ok:true});
  f.setLocked(true);f.powerMonitor.emit('lock-screen');
  assert.equal(await f.runtime.invalidateOnLock(),true);
  assert.deepEqual(f.calls.at(-1),{path:'/api/chat/consent/keys/revoke',body:{installation_id:'di_'+'a'.repeat(24)},authorization:'Bearer synthetic-device-token'});
- assert.equal(await f.runtime.handle({request_id:'request_test_2',device_bearer:'Bearer synthetic-device-token'}),false);
+ assert.deepEqual(await f.runtime.handle({request_id:'request_test_2',device_bearer:'Bearer synthetic-device-token'}),{ok:false,reason:'failed'});
  f.setLocked(false);f.powerMonitor.emit('unlock-screen');
- assert.equal(await f.runtime.handle({request_id:'request_test_2',device_bearer:'Bearer synthetic-device-token'}),true);
+ assert.deepEqual(await f.runtime.handle({request_id:'request_test_2',device_bearer:'Bearer synthetic-device-token'}),{ok:true});
  assert.equal(f.keyLoads,4,'each approval reloads the same OS-protected private key for registration and signing');
  assert.equal(f.calls.filter(x=>x.path.endsWith('/keys/activate')).length,2);
 });
@@ -85,7 +85,7 @@ test('suspend during a pending native approval revokes the server key and cannot
  f.setLocked(true);f.powerMonitor.emit('suspend');controller.abort();
  const revoke=f.runtime.invalidateOnLock();
  resolveDialog({response:1});
- assert.equal(await pending,false);
+ assert.deepEqual(await pending,{ok:false,reason:'failed'});
  assert.equal(await revoke,true);
  assert.equal(f.calls.some(x=>x.path.endsWith('/challenges/verify')),false);
  assert.equal(f.calls.at(-1).path,'/api/chat/consent/keys/revoke');
@@ -93,13 +93,13 @@ test('suspend during a pending native approval revokes the server key and cannot
 
 test('cancel, locked session, malformed notification, and server binding mismatch fail closed',async()=>{
  const canceled=fixture({dialogResult:0});
- assert.equal(await canceled.runtime.handle({request_id:'request_test_1',device_bearer:'Bearer synthetic-device-token'}),false);
+ assert.deepEqual(await canceled.runtime.handle({request_id:'request_test_1',device_bearer:'Bearer synthetic-device-token'}),{ok:false,reason:'declined'});
  assert.equal(canceled.calls.some(x=>x.path.endsWith('/verify')),false);
  const locked=fixture({locked:true});
- assert.equal(await locked.runtime.handle({request_id:'request_test_1',device_bearer:'Bearer synthetic-device-token'}),false);
+ assert.deepEqual(await locked.runtime.handle({request_id:'request_test_1',device_bearer:'Bearer synthetic-device-token'}),{ok:false,reason:'failed'});
  assert.equal(locked.calls.some(x=>x.path.endsWith('/verify')),false);
  const invalid=fixture();
- assert.equal(await invalid.runtime.handle({request_id:'bad id',device_bearer:'Bearer synthetic-device-token'}),false);
+ assert.deepEqual(await invalid.runtime.handle({request_id:'bad id',device_bearer:'Bearer synthetic-device-token'}),{ok:false,reason:'failed'});
  assert.equal(invalid.calls.length,0);
  const mismatch=fixture({requestOverride:async(path,body,_auth,_calls,claims)=>{
   if(path.endsWith('/keys/begin'))return {status:200,body:{key_id:'ck_synthetic_1',claims:{...claims,session_id:'ck_synthetic_1',provider:'mycrm-key',model:'bind'}}};
@@ -107,7 +107,7 @@ test('cancel, locked session, malformed notification, and server binding mismatc
   if(path.endsWith('/challenges/issue'))return {status:200,body:{claims:{...claims,session_id:'other_request'}}};
   return {status:500,body:null};
  }});
- assert.equal(await mismatch.runtime.handle({request_id:'request_test_1',device_bearer:'Bearer synthetic-device-token'}),false);
+ assert.deepEqual(await mismatch.runtime.handle({request_id:'request_test_1',device_bearer:'Bearer synthetic-device-token'}),{ok:false,reason:'failed'});
 });
 
 test('stop abort while native dialog is open cannot submit challenge verification',async()=>{
@@ -131,6 +131,41 @@ test('stop abort while native dialog is open cannot submit challenge verificatio
  while(!resolveDialog)await new Promise(resolve=>setImmediate(resolve));
  controller.abort(); // UDS client disconnects when supervised child stops
  resolveDialog({response:1});
- assert.equal(await pending,false);
+ assert.deepEqual(await pending,{ok:false,reason:'failed'});
  assert.equal(calls.some(path=>path.endsWith('/verify')),false);
+});
+
+test('refusal reasons: 취소 or close is declined, lock during the dialog is locked, dialog failure is failed',async()=>{
+ const req={request_id:'request_test_1',device_bearer:'Bearer synthetic-device-token'};
+ const declined=fixture({dialogResult:0});
+ assert.deepEqual(await declined.runtime.handle(req),{ok:false,reason:'declined'});
+ assert.equal(declined.calls.some(x=>x.path.endsWith('/verify')),false);
+ let locking;
+ locking=fixture({onDialog:()=>{locking.powerMonitor.emit('lock-screen');return {response:1};}});
+ assert.deepEqual(await locking.runtime.handle(req),{ok:false,reason:'locked'});
+ assert.equal(locking.calls.some(x=>x.path.endsWith('/verify')),false);
+ const thrown=fixture({onDialog:()=>{throw new Error('synthetic dialog failure');}});
+ assert.deepEqual(await thrown.runtime.handle(req),{ok:false,reason:'failed'});
+ const odd=fixture({dialogResult:2});
+ assert.deepEqual(await odd.runtime.handle(req),{ok:false,reason:'failed'});
+ const serverDown=fixture({requestOverride:async()=>{throw new Error('synthetic network failure');}});
+ assert.deepEqual(await serverDown.runtime.handle(req),{ok:false,reason:'failed'});
+ const verifyRefused=fixture({requestOverride:async(path,body,_a,_c,claims)=>{
+  if(path.endsWith('/keys/begin'))return {status:200,body:{key_id:'ck_synthetic_1',claims:{...claims,session_id:'ck_synthetic_1',provider:'mycrm-key',model:'bind'}}};
+  if(path.endsWith('/keys/activate'))return {status:200,body:{state:'active'}};
+  if(path.endsWith('/challenges/issue'))return {status:200,body:{claims}};
+  return {status:409,body:{code:'CONSENT_REQUIRED'}};
+ }});
+ assert.deepEqual(await verifyRefused.runtime.handle(req),{ok:false,reason:'failed'});
+});
+
+test('a second request while one is pending is failed, never declined',async()=>{
+ let resolveDialog;
+ const f=fixture({onDialog:()=>new Promise(resolve=>{resolveDialog=resolve;})});
+ const req={request_id:'request_test_1',device_bearer:'Bearer synthetic-device-token'};
+ const first=f.runtime.handle(req);
+ while(!resolveDialog)await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(await f.runtime.handle(req),{ok:false,reason:'failed'});
+ resolveDialog({response:0});
+ assert.deepEqual(await first,{ok:false,reason:'declined'});
 });

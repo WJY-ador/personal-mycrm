@@ -284,7 +284,7 @@ async function initialize(){
   win.on('close',event=>{if(!quitting&&!installing){event.preventDefault();win.hide();}});
   connector=new Connector({hosted:HOSTED,request,store:connectionStore(path.join(userData,'desktop-connection.json')),install,forgetLocal,
     exclusive:exclusively,canDeliver:()=>ready&&!busy&&!quitting,connection,notify,log,client:grants.clientInfo(os.hostname(),process.platform),changed});
-  consentBridge=new ConsentBridge({directory:path.join(userData,'chat-ipc'),handler:async(input,signal)=>await consentRuntime?.handle(input,signal)===true});
+  consentBridge=new ConsentBridge({directory:path.join(userData,'chat-ipc'),handler:async(input,signal)=>consentRuntime?await consentRuntime.handle(input,signal):{ok:false,reason:'failed'}});
   consentRuntime=createConsentRuntime({
     request:consentRequest,
     getInstallationId:async()=>{

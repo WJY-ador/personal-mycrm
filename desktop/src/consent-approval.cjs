@@ -19,7 +19,7 @@ const KEY_FILE='consent-signing-key.json';
 const MAX_TTL_SECONDS=600;
 const APPROVE=1,CANCEL=0;
 const CODES=Object.freeze({UNSUPPORTED:'UNSUPPORTED',BUSY:'BUSY',SENDER:'SENDER',CLAIMS:'CLAIMS',EXPIRED:'EXPIRED',
-  IDLE:'IDLE',CANCELED:'CANCELED',KEY:'KEY'});
+  IDLE:'IDLE',DECLINED:'DECLINED',CANCELED:'CANCELED',KEY:'KEY'});
 const LOCK_EVENT_PLATFORMS=new Set(['darwin','win32']);
 
 const refuse=code=>Object.freeze({ok:false,code});
@@ -155,6 +155,9 @@ function createConsentApproval(options){
       let result;
       try{result=await dialog.showMessageBox(win,dialogOptions(claims));}catch{return refuse(CODES.CANCELED);}
       if(signal?.aborted)return refuse(CODES.CANCELED);
+      // DECLINED: the person pressed 취소 or closed the dialog (cancelId maps both to CANCEL).
+      // CANCELED: anything else that is not an explicit 허용 (dialog failure, abort, malformed result).
+      if(result&&typeof result==='object'&&result.response===CANCEL)return refuse(CODES.DECLINED);
       if(!result||typeof result!=='object'||result.response!==APPROVE)return refuse(CODES.CANCELED);
 
       // Everything is checked again: the dialog may have stayed open while the screen locked,

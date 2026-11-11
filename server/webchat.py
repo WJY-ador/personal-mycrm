@@ -95,9 +95,58 @@ CHAT_APPROVABLE_OPS = frozenset({
     "definition_archive", "definition_restore", "person_delete",
     "source_reflection_review", "source_reflection_delete", "trash_move", "trash_restore",
 })
+# 대화 하나로 F1(2026-11-11): 자유 대화의 write 등급은 pc_connect 를 빼고 전부 카드를 거친다. 판정은 이름 나열이 아니라
+# 등급(chat_mcp._PINNED_TIERS)이다 — 나중에 더한 write op 도 카드를 건너뛰지 못한다. 강제는 _chat_mcp_execute 한 곳.
+# 이 집합은 다음 턴 outcomes 필터와 F11 대조(서버, agent, 화면)에만 쓴다.
+from chat_mcp import _PINNED_TIERS as _CHAT_TIERS  # noqa: E402
+CHAT_WRITE_CARD_OPS = frozenset(n for n, t in _CHAT_TIERS.items() if t == "write" and n != "pc_connect")
+CHAT_CARD_OPS = CHAT_APPROVABLE_OPS | CHAT_WRITE_CARD_OPS
 APPROVAL_TTL_SECONDS = 600
 APPROVAL_PENDING_LIMIT = 20
 APPROVAL_SESSION_LIMIT = 100
+# F8: /api/chat/mcp 본문(바이트). 기록 쓰기 상한 64 KiB(db.py) + JSON 봉투, 이스케이프 여유. 실제 글 상한은 db 쓰기 상한이 정한다.
+# 바깥 main.BodyLimit(256 KiB)과 PC 브리지 한 줄(256 KiB) 안이다. grant, 동의 경로는 CONSENT_BODY_MAX(4 KiB) 그대로
+CHAT_MCP_BODY_MAX = 96 * 1024
+# F13(2026-11-11): 다음 턴 outcomes 를 agent 꼴(json 압축, ensure_ascii=False)로 직렬화한 바이트 상한. agent 는 고정 지시문과 머리말을 더한
+# 모델 context 가 16 KiB 를 넘으면 턴을 거절한다(APPROVAL-OUTCOMES). 고정 문구(실측 1237 바이트) + 이 값 <= 16 KiB - 1 KiB 여유.
+# 시험(test_chat_injection)이 agent/chat_approval_context.py 의 실제 문구로 이 부등식을 대조한다. 최신 행부터 담고 넘치면 오래된 행을 뺀다
+APPROVAL_OUTCOMES_JSON_MAX = 13 * 1024
+
+# F4: 확정된 write 카드가 다음 턴에 넘기는 생성 id — op별 (결과 키, id 접두어) 허용 목록. 값은 생성기 모양 정규식만 통과한다
+# (db.new_id = 접두어_urlsafe 11자, 오브젝트 = od_ hex 10자). 모델이 고른 slug, 글, 그 밖의 값은 넘기지 않는다.
+# record_attach, record_title_set 의 id 는 입력 그대로라 넣지 않는다. candidates_propose 는 id 목록(added[])이라 넣지 않는다(candidate_list 로 읽는다).
+_WRITE_CREATED = {
+    "question_add": (("id", "q"),),
+    "record_add": (("id", "r"), ("source_id", "s")),
+    "person_save": (("id", "p"),),
+    "source_create": (("id", "s"),),
+    "source_reflection_save": (("id", "sr"), ("source_id", "s")),
+    "definition_propose": (("object_id", "od"), ("proposal_id", "dp")),
+    "item_propose": (("item_id", "i"), ("proposal_id", "ip")),
+}
+_CREATED_ID_RE = {p: re.compile(r"^od_[0-9a-f]{10}$" if p == "od" else rf"^{p}_[A-Za-z0-9_-]{{11}}$")
+                  for p in ("q", "r", "s", "p", "sr", "od", "dp", "i", "ip")}
+
+# F2, F3: write 카드 shown 의 한국어 이름표(op별). 정규화 params 의 키를 하나도 빼지 않는다 — 표에 없는 키는 키 이름 그대로 보인다.
+_WRITE_LABELS = {
+    "layout_set": {"page": "화면", "layout": "배치", "version": "배치 판"},
+    "layout_reset": {"page": "화면"},
+    "display_name_set": {"display_name": "표시 이름"},
+    "question_add": {"text": "질문 문장"},
+    "profile_set": {"key": "프로필 항목", "value": "값", "status": "상태", "source": "어디서 알았나"},
+    "record_add": {"text": "본문", "title": "제목", "question_id": "질문 ID", "source": "출처 메모", "source_name": "출처 이름",
+                   "source_kind": "출처 종류", "source_location": "출처 위치", "decision_owner": "내 결정 표시"},
+    "record_attach": {"record_id": "기록 ID", "attach_to": "붙일 곳", "axes": "축", "use_at": "쓸 때", "unattached": "붙이지 않음"},
+    "record_title_set": {"record_id": "기록 ID", "title": "새 제목", "expected_revision": "기록 판"},
+    "candidates_propose": {"record_id": "기록 ID", "question_id": "질문 ID", "candidates": "판단 후보", "origin": "뽑은 쪽"},
+    "definition_propose": {"object_id": "자료 종류 ID", "expected_revision": "자료 종류 판", "definition_json": "정의(JSON)"},
+    "item_propose": {"object_id": "자료 종류 ID", "schema_revision": "정의 판", "item_id": "항목 ID", "expected_revision": "항목 판",
+                     "code": "코드", "title": "제목", "body": "본문", "data_json": "값(JSON)", "links": "연결"},
+    "person_save": {"alias": "별칭", "person_id": "사람 ID", "expected_revision": "판"},
+    "source_create": {"kind": "종류", "name": "이름", "location": "위치"},
+    "source_reflection_save": {"source_id": "출처 ID", "kind": "종류", "body": "본문", "reflection_id": "읽고 든 생각 ID",
+                               "expected_revision": "판"},
+}
 
 
 def _id(prefix: str) -> str:
@@ -217,6 +266,11 @@ def _chat_mcp_execute(dev, authorization, body):
         if tool == "decide" and body["op"] in CHAT_APPROVABLE_OPS:
             return approval_prepare(principal.user_id, session.session_id, body["turn_id"],
                                     body["op"], body["params"])
+        if tool == "write":
+            # F1: write 겉면은 어떤 op 이든 바로 실행하지 않는다. 모델이 준 bind 는 무시한다.
+            # 등급이 write 가 아니거나 pc_connect 면 chat_write_prepare 가 거절한다(그래서 gateway.call 에 닿지 않는다).
+            return chat_write_prepare(principal.user_id, session.session_id, body["turn_id"],
+                                      body["op"], body["params"])
         if tool not in gateway.tools((tool,)):
             raise _consent_denied()
         result = gateway.call(tool, body["op"], body["params"], body.get("bind", ""))
@@ -472,7 +526,9 @@ def grant_status(uid: str, request_id: str) -> dict:
     """허용 대기 화면용 읽기(2026-11-10). 상태를 바꾸지 않는다. 세션 uid 의 요청만, 남의 것과 없는 것 = NOT-FOUND.
     state = pending, approved, consumed, 소비 전에 만료(서버 벽시계) = expired.
     prompt = PC 동의 창 상태: none(PC 가 아직 서명 요청을 열지 않음), open(창이 떠 있음), done(서명 확인됨),
-    closed(창이 끝났는데 승인 없음). PC 의 취소는 서버에 오지 않아 취소, 시간 초과, 서명 실패를 closed 하나로 둔다."""
+    closed(창이 끝났는데 승인 없음), declined(PC 앱이 사용자가 허용하지 않았다고 알림, F9).
+    0.1.3 이하 PC 앱은 거절을 알리지 않아(F10) 그 앱의 취소, 시간 초과, 서명 실패는 closed 하나로 둔다.
+    close_reason = locked, failed 는 바로 closed 다."""
     if not isinstance(request_id, str) or not REQUEST_ID_RE.fullmatch(request_id):
         raise CrmError("ARG-INVALID", "허용 요청 값이 올바르지 않아요.")
     with tx() as c:
@@ -485,7 +541,11 @@ def grant_status(uid: str, request_id: str) -> dict:
     state = g["state"]
     if state != "consumed" and g["expires_at"] <= now:
         state = "expired"
-    if not ch:
+    if g.get("close_reason") == "declined":
+        prompt = "declined"
+    elif g.get("close_reason"):
+        prompt = "closed"
+    elif not ch:
         prompt = "none"
     elif ch["state"] == "verified":
         prompt = "done"
@@ -510,6 +570,8 @@ def grant_approve(uid: str, request_id: str, proof):
             raise CrmError("NOT-FOUND", "그 허용 요청을 찾을 수 없어요.")
         if g["state"] != "pending":
             raise CrmError("GRANT-USED", "이미 처리한 허용 요청이에요.")
+        if g.get("close_reason"):   # F9: PC 가 닫은 grant
+            raise CrmError("CONSENT_REQUIRED", "PC 허용 증명을 확인하지 못했어요.", "PC 에서 다시 허용하세요.")
         # Evaluate only after the row lock. PostgreSQL now() is transaction-start time and
         # can be stale if SELECT ... FOR UPDATE waited past the grant expiry.
         if g["expires_at"] <= _db_clock(c):
@@ -529,7 +591,7 @@ def grant_consume(c, uid: str, device_id: str, provider: str, model, request_id:
     _grant_args(device_id, provider, model, request_id)
     g = _one(c, "SELECT * FROM chat_provider_grants WHERE user_id=%s AND request_id=%s FOR UPDATE",
              (uid, request_id))
-    if not g:
+    if not g or g.get("close_reason"):   # F9: PC 가 닫은 grant 는 소비하지 않는다
         raise CrmError("CONSENT_REQUIRED", "이 대화에 필요한 PC 허용이 없어요.", "PC 에서 허용하세요.")
     if (g["device_id"], g["provider"], g["model"]) != (device_id, provider, model) or device_id not in _active_devices(c, uid):
         raise CrmError("GRANT-INVALID", "이 선택에 맞는 PC 허용이 없어요.", "PC 에서 다시 허용하세요.")
@@ -564,6 +626,33 @@ def grant_consume(c, uid: str, device_id: str, provider: str, model, request_id:
     if not consumed:
         raise CrmError("GRANT-EXPIRED", "PC 허용 시간이 지났어요.", "PC 에서 다시 허용하세요.")
     return g["id"]
+
+
+CONSENT_RESULT_OUTCOMES = frozenset({"declined", "locked", "failed"})
+
+
+def consent_result(dev, request_id, outcome) -> bool:
+    """F9(2026-11-11): PC 앱이 동의 창이 허용 없이 끝났다고 장치 WS 로 알린다({type: consent.result, request_id, outcome}).
+    권한을 줄이기만 하는 신호다 — 그 연결의 사용자와 장치에 속한 pending grant 만, 아직 닫히지 않았을 때만 close_reason 을 쓰고
+    그 grant 의 issued challenge 를 revoked 로 바꾼다. 그 밖(형식 틀림, 목록 밖 outcome, 없음, 다른 장치, 이미 승인, 소비, 닫힘)은
+    아무것도 하지 않는다(멱등, 응답 없음). 반환 = 닫았으면 True."""
+    if (not isinstance(outcome, str) or outcome not in CONSENT_RESULT_OUTCOMES
+            or not isinstance(request_id, str) or not REQUEST_ID_RE.fullmatch(request_id)):
+        return False
+    uid, device_id = dev.get("user_id"), dev.get("id")
+    if not isinstance(uid, str) or not uid or not isinstance(device_id, str) or not device_id:
+        return False
+    with tx() as c:
+        _user_lock(c, uid)
+        g = _one(c, "SELECT id, state, close_reason FROM chat_provider_grants WHERE user_id=%s AND request_id=%s AND device_id=%s "
+                    "FOR UPDATE", (uid, request_id, device_id))
+        if not g or g["state"] != "pending" or g["close_reason"] is not None:
+            return False
+        c.execute("UPDATE chat_provider_grants SET close_reason=%s WHERE id=%s AND state='pending' AND close_reason IS NULL",
+                  (outcome, g["id"]))
+        c.execute("UPDATE chat_consent_challenges SET state='revoked', settled_at=now() WHERE user_id=%s AND grant_id=%s AND state='issued'",
+                  (uid, g["id"]))
+        return True
 
 
 # ── PC 동의 키·challenge(2026-11-07) ─────────────────
@@ -771,7 +860,8 @@ def consent_challenge_issue(uid: str, authorization: str, installation_id: str, 
             raise _consent_denied()
         g = _one(c, "SELECT *, floor(extract(epoch from expires_at))::bigint AS exp_epoch "
                     "FROM chat_provider_grants WHERE user_id=%s AND request_id=%s FOR UPDATE", (uid, request_id))
-        if not g or g["device_id"] != device_id or g["state"] != "pending" or g["model"] is None:
+        if (not g or g["device_id"] != device_id or g["state"] != "pending" or g["model"] is None
+                or g.get("close_reason") is not None):   # F9: PC 가 닫은 grant 에는 새 서명 요청을 만들지 않는다
             raise CrmError("GRANT-INVALID", "이 PC 에 맞는 허용 요청이 없어요.")
         wall_now = _db_clock(c)
         now = int(wall_now.timestamp())
@@ -815,6 +905,7 @@ def consent_challenge_verify(uid: str, authorization: str, installation_id: str,
         g = _one(c, "SELECT * FROM chat_provider_grants WHERE id=%s FOR UPDATE", (ch["grant_id"],))
         now = _db_now(c)
         if (not key or key["state"] != "active" or key["installation_id"] != installation_id or not g or g["state"] != "pending"
+                or g.get("close_reason") is not None   # F9: PC 가 닫은 grant 는 서명이 맞아도 승인하지 않는다
                 or (g["user_id"], g["device_id"], g["provider"], g["model"], g["request_id"])
                 != (uid, ch["device_id"], ch["provider"], ch["model"], ch["session_id"])):
             state, err = "revoked", _consent_denied()
@@ -878,6 +969,99 @@ def _approval_session(c, uid, sid):
     return session
 
 
+def _approval_slot(c, uid, sid, tid):
+    """카드 한 장을 만들 수 있나 — 세션, 동의 재확인, 실행 중 턴, 한도(F6: 대기 20, 세션 100행). decide, write 공통."""
+    _approval_session(c, uid, sid)
+    if not _one(c, "SELECT id FROM chat_turns WHERE id=%s AND session_id=%s AND status='running' FOR UPDATE", (tid, sid)):
+        raise _approval_closed()
+    if _one(c, "SELECT count(*) AS n FROM chat_approvals WHERE user_id=%s AND session_id=%s "
+               "AND state='pending' AND expires_at>clock_timestamp()", (uid, sid))["n"] >= APPROVAL_PENDING_LIMIT:
+        raise CrmError("RATE-LIMIT", "확인 대기 중인 작업이 너무 많아요.")
+    if _one(c, "SELECT count(*) AS n FROM chat_approvals WHERE user_id=%s AND session_id=%s", (uid, sid))["n"] >= APPROVAL_SESSION_LIMIT:
+        raise CrmError("RATE-LIMIT", "이 대화의 확인 작업 한도에 도달했어요.")
+
+
+def _write_shown(op, norm) -> dict:
+    """F3: 정규화 params 의 모든 키를 한 줄씩 — 아는 키는 한국어 이름표, 모르는 키는 키 이름 그대로. 값은 자르거나 요약하지 않는다.
+    이름표가 겹치면 키 이름으로, 그것도 겹치면 번호를 붙여 줄이 사라지지 않게 한다(줄 수 == 키 수)."""
+    labels = _WRITE_LABELS.get(op, {})
+    shown = {}
+    for key, value in norm.items():
+        label = labels.get(key, key)
+        if label in shown:
+            label = key
+        n = 2
+        base = label
+        while label in shown:
+            label = f"{base} ({n})"
+            n += 1
+        shown[label] = value
+    return shown
+
+
+def _write_preview(op, norm) -> dict:
+    """F2: chat 전용 write 미리보기 — facade PREVIEWS, bind 와 무관. 서버가 정규화 params 로만 만든다(모델 문구 없음)."""
+    import facade
+    return {"op": op, "shown": _write_shown(op, norm), "impact": {"tier": "write"}, "irreversible": False,
+            "hash": hashlib.sha256(facade._canon([op, norm])).hexdigest()}
+
+
+def _write_spec(op):
+    """write 카드가 될 수 있는 op 의 facade 등록부 항목. 등급이 write 가 아니거나 pc_connect 면 거절."""
+    import facade
+    spec = facade.OPS.get(op) if isinstance(op, str) else None
+    if (not spec or op == "pc_connect" or spec.tier != "write" or _CHAT_TIERS.get(op) != "write"
+            or op not in CHAT_WRITE_CARD_OPS):
+        raise _approval_closed()
+    return spec
+
+
+def chat_write_prepare(uid, sid, tid, op, params):
+    """F1, F2: 자유 대화의 write 요청을 카드로 저장만 한다. 이 경로는 실행하지 않는다. 사람이 웹 카드에서 확인해야 approval_confirm 이 실행한다."""
+    import facade
+    if not isinstance(params, dict) or any(k in params for k in ("uid", "user_id", "bind")):
+        raise _approval_closed()
+    spec = _write_spec(op)
+    with db.tx_scope() as c:
+        _approval_slot(c, uid, sid, tid)
+        facade.validate(spec, params)
+        norm = facade.normalize(op, params)
+        preview = _write_preview(op, norm)
+        aid = _id("ca")
+        c.execute("INSERT INTO chat_approvals (id,user_id,session_id,turn_id,op,params,preview,expires_at,kind) "
+                  "VALUES (%s,%s,%s,%s,%s,%s,%s,clock_timestamp()+make_interval(secs => %s),'write')",
+                  (aid, uid, sid, tid, op, Jsonb(norm), Jsonb(preview), APPROVAL_TTL_SECONDS))
+        return {"status": "pending_confirmation", "approval_id": aid}
+
+
+def _result_object(result) -> dict:
+    """facade 결과 → jsonb 객체. structured_content 가 없으면(일부 op) 텍스트 한 덩어리의 JSON 객체를 읽는다."""
+    if getattr(result, "isError", False):
+        raise CrmError("MCP-ERROR", "작업을 완료하지 못했어요.")
+    value = getattr(result, "structured_content", None)
+    if value is None:
+        content = getattr(result, "content", None) or []
+        if len(content) == 1 and getattr(content[0], "type", "") == "text":
+            try:
+                value = json.loads(content[0].text)
+            except (TypeError, ValueError):
+                value = None
+    if not isinstance(value, dict):
+        raise CrmError("MCP-ERROR", "작업 결과를 확인하지 못했어요.")
+    return value
+
+
+def _created(op, result) -> dict:
+    """F4: 확정된 write 결과에서 허용 키의 생성 id 만. 글이나 그 밖의 값은 넣지 않는다."""
+    out = {}
+    if isinstance(result, dict):
+        for key, prefix in _WRITE_CREATED.get(op, ()):
+            value = result.get(key)
+            if isinstance(value, str) and _CREATED_ID_RE[prefix].fullmatch(value):
+                out[key] = value
+    return out
+
+
 def approval_prepare(uid, sid, tid, op, params):
     """Create a server-owned preview only; this path never executes the action."""
     import facade
@@ -888,14 +1072,7 @@ def approval_prepare(uid, sid, tid, op, params):
     if not spec or spec.tier != "decide" or spec.bind != "hmac":
         raise _approval_closed()
     with db.tx_scope() as c:
-        _approval_session(c, uid, sid)
-        if not _one(c, "SELECT id FROM chat_turns WHERE id=%s AND session_id=%s AND status='running' FOR UPDATE", (tid, sid)):
-            raise _approval_closed()
-        if _one(c, "SELECT count(*) AS n FROM chat_approvals WHERE user_id=%s AND session_id=%s "
-                   "AND state='pending' AND expires_at>clock_timestamp()", (uid, sid))["n"] >= APPROVAL_PENDING_LIMIT:
-            raise CrmError("RATE-LIMIT", "확인 대기 중인 작업이 너무 많아요.")
-        if _one(c, "SELECT count(*) AS n FROM chat_approvals WHERE user_id=%s AND session_id=%s", (uid, sid))["n"] >= APPROVAL_SESSION_LIMIT:
-            raise CrmError("RATE-LIMIT", "이 대화의 확인 작업 한도에 도달했어요.")
+        _approval_slot(c, uid, sid, tid)
         facade.validate(spec, params)
         norm = facade.normalize(op, params)
         preview = facade.preview(op, norm, uid)
@@ -933,7 +1110,13 @@ def approval_confirm(uid, sid, aid):
         if not row or row["state"] != "pending" or row["expires_at"] <= _db_clock(c):
             raise _approval_closed()
         op, params, previous = row["op"], row["params"], row["preview"]
-        if op not in CHAT_APPROVABLE_OPS or not isinstance(params, dict) or not isinstance(previous, dict):
+        if row.get("kind", "decide") == "write":
+            value = _confirm_write(c, uid, sid, session, op, params, previous)
+            c.execute("UPDATE chat_approvals SET state='confirmed',result=%s,finished_at=clock_timestamp() WHERE id=%s",
+                      (Jsonb(value), aid))
+            return {"status": "confirmed", "result": value}
+        if (row.get("kind", "decide") != "decide" or op not in CHAT_APPROVABLE_OPS
+                or not isinstance(params, dict) or not isinstance(previous, dict)):
             raise _approval_closed()
         spec = facade.OPS.get(op)
         if not spec or spec.tier != "decide" or spec.bind != "hmac":
@@ -955,6 +1138,30 @@ def approval_confirm(uid, sid, aid):
         c.execute("UPDATE chat_approvals SET state='confirmed',result=%s,finished_at=clock_timestamp() WHERE id=%s",
                   (Jsonb(value), aid))
         return {"status": "confirmed", "result": value}
+
+
+def _confirm_write(c, uid, sid, session, op, params, previous):
+    """F2: 저장한 params 를 다시 검증, 정규화해 해시와 shown 이 저장 때와 같아야 실행한다(다르면 APPROVAL-STALE).
+    실행 = facade.dispatch("write", op, params, 서버가 만든 principal, None) — guard, 쿼터, 도구 검사는 직접 MCP 와 같다."""
+    import facade
+    from chat_mcp_gateway import _mint_trusted_principal
+    if not isinstance(params, dict) or not isinstance(previous, dict) or any(k in params for k in ("uid", "user_id", "bind")):
+        raise _approval_closed()
+    spec = _write_spec(op)
+    try:
+        facade.validate(spec, params)
+        norm = facade.normalize(op, params)
+    except Exception:
+        raise CrmError("APPROVAL-STALE", "대상이 바뀌어 다시 확인해야 해요.") from None
+    now_preview = _write_preview(op, norm)
+    if (previous.get("irreversible") is not False or not isinstance(previous.get("hash"), str)
+            or not hmac.compare_digest(previous["hash"], now_preview["hash"])
+            or norm != params or previous != now_preview):
+        raise CrmError("APPROVAL-STALE", "대상이 바뀌어 다시 확인해야 해요.")
+    principal = _mint_trusted_principal(user_id=uid, device_id=session["device_id"], session_id=sid,
+                                       provider=session["provider"], model=session["model"],
+                                       expires_at=_db_clock(c) + timedelta(seconds=15))
+    return _result_object(facade.dispatch("write", op, params, principal, None))
 
 
 def approval_cancel(uid, sid, aid):
@@ -1057,11 +1264,25 @@ def _turn_create(uid, sid, text, client_turn_id, connected, capable=None):
         t = _one(c, "INSERT INTO chat_turns (id,session_id,client_turn_id) VALUES (%s,%s,%s) RETURNING *", (_id("ct"), sid, client_turn_id))
         c.execute("INSERT INTO chat_messages (id,session_id,turn_id,role,body) VALUES (%s,%s,%s,'user',%s)", (_id("cm"), sid, t["id"], text))
         c.execute("UPDATE chat_sessions SET last_at=now() WHERE id=%s", (sid,))
-        outcomes = _all(c, "SELECT id,op,state FROM chat_approvals WHERE user_id=%s AND session_id=%s "
-                           "AND state IN ('confirmed','cancelled') ORDER BY finished_at,id LIMIT %s",
+        outcomes = _all(c, "SELECT id,op,state,kind,result FROM chat_approvals WHERE user_id=%s AND session_id=%s "
+                           "AND state IN ('confirmed','cancelled') ORDER BY finished_at DESC,id DESC LIMIT %s",
                         (uid, sid, APPROVAL_SESSION_LIMIT))
-        safe_outcomes = [{"id": row["id"], "op": row["op"], "status": row["state"]} for row in outcomes
-                         if row["op"] in CHAT_APPROVABLE_OPS]
+        safe_outcomes, size = [], 2   # 최신부터(F13). size = agent 꼴 JSON 배열 바이트([] + 항목 + 쉼표)
+        for row in outcomes:   # 승인 가능 집합 24개(decide 10 + write 14). 종류와 op 등급이 맞는 행만
+            if not ((row["kind"] == "decide" and row["op"] in CHAT_APPROVABLE_OPS)
+                    or (row["kind"] == "write" and row["op"] in CHAT_WRITE_CARD_OPS)):
+                continue
+            item = {"id": row["id"], "op": row["op"], "status": row["state"]}
+            if row["kind"] == "write" and row["state"] == "confirmed":
+                created = _created(row["op"], row["result"])   # F4: 정해진 id 키만, 다음 턴에 잇는다
+                if created:
+                    item["created"] = created
+            n = len(json.dumps(item, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) + (1 if safe_outcomes else 0)
+            if size + n > APPROVAL_OUTCOMES_JSON_MAX:
+                break   # 이보다 오래된 행은 뺀다
+            size += n
+            safe_outcomes.append(item)
+        safe_outcomes.reverse()   # 모델에는 시간순으로
         return {"turn": dict(t), "created": True, "session": dict(s), "events": evs, "text": text,
                 "approval_outcomes": safe_outcomes}
 
@@ -1609,7 +1830,7 @@ class Routes:
         if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
             raise CrmError("ARG-INVALID", "JSON 본문이 필요해요.")
         raw = await request.body()
-        if len(raw) > CONSENT_BODY_MAX:
+        if len(raw) > CHAT_MCP_BODY_MAX:
             raise CrmError("TEXT-LIMIT", "요청 본문이 너무 커요.")
 
         def pairs(items):
@@ -1797,13 +2018,17 @@ class Routes:
     async def grant(self, request):
         """POST /api/chat/grants {device_id, provider, model|null, request_id} → pending grant(멱등). device_id 는 권한이 아니라 선택값 —
         grant_request 가 세션 uid 의 활성 장치인지 본다. 연결된 PC에 동의 요청을 알린다. 201 새로 · 200 같은 요청."""
+        closed = []
+
         def call(uid, _authz, b):
             g, created = grant_request(uid, b["device_id"], b["provider"], b["model"], b["request_id"])
+            if g.get("close_reason"):
+                closed.append(True)
             return ({"request_id": g["request_id"], "device_id": g["device_id"], "provider": g["provider"], "model": g["model"],
                      "state": g["state"], "expires_at": _iso(g["expires_at"]), "created": created}, 201 if created else 200)
         async def notify(uid, _authz, _body, result):
             d = hub.dev(uid, result["device_id"])
-            if d and result["state"] == "pending":
+            if d and result["state"] == "pending" and not closed:   # PC 가 닫은 grant 에 창을 다시 띄우지 않는다
                 await d.send({"type": "consent.request", "request_id": result["request_id"]})
         return await self._consent_call(request, {"device_id": (200, False), "provider": (40, False), "model": (120, True),
                                                   "request_id": (64, False)}, call, bearer=False, after=notify)
@@ -1975,4 +2200,9 @@ class Routes:
                     await run_in_threadpool(session_ref_set, dev, m.get("session_id"), m.get("cli_session_ref"))
                 except Exception:
                     db.usage_count(None, "api:chat_ws_ref", "EXC")
+            elif typ == "consent.result":   # F9 — 응답을 보내지 않는다(멱등). 실패는 서버 시간 초과 경로가 남는다
+                try:
+                    await run_in_threadpool(consent_result, dev, m.get("request_id"), m.get("outcome"))
+                except Exception:
+                    db.usage_count(None, "api:chat_ws_consent_result", "EXC")
             # pong·모르는 type = 무시

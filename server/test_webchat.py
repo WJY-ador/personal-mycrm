@@ -6,7 +6,7 @@
 다루는 것: 스위치 꺼짐 503(API·SSE·WS) · 세션(장치 자동·여러 대·없음) · 턴 멱등·TURN-BUSY·DEVICE-OFFLINE · (turn_id,seq) 중복 무시·빈 칸
 · 누적 ack · SSE 재생·Last-Event-ID 재개·사용자당 1 · WS 인증(무토큰·틀림·철회·다른 사용자 턴 거절) · 중지 · 한도(글자·분당·이벤트·WS 64KB)
 · 유휴 턴 TURN-TIMEOUT · 30일 삭제 · 계정 삭제 cascade · 응답에 남의 데이터 없음
-· grant 요청, 상태 조회(GET), 동의 키, challenge HTTP route(세션 401·Origin 403·Bearer 401·바인딩 409·엄격 JSON·4KB·native 서명 뒤 approved, provider fail-closed).
+· grant 요청, 상태 조회(GET), PC 거절 알림(consent.result), 동의 키, challenge HTTP route(세션 401·Origin 403·Bearer 401·바인딩 409·엄격 JSON·4KB·native 서명 뒤 approved, provider fail-closed).
 """
 import asyncio
 import http.client
@@ -735,6 +735,125 @@ def test_consent_challenge(ua, ub, tok_a, dev_a):
         imports.device_revoke(ub, other["device"]["id"])
 
 
+def test_consent_result(srv, ua, ub, tok_a, dev_a):
+    """F9(2026-11-11): PC 앱이 동의 창이 허용 없이 끝났다고 장치 WS consent.result 로 알린다. 그 사용자, 장치의 pending grant 만
+    처음 한 번 닫고(멱등, 응답 없음) issued challenge 를 revoked 로 바꾼다. 닫힌 grant 는 challenge 발급, 서명 검증, 소비가 거절되고
+    상태 prompt 는 declined(거절) 또는 closed(locked, failed)다. 합성 키, 합성 설치본만."""
+    import base64
+    import secrets
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    import consent_signature
+
+    def spki(k):
+        return k.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+
+    def sign(k, claims):
+        return base64.urlsafe_b64encode(k.sign(consent_signature.encode_consent(claims))).rstrip(b"=").decode("ascii")
+
+    def ch_state(nonce):
+        return rows("SELECT state FROM chat_consent_challenges WHERE user_id=%s AND nonce=%s", (ua, nonce))[0]["state"]
+
+    def reason(rid):
+        return rows("SELECT close_reason FROM chat_provider_grants WHERE user_id=%s AND request_id=%s", (ua, rid))[0]["close_reason"]
+
+    def wait_reason(rid, want, timeout=3.0):
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            if reason(rid) == want:
+                return True
+            time.sleep(0.05)
+        return reason(rid) == want
+
+    bearer = "Bearer " + tok_a
+    inst = "di_" + secrets.token_hex(12)
+    other = imports.device_connect(ua, "a consent-result other pc")
+    key = Ed25519PrivateKey.generate()
+    issue, verify = webchat.consent_challenge_issue, webchat.consent_challenge_verify
+    pc = None
+    try:
+        with db.tx() as c:
+            c.execute("INSERT INTO desktop_installations (user_id,id,client_name,os,device_id) VALUES (%s,%s,'cr pc','darwin',%s)",
+                      (ua, inst, dev_a))
+        b = webchat.consent_key_begin(ua, bearer, inst, spki(key))
+        assert webchat.consent_key_activate(ua, bearer, inst, b["key_id"], sign(key, b["claims"]))["state"] == "active"
+
+        webchat.grant_request(ua, dev_a, "claude", "test-model", "cr-declined")
+        ch = issue(ua, bearer, inst, "cr-declined")["claims"]
+        assert webchat.grant_status(ua, "cr-declined")["prompt"] == "open"
+        pc = PC(srv, tok_a)
+        pc.send({"type": "consent.result", "request_id": "cr-declined", "outcome": "declined"})
+        assert wait_reason("cr-declined", "declined"), reason("cr-declined")
+        assert ch_state(ch["nonce"]) == "revoked"
+        st = webchat.grant_status(ua, "cr-declined")
+        assert (st["state"], st["prompt"]) == ("pending", "declined"), st
+        assert pc.wait(lambda m: m.get("type") != "ping", 0.3) is None   # 응답을 보내지 않는다
+        pc.send({"type": "consent.result", "request_id": "cr-declined", "outcome": "locked"})   # 이미 닫힘 = 그대로
+        pc.send({"type": "consent.result", "request_id": "cr-declined", "outcome": ["declined"]})   # 형식 틀림 = 무시
+        time.sleep(0.3)
+        assert reason("cr-declined") == "declined" and pc.closed is None
+        ok("consent.result: WS 로 받은 거절이 그 grant 를 declined 로 닫고 issued challenge 를 revoked(응답 없음, 두 번째는 그대로)")
+
+        assert _code(lambda: issue(ua, bearer, inst, "cr-declined")) == "GRANT-INVALID"
+        assert _code(lambda: verify(ua, bearer, inst, ch["nonce"], sign(key, ch))) == "GRANT-USED"
+        assert _code(lambda: _grant_consume(ua, dev_a, "claude", "test-model", "cr-declined")) == "CONSENT_REQUIRED"
+        assert _grant_state(ua, "cr-declined") == "pending"
+        # 서명 검증: challenge 가 아직 issued 여도 grant 가 닫혔으면 승인하지 않는다(revoked 로 끝낸다)
+        webchat.grant_request(ua, dev_a, "claude", "test-model", "cr-verify")
+        cv = issue(ua, bearer, inst, "cr-verify")["claims"]
+        with db.tx() as c:
+            c.execute("UPDATE chat_provider_grants SET close_reason='failed' WHERE user_id=%s AND request_id='cr-verify'", (ua,))
+        assert _code(lambda: verify(ua, bearer, inst, cv["nonce"], sign(key, cv))) == "CONSENT_REQUIRED"
+        assert ch_state(cv["nonce"]) == "revoked" and _grant_state(ua, "cr-verify") == "pending"
+        assert webchat.grant_status(ua, "cr-verify")["prompt"] == "closed"
+        # 소비: 승인된 grant 에 이유가 붙어 있으면(직접 넣은 합성 상태) 소비하지 않는다
+        webchat.grant_request(ua, dev_a, "claude", "test-model", "cr-consume")
+        cc = issue(ua, bearer, inst, "cr-consume")["claims"]
+        assert verify(ua, bearer, inst, cc["nonce"], sign(key, cc))["state"] == "verified"
+        with db.tx() as c:
+            c.execute("UPDATE chat_provider_grants SET close_reason='failed' WHERE user_id=%s AND request_id='cr-consume'", (ua,))
+        assert _code(lambda: _grant_consume(ua, dev_a, "claude", "test-model", "cr-consume")) == "CONSENT_REQUIRED"
+        assert _grant_state(ua, "cr-consume") == "approved"
+        ok("닫힌 grant: challenge 발급 GRANT-INVALID, 서명 검증 거절(revoked), 소비 CONSENT_REQUIRED")
+
+        me = {"user_id": ua, "id": dev_a}
+        webchat.grant_request(ua, dev_a, "claude", "test-model", "cr-locked")
+        assert webchat.consent_result(me, "cr-locked", "locked") is True
+        assert webchat.grant_status(ua, "cr-locked")["prompt"] == "closed"
+        webchat.grant_request(ua, dev_a, "claude", "test-model", "cr-other")
+        assert webchat.consent_result({"user_id": ua, "id": other["device"]["id"]}, "cr-other", "declined") is False   # 다른 장치
+        assert webchat.consent_result({"user_id": ub, "id": dev_a}, "cr-other", "declined") is False                    # 다른 사용자
+        for bad_rid, bad_outcome in (("cr-other", "cancelled"), ("cr-other", None), ("bad id!", "declined"), (None, "declined"),
+                                     ("cr-none", "declined")):
+            assert webchat.consent_result(me, bad_rid, bad_outcome) is False, (bad_rid, bad_outcome)
+        assert reason("cr-other") is None and webchat.grant_status(ua, "cr-other")["prompt"] == "none"
+        assert webchat.consent_result(me, "cr-consume", "declined") is False   # 이미 approved
+        assert reason("cr-consume") == "failed"
+        ok("consent.result: locked 는 closed, 다른 장치, 다른 사용자, 목록 밖, 없음, 승인된 grant 는 바꾸지 않는다")
+
+        h = web(srv, ua)
+        body = {"device_id": dev_a, "provider": "claude", "model": "test-model"}
+        r = h.post("/api/chat/grants", json={**body, "request_id": "cr-declined"})
+        assert r.status_code == 200 and r.json()["state"] == "pending", r.text
+        assert pc.wait(lambda m: m.get("type") == "consent.request", 0.5) is None   # 닫힌 grant 에 창을 다시 띄우지 않는다
+        r = h.post("/api/chat/grants", json={**body, "request_id": "cr-fresh"})
+        assert r.status_code == 201, r.text
+        m = pc.wait(lambda m: m.get("type") == "consent.request", 3)
+        assert m and m["request_id"] == "cr-fresh", m
+        st = h.get("/api/chat/grants/cr-declined").json()
+        assert st["prompt"] == "declined", st
+        ok("grant 요청 route: 닫힌 같은 요청은 PC 에 consent.request 를 다시 보내지 않고, 새 요청은 보낸다. GET prompt=declined")
+    finally:
+        if pc:
+            pc.close()
+        with db.tx() as c:
+            c.execute("DELETE FROM chat_consent_challenges WHERE user_id=%s AND installation_id=%s", (ua, inst))
+            c.execute("DELETE FROM desktop_consent_keys WHERE user_id=%s AND installation_id=%s", (ua, inst))
+            c.execute("DELETE FROM desktop_installations WHERE user_id=%s AND id=%s", (ua, inst))
+            c.execute("DELETE FROM chat_provider_grants WHERE user_id=%s AND request_id LIKE 'cr-%%'", (ua,))
+        imports.device_revoke(ua, other["device"]["id"])
+
+
 def test_consent_routes(srv, ua, ub, tok_a, dev_a):
     """HTTP route: grant 요청·동의 키·challenge. 권한 = 웹 세션 uid 뿐, Origin 은 CSRF 방어뿐(PC 증거 아님), 키·challenge 는 Bearer 필수.
     합성 키·합성 설치본만. verified 서명 grant 는 session_new 에서 한 번 소비해 세션을 만들며, provider turn 은 계속 fail-closed."""
@@ -1392,9 +1511,14 @@ def test_consent_routes(srv, ua, ub, tok_a, dev_a):
                 with db.tx() as c:
                     c.execute("UPDATE users SET display_name='Synthetic MCP' WHERE id=%s", (ua,))
                 write_response = asyncio.run(route.chat_mcp(McpRequest(
-                    bound_mcp({"tool": "write", "op": "record_add", "params": write_params}))))
+                    bound_mcp({"tool": "write", "op": "record_add", "params": write_params, "bind": "model-bind"}))))
                 assert write_response.status_code == 200, write_response.body
-                record_id = mcp_value(write_response)["id"]
+                write_card = mcp_value(write_response)   # F1: write 는 바로 실행되지 않고 카드가 된다(모델 bind 무시)
+                assert write_card["status"] == "pending_confirmation", write_card
+                assert not rows("SELECT 1 FROM records WHERE user_id=%s AND title='synthetic MCP record'", (ua,))
+                write_done = webchat.approval_confirm(ua, mcp_session["session_id"], write_card["approval_id"])
+                assert write_done["status"] == "confirmed", write_done
+                record_id = write_done["result"]["id"]
                 preview_params = {"op": "trash_move", "params": {
                     "kind": "record", "target_id": record_id, "expected_revision": None}}
                 preview_response = asyncio.run(route.chat_mcp(McpRequest(
@@ -1478,18 +1602,20 @@ def test_consent_routes(srv, ua, ub, tok_a, dev_a):
 
                 with db.tx() as c:
                     before_count = c.execute("SELECT count(*) AS n FROM records WHERE user_id=%s", (ua,)).fetchone()["n"]
-                real_dispatch = facade.dispatch_trusted
-                def dispatch_then_fail(*args, **kwargs):
-                    real_dispatch(*args, **kwargs)
+                    before_cards = c.execute("SELECT count(*) AS n FROM chat_approvals WHERE user_id=%s", (ua,)).fetchone()["n"]
+                real_prepare = webchat.chat_write_prepare
+                def prepare_then_fail(*args, **kwargs):
+                    real_prepare(*args, **kwargs)
                     raise RuntimeError("synthetic rollback after side effect")
-                with patch.object(facade, "dispatch_trusted", side_effect=dispatch_then_fail):
+                with patch.object(webchat, "chat_write_prepare", side_effect=prepare_then_fail):
                     rollback_response = asyncio.run(route.chat_mcp(McpRequest(
                         bound_mcp({"tool": "write", "op": "record_add", "params": {
                             "title": "synthetic rollback", "text": "must not persist"}}))))
                 assert rollback_response.status_code == 400, rollback_response.body
                 with db.tx() as c:
                     after_count = c.execute("SELECT count(*) AS n FROM records WHERE user_id=%s", (ua,)).fetchone()["n"]
-                assert after_count == before_count, (before_count, after_count)
+                    after_cards = c.execute("SELECT count(*) AS n FROM chat_approvals WHERE user_id=%s", (ua,)).fetchone()["n"]
+                assert (after_count, after_cards) == (before_count, before_cards), (before_count, after_count, before_cards, after_cards)
 
             def assert_gateway_scope_denied(dev=gateway_dev):
                 with patch.object(facade, "dispatch_trusted") as denied_dispatch:
@@ -2168,6 +2294,7 @@ def main_():
         test_wall_clock_expiry_after_row_lock_wait(ua, dev_a)
         test_unapproved_keeps_active(srv, ua, tok_a, dev_a)
         test_consent_routes(srv, ua, ub, tok_a, dev_a)
+        test_consent_result(srv, ua, ub, tok_a, dev_a)
         sid_a, sid_b = test_sessions(srv, ua, ub, tok_a, dev_a, b2["device"]["id"])
         tid_a = test_turns(srv, ua, tok_a, sid_a)
         test_foreign(srv, ub, b1["token"], sid_a, tid_a)

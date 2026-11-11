@@ -85,7 +85,9 @@ def surface_schemas(operations, name_prefix=TOOL_PREFIX):
         "read": "읽기 op 을 부른다(아무것도 바꾸지 않는다). op 목록은 enum, 인자는 find(op=…). "
                 "확정·삭제 전 미리보기는 op=\"decide_preview\", params={op, params}.",
         "write": "사용자 말을 그대로 저장하거나 제안(draft)만 남기는 op 을 부른다. 다듬거나 추정으로 채우지 않는다. "
-                 "op 목록은 enum, 인자는 find(op=…).",
+                 "op 목록은 enum, 인자는 find(op=…). "
+                 "쓰기는 사용자가 카드로 확인한 뒤 실행된다. pending_confirmation은 완료가 아니다. "
+                 "이어지는 쓰기는 다음 턴에 created id로 한다.",
         "decide": "확정·변경·휴지통 이동/복원·보관·밖으로 보내기 op 을 부른다. op 목록은 enum, 인자는 find(op=…) 로 본다. "
                   "먼저 read(op=\"decide_preview\", params={op, params}) 로 bind 를 받는다. "
                   "공통: decide_preview 의 shown 을 고치지 않고 그대로 사용자에게 보여 주고, 사용자가 말한 뒤에만 부른다.",
