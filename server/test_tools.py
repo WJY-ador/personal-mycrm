@@ -157,10 +157,10 @@ MIG_TOOLS = {"migration_receipt_get"}
 FACADE_TOOLS = {"find", "read", "write", "decide", "purge"}
 BI = {k: f"bi-{k}@example.com" for k in ("a", "b", "agg", "adm", "del", "mig")}   # 25절: a 장치·수신 · b 남 · agg 집계 · adm 삭제 실행 · del 삭제 대상 · mig 이전
 # 처리방침 머리글(`vN · 날짜`) — PR B 부터 v5. 날짜는 문서가 정본이라 파일에서 읽는다(시험이 날짜를 따로 들지 않는다)
-PRIVACY_VERSION = "v7"   # board 이전(2026-10-20) v6 → PR ②-b(2026-10-22) v7
+PRIVACY_VERSION = "v8"   # board 이전(2026-10-20) v6 → PR ②-b(2026-10-22) v7 → 웹 AI 대화(2026-11) v8
 PRIVACY_HEAD = re.search(r"`(v\d+ · [^`]+)`", (HERE.parent / "guides" / "11-privacy.md").read_text(encoding="utf-8")).group(1)
 # 머리글 꼴 = v7 · 2026-10-<두 자리>. 날짜 자리값 DD 는 릴리스 때 채운다(릴리스 체크 「처리방침 날짜 채움」) — 그 전에도 시험은 통과
-assert re.fullmatch(r"v7 · 2026-10-(\d\d|DD)", PRIVACY_HEAD), PRIVACY_HEAD
+assert re.fullmatch(r"v8 · 2026-1[12]-(\d\d|DD)", PRIVACY_HEAD), PRIVACY_HEAD
 # PR B(24절) 시험 사용자 — prb-* 는 표시 이름을 자동으로 채우지 않는다(관문 시험). 그 밖 시험 사용자는 아래 _autoname 이 채운다
 PRB_EMAILS = tuple(f"prb-{k}@example.com" for k in ("a", "b", "noname", "web", "mcp", "del", "dela", "delb", "adm", "race", "old", "nav"))
 TEST_EMAILS += PRB_EMAILS
