@@ -1064,8 +1064,11 @@ def _write_shown(op, norm) -> dict:
     """F3: 정규화 params 의 모든 키를 한 줄씩 — 아는 키는 한국어 이름표, 모르는 키는 키 이름 그대로. 값은 자르거나 요약하지 않는다.
     이름표가 겹치면 키 이름으로, 그것도 겹치면 번호를 붙여 줄이 사라지지 않게 한다(줄 수 == 키 수)."""
     labels = _WRITE_LABELS.get(op, {})
+    values = _WRITE_VALUES.get(op, {})
     shown = {}
     for key, value in norm.items():
+        if isinstance(value, str) and value in values.get(key, {}):
+            value = values[key][value]
         label = labels.get(key, key)
         if label in shown:
             label = key
@@ -1076,6 +1079,15 @@ def _write_shown(op, norm) -> dict:
             n += 1
         shown[label] = value
     return shown
+
+
+# 보안 검토 2(2026-11-12): record_add 카드의 출처 값은 영어 코드 대신 사람 말로 보인다. 표에 없는 값은 그대로.
+_WRITE_VALUES = {
+    "record_add": {
+        "decision_owner": {"self": "판단 근거로 쓰는 내 정리(결정은 내가 했어요)"},
+        "text_process": {"structured": "AI가 정리한 글", "verbatim": "내가 쓴 글 그대로"},
+    },
+}
 
 
 # I 반영 R1~R3(2026-11-11): 덮어쓰기 write 카드는 대상의 "지금" 상태를 서버가 DB 에서 읽어 "바뀐 뒤"(F3 줄)와 함께 보인다.

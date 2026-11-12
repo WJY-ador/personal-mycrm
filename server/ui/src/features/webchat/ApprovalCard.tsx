@@ -1,6 +1,8 @@
 // 확인 카드 — 무엇을 하려는지 한 줄 제목(op 한국어 이름) · 상태 · 바뀌는 내용(서버 shown 을 이름과 값의 줄로, 원문은 인용 꼴로).
 // shown 은 고쳐 쓰지 않는다: 서버가 준 순서 그대로, 값을 요약하거나 빼지 않는다(표현만 바꾼다). 긴 값은 높이 제한 상자 안에서 스크롤로 전부 보인다. 원본 JSON(shown, impact, params, 결과)은 "자세히" 안에 접는다.
 // 버튼과 서버 계약(취소, 확인하고 실행)은 그대로. A5: 되돌릴 수 없는 카드는 표시 한 줄을 두고, 확인하고 실행 뒤 정말 실행을 한 번 더 눌러야 실행한다.
+// 보안 검토 1(2026-11-12): 정말 실행은 확인하고 실행과 다른 자리(경고 줄 왼쪽)에 두고, 무장 뒤 1초 비활성, 10초 뒤 해제, 카드 밖을 누르면 바로 해제.
+import { useEffect, useRef } from "react";
 import { mdhm } from "../../shared/date";
 import type { Approval } from "./api";
 import type { WebchatStore } from "./store";
@@ -35,8 +37,15 @@ function Card({ a, s }: { a: Approval; s: WebchatStore }) {
   if (a.status === "confirmed" && a.result !== null) raw.push(["result", a.result]);
   const armed = a.status === "pending" && a.irreversible && s.approvalArmed === a.id;
   const busy = s.approvalsLoading || !!s.approvalAction;
+  const box = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!armed) return;
+    const outside = (e: Event) => { if (box.current && !box.current.contains(e.target as Node)) s.disarmApproval(); };
+    document.addEventListener("pointerdown", outside, true);
+    return () => document.removeEventListener("pointerdown", outside, true);
+  }, [armed, s]);
   return (
-    <article className={css.approval} data-op={a.op} data-irreversible={a.irreversible ? "" : undefined}>
+    <article ref={box} className={css.approval} data-op={a.op} data-irreversible={a.irreversible ? "" : undefined}>
       <h5>{OP_NAME[a.op] || a.op}</h5>
       <p className={css.approvalMeta}>{CARD_STATUS[a.status] || a.status}{when}</p>
       {a.irreversible && <p className={css.irreversible} data-irreversible-note="">{CARD_IRREVERSIBLE}</p>}
@@ -45,11 +54,13 @@ function Card({ a, s }: { a: Approval; s: WebchatStore }) {
         {raw.map(([k, v]) => <div key={k}><h6>{CARD_RAW[k]}</h6><pre>{jsonText(v)}</pre></div>)}
       </details>
       {a.status === "pending" && s.approvalAction === a.id && <p className={css.empty} role="status">처리 중…</p>}
-      {armed && <p className={css.irreversible} role="alert">{CARD_AGAIN}</p>}
-      {a.status === "pending" && (armed ? <div className={css.row}>
+      {armed && <div className={css.armRow} data-arm-row="">
+        <button type="button" className="primary" disabled={busy || !s.approvalArmReady} onClick={() => void s.actOnApproval(a.id, "confirm")}>{CARD_REALLY}</button>
+        <p className={css.irreversible} role="alert">{CARD_AGAIN}</p>
+      </div>}
+      {a.status === "pending" && (armed ? <div className={css.row} data-card-buttons="">
         <button type="button" className="secondary" disabled={busy} onClick={() => s.disarmApproval()}>{CARD_BACK}</button>
-        <button type="button" className="primary" disabled={busy} onClick={() => void s.actOnApproval(a.id, "confirm")}>{CARD_REALLY}</button>
-      </div> : <div className={css.row}>
+      </div> : <div className={css.row} data-card-buttons="">
         <button type="button" className="secondary" disabled={busy} onClick={() => void s.actOnApproval(a.id, "cancel")}>취소</button>
         <button type="button" className="primary" disabled={busy} onClick={() => void s.actOnApproval(a.id, "confirm")}>{CARD_CONFIRM}</button>
       </div>)}

@@ -61,6 +61,8 @@
 .approvalMeta { margin: 0; font-size: var(--fs-1); color: var(--muted); overflow-wrap: anywhere; }
 /* A5: 되돌릴 수 없는 카드 표시 — 색만으로 알리지 않는다(글자 그대로 되돌릴 수 없어요) */
 .irreversible { margin: .35rem 0 0; font-size: var(--fs-1); font-weight: 600; color: var(--fail); overflow-wrap: anywhere; }
+.armRow { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; min-width: 0; }
+.armRow .irreversible { margin: 0; flex: 1 1 12rem; }
 /* 확인 카드의 바뀌는 내용 — 값은 자르지 않고 높이 제한 상자 안에서 스크롤로 전부 보인다(대화 하나로 F3) */
 .shown { max-height: min(24rem, 55vh); overflow-y: auto; overscroll-behavior: contain; min-width: 0; padding-right: var(--sp-2); }
 .shown:focus-visible { outline: 2px solid var(--mark); outline-offset: 2px; }

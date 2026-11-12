@@ -195,7 +195,10 @@ class ChatInjectionTests(unittest.TestCase):
                 self.assertEqual(len(shown), len(norm))
                 # jsonb keeps neither key order, so compare as multisets of values
                 dump = lambda values: sorted(json.dumps(v, sort_keys=True, ensure_ascii=False) for v in values)
-                self.assertEqual(dump(shown.values()), dump(norm.values()))
+                # 보안 검토 2: record_add 의 출처 코드 값은 사람 말로 보인다(_WRITE_VALUES). 그 밖의 값은 그대로
+                human = webchat._WRITE_VALUES.get(op, {})
+                expected = [human.get(k, {}).get(v, v) if isinstance(v, str) else v for k, v in norm.items()]
+                self.assertEqual(dump(shown.values()), dump(expected))
                 for key in norm:
                     label = webchat._WRITE_LABELS[op].get(key, key)
                     self.assertTrue(label in shown or key in shown, (op, key))
@@ -296,8 +299,8 @@ class ChatInjectionTests(unittest.TestCase):
         cancelled = self.call("write", "record_add", params)["approval_id"]
         card = [a for a in webchat.approvals_list(self.uid, self.sid) if a["id"] == cancelled][0]
         self.assertEqual(card["shown"]["본문"], body)   # 전문 그대로
-        self.assertEqual(card["shown"]["가공 방식"], "structured")
-        self.assertEqual(card["shown"]["내 결정 표시"], "self")
+        self.assertEqual(card["shown"]["가공 방식"], "AI가 정리한 글")
+        self.assertEqual(card["shown"]["내 결정 표시"], "판단 근거로 쓰는 내 정리(결정은 내가 했어요)")
         webchat.approval_cancel(self.uid, self.sid, cancelled)
         self.assertEqual(self.snapshot(), before)
         aid = self.call("write", "record_add", params)["approval_id"]

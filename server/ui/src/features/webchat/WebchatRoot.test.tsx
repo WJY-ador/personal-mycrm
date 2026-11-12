@@ -165,10 +165,20 @@ test("지난 대화 목록 = 보관 안내 한 줄 + 세션 목록 · 열면 읽
   expect(aside().querySelector("textarea")).toBeTruthy();
 });
 
+// 보안 검토 1: 무장 지연과 해제를 실제 시간 없이 본다(store.now, store.later 주입)
+const clock = (s: WebchatStore) => {
+  let t = 0;
+  const q: { at: number; fn: () => void; live: boolean }[] = [];
+  s.now = () => t;
+  s.later = (fn, ms) => { const x = { at: t + ms, fn, live: true }; q.push(x); return () => { x.live = false; }; };
+  return { tick(ms: number) { t += ms; for (const x of q.filter(x => x.live && x.at <= t)) { x.live = false; x.fn(); } } };
+};
+
 const leaves = (v: unknown): string[] => v === null ? [] : Array.isArray(v) ? v.flatMap(leaves) : typeof v === "object" ? Object.entries(v as object).flatMap(([k, x]) => [k, ...leaves(x)]) : [String(v)];
 
 test("확인 카드 = op 한국어 제목 · shown 의 이름과 값이 빠짐없이 보인다(자세히 밖) · 원문은 인용 · 원본 JSON 은 자세히 안 · 되돌릴 수 없으면 두 번 확인(A5)", async () => {
   const { s } = mk();
+  const c = clock(s);
   const shown = { "기록": "회고", "전": "<script>alert(1)</script> 옛 글", "후": "새 글", "지워질 판단 후보": ["후보 하나", "후보 둘"], "제안": { "title": "새 제목", "body": null }, "근거 인용": "원문 그대로" };
   const card: Approval = { id: "ap_1", turn_id: "ct_1", op: "record_edit", params: { record_id: "r1", find: "옛", replace: "새" }, shown, impact: { record_id: "r1", revision: 3 }, irreversible: true, status: "pending", created_at: "", expires_at: "2026-11-08T00:05:00Z", finished_at: null, result: null };
   s.api.approvals = vi.fn().mockResolvedValue({ approvals: [card] });
@@ -188,15 +198,31 @@ test("확인 카드 = op 한국어 제목 · shown 의 이름과 값이 빠짐�
   expect(raw.querySelector("summary")?.textContent).toBe("자세히");
   expect(raw.textContent).toContain('"replace": "새"');
   expect(raw.textContent).toContain('"revision": 3');
-  expect([...art.querySelectorAll(":scope > div > button")].map(b => b.textContent)).toEqual(["취소", "확인하고 실행"]);
+  const buttons = () => [...art.querySelectorAll("[data-card-buttons] > button")].map(b => b.textContent);
+  expect(buttons()).toEqual(["취소", "확인하고 실행"]);
   s.api.approvals = vi.fn().mockResolvedValue({ approvals: [{ ...card, status: "confirmed", finished_at: "2026-11-08T00:01:00Z", result: { updated: 1, record: { title: "changed" } } }] });
   await act(async () => { btn("확인하고 실행").click(); }); await flush();
   expect(s.api.confirmApproval).not.toHaveBeenCalled();   // 첫 확인은 서버로 가지 않는다
   expect(art.querySelector("[role=alert]")?.textContent).toBe("되돌릴 수 없는 작업이에요. 실행하려면 한 번 더 눌러 주세요.");
-  expect([...art.querySelectorAll(":scope > div > button")].map(b => b.textContent)).toEqual(["그만두기", "정말 실행"]);
+  // 보안 검토 1: 정말 실행은 확인하고 실행 자리에 생기지 않는다(경고 줄 왼쪽), 1초 동안 비활성
+  expect(buttons()).toEqual(["그만두기"]);
+  const armRow = art.querySelector("[data-arm-row]") as HTMLElement;
+  expect([...armRow.children].map(x => x.textContent)).toEqual(["정말 실행", "되돌릴 수 없는 작업이에요. 실행하려면 한 번 더 눌러 주세요."]);
+  expect(btn("정말 실행").disabled).toBe(true);
+  await act(async () => { btn("정말 실행").click(); btn("정말 실행").dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); }); await flush();
+  expect(s.api.confirmApproval).not.toHaveBeenCalled();   // 무장 직후 클릭, 더블클릭 = 실행 안 함
   await act(async () => { btn("그만두기").click(); }); await flush();
-  expect([...art.querySelectorAll(":scope > div > button")].map(b => b.textContent)).toEqual(["취소", "확인하고 실행"]);
+  expect(buttons()).toEqual(["취소", "확인하고 실행"]);
+  // 카드 밖을 누르면 바로 풀린다
   await act(async () => { btn("확인하고 실행").click(); }); await flush();
+  expect(art.querySelector("[data-arm-row]")).toBeTruthy();
+  await act(async () => { document.body.dispatchEvent(new Event("pointerdown", { bubbles: true })); }); await flush();
+  expect(art.querySelector("[data-arm-row]")).toBeNull();
+  expect(buttons()).toEqual(["취소", "확인하고 실행"]);
+  // 1초 뒤 클릭 = 실행
+  await act(async () => { btn("확인하고 실행").click(); }); await flush();
+  await act(async () => { c.tick(1000); }); await flush();
+  expect(btn("정말 실행").disabled).toBe(false);
   await act(async () => { btn("정말 실행").click(); }); await flush(); await flush();
   expect(s.api.confirmApproval).toHaveBeenCalledTimes(1);
   expect(s.api.confirmApproval).toHaveBeenCalledWith("cs_1", "ap_1", true);
@@ -206,7 +232,7 @@ test("확인 카드 = op 한국어 제목 · shown 의 이름과 값이 빠짐�
 test("A6 대화 기록 카드 = 기록 남기기 제목 · 전문이 자르지 않고 보이고 가공 방식, 내 결정 표시가 보인다 · 되돌릴 수 있으면 한 번 확인", async () => {
   const { s } = mk();
   const body = "### 확인 카드를 두 번 누르게\n영구 삭제가 한 번에 나가면 안 된다고 내가 정했다. 그래서 정말 실행을 한 번 더 두었다.\n동기: 대화에 없음";
-  const shown = { "본문": body, "제목": "AI 대화 정리", "가공 방식": "structured", "내 결정 표시": "self" };
+  const shown = { "본문": body, "제목": "AI 대화 정리", "가공 방식": "AI가 정리한 글", "내 결정 표시": "판단 근거로 쓰는 내 정리(결정은 내가 했어요)" };
   const card: Approval = { id: "ca_9", turn_id: "ct_1", op: "record_add", params: { text: body, text_process: "structured", decision_owner: "self" }, shown, impact: { tier: "write" }, irreversible: false, status: "pending", created_at: "", expires_at: "2026-11-08T00:05:00Z", finished_at: null, result: null };
   s.api.approvals = vi.fn().mockResolvedValue({ approvals: [card] });
   await open(s);
@@ -216,7 +242,7 @@ test("A6 대화 기록 카드 = 기록 남기기 제목 · 전문이 자르지 �
   expect(art.querySelector("[data-irreversible-note]")).toBeNull();
   const box = art.querySelector("[data-shown]") as HTMLElement;
   expect(box.querySelector("blockquote")?.textContent).toBe(body);
-  for (const v of ["가공 방식", "structured", "내 결정 표시", "self"]) expect(box.textContent).toContain(v);
+  for (const v of ["가공 방식", "AI가 정리한 글", "내 결정 표시", "판단 근거로 쓰는 내 정리(결정은 내가 했어요)"]) expect(box.textContent).toContain(v);
   await act(async () => { btn("확인하고 실행").click(); }); await flush(); await flush();
   expect(s.api.confirmApproval).toHaveBeenCalledWith("cs_1", "ca_9", false);
 });

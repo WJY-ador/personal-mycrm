@@ -372,8 +372,18 @@ test("승인 확인과 취소는 본문 없는 명시 endpoint를 호출하고 �
   expect(s.api.approvals).toHaveBeenCalledTimes(3);
 });
 
+// 보안 검토 1: 무장 지연과 해제를 실제 시간 없이 본다(store.now, store.later 주입)
+const clock = (s: WebchatStore) => {
+  let t = 0;
+  const q: { at: number; fn: () => void; live: boolean }[] = [];
+  s.now = () => t;
+  s.later = (fn, ms) => { const x = { at: t + ms, fn, live: true }; q.push(x); return () => { x.live = false; }; };
+  return { tick(ms: number) { t += ms; for (const x of q.filter(x => x.live && x.at <= t)) { x.live = false; x.fn(); } } };
+};
+
 test("A5: 되돌릴 수 없는 카드는 첫 확인에서 서버로 가지 않고, 두 번째 확인만 irreversible_ack 로 간다 · 다른 카드나 취소는 표시를 푼다", async () => {
   const { s } = mk();
+  const c = clock(s);
   await s.toggle(true);
   s.approvals = [{ id: "ap_1", turn_id: "ct_1", op: "trash_purge", params: {}, shown: {}, impact: {}, irreversible: true, status: "pending", created_at: "", expires_at: "", finished_at: null, result: null }];
   await s.actOnApproval("ap_1", "confirm");
@@ -382,6 +392,15 @@ test("A5: 되돌릴 수 없는 카드는 첫 확인에서 서버로 가지 않�
   s.disarmApproval();
   expect(s.approvalArmed).toBe("");
   await s.actOnApproval("ap_1", "confirm");
+  // 보안 검토 1: 무장 직후 두 번째 누름(더블클릭, Enter 두 번)은 실행하지 않는다
+  await s.actOnApproval("ap_1", "confirm");
+  expect(s.approvalArmReady).toBe(false);
+  c.tick(999);
+  await s.actOnApproval("ap_1", "confirm");
+  expect(s.api.confirmApproval).not.toHaveBeenCalled();
+  expect(s.approvalArmed).toBe("ap_1");
+  c.tick(1);
+  expect(s.approvalArmReady).toBe(true);
   await s.actOnApproval("ap_1", "confirm");
   expect(s.api.confirmApproval).toHaveBeenCalledTimes(1);
   expect(s.api.confirmApproval).toHaveBeenCalledWith("cs_1", "ap_1", true);
@@ -577,4 +596,20 @@ test("R-J3: 창으로 돌아오면 capabilities 다시 읽기, 열린 패널만,
   expect(s.capabilities.devices[0].capabilities[0].provider).toBe("codex");
   s.open = false; t += CAPS_REFRESH_GAP_MS; s.refreshCapabilities();
   expect(calls(s.api.capabilities).length).toBe(2);
+});
+
+test("보안 검토 1: 무장은 10초 뒤 저절로 풀리고, 풀린 뒤 누름은 다시 무장만 한다", async () => {
+  const { s } = mk();
+  const c = clock(s);
+  await s.toggle(true);
+  s.approvals = [{ id: "ap_1", turn_id: "ct_1", op: "trash_purge", params: {}, shown: {}, impact: {}, irreversible: true, status: "pending", created_at: "", expires_at: "", finished_at: null, result: null }];
+  await s.actOnApproval("ap_1", "confirm");
+  c.tick(9999);
+  expect(s.approvalArmed).toBe("ap_1");
+  c.tick(1);
+  expect(s.approvalArmed).toBe("");
+  expect(s.approvalArmReady).toBe(false);
+  await s.actOnApproval("ap_1", "confirm");
+  expect(s.api.confirmApproval).not.toHaveBeenCalled();
+  expect(s.approvalArmed).toBe("ap_1");
 });
