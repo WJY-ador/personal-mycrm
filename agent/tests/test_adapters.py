@@ -99,7 +99,8 @@ class LikesSemanticsTest(unittest.TestCase):
 
 class SkeletonTest(unittest.TestCase):
     def test_skeletons_cannot_be_enabled(self):
-        for name in ("feed", "reactions", "mail", "kakao"):
+        self.assertEqual(set(adapters.SKELETONS), {"kakao"})
+        for name in ("kakao",):
             a = adapters.get(name)
             a.check_config({"enabled": False})
             with self.assertRaises(AdapterNotActive):

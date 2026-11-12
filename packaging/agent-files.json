@@ -2,6 +2,7 @@
   "agent/__init__.py",
   "agent/adapters/__init__.py",
   "agent/adapters/base.py",
+  "agent/adapters/collected.py",
   "agent/adapters/likes.py",
   "agent/adapters/skeletons.py",
   "agent/chat.py",

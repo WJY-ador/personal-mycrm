@@ -1,6 +1,6 @@
 # agent — 로컬 에이전트 (호스팅 판 「연결 장치」)
 
-내 PC 를 호스팅 판 계정에 「연결 장치」로 붙이는 프로그램입니다. 수집기 산출물을 활동으로 바꿔 서버에 보내고, 다른 사람의 원문은 PC 에 둡니다. 서버엔 행동·날짜·별칭·HMAC 식별자·관계 같은 구조화 정보와 내가 승인할 글만 갑니다.
+내 PC 를 호스팅 판 계정에 「연결 장치」로 붙이는 프로그램입니다. 수집기 산출물을 활동과 수집 글로 바꿔 서버에 보내고, 다른 사람의 원문 본문은 PC 에 둡니다. 서버엔 행동·날짜·별칭·HMAC 식별자·관계 같은 구조화 정보, 수집 글의 URL, 제목 줄, 작성자 표시, 날짜, AI 요약과 분석, 그리고 내가 승인할 글만 갑니다.
 
 - Python ≥3.9, 표준 라이브러리만. 키트 루트(이 `agent/` 폴더의 상위)에서 `python3 -m agent …` 로 돌립니다.
 - macOS: 자격 증명은 Keychain(`security` CLI), 예약은 launchd. Windows: 자격 증명은 Credential Manager, 예약은 Task Scheduler. Windows 는 실제 PC 에서 아직 검증하지 않았습니다(아래 「Windows」).
@@ -97,8 +97,98 @@ python3 -m agent [--home 경로] <명령>
 - `include_kinds`·`include_null_kind`·`include_seed` — 보낼 행. 코드 기본값은 **아무 행도 안 보냄**(`[]`·`false`·`false`)이라, 보내려면 이렇게 직접 적어야 합니다. `["*"]` = kind 가 있는 행 전부. kind 는 내가 붙인 분류 태그라 좋아요 여부와 무관하고, 축 매핑에도 쓰지 않습니다.
 - `axes` — 모든 활동에 붙일 축 항목 ID. 웹 「연결 장치」 허용 규칙의 축 안에서만 됩니다.
 - 변환 규칙: 행 하나 = `like` 활동 하나. 행동 날짜를 주는 필드가 없어 `occurred_on` 은 언제나 비움(「날짜 미확인」) — 게시 시각·수집 시각으로 대신하지 않습니다. `first_seen` 은 「처음 수집한 날」(`observed_on`)로만 갑니다. 작성자 핸들은 HMAC 으로만 가고, 본문·게시 시각·원 URL·주제 등 나머지는 PC 원문 저장소에만 둡니다. 파일에서 행이 사라져도 취소를 만들지 않습니다. 판별할 수 없는 중복은 격리하고 보내지 않습니다.
-- 다른 어댑터(`feed`·`reactions`·`mail`·`kakao`)는 의미 규칙만 있는 골격이라 꺼져 있습니다. LinkedIn 이직 입력원(`linkedin_moves`)은 설정에 적으면 설정 오류로 막습니다.
+- 수집 글 어댑터(`feed`, `reactions`, `mail`)는 기본으로 꺼져 있습니다. 켜는 법은 아래 3-1절입니다.
+- `kakao` 는 의미 규칙만 있는 골격이라 켤 수 없습니다. 카톡 글은 `feed` 어댑터의 채널 `kakao` 로 들어옵니다(feed-queue `source: "kakao"`). 내가 보내고 답한 행동을 담은 입력 파일이 생기면 그때 켭니다.
+- LinkedIn 이직 입력원(`linkedin_moves`)은 설정에 적으면 설정 오류로 막습니다.
 - 그 밖: `viewer_port`(원문 보기 포트, 기본 8790 — 웹 활동 상세의 「로컬 연결 포트」와 같게), `upload`(`max_per_run` 100 · `min_interval_sec` 6.5 · `timeout_sec` 30).
+
+## 3-1. 수집 글 어댑터 (`feed`, `reactions`, `mail`, 기본 꺼짐)
+
+수집기(로그인된 브라우저로 긁는 프로그램)가 만든 JSONL 을 읽습니다. 수집 자체는 이 에이전트가 하지 않습니다. 줄 하나가 JSON 객체 하나이고, UTF-8 입니다.
+
+**서버로 가는 것과 PC 에 두는 것**
+- 수집 글(`collected-post/1`)은 다른 사람의 글입니다. 서버엔 원 URL(`post_url`), 제목 줄(본문 첫 줄 앞 200자, 요약 아님), 작성자 표시 이름, 게시일, 수집일, 축, 수집기 AI 가 만든 요약과 분석(`ai`)만 갑니다. 원문 본문 전체, 작성자 소개는 PC 원문 저장소(`raw_id`)에 두고 [5절](#5-원문-보기-serve)로 엽니다.
+- 수집 글은 승인 대기 없이 바로 항목이 됩니다. 내 판단의 근거가 아니고, AI 문장은 `ai` 안에만 둡니다.
+- 작성자는 표시 이름 글자로만 갑니다. 사람 항목, HMAC 식별자를 만들지 않습니다.
+- 제목 줄, 작성자 표시, AI 문장 안의 URL, 이메일, 로컬 경로 덩어리는 `‹링크›`, `‹메일›`, `‹경로›` 로 가리고 보냅니다. 가린 수는 `run-once` 결과의 `masked` 에 남습니다. 가린 뒤 제목 줄에 가림 표시만 남으면 그 글은 격리합니다. URL 은 `post_url` 에만 갑니다(`https://` 로 시작, 2,000자 이하).
+- 활동(내 행동)은 명시된 것만 만듭니다. 행동 날짜(`occurred_on`)는 명시적 행동 시각(`reacted_at`, 보낸 메일의 `ts`)에서만 채우고 수집 시각으로 대신하지 않습니다. 활동엔 작성자 정보를 붙이지 않습니다.
+- 날짜는 KST 날짜로 자릅니다. 오프셋(`Z`, `+09:00`, `+0900`)이 없는 시각은 쓰지 않습니다.
+- 같은 원천 ID 는 한 항목입니다. 다시 실행하면 바뀐 필드만 새 개정으로 갱신합니다(예: AI 요약이 나중에 채워짐). 같은 ID 의 행이 여럿이면 파일의 마지막 행을 씁니다(URL 이 바뀌어도 같은 항목을 갱신).
+- 판별할 수 없는 행(ID, 수집일, 제목 줄 없음, 모르는 상태, 채널)은 격리하고 보내지 않습니다.
+
+**설정 예시** (`connect` 뒤 `<홈>/config.json` 의 `adapters` 에 더합니다. 경로는 절대 경로)
+```json
+"feed": {
+  "enabled": true,
+  "input_path": "/absolute/path/to/feed-queue.jsonl",
+  "axes_map": {"<원천 축 코드>": "i_<축 항목 ID>"}
+},
+"reactions": {
+  "enabled": true,
+  "inputs": [
+    {"path": "/absolute/path/to/reactions.jsonl", "format": "reactions", "channel": "linkedin"},
+    {"path": "/absolute/path/to/threads-likes.jsonl", "format": "threads_likes", "channel": "threads"}
+  ]
+},
+"mail": {"enabled": true, "input_path": "/absolute/path/to/mail.jsonl"}
+```
+- `feed.channels` — 원천 `source` 값 → 채널(`linkedin`, `reddit`, `kakao`, `threads`, `blog`, `web`). 기본값: `source` 없음, `linkedin`, `linkedin_search` → `linkedin`, `reddit`, `kakao`, `brunch`, `naver_blog` → `blog`, `web`. 값을 `null` 로 적으면 그 `source` 는 보내지 않습니다. 매핑에 없는 `source` 는 격리합니다.
+- `feed.axes_map` — 원천 축 코드 → 축 항목 ID. 웹 연결 장치 허용 규칙의 축 안이어야 합니다. 매핑에 없는 코드는 버립니다(최대 10개).
+- `reactions.inputs` — 파일마다 `format`(`reactions` 또는 `threads_likes`)과 `channel` 을 적습니다. `channel` 은 `kakao` 를 쓸 수 없습니다(반응 활동의 제공자에 카톡이 없습니다). `reactions.kind_actions` — 원천 `kind` → 활동(기본 `like`, `comment`, `repost`, `reply` 그대로). 매핑에 없는 `kind` 는 활동 없이 격리 기록만 남기고, 수집 글은 그대로 보냅니다.
+- `threads_likes` 입력은 수집 글만 만듭니다. 좋아요 활동은 `likes` 어댑터가 만듭니다. 그래서 같은 Threads 좋아요 파일을 두 어댑터가 함께 읽어도 활동이 겹치지 않습니다.
+- 웹 연결 장치 허용 규칙에서 변환(`collected-post/1`, `board-feed/1`, `board-reactions/1`, `board-mail/1`)과 행동(`save`, `comment`, `repost`, `reply`, `read`, `send`)을 켜야 서버가 받습니다. 꺼져 있으면 만들지 않고 건너뜁니다(`run-once` 결과의 `skipped_policy`). 웹에서 켜면 다음 실행이 허용 규칙을 다시 받아 만듭니다.
+- 서버 계정에 커스텀 오브젝트 `collected_posts` 가 있어야 수집 글을 받습니다.
+
+**입력 JSONL 필드 (수집기 출력 계약)** — 표에 없는 필드는 PC 원문 저장소에만 둡니다.
+
+`feed` (feed-queue 꼴) → 수집 글 + 보관이면 `save` 활동
+
+| 필드 | 꼴 | 쓰는 곳 |
+|---|---|---|
+| `id` | 문자열, 필수 | 중복 기준(PC 대응표에만) |
+| `status` | `pending`, `kept`, `dropped`, `expired`, `excluded`, `superseded`, 필수 | `pending`, `kept` → 수집 글 `state`. 나머지는 새로 올리지 않고, 이미 올린 글이면 `state: removed`(서버 휴지통). `kept` → `save` 활동 |
+| `text` | 문자열, 필수 | 첫 줄 앞 200자 → `title`. 전체는 PC 에만 |
+| `collected_at` | 오프셋 있는 시각 또는 `YYYY-MM-DD`, 필수 | KST 날짜 → `collected_on`, `save` 활동의 `observed_on` |
+| `source` | 문자열 또는 없음 | `feed.channels` 로 → `channel` |
+| `post_url` | `https://` URL | → `post_url` |
+| `author` | 문자열 | → `author_display` |
+| `published_at` | 오프셋 있는 시각 또는 날짜 | KST 날짜 → `posted_on`. 없으면 비움 |
+| `axes` | 축 코드 문자열 목록 | `feed.axes_map` 으로 → `axes`(수집 글과 `save` 활동) |
+| `grade` | `signal`, `news`, `noise` | → `ai.grade` |
+| `summary` | 문자열 | → `ai.summary`(500자에서 자름) |
+| `long` | `{asis, tobe, ops, points[]}` | → `ai.as_is`, `ai.to_be`, `ai.ops`(각 1,000자), `ai.points`(12개, 각 300자) |
+| `author_desc` 등 | | PC 에만 |
+
+`reactions` (`format: "reactions"`) → 수집 글(`state: kept`) + 반응 활동
+
+| 필드 | 꼴 | 쓰는 곳 |
+|---|---|---|
+| `id` | 문자열, 필수 | 중복 기준 |
+| `text` | 문자열, 필수 | 첫 줄 → `title`. 전체는 PC 에만 |
+| `collected_at` | 시각 또는 날짜, 필수 | → `collected_on`, 활동의 `observed_on` |
+| `kind` | 문자열 | `reactions.kind_actions` 로 → 활동 `like`, `comment`, `repost`, `reply`. 같은 `id` 에 `kind` 가 여럿이면 행동마다 하나 |
+| `reacted_at` | 오프셋 있는 시각 | KST 날짜 → 그 활동의 `occurred_on`. 없으면 비움 |
+| `post_url`, `author`, `posted_at` | | → `post_url`, `author_display`, `posted_on` |
+
+`reactions` (`format: "threads_likes"`, Threads 좋아요 꼴) → 수집 글(`state: kept`)만. 좋아요 활동은 `likes` 어댑터 몫
+
+| 필드 | 꼴 | 쓰는 곳 |
+|---|---|---|
+| `id` | 문자열, 필수 | 중복 기준 |
+| `text` | 문자열, 필수 | 첫 줄 → `title` |
+| `first_seen` | `YYYY-MM-DD`, 필수 | → `collected_on` |
+| `original_url`, `author`, `posted_at` | | → `post_url`, `author_display`, `posted_on` |
+
+`mail` (mail 꼴) → 활동만. 수집 글을 만들지 않습니다
+
+| 필드 | 꼴 | 쓰는 곳 |
+|---|---|---|
+| `url`, `acct`, `from_email`, `ts`, `subject` | | 다섯 값을 함께 다이제스트해 중복 기준으로만 씁니다(PC 대응표에만) |
+| `unread` | 불리언 | `false` 일 때만 `read` |
+| `saved`, `sent`, `replied` | 불리언, 있으면 | `true` 일 때 `save`, `send`, `reply`. 수신, 목록에 있다는 것만으로는 활동을 만들지 않습니다 |
+| `ts` | 오프셋 있는 시각 또는 epoch(초, 밀리초) | `send` 의 `occurred_on` 만 |
+| `first_seen` | `YYYY-MM-DD` | → `observed_on` |
+| `subject`, `snippet`, `from_name`, `from_email`, `acct` | | PC 에만. 서버로 가지 않습니다 |
 
 ## 4. 무인 요약 (기본 꺼짐)
 
@@ -112,7 +202,7 @@ python3 -m agent [--home 경로] <명령>
 - 로그인·구독·권한 오류면 `summary` 범위가 멈춥니다. 조치한 뒤 `run-once --resume summary`.
 - 요약은 서버 「승인 대기」로 가고, 내가 웹에서 승인해야 기록이 됩니다. 승인해도 AI 생성 표시가 남습니다.
 - 웹에서 삭제한 요약은 입력 파일이 바뀌어도 바로 다시 요약하지 않습니다(구독 사용 0). 휴지통이면 168시간 뒤 입력이 바뀌어 있을 때 한 번 다시 요약해 보내고(복원했으면 접수), 영구 삭제했으면 더는 요약하지 않습니다.
-- 지금 에이전트는 내 글(`self-text/1`)을 만드는 어댑터가 없습니다. 승인 대기로 가는 것은 AI 요약과 세션 정리(아래)입니다.
+- 지금 에이전트는 내 글(`self-text/1`)을 만드는 어댑터가 없습니다. 승인 대기로 가는 것은 AI 요약과 세션 정리(아래)입니다. 수집 글(3-1절)은 승인 대기 없이 바로 항목이 됩니다.
 
 ## 4-1. 세션 정리 폴더 (기본 꺼짐)
 
@@ -132,7 +222,7 @@ AI 와 나눈 대화를 내가 정리해 둔 「세션 정리」 글(`YYYY-MM-DD
 
 ## 5. 원문 보기 (`serve`)
 
-웹 활동 상세의 [이 PC에서 원문 열기] 는 `http://127.0.0.1:<포트>/raw/<원문 ID>` 로 갑니다.
+웹 활동 상세의 [이 PC에서 원문 열기] 는 `http://127.0.0.1:<포트>/raw/<원문 ID>` 로 갑니다. 수집 글의 원문 본문도 같은 원문 ID(`raw_id`)로 엽니다.
 - `127.0.0.1` 에만 붙습니다. 첫 화면은 **원문 없는 확인 화면**이고, 그 화면의 [원문 열기] 를 눌러야 원문을 보여 줍니다(같은 출처 요청 · 정확한 Host·Origin · 세션 · 60초 일회용 토큰).
 - 요청에서 경로·URL·파일명을 받지 않습니다. 원문 위치는 PC 대응표로만 찾고, 저장소 밖으로 벗어나는 경로는 거절합니다. 다른 사람의 HTML 은 실행하지 않고 글자로 보여 줍니다. 외부 이미지·글꼴·스크립트가 없고, 캐시·리퍼러·프레임 삽입을 막습니다. 접근 로그를 남기지 않습니다.
 - 다른 PC 에서는 같은 ID 라도 대응표가 없어 열리지 않습니다. 이 방어는 웹 페이지의 무단 접근을 줄이는 것이고, 같은 OS 계정에서 도는 악성 프로그램까지 막는다고 보장하지 않습니다.

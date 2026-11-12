@@ -35,6 +35,20 @@ class Observation:
 
 
 @dataclass
+class CollectedPost:
+    """수집 글 1건(외부 글, collected-post/1). 원문 본문은 raw(PC 원문 저장소)에만 두고 서버로 보내지 않는다.
+
+    fields = 서버로 가는 필드(raw_id 빼고). 선택 필드는 값이 없으면 키를 뺀다.
+    only_if_sent = True 면 이미 올린 원본에만 보낸다(state=removed — 처음 보는 버린 글은 올리지 않는다).
+    """
+    dedupe_key: str                 # PC 대응표 중복 기준 — 서버로 안 감
+    fingerprint: str                # 신원(채널·원천 ID·URL) 다이제스트. 요약 같은 내용은 넣지 않는다
+    raw: dict
+    fields: dict
+    only_if_sent: bool = False
+
+
+@dataclass
 class Quarantine:
     reason: str
     key: str                        # 다이제스트로만 저장된다
