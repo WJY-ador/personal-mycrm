@@ -19,10 +19,9 @@ from chat_mcp import (
 )
 
 _TRUST = object()
-# Scope/dispatch share one connection in synthetic tests, but tool-specific
-# side effects and every lifecycle path have not had independent security
-# review. Keep HTTP dispatch impossible until that review and isolation work.
-ATOMIC_DISPATCH_READY = False
+# Scope reconstruction and dispatch share one transaction. 2026-11-12 K: 원작자 실사용, 독립 검토 I와 J 반영 뒤 켬, Codex는 꺼짐.
+# The route still needs CRM_WEBCHAT_ENABLED and CRM_CHAT_MCP_ENABLED (env, default off).
+ATOMIC_DISPATCH_READY = True
 
 
 def route_enabled(webchat_on: bool, gateway_on: bool) -> bool:

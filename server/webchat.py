@@ -70,7 +70,7 @@ REPLAY_BYTES = 2 * 1024 * 1024      # SSE 재생 상한 — 이벤트 바이트(
 SSE_MAX_SECONDS = 300               # SSE 연결 하나의 최대 수명 — 끝나면 브라우저가 Last-Event-ID 로 다시 붙는다(재배포 때 옛 프로세스가 열린 SSE 를 무한히 기다리지 않게)
 PING_SECONDS = 25                   # 장치 WS ping + 토큰 재확인(철회·만료·차단 = 닫음)
 TURN_IDLE_SECONDS = 600             # 이벤트 없는 running 턴 → 다음 입력 때 failed(TURN-TIMEOUT)
-PROVIDER_LAUNCH_READY = False       # stay OFF until provider process isolation and launch integration are cleared
+PROVIDER_LAUNCH_READY = True        # 2026-11-12 K: 원작자 실사용, 독립 검토 I와 J 반영 뒤 켬, Codex는 꺼짐
 LAUNCH_AUTHORIZATION_PATH = "/api/chat/launch-authorization"
 LAUNCH_AUTHORIZATION_TTL_SECONDS = 15
 CLIENT_TURN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -170,7 +170,7 @@ def enabled() -> bool:
 
 
 def chat_mcp_enabled() -> bool:
-    """Hard-off until independent review clears atomic tool lifecycle and provider isolation."""
+    """Gateway route on = ATOMIC_DISPATCH_READY + CRM_WEBCHAT_ENABLED + CRM_CHAT_MCP_ENABLED."""
     from chat_mcp_gateway import route_enabled
     return route_enabled(enabled(), env("CHAT_MCP_ENABLED", "") == "1")
 
@@ -2189,7 +2189,7 @@ class Routes:
     # 키·challenge 경로는 세션에 더해 Authorization: Bearer <장치 토큰>을 요구하고, 원문 그대로 helper 에 넘긴다 —
     # 토큰 주인 = 세션 uid · 활성 장치 · 설치본.device_id 일치는 helper(_consent_bind)가 tx 안에서 본다. 장치 id 는 토큰에서만 나온다.
     # grant route 는 요청만 저장한다. challenge verify 가 승인하고, session_new 가 같은 트랜잭션에서 소비한다.
-    # provider turn dispatch 는 별도 안전 검증 전까지 차단한다.
+    # provider 실행은 PROVIDER_LAUNCH_READY(2026-11-12 K 켬)와 launch-authorization 재확인을 거친다. 도구 호출은 /api/chat/mcp(CRM_CHAT_MCP_ENABLED).
 
     @staticmethod
     async def _strict_body(request, spec: dict, optional=()) -> dict:

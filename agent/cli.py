@@ -18,7 +18,7 @@ import sys
 from . import AGENT_VERSION, chat_mcp_bridge, config as _config, contract, hmacid, keystore, osutil, runner, schedule, store as _store
 
 EXIT_OK, EXIT_ERR, EXIT_USAGE, EXIT_HALT = 0, 1, 2, 3
-CHAT_CLAUDE_PROVIDER_READY = False  # server+desktop launch lifecycle review gate; keep default OFF
+CHAT_CLAUDE_PROVIDER_READY = True  # 2026-11-12 K: 원작자 실사용, 독립 검토 I와 J 반영 뒤 켬, Codex는 꺼짐
 CHAT_CODEX_PROVIDER_READY = False  # subscription home/login and production package trust are unverified
 
 
