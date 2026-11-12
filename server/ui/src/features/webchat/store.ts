@@ -20,7 +20,9 @@ type Ev = { turn_id: string; seq?: number; data?: Record<string, unknown>; text?
 export const MODEL_KEY = "mycrm-webchat-model";
 export const GRANT_PROVIDERS = ["claude", "codex"];   // server/webchat.py GRANT_PROVIDERS 와 같은 값 — fake 는 허용 없이 시작
 export const GRANT_POLL_MS = 1500;
-export const CAPS_REFRESH_GAP_MS = 2000;   // R-J3: 창 focus, 탭 다시 보임 때 다시 읽기 — 이 간격 안의 중복(focus + visibilitychange 등)은 한 번으로
+export const CAPS_REFRESH_GAP_MS = 2000;
+export const ARM_READY_MS = 1000;   // 보안 검토 1(2026-11-12): 정말 실행은 무장 뒤 1초 동안 눌리지 않는다(더블클릭, Enter 두 번 막기)
+export const ARM_TTL_MS = 10000;    // 무장은 10초 뒤 저절로 풀린다   // R-J3: 창 focus, 탭 다시 보임 때 다시 읽기 — 이 간격 안의 중복(focus + visibilitychange 등)은 한 번으로
 const cid = () => (crypto.randomUUID ? crypto.randomUUID() : `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`);
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 export const choiceKey = (c: Choice) => `${c.device}|${c.provider}|${c.model ?? ""}`;
@@ -37,6 +39,7 @@ export class WebchatStore {
   api: WebchatApi = { ...webchatApi };
   saved: Saved = local;
   sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+  later = (fn: () => void, ms: number): (() => void) => { const t = setTimeout(fn, ms); return () => clearTimeout(t); };
   now = () => performance.now();
   open = false; sid = ""; device = ""; connected = false; turns: Turn[] = []; input = ""; line = ""; bad = false; sending = false;
   provider = ""; model: string | null = null; bindingVersion = 0; readOnly = false;
@@ -46,6 +49,10 @@ export class WebchatStore {
   view: "chat" | "history" = "chat"; past: Session[] = []; pastLoading = false; pastError = "";
   approvals: Approval[] = []; approvalsLoading = false; approvalsError = ""; approvalAction = ""; approvalLine = ""; approvalBad = false;
   approvalResult: { id: string; result: unknown } | null = null;
+  approvalArmed = "";   // A5: 되돌릴 수 없는 카드의 첫 확인을 누른 카드 id — 정말 실행을 한 번 더 눌러야 서버로 간다
+  approvalArmReady = false;   // 무장 뒤 ARM_READY_MS 가 지나야 true — 그 전엔 정말 실행이 비활성이고 눌러도 실행하지 않는다
+  private armedAt = 0;
+  private armTimers: (() => void)[] = [];
   replaced = false; trimmed = "";   // replaced = 다른 탭이 이 대화를 열어 이 탭의 SSE 가 끝남(다시 붙지 않는다) · trimmed = 재생에서 생략된 앞부분 안내
   private es: Es | null = null;
   private grantSeq = 0;
@@ -159,7 +166,7 @@ export class WebchatStore {
   }
 
   private resetApprovals() {
-    this.approvals = []; this.approvalsLoading = false; this.approvalsError = ""; this.approvalAction = ""; this.approvalLine = ""; this.approvalBad = false; this.approvalResult = null;
+    this.approvals = []; this.approvalsLoading = false; this.approvalsError = ""; this.approvalAction = ""; this.approvalLine = ""; this.approvalBad = false; this.approvalResult = null; this.clearArm();
     this.approvalsRequest = false; this.approvalsRequestSid = ""; this.approvalsRequestSeq++; this.approvalsPromise = null;
   }
 
@@ -227,13 +234,31 @@ export class WebchatStore {
     await request;
   }
 
+  // A5: 되돌릴 수 없는 카드(irreversible)는 첫 확인에서 서버로 보내지 않고 정말 실행을 기다린다. 두 번째 확인만 irreversible_ack 를 싣는다
+  // 보안 검토 1: 무장 뒤 1초 비활성, 10초 뒤 자동 해제, 카드 밖 누름은 화면(ApprovalCard)이 disarmApproval 을 부른다
+  disarmApproval() { if (this.approvalArmed) { this.clearArm(); this.emit(); } }
+  private clearArm() { for (const stop of this.armTimers) stop(); this.armTimers = []; this.approvalArmed = ""; this.approvalArmReady = false; this.armedAt = 0; }
+  private arm(id: string) {
+    this.clearArm();
+    this.approvalArmed = id; this.armedAt = this.now();
+    this.armTimers = [
+      this.later(() => { if (this.approvalArmed === id) { this.approvalArmReady = true; this.emit(); } }, ARM_READY_MS),
+      this.later(() => { if (this.approvalArmed === id) this.disarmApproval(); }, ARM_TTL_MS),
+    ];
+  }
+
   async actOnApproval(id: string, action: "confirm" | "cancel") {
-    if (!this.sid || this.approvalAction || !this.approvals.some(a => a.id === id && a.status === "pending")) return;
+    const card = this.approvals.find(a => a.id === id && a.status === "pending");
+    if (!this.sid || this.approvalAction || !card) return;
     const sid = this.sid;
+    const ack = action === "confirm" && card.irreversible && this.approvalArmed === id;
+    if (action === "confirm" && card.irreversible && !ack) { this.arm(id); this.approvalLine = ""; this.approvalBad = false; this.emit(); return; }
+    if (ack && (!this.approvalArmReady || this.now() - this.armedAt < ARM_READY_MS)) return;   // 무장 직후 1초 안의 두 번째 누름은 버린다
+    this.clearArm();
     this.approvalAction = id; this.approvalLine = ""; this.approvalBad = false; this.approvalResult = null; this.emit();
     try {
       if (action === "confirm") {
-        const response = await this.api.confirmApproval(sid, id);
+        const response = await this.api.confirmApproval(sid, id, ack);
         if (this.sid !== sid) return;
         this.approvalResult = { id, result: response.result ?? null };
       } else {

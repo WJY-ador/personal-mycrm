@@ -230,6 +230,9 @@ def record_add(
     source_location: Annotated[str, Field(description="출처 연결: 위치 — 파일 경로·URL 등 (선택)")] = "",
     decision_owner: Annotated[Literal["", "self"],
                               Field(description="self = 사용자가 이 기록의 결정은 「내 결정」이라고 말했을 때만. 비우면 표시 없음")] = "",
+    text_process: Annotated[Literal["verbatim", "structured"],
+                            Field(description="verbatim = 사용자 말 그대로(기본). structured = 대화를 정리한 기록 — 웹 AI 확인 카드로 사용자가 "
+                                              "전문을 보고 확인한 대화 기록에만")] = "verbatim",
 ) -> dict:
     """기록 1편을 원문 그대로 남긴다. 직접 쓴 내 기록만 넣는다 — 남의 말·AI 요약은 넣지 않는다.
     남이 쓴 글은 넣지 않는다. 이미 넣었다면 record_provenance_set 으로 author_kind=external 표시한다.
@@ -238,7 +241,8 @@ def record_add(
     저장 뒤 사용자에게 '지금 후보를 뽑을까요?' 하나만 묻는다.
     저장한 본문은 사용자가 고치라고 말한 구절만 record_edit 로 바꾼다(내가 결정한 판단이 붙지 않은 글만, 이력이 남는다)."""
     ref = {"kind": source_kind, "name": source_name, "location": source_location} if source_name.strip() else None
-    r = db.record_add(uid_of(ctx), title, text, question_id or None, source, source_ref=ref, decision_owner=decision_owner or None)
+    r = db.record_add(uid_of(ctx), title, text, question_id or None, source, text_process=text_process, source_ref=ref,
+                      decision_owner=decision_owner or None)
     out = {"id": r["id"], "title": r["title"], "created": r["created"]}
     if ref is not None:
         out["source_id"], out["source_linked"] = r["source_id"], r["source_linked"]

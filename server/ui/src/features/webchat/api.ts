@@ -32,7 +32,8 @@ export const webchatApi = {
   turn: (sid: string, text: string, client_turn_id: string) => postJSON<TurnRes>(`/api/chat/sessions/${encodeURIComponent(sid)}/turns`, { text, client_turn_id }),
   stop: (sid: string) => postJSON<{ turn_id: string | null }>(`/api/chat/sessions/${encodeURIComponent(sid)}/stop`, {}),
   approvals: (sid: string) => getJSON<ApprovalList>(`/api/chat/sessions/${encodeURIComponent(sid)}/approvals`),
-  confirmApproval: (sid: string, id: string) => postJSON<ApprovalAction>(`/api/chat/sessions/${encodeURIComponent(sid)}/approvals/${encodeURIComponent(id)}/confirm`, {}),
+  // A5: 되돌릴 수 없는 카드의 두 번째 확인만 irreversible_ack 를 싣는다(서버는 이것 없이 그 카드를 실행하지 않는다)
+  confirmApproval: (sid: string, id: string, ack = false) => postJSON<ApprovalAction>(`/api/chat/sessions/${encodeURIComponent(sid)}/approvals/${encodeURIComponent(id)}/confirm`, ack ? { irreversible_ack: true } : {}),
   cancelApproval: (sid: string, id: string) => postJSON<ApprovalAction>(`/api/chat/sessions/${encodeURIComponent(sid)}/approvals/${encodeURIComponent(id)}/cancel`, {}),
   stream: (sid: string): Es => new EventSource(`/api/chat/sessions/${encodeURIComponent(sid)}/stream`) as unknown as Es,
 };

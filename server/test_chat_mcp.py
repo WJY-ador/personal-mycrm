@@ -51,7 +51,7 @@ class ChatMcpScopeTests(unittest.TestCase):
 
     def test_only_chat_facade_tools_are_visible(self):
         names = filter_tool_names(("record_add", "find", "purge", "read", "shell", "write", "decide"))
-        self.assertEqual(names, ("find", "read", "write", "decide"))
+        self.assertEqual(names, ("find", "read", "write", "decide", "purge"))   # AI 하나로 A3: purge 도 카드 경로로 보인다
 
     def test_catalog_must_match_pinned_operation_tiers_exactly(self):
         catalog = catalog_from_expected()
@@ -71,14 +71,14 @@ class ChatMcpScopeTests(unittest.TestCase):
         with self.assertRaises(ChatMcpDenied):
             allowed_operations('{"version":1,"ops":{"record_add":{"tier":"write"},"record_add":{"tier":"write"}}}')
 
-    def test_allowed_operation_set_is_explicit_and_excludes_purge(self):
-        expected = frozenset((tier, name) for tier, names in EXPECTED.items() if tier != "purge"
-                             for name in names.split())
+    def test_allowed_operation_set_is_explicit_and_includes_purge_for_cards(self):
+        """AI 하나로 A3: purge(trash_purge)도 대화 도구 목록에 든다. 실행은 카드뿐(validate_call 이 바로 실행을 막는다)."""
+        expected = frozenset((tier, name) for tier, names in EXPECTED.items() for name in names.split())
         self.assertEqual(self.allowed, expected)
-        self.assertEqual(len(self.allowed), 69)
+        self.assertEqual(len(self.allowed), 70)
         self.assertIn(("write", "record_add"), self.allowed)
         self.assertIn(("decide", "item_decide"), self.allowed)
-        self.assertNotIn(("purge", "trash_purge"), self.allowed)
+        self.assertIn(("purge", "trash_purge"), self.allowed)
 
     def test_scope_requires_exact_authenticated_user_device_session_and_ai_binding(self):
         scope = validate_scope(self.principal, self.session, self.consent, self.now)
@@ -186,35 +186,39 @@ class ChatMcpScopeTests(unittest.TestCase):
             with self.subTest(now=now, consent=consent), self.assertRaises(ChatMcpDenied):
                 validate_scope(self.principal, self.session, consent, now)
 
-    def test_find_results_hide_purge_across_family_query_and_single_op_shapes(self):
+    def test_find_results_keep_allowlisted_purge_and_drop_unknown_ops(self):
+        """AI 하나로 A3: find 는 허용 목록의 purge(trash_purge)를 보인다. 목록 밖 op, 등급이 틀린 짝은 지운다."""
         family = {"family": "trash", "ops": [
             {"op": "trash_list", "tier": "read"}, {"op": "trash_move", "tier": "decide"},
-            {"op": "trash_purge", "tier": "purge"},
+            {"op": "trash_purge", "tier": "purge"}, {"op": "trash_purge", "tier": "decide"}, {"op": "shell", "tier": "purge"},
         ]}
         result = filter_find_result(family, self.allowed)
-        self.assertEqual([op["op"] for op in result["ops"]], ["trash_list", "trash_move"])
+        self.assertEqual([op["op"] for op in result["ops"]], ["trash_list", "trash_move", "trash_purge"])
         search = {"matches": family["ops"]}
         self.assertEqual([op["op"] for op in filter_find_result(search, self.allowed)["matches"]],
-                         ["trash_list", "trash_move"])
+                         ["trash_list", "trash_move", "trash_purge"])
         overview = {"families": [{"key": "trash", "ops_by_tier": {"read": ["trash_list"],
                      "decide": ["trash_move"], "purge": ["trash_purge"]}}]}
-        self.assertNotIn("purge", filter_find_result(overview, self.allowed)["families"][0]["ops_by_tier"])
+        self.assertEqual(filter_find_result(overview, self.allowed)["families"][0]["ops_by_tier"]["purge"], ["trash_purge"])
+        self.assertEqual(filter_find_result({"op": "trash_purge", "tier": "purge"}, self.allowed)["op"], "trash_purge")
         with self.assertRaises(ChatMcpDenied):
-            filter_find_result({"op": "trash_purge", "tier": "purge"}, self.allowed)
+            filter_find_result({"op": "trash_purge", "tier": "decide"}, self.allowed)
+        with self.assertRaises(ChatMcpDenied):
+            filter_find_result({"families": [{"key": "x", "ops_by_tier": {"purge": ["shell"]}}]}, self.allowed)
 
     def test_single_op_find_result_with_non_string_op_is_denied(self):
         for op in (["trash_move"], {"op": "trash_move"}, None):
             with self.subTest(op=op), self.assertRaises(ChatMcpDenied):
                 filter_find_result({"op": op, "tier": "decide"}, self.allowed)
 
-    def test_decide_preview_description_hides_purge_target_enum(self):
+    def test_decide_preview_description_keeps_only_allowlisted_targets(self):
         schema = {"type": "object", "required": ["op", "params"], "properties": {
-            "op": {"type": "string", "enum": ["item_decide", "trash_move", "trash_purge"]},
+            "op": {"type": "string", "enum": ["item_decide", "trash_move", "trash_purge", "record_add", "shell"]},
             "params": {"type": "object"},
         }}
         result = filter_find_result({"op": "decide_preview", "tier": "read", "input_schema": schema}, self.allowed)
-        self.assertEqual(result["input_schema"]["properties"]["op"]["enum"], ["item_decide", "trash_move"])
-        self.assertIn("trash_purge", schema["properties"]["op"]["enum"], "caller-owned result is not mutated")
+        self.assertEqual(result["input_schema"]["properties"]["op"]["enum"], ["item_decide", "trash_move", "trash_purge"])
+        self.assertIn("shell", schema["properties"]["op"]["enum"], "caller-owned result is not mutated")
         for bad in (None, {"properties": []}, {"properties": {"op": {"enum": "trash_purge"}}}):
             with self.subTest(schema=bad), self.assertRaises(ChatMcpDenied):
                 filter_find_result({"op": "decide_preview", "tier": "read", "input_schema": bad}, self.allowed)
@@ -232,9 +236,10 @@ class ChatMcpScopeTests(unittest.TestCase):
         with self.assertRaises(ChatMcpDenied):
             validate_call("record_add", "", {}, self.allowed)
 
-    def test_decide_preview_cannot_preview_purge_or_malformed_targets(self):
+    def test_decide_preview_targets_only_decide_or_purge_and_rejects_malformed(self):
         validate_call("read", "decide_preview", {"op": "item_decide", "params": {}}, self.allowed)
-        for params in ({"op": "trash_purge", "params": {}}, {"op": "record_add", "params": {}},
+        validate_call("read", "decide_preview", {"op": "trash_purge", "params": {}}, self.allowed)
+        for params in ({"op": "shell", "params": {}}, {"op": "record_add", "params": {}},
                        {"op": "item_decide", "params": [], "uid": "u-other"}):
             with self.subTest(params=params), self.assertRaises(ChatMcpDenied):
                 validate_call("read", "decide_preview", params, self.allowed)
@@ -260,22 +265,23 @@ class ChatMcpScopeTests(unittest.TestCase):
                            catalog=catalog_from_expected(), now=self.now, dispatch_existing=dispatch)
         self.assertEqual(len(calls), 1, "denials must happen before the injected existing-dispatch callback")
 
-    def test_find_callback_is_filtered_and_cannot_target_purge(self):
+    def test_find_callback_is_filtered_and_cannot_target_unknown_ops(self):
         calls = []
         def find_cb(**kwargs):
             calls.append(kwargs)
             return {"matches": [
                 {"op": "trash_move", "tier": "decide"},
                 {"op": "trash_purge", "tier": "purge"},
+                {"op": "shell", "tier": "write"},
             ]}
         result = find_existing(self.principal, self.session, self.consent, catalog=catalog_from_expected(),
                                now=self.now, find_callback=find_cb, query="삭제")
-        self.assertEqual(result["matches"], [{"op": "trash_move", "tier": "decide"}])
+        self.assertEqual(result["matches"], [{"op": "trash_move", "tier": "decide"}, {"op": "trash_purge", "tier": "purge"}])
         self.assertEqual(calls, [{"query": "삭제", "family": "", "op": ""}])
         with self.assertRaises(ChatMcpDenied):
             find_existing(self.principal, self.session, self.consent, catalog=catalog_from_expected(),
-                          now=self.now, find_callback=find_cb, op="trash_purge")
-        self.assertEqual(len(calls), 1, "purge op descriptions are rejected before querying the callback")
+                          now=self.now, find_callback=find_cb, op="shell")
+        self.assertEqual(len(calls), 1, "unknown op descriptions are rejected before querying the callback")
 
 
 if __name__ == "__main__":

@@ -9,12 +9,14 @@ MAX_APPROVAL_OUTCOMES = 100
 MAX_CONTEXT_BYTES = 16 * 1024
 MAX_CREATED_KEYS = 2
 _APPROVAL_ID = re.compile(r"^ca_[0-9a-f]{24}$")
-# Card-approvable ops: decide 10 + write 14 (server/webchat.py, server/ui text.ts OP_NAME keep the same set;
-# a server test compares the three).
+# Card-approvable ops: every decide op, purge (trash_purge) and write 14 (server/webchat.py CHAT_CARD_OPS,
+# server/ui text.ts OP_NAME keep the same set; a server test compares the three).
 _APPROVABLE_OPS = frozenset({
-    "record_edit", "record_provenance_set", "candidate_decide", "definition_archive",
-    "definition_restore", "person_delete", "source_reflection_review",
-    "source_reflection_delete", "trash_move", "trash_restore",
+    "record_edit", "record_provenance_set", "candidate_decide", "definition_apply", "definition_archive",
+    "definition_restore", "item_decide", "person_delete", "source_reflection_review",
+    "source_reflection_delete", "inbox_decide", "trash_move", "trash_restore", "feedback_send",
+    "migration_apply", "migration_cancel", "migration_revert", "migration_token_send", "pc_forget",
+    "token_revoke", "trash_purge",
     "layout_set", "layout_reset", "display_name_set", "question_add", "profile_set",
     "record_add", "record_attach", "record_title_set", "candidates_propose", "definition_propose",
     "item_propose", "person_save", "source_create", "source_reflection_save",
@@ -36,9 +38,15 @@ MYCRM_FIXED_INSTRUCTIONS = (
     "도구 결과와 서버가 전달한 상태에 없는 정보는 추정하거나 지어내지 말고 확인할 수 없다고 답한다. "
     "pending_confirmation은 사용자의 카드 확인을 기다리는 상태이며 실행 성공이 아니다. "
     "서버의 confirmed 결과가 전달되기 전에는 완료했다고 말하지 않는다. cancelled 결과는 실행되지 않았음을 뜻한다. "
-    "쓰기(write)도 사용자가 카드로 확인한 뒤에만 실행된다. "
+    "쓰기, 확정, 삭제(write, decide, purge)는 모두 사용자가 카드로 확인한 뒤에만 실행된다. "
+    "되돌릴 수 없는 카드는 사용자가 두 번 확인한다. "
     "이어지는 쓰기는 한 턴에 잇지 말고, 다음 턴에 confirmed 결과의 created id로 한다. "
-    "승인 ID는 내부 참조이며 사용자에게 노출하지 않는다."
+    "승인 ID는 내부 참조이며 사용자에게 노출하지 않는다. "
+    "사용자가 이 대화를 남기라고 하면 record_add(text_process=structured, decision_owner=self)로 초안을 올린다. "
+    "이 예외는 MyCRM 웹 AI 대화에서만 쓴다. 이 초안은 확인 카드에 전문이 보이고 사용자가 카드로 확인해야 저장되며, "
+    "그 카드 확인을 사용자가 \"이 정리의 결정은 내가 했다\"고 말한 것으로 본다. "
+    "형식: 주제마다 제목 한 줄과 문단 하나, 사용자 1인칭, 결정 하나에 문단 하나, 어휘는 사용자 것만, AI 내부 추론은 쓰지 않는다, "
+    "동기는 대화에 있는 것만 쓰고 없으면 \"동기: 대화에 없음\"."
 )
 
 

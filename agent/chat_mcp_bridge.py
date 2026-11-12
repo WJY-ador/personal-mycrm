@@ -1,6 +1,6 @@
 """Narrow stdio MCP bridge for the authenticated per-turn MyCRM HTTP facade.
 
-Only the four facade surfaces are model-visible. Authorization and every tool
+Only the five facade surfaces are model-visible. Authorization and every tool
 call are checked by the HTTPS client and server; no bearer is placed in argv,
 environment, MCP output, or diagnostics.
 """
@@ -19,7 +19,7 @@ from .chat_launch_authority import AUTH_PATH, LaunchAuthorizationDenied
 
 SERVER_NAME = "my-crm"
 TOOL_PREFIX = "mcp__my-crm__"
-SURFACES = ("find", "read", "write", "decide")
+SURFACES = ("find", "read", "write", "decide", "purge")
 # Claude Code namespaces MCP tools as mcp__<server>__<name> itself (CLI 2.1.322 probe, 2026-11-10):
 # a server-side name that already carries the prefix becomes mcp__my-crm__mcp__my-crm__find, which
 # never matches the adapter's --allowedTools or its init check. Claude therefore gets bare names.
@@ -64,16 +64,16 @@ def surface_schemas(operations, name_prefix=TOOL_PREFIX):
         if not isinstance(full_name, str) or not full_name.startswith(TOOL_PREFIX):
             raise ValueError("tool-name")
         op = full_name[len(TOOL_PREFIX):]
-        if not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", op) or tier not in ("read", "write", "decide"):
+        if not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", op) or tier not in ("read", "write", "decide", "purge"):
             raise ValueError("tool-scope")
         if op != "find":
             by_tier[tier].append(op)
     out = []
-    # `find` only describes non-purge operations; server/chat_mcp filters its result.
+    # `find` describes only allowlisted operations; server/chat_mcp filters its result.
     out.append({"name": name_prefix + "find", "description": (
                     "이 서버의 할 일(op)을 찾는다. 인자 없음 = 묶음 목록, query = 말로 찾기(최대 8), "
                     "op = 그 op 의 설명·input_schema·examples·rule. 찾은 op 은 등급 도구(read·write·decide·purge)로 부른다. "
-                    "확정·삭제는 decide_preview → decide/purge."),
+                    "확정·삭제(decide·purge)는 서버가 확인 카드로 만들고, 사용자가 카드로 확인해야 실행된다."),
             "annotations": {"readOnlyHint": True},
                 "inputSchema": {"type": "object", "properties": {
                     "query": {"type": "string", "description": "찾을 말(사용자 표현 그대로도 된다). 부분 일치", "default": ""},
@@ -87,12 +87,19 @@ def surface_schemas(operations, name_prefix=TOOL_PREFIX):
         "write": "사용자 말을 그대로 저장하거나 제안(draft)만 남기는 op 을 부른다. 다듬거나 추정으로 채우지 않는다. "
                  "op 목록은 enum, 인자는 find(op=…). "
                  "쓰기는 사용자가 카드로 확인한 뒤 실행된다. pending_confirmation은 완료가 아니다. "
-                 "이어지는 쓰기는 다음 턴에 created id로 한다.",
-        "decide": "확정·변경·휴지통 이동/복원·보관·밖으로 보내기 op 을 부른다. op 목록은 enum, 인자는 find(op=…) 로 본다. "
-                  "먼저 read(op=\"decide_preview\", params={op, params}) 로 bind 를 받는다. "
-                  "공통: decide_preview 의 shown 을 고치지 않고 그대로 사용자에게 보여 주고, 사용자가 말한 뒤에만 부른다.",
+                 "이어지는 쓰기는 다음 턴에 created id로 한다. "
+                 "예외 하나: 사용자가 이 대화를 남기라고 하면 record_add(text_process=structured, decision_owner=self)로 "
+                 "대화를 정리한 기록 초안을 올린다. 형식은 주제마다 제목 한 줄과 문단 하나, 사용자 1인칭, 결정 하나에 문단 하나, "
+                 "어휘는 사용자 것만, AI 내부 추론 제외, 동기는 대화에 있는 것만 쓰고 없으면 \"동기: 대화에 없음\". "
+                 "카드에 전문이 보이고 사용자가 확인해야 저장된다.",
+        "decide": "확정·변경·휴지통 이동/복원·보관·밖으로 보내기·PC와 토큰 해제·이관 반영/취소/되돌리기 op 을 부른다. "
+                  "op 목록은 enum, 인자는 find(op=…) 로 본다. 부르면 바로 실행되지 않고 서버가 확인 카드를 만든다"
+                  "(pending_confirmation). 사용자가 카드로 확인해야 실행된다. bind 는 필요 없다(주면 무시된다). "
+                  "되돌릴 수 없는 카드는 사용자가 두 번 확인한다. 사용자가 말한 일만 부른다.",
+        "purge": "영구 삭제(trash_purge) op 을 부른다. 바로 실행되지 않고 서버가 확인 카드를 만든다(pending_confirmation). "
+                 "되돌릴 수 없어 사용자가 카드에서 두 번 확인해야 실행된다. 사용자가 영구 삭제를 분명히 말할 때만 부른다.",
     }
-    for tier in ("read", "write", "decide"):
+    for tier in ("read", "write", "decide", "purge"):
         ops = sorted(by_tier[tier])
         if not ops:
             continue
@@ -100,8 +107,8 @@ def surface_schemas(operations, name_prefix=TOOL_PREFIX):
                  "params": {"anyOf": [{"type": "object", "additionalProperties": True}, {"type": "null"}],
                             "description": "op 인자 객체 — 모양은 find(op=…) 의 input_schema·examples", "default": None}}
         required = ["op"]
-        if tier == "decide":
-            props["bind"] = {"type": "string", "description": "read(op=\"decide_preview\") 가 준 bind. 없거나 낡으면 거절된다", "default": ""}
+        if tier in ("decide", "purge"):
+            props["bind"] = {"type": "string", "description": "쓰지 않는다(서버가 카드로 확인한다). 주어도 무시된다", "default": ""}
         tool = {"name": name_prefix + tier, "description": descriptions[tier],
                 "inputSchema": {"type": "object", "properties": props, "required": required,
                                 "additionalProperties": False}}
@@ -221,8 +228,8 @@ class McpStdioBridge:
             if params_value is not None and not isinstance(params_value, dict):
                 raise ValueError("operation-params")
             bind = args.get("bind", "")
-            if (tier == "decide" and (not isinstance(bind, str) or len(bind) > 128)
-                    or tier != "decide" and "bind" in args):
+            if (tier in ("decide", "purge") and (not isinstance(bind, str) or len(bind) > 128)
+                    or tier not in ("decide", "purge") and "bind" in args):
                 raise ValueError("bind")
             result = self.client.call_mcp(auth, tier, params_value or {}, op=args["op"], bind=bind)
         else:

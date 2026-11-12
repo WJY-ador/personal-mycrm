@@ -16,7 +16,7 @@ export function Summary({ W, slots, blocks, statsFail }: { W: World; slots: Slot
         <ol aria-label="첫 기록을 남기는 순서">
           <li>AI 대화 연결</li><li>기록 남기기</li><li>후보 검토</li>
         </ol>
-        <p className={css.webChatNote}>웹의 AI 대화는 본인 PC 연결과 로컬 에이전트 실행이 필요해요.</p>
+        <p className={css.webChatNote}>웹의 AI는 본인 PC 연결과 로컬 에이전트 실행이 필요해요.</p>
         <a className={css.helpLink} href="/help">첫 기록 안내 보기</a>
       </section>}
       <div className={css.sum} id="me-summary">

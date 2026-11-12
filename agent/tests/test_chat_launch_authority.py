@@ -73,19 +73,30 @@ class LaunchAuthorizationClientTest(unittest.TestCase):
                 self.client(opener=Opener()).authorize("/api/chat/launch-authorization", "cs_synthetic", "turn_synthetic",
                                                        "claude", "claude-synthetic")
 
-    def test_denies_purge_tools(self):
-        payload = response_payload()
-        payload["tools"] = {"mcp__my-crm__trash_purge": "decide"}
-        class Reply:
-            status = 200
-            def read(self, *_args): return json.dumps(payload).encode()
-            def __enter__(self): return self
-            def __exit__(self, *_): pass
+    def test_purge_tier_only_for_trash_purge(self):
+        """AI 하나로 A3: trash_purge 는 purge 등급으로만 받는다. purge 라는 이름의 op, 다른 op 의 purge 등급은 거절한다."""
         class Opener:
-            def open(self, *_args, **_kwargs): return Reply()
-        with self.assertRaises(LaunchAuthorizationDenied):
-            self.client(opener=Opener()).authorize("/api/chat/launch-authorization", "cs_synthetic", "turn_synthetic",
-                                                   "claude", "claude-synthetic")
+            def __init__(self, payload): self.payload = payload
+            def open(self, *_args, **_kwargs):
+                body = json.dumps(self.payload).encode()
+                class Reply:
+                    status = 200
+                    def read(self, *_args): return body
+                    def __enter__(self): return self
+                    def __exit__(self, *_): pass
+                return Reply()
+        for tools in ({"mcp__my-crm__trash_purge": "decide"}, {"mcp__my-crm__purge": "purge"},
+                      {"mcp__my-crm__trash_move": "purge"}):
+            payload = response_payload()
+            payload["tools"] = {**payload["tools"], **tools}
+            with self.subTest(tools=tools), self.assertRaises(LaunchAuthorizationDenied):
+                self.client(opener=Opener(payload)).authorize("/api/chat/launch-authorization", "cs_synthetic", "turn_synthetic",
+                                                              "claude", "claude-synthetic")
+        payload = response_payload()
+        payload["tools"] = {**payload["tools"], "mcp__my-crm__trash_purge": "purge"}
+        auth = self.client(opener=Opener(payload)).authorize("/api/chat/launch-authorization", "cs_synthetic", "turn_synthetic",
+                                                             "claude", "claude-synthetic")
+        self.assertEqual(auth.tools["mcp__my-crm__trash_purge"], "purge")
 
     def test_denies_transport_failure_without_returning_partial_grant(self):
         class FailingOpener:

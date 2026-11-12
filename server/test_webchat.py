@@ -1389,9 +1389,11 @@ def test_consent_routes(srv, ua, ub, tok_a, dev_a):
                         launch_binding["turn_id"], launch_binding["provider"], launch_binding["model"]) == (
                             ua, gateway_device["device"]["id"], mcp_session["session_id"], launch_turn, "claude", "test-model")
                 assert launch_binding["grant_id"] and launch_binding["consent_challenge_id"]
-                assert set(launch_value["tools"].values()) <= {"read", "write", "decide"}
+                assert set(launch_value["tools"].values()) <= {"read", "write", "decide", "purge"}
                 assert launch_value["tools"].get("mcp__my-crm__find") == "read"
-                assert "mcp__my-crm__trash_purge" not in launch_value["tools"]
+                # AI 하나로 A3: trash_purge 는 purge 등급으로 실린다(실행은 확인 카드뿐). 다른 op 은 purge 등급이 아니다
+                assert launch_value["tools"].get("mcp__my-crm__trash_purge") == "purge"
+                assert [n for n, t in launch_value["tools"].items() if t == "purge"] == ["mcp__my-crm__trash_purge"]
                 assert gateway_bearer not in launch_ok.body.decode()
                 forged = asyncio.run(route.launch_authorization(McpRequest(
                     {**launch_req_body, "uid": ua, "tools": ["purge"], "executable_sha256": "0" * 64})))

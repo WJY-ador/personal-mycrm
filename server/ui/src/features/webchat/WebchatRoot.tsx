@@ -1,5 +1,5 @@
 // 웹 「대화」(구독 AI 채팅) 상시 섬 — 스위치 S.switches.webchat 켜짐일 때만 껍데기가 띄운다(layout/App). 옛 1턴 「대화」(features/chat)와 따로.
-// 탭 줄 「AI 대화」 버튼은 #ui-chatnav 에 포털로, 패널은 오른쪽 고정(넓은 화면)·화면 전체(좁은 화면).
+// 탭 줄 AI 버튼(AI 하나로 A1, 탭 줄의 대화 버튼은 이것 하나)은 #ui-chatnav 에 포털로, 패널은 오른쪽 고정(넓은 화면)·화면 전체(좁은 화면).
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import type { ScreenProps } from "../../shared/ctx";

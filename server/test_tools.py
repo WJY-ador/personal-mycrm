@@ -5917,8 +5917,8 @@ async def test_prA_setup():
             assert "ARG-INVALID" in r.text, path
         # ── 메뉴 · breadcrumb · 좁은 화면 ──
         labels = [m[2] for m in web.ADMIN_MENU]
-        assert labels == ["Setup Home", "Object Manager", "Users", "Profiles", "Feature Settings", "Setup Audit Trail", "Reports", "Support",
-                          "Administration"], labels   # 관리자 프로필(2026-11-12) — Profiles·Feature Settings·Setup Audit Trail
+        assert labels == ["Setup Home", "Object Manager", "사용자", "프로필", "조직 기능 설정", "변경 기록", "Reports", "Support",
+                          "Administration"], labels   # 관리자 프로필(2026-11-12) — 프로필·조직 기능 설정·변경 기록(2026-11-12 한국어 메뉴)
         for key, href, label, _, _ in web.ADMIN_MENU:
             t = clean(await req("GET", href), href)
             nav = t[t.index('<nav class="side"'):t.index("</nav>", t.index('<nav class="side"'))]
@@ -5932,7 +5932,7 @@ async def test_prA_setup():
         # 옛 _admin_page 호출(위치 인자 4개) 그대로 동작
         r = web._admin_page("옛 호출", "<p>본문</p>", 200, "users")
         t = r.body.decode()
-        assert r.status_code == 200 and '<a href="/admin/users" aria-current=page>' in t and '<span aria-current="page">Users</span>' in t
+        assert r.status_code == 200 and '<a href="/admin/users" aria-current=page>' in t and '<span aria-current="page">사용자</span>' in t
         assert r.headers["cache-control"] == "no-store" and "script-src 'self'" in r.headers["content-security-policy"]
         # ── Setup Home · Support · Users · Administration 재배치 ──
         t = clean(await req("GET", "/admin"), "/admin")
