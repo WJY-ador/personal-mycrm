@@ -1,10 +1,10 @@
-"""Disabled Claude subscription-CLI candidate. Not registered or advertised.
+"""Claude subscription-CLI provider. Built by agent/cli.py only when CHAT_CLAUDE_PROVIDER_READY is on.
 
 This module is only a process/stream adapter. `--allowedTools` is not authorization;
-the MyCRM launch grant must be issued by a verified server gateway and must enforce
-the existing MyCRM permission rules. That authenticated desktop/server integration
-does not exist yet, so no injected verifier can enable this provider. Fixture tests
-do not prove CLI tool isolation or subscription terms.
+the MyCRM launch grant is issued by the server gateway (launch-authorization) and checked
+by the factory's _ServerLaunchVerifier, which enforces the existing MyCRM permission rules.
+No injected verifier can enable this provider. Fixture tests do not prove CLI tool
+isolation or subscription terms.
 """
 from __future__ import annotations
 
@@ -53,8 +53,8 @@ MAX_MODEL_ID_CHARS = 100
 MAX_ADVERTISED_MODELS = 16  # server/webchat.py _normalize_capabilities accepts 1..16 per provider
 _MODEL_QUERY_ID = "mycrm-models-1"
 MODEL_QUERY_TIMEOUT = 15.0
-# No authenticated desktop/server launch authority exists yet. Do not let an injected
-# verifier (including a test lambda) turn this candidate into an executable provider.
+# Set only by ClaudeProviderFactory to its _ServerLaunchVerifier (server launch-authorization).
+# An injected verifier (including a test lambda) never matches it, so it cannot turn a provider on.
 _TRUSTED_LAUNCH_VERIFIER = None
 MAX_LINE_BYTES = 256 * 1024
 MAX_STREAM_BYTES = 8 * 1024 * 1024

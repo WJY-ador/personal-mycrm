@@ -70,11 +70,13 @@ class ChatMcpGatewayTests(unittest.TestCase):
             self.trusted.user_id = "other-user"
         self.assertEqual(trusted_principal_uid(self.trusted), "synthetic-user")
 
-    def test_http_route_hard_off_until_independent_review(self):
-        self.assertFalse(ATOMIC_DISPATCH_READY)
+    def test_http_route_needs_both_switches(self):
+        # 2026-11-12 K: gate on. The route still needs CRM_WEBCHAT_ENABLED and CRM_CHAT_MCP_ENABLED.
+        self.assertTrue(ATOMIC_DISPATCH_READY)
         self.assertFalse(route_enabled(True, False))
-        self.assertFalse(route_enabled(True, True))
+        self.assertTrue(route_enabled(True, True))
         self.assertFalse(route_enabled(False, True))
+        self.assertFalse(route_enabled(False, False))
 
     def test_expired_trusted_principal_and_invalid_scope_never_dispatch(self):
         expired = _mint_trusted_principal(user_id="synthetic-user", device_id="synthetic-device",
