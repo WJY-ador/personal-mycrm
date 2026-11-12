@@ -24,8 +24,8 @@ KEYCHAIN_SERVICE = "my-crm-agent"
 DEFAULT_VIEWER_PORT = 8790   # board-dev 8787 회피. 웹 화면도 이 값을 기본으로 쓴다
 
 # 활성 구현 어댑터 / 의미 규칙만 있는 골격(기본 비활성) / 전송 분기 자체 차단
-ACTIVE_ADAPTERS = ("likes",)
-SKELETON_ADAPTERS = ("feed", "reactions", "mail", "kakao")
+ACTIVE_ADAPTERS = ("likes", "feed", "reactions", "mail")
+SKELETON_ADAPTERS = ("kakao",)
 BLOCKED_ADAPTERS = ("linkedin_moves",)
 MAX_SESSION_WRAP_FOLDERS = 20   # 세션 정리 폴더 수 상한
 
@@ -97,10 +97,26 @@ def default_config() -> dict:
                 "include_seed": False,
                 "axes": [],                  # 고정 축 매핑(allowed_axes 안)
             },
-            "feed": {"enabled": False},
-            "reactions": {"enabled": False},
-            "mail": {"enabled": False},
-            "kakao": {"enabled": False},
+            # 수집 글(2026-11-12). 켜려면 입력 경로를 적는다. 입력 JSONL 필드 = agent/README.md 3-1절
+            "feed": {
+                "enabled": False,
+                "input_path": None,          # feed-queue JSONL 절대 경로
+                "channels": dict(FEED_CHANNELS),   # 원천 source 값 → 채널. 키 "" = source 없음. 값 null = 그 source 안 보냄
+                "axes_map": {},              # 원천 축 코드 → 축 항목 ID(allowed_axes 안). 없는 코드는 버린다
+            },
+            "reactions": {
+                "enabled": False,
+                "inputs": [],                # [{"path": 절대 경로, "format": "reactions"|"threads_likes", "channel": 채널}]
+                "kind_actions": dict(REACTION_KIND_ACTIONS),   # 원천 kind → 활동. 없는 kind 는 활동 없이 격리 기록
+            },
+            "mail": {
+                "enabled": False,
+                "input_path": None,          # mail JSONL 절대 경로. 활동만 보낸다(주소·제목·본문은 PC 에만)
+            },
+            "kakao": {
+                "enabled": False,
+                "note": KAKAO_NOTE,
+            },
         },
         "summary": {
             "enabled": False,                # 약관 확인 전 끔
@@ -120,6 +136,14 @@ def default_config() -> dict:
             "folders": [],                   # 절대 경로 목록
         },
     }
+
+
+# 수집 글 어댑터 기본값 — 원작자 수집기 값(2026-11-12 조사). 설정에서 덮어쓴다
+FEED_CHANNELS = {"": "linkedin", "linkedin": "linkedin", "linkedin_search": "linkedin", "reddit": "reddit",
+                 "kakao": "kakao", "brunch": "blog", "naver_blog": "blog", "web": "web"}
+REACTION_KIND_ACTIONS = {"like": "like", "comment": "comment", "repost": "repost", "reply": "reply"}
+KAKAO_NOTE = ("카톡 글은 feed 어댑터(source kakao → 채널 kakao)로 들어옵니다. 내가 보내고 답한 행동을 담은 입력 파일이 "
+              "아직 없어 이 어댑터는 켜지 않습니다.")
 
 
 # likes 설정 예시(원작자가 설정 파일을 만들 때 쓰는 값, 2026-10-20 메인 확정).
@@ -219,6 +243,7 @@ def validate_config(cfg: dict) -> dict:
     for a in likes.get("axes") or []:
         if a not in axes:
             raise ConfigError("likes.axes not in allowed_axes")
+    _validate_collected_sections(adapters, axes)
     sw = cfg.get("session_wrap")
     if sw is not None:
         if not isinstance(sw, dict) or set(sw) - {"enabled", "folders"} or not isinstance(sw.get("enabled", False), bool):
@@ -241,6 +266,28 @@ def validate_config(cfg: dict) -> dict:
             or len(set(codex_models)) != len(codex_models)):
         raise ConfigError("summary.codex_models")
     return cfg
+
+
+def _validate_collected_sections(adapters: dict, allowed_axes: list) -> None:
+    """수집 글 어댑터 설정의 꼴. 입력 경로 존재는 실행 때 어댑터가 본다(값은 메시지에 넣지 않는다)."""
+    feed = adapters.get("feed") or {}
+    chans = feed.get("channels") or {}
+    if not isinstance(chans, dict) or not all(isinstance(k, str) and (v is None or v in contract.CHANNELS)
+                                              for k, v in chans.items()):
+        raise ConfigError("feed.channels")
+    amap = feed.get("axes_map") or {}
+    if not isinstance(amap, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in amap.items()):
+        raise ConfigError("feed.axes_map")
+    if any(v not in allowed_axes for v in amap.values()):
+        raise ConfigError("feed.axes_map not in allowed_axes")
+    reactions = adapters.get("reactions") or {}
+    inputs = reactions.get("inputs") or []
+    if not isinstance(inputs, list) or not all(isinstance(i, dict) for i in inputs):
+        raise ConfigError("reactions.inputs")
+    km = reactions.get("kind_actions") or {}
+    if not isinstance(km, dict) or not all(isinstance(k, str) and (v is None or v in contract.ACTIONS)
+                                           for k, v in km.items()):
+        raise ConfigError("reactions.kind_actions")
 
 
 def load(paths: Paths) -> dict:

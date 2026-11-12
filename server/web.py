@@ -648,7 +648,10 @@ ADMIN_LABELS = {"bootstrap": "첫 지정", "recover": "복구(CLI)", "role_grant
 # 연결 장치 허용 규칙의 변환 이름 — 화면 표시용(키 = imports.TRANSFORMS). 모르는 키는 키 그대로 보인다
 POLICY_MAX_BYTES = 4 * 1024   # 장치 허용 규칙(policy) JSON 상한 — WRITE_LIMITS 밖이라 웹이 write_gate 전에 직접 센다
 TRANSFORM_LABELS = {"board-likes/1": "좋아요 활동(바로 저장)", "self-text/1": "내 글(승인 대기)", "self-summary/1": "AI 요약(승인 대기)",
-                    "session-wrap/1": "세션 정리(승인 대기)"}
+                    "session-wrap/1": "세션 정리(승인 대기)",
+                    # 수집 글(2026-11-12) — 남이 쓴 공개 글은 collected_posts 오브젝트의 항목으로 바로. 골격 활동은 명시된 행동만
+                    "collected-post/1": "수집 글(바로 저장, 원문 본문은 PC)", "board-feed/1": "피드 보관 활동(바로 저장)",
+                    "board-reactions/1": "반응 활동(바로 저장)", "board-mail/1": "메일 활동(바로 저장, 주소·제목 없음)"}
 # 운영 화면 색 = 토큰 정본(TOKENS_CSS, 밝은 값 — 스크립트 0 이라 data-theme 가 붙지 않는다). 색 글자값을 여기 다시 쓰지 않는다(test_download F).
 _ADMIN_CSS = TOKENS_CSS + """
 body{font-family:system-ui,sans-serif;margin:0;color:var(--ink);background:var(--paper);line-height:1.5;font-size:14px}

@@ -13,6 +13,8 @@
 - 403 STREAM-MISMATCH → 전체 멈춤(config) · 403 NAME-REQUIRED → (account) · 409 POLICY-STALE → (policy)
   · 그 밖의 403 → (forbidden). 멈춤은 사용자 조치 뒤 `run-once --resume <범위>` 로 푼다
 - 429 IMPORT-QUOTA·PEOPLE-QUOTA → 본문 resume_at(없거나 이상하면 다음 KST 0시) · INBOX-FULL → 1시간 · 그 밖(RATE-LIMIT) → Retry-After(없으면 60초). 이번 실행 중단
+- 503 OBJECT-MISSING(수집 글 오브젝트 collected_posts 없음) → 그 개정만 대기 유지·지수 대기. 이번 실행의 남은 수집 글은
+  미루고 다른 전송은 계속한다(사용자가 오브젝트를 만들면 다음 실행부터 이어진다)
 - 5xx(*-OFF 스위치 꺼짐 포함)·네트워크·시간 초과 → 대기 유지, 지수 대기(최대 1시간). 이번 실행 중단
 로그·오류 메시지엔 상태 코드·규칙 코드만 남긴다(본문·토큰 없음).
 """
@@ -42,6 +44,7 @@ AUTH_CODES = ("AUTH-INVALID", "TOKEN-EXPIRED", "TOKEN-REVOKED", "AUTH-BLOCKED", 
 GLOBAL_HALT_CODES = {"STREAM-MISMATCH": "config", "NAME-REQUIRED": "account", "POLICY-STALE": "policy"}
 CONFLICT_CODES = ("IDEMPOTENCY-CONFLICT", "KIND-CHANGED")
 UPLOAD_HALT_SCOPES = ("auth", "config", "account", "policy", "forbidden")
+OBJECT_MISSING = "OBJECT-MISSING"      # 서버 imports._HTTP 503 — 수집 글을 담을 오브젝트가 없다
 REJECT_STATUSES = (400, 413, 415, 422)
 MAX_RESPONSE_BYTES = 64 * 1024
 DELETED_STATE = "deleted"   # 서버 200 응답의 state — 그 원본이 휴지통·영구 삭제 상태라 이 개정을 받지 않았다
@@ -161,6 +164,7 @@ class Uploader:
                 return out
         now = self.now()
         first = True
+        skip_collected = False
         for rev in store.pending_revisions():
             if out["sent"] >= max_n:
                 out["stopped"] = "max-per-run"
@@ -181,6 +185,9 @@ class Uploader:
             first = False
             key = rev["idempotency_key"]
             body = store.read_pending(rev)
+            if skip_collected and _kind_of(body) == "collected_post":
+                out["deferred"] += 1
+                continue
             out["sent"] += 1
             try:
                 status, headers, payload = self.post(key, body)
@@ -241,6 +248,10 @@ class Uploader:
                 store.mark(key, "rejected", error=f"http-{status}:{code}" if code else f"http-{status}")
                 store.quarantine("upload", f"rejected-{status}", key)
                 out["rejected"] += 1
+            elif code == OBJECT_MISSING:
+                self._backoff(store, rev, f"http-{status}:{code}")
+                skip_collected = True
+                out["deferred"] += 1
             else:
                 self._backoff(store, rev, f"http-{status}")
                 out["stopped"] = "server"
@@ -252,6 +263,14 @@ class Uploader:
         wait = min(60 * (2 ** min(n, 6)), 3600)
         at = self.now() + _dt.timedelta(seconds=wait)
         store.bump_attempt(rev["idempotency_key"], err, at.isoformat(timespec="seconds"))
+
+
+def _kind_of(body) -> str:
+    try:
+        obj = json.loads(bytes(body).decode("utf-8"))
+    except (TypeError, ValueError, UnicodeDecodeError):
+        return ""
+    return obj.get("kind", "") if isinstance(obj, dict) else ""
 
 
 # ---- 브라우저 로그인(앱 없는 대체 경로) — RFC 8252 loopback + PKCE S256 + state -----------------

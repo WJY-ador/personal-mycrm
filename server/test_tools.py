@@ -161,7 +161,7 @@ TRASH_WRITES = TRASH_TOOLS - {"trash_list"}
 MIG_TOOLS = {"migration_receipt_get"}
 # facade 겉면 5(2026-11-02) — 이름 관문·쓰기 표 밖(안쪽 op 의 guard 가 건다). 등급·카탈로그는 test_facade.py 가 본다
 FACADE_TOOLS = {"find", "read", "write", "decide", "purge"}
-BI = {k: f"bi-{k}@example.com" for k in ("a", "b", "agg", "adm", "del", "mig")}   # 25절: a 장치·수신 · b 남 · agg 집계 · adm 삭제 실행 · del 삭제 대상 · mig 이전
+BI = {k: f"bi-{k}@example.com" for k in ("a", "b", "agg", "adm", "del", "mig", "col", "colb")}   # 25절: a 장치·수신 · b 남 · agg 집계 · adm 삭제 실행 · del 삭제 대상 · mig 이전 · col·colb 수집 글
 # 처리방침 머리글(`vN · 날짜`) — PR B 부터 v5. 날짜는 문서가 정본이라 파일에서 읽는다(시험이 날짜를 따로 들지 않는다)
 PRIVACY_VERSION = "v8"   # board 이전(2026-10-20) v6 → PR ②-b(2026-10-22) v7 → 웹 AI 대화(2026-11) v8
 PRIVACY_HEAD = re.search(r"`(v\d+ · [^`]+)`", (HERE.parent / "guides" / "11-privacy.md").read_text(encoding="utf-8")).group(1)
@@ -3898,10 +3898,12 @@ async def run():
         await test_prb_app()
         await test_prb_privacy()
         test_bi_schema()
+        test_collected_schema()
         test_mig_path_schema()
         test_desktop_schema()
         test_bi_contract()
         await test_bi_imports()
+        await test_collected()
         await test_bi_aggregate()
         test_bi_migration()
         await test_bi_delete()
@@ -7737,6 +7739,265 @@ async def test_bi_imports():
     print("OK — 25c 장치 토큰(SHA-256·5개·재발급·폐기·policy) · /api/imports(스위치·인증·멱등 200/409·키 400·개정 409·noop·새 판·GET)"
           " · 사람 HMAC(별칭·재사용·키 공간) · 경계(금지 필드·URL·값 0) · 승인 대기(승인·제외·superseded·만료·본문 파기·메모 연결)"
           " · AI 요약(무인 스위치·generated·정정 차단) · 한도(대기·하루·분당·사람 50 전체 취소) · 만료·재발급·차단·폐기 통과")
+
+
+def test_collected_schema():
+    """25h-0 수집 글 스키마 — 옛 DB(import_entries 에 raw_id 열·CHECK·인덱스 없음, 종류 CHECK 6값) → init_schema 2회 = 새 DB 모양
+    · 옛 행 raw_id NULL 그대로 · 넓힌 뒤 collected_post 행 INSERT 성공(운영 적용 경로 = 서버 시작 때 init_schema)."""
+    fresh, old = f"colf_{secrets.token_hex(3)}", f"colo_{secrets.token_hex(3)}"
+    create_schema(fresh)
+    create_schema(old)
+    try:
+        with schema_conn(fresh) as c:
+            db.init_schema(c)
+            c.commit()
+            want = _prb_shape(c, ("import_entries",))
+        with schema_conn(old) as c:
+            db.init_schema(c)
+            c.execute("ALTER TABLE import_entries DROP CONSTRAINT ck_import_entries_raw_id")
+            c.execute("DROP INDEX ix_import_raw")
+            c.execute("ALTER TABLE import_entries DROP COLUMN raw_id")
+            c.execute("ALTER TABLE import_entries DROP CONSTRAINT import_entries_kind_check")
+            c.execute("ALTER TABLE import_entries ADD CONSTRAINT import_entries_kind_check CHECK (kind IN "
+                      "('self_text','self_summary','activity','migration_object','migration_item','migration_record'))")
+            c.execute("INSERT INTO users (id,email) VALUES ('u_colold','col-old@example.com')")
+            c.execute("INSERT INTO import_streams (user_id,id,channel,label,token_id,secret_hash,token_expires_at,hmac_namespace) "
+                      "VALUES ('u_colold','is_" + "c" * 24 + "','device','옛 장치','it_" + "c" * 16 + "',%s,now(),'hn_" + "c" * 24 + "')",
+                      (b"\0" * 32,))
+            ins = ("INSERT INTO import_entries (user_id,id,stream_id,original_id,source_revision,kind,request_sha256,projection_sha256,state,"
+                   "is_latest_received,resolved_at,resolved_by,transform_version{x}) VALUES ('u_colold',%s,'is_" + "c" * 24 + "',%s,%s,%s,"
+                   "%s,%s,'excluded',true,now(),'system',%s{y})")
+            c.execute(ins.format(x="", y=""), ("ie_old1", "o_" + "1" * 32, "v_" + "1" * 32, "self_text", b"\1" * 32, b"\1" * 32, "self-text/1"))
+            c.commit()
+            db.init_schema(c)
+            c.commit()
+            db.init_schema(c)
+            c.commit()
+            assert _prb_shape(c, ("import_entries",)) == want, "옛 DB 마이그레이션 결과 = 새 DB 모양"
+            assert c.execute("SELECT raw_id FROM import_entries WHERE id='ie_old1'").fetchone()["raw_id"] is None
+            c.execute(ins.format(x=",raw_id", y=",%s"), ("ie_new1", "o_" + "2" * 32, "v_" + "2" * 32, "collected_post", b"\2" * 32,
+                                                            b"\2" * 32, "collected-post/1", "ab" * 24))
+            try:
+                with c.transaction():   # raw_id 는 수집 글 행만
+                    c.execute(ins.format(x=",raw_id", y=",%s"), ("ie_bad1", "o_" + "3" * 32, "v_" + "3" * 32, "self_text", b"\3" * 32,
+                                                                    b"\3" * 32, "self-text/1", "ab" * 24))
+                raise AssertionError("수집 글이 아닌 행에 raw_id 가 들어갔다")
+            except psycopg.errors.CheckViolation:
+                pass
+            c.commit()
+    finally:
+        drop_schema(fresh)
+        drop_schema(old)
+    print("OK — 25h-0 수집 글 스키마(옛 DB → init 2회 = 새 DB · 옛 행 raw_id NULL · collected_post 행 INSERT · raw_id 는 수집 글 행만) 통과")
+
+
+COL_FIELDS = [   # 수집 글 오브젝트 collected_posts(명세 2절 필드 키) + 사용자 필드 my_notes(기록 연결)
+    {"key": "channel", "label": "채널", "value_type": "select", "required": True, "options": list(imports.COLLECTED_CHANNELS)},
+    {"key": "author_display", "label": "작성자 표시", "value_type": "text"},
+    {"key": "post_url", "label": "원 URL", "value_type": "text"},
+    {"key": "posted_on", "label": "게시일", "value_type": "date"},
+    {"key": "collected_on", "label": "수집일", "value_type": "date", "required": True},
+    {"key": "ai_grade", "label": "AI 등급", "value_type": "select", "options": list(imports.COLLECTED_GRADES)},
+    {"key": "ai_summary", "label": "AI 요약", "value_type": "text"},
+    {"key": "ai_as_is", "label": "AI as-is", "value_type": "text"},
+    {"key": "ai_to_be", "label": "AI to-be", "value_type": "text"},
+    {"key": "ai_points", "label": "AI 요점", "value_type": "text"},   # 일부러 text — text_list 값은 꼴이 달라 건너뛴다. ai_ops 는 일부러 없음
+    {"key": "my_notes", "label": "내 생각", "value_type": "reference", "target_kind": "record", "multiple": True}]
+
+
+async def test_collected():
+    """25h 수집 글(2026-11-12 명세 2절·5절) — collected-post/1: 오브젝트 없음·필수 필드 없음 503 OBJECT-MISSING · 새 항목(제목 줄·빈 본문·
+    ingest inbox·raw_id 대응) · 재전송 = 장치 키만(사용자 본문·관계·휴지통 상대 관계 보존, 빠진 키 유지, axes 만 교체) · 꼴 다른·없는 필드 건너뜀 ·
+    noop · 일반 제안·결정 한도 미산입 · collected 일일 한도 · removed 휴지통 → 뒤 개정 차단 · 항목 없는 removed = excluded · raw_id 규칙 ·
+    보관 항목 · 사용자 필수 필드 · 남의 축·다른 사용자 · 후보 근거 불가 · 골격 활동 board-feed/1."""
+    C, D = db.user_by_email(BI["col"])["id"], db.user_by_email(BI["colb"])["id"]
+    ax_obj, (X1, X2) = _bi_axes(C)
+    _, (XD,) = _bi_axes(D, 1)
+    c1 = imports.device_connect(C, "합성 수집 PC")
+    tok, DEV = c1["token"], c1["device"]["id"]
+    pol = {"actions": ["like", "save"], "transform_versions": ["collected-post/1", "board-feed/1"], "axes": [X1, X2]}
+    assert imports.device_policy_set(C, DEV, pol, 1)["device"]["policy_revision"] == 2
+    d1 = imports.device_connect(D, "합성 남의 PC")
+    imports.device_policy_set(D, d1["device"]["id"], {**pol, "axes": [XD]}, 1)
+
+    def cp(dev=DEV, original=None, revision=None, prev=None, **kw):
+        r = {"contract": "canon-inbox/1", "schema_revision": 2, "source_instance_id": dev, "original_id": original or _bi_o(),
+             "revision": revision or _bi_v(), "previous_revision": prev, "kind": "collected_post", "execution": "unattended",
+             "transform_version": "collected-post/1", "policy_revision": 2, "raw_id": secrets.token_hex(24), "channel": "linkedin",
+             "collected_on": "2026-11-12", "title": "합성 수집 글 COLTITLE 첫 줄", "state": "pending"}
+        r.update(kw)
+        return r
+
+    def gate_n(kind):   # 일반 일일 한도가 세는 수(_daily_gate 와 같은 식)
+        with db.tx() as c:
+            return sum(c.execute(f"SELECT count(*) AS n FROM {t} WHERE user_id=%s AND {col} >= {db._KST_TODAY}"
+                                 + "".join(f" AND {x}" for x in extra), (C,)).fetchone()["n"]
+                       for t, col, *extra in db._DAILY_SOURCES[kind])
+
+    def item(iid):
+        with db.tx() as c:
+            return c.execute("SELECT title, body, data, revision, ingest_kind, trashed_at, archived_at FROM items WHERE user_id=%s AND id=%s",
+                             (C, iid)).fetchone()
+
+    def links(iid):
+        with db.tx() as c:
+            return sorted((r["field_key"], r["target_item_id"] or r["target_record_id"]) for r in c.execute(
+                "SELECT field_key, target_item_id, target_record_id FROM item_links WHERE user_id=%s AND source_item_id=%s", (C, iid)))
+
+    n_rec = _bi_count(C, "records")
+    with _bi_fast(), _bi_switch("IMPORTS_ENABLED"):
+        # ── 오브젝트 없음 → 503 OBJECT-MISSING · 아무것도 저장 안 함 ──
+        o1, v1, raw1 = _bi_o(), _bi_v(), secrets.token_hex(24)
+        b1 = cp(original=o1, revision=v1, raw_id=raw1, post_url="https://www.linkedin.com/posts/synthetic-COLURL-1",
+                author_display="합성 작성자", posted_on="2026-11-10", axes=[X1],
+                ai={"grade": "signal", "summary": "합성 AI 요약", "ops": "합성 운영", "points": ["점 하나"]})
+        r = await _bi_post(tok, b1)
+        assert r.status_code == 503 and r.json()["code"] == "OBJECT-MISSING", r.text
+        assert "COLURL" not in r.text and "COLTITLE" not in r.text and _bi_count(C, "import_entries") == 0
+        # 필수 필드(collected_on) 없는 오브젝트도 OBJECT-MISSING
+        p = db.definition_propose(C, None, 0, {"key": imports.COLLECTED_OBJECT_KEY, "label": "수집 글", "semantic_kind": "collection",
+                                                "fields": [f for f in COL_FIELDS if f["key"] != "collected_on"]})
+        db.definition_apply(C, p["object_id"], p["proposal_id"], 0)
+        OBJ = p["object_id"]
+        r = await _bi_post(tok, b1)
+        assert r.status_code == 503 and r.json()["code"] == "OBJECT-MISSING", r.text
+        flds = [f for f in COL_FIELDS] + [{"key": "axes", "label": "축", "value_type": "reference", "target_kind": "item",
+                                           "target_object_id": ax_obj, "multiple": True}]
+        p = db.definition_propose(C, OBJ, 1, {"id": OBJ, "key": imports.COLLECTED_OBJECT_KEY, "label": "수집 글",
+                                              "semantic_kind": "collection", "fields": flds})
+        db.definition_apply(C, OBJ, p["proposal_id"], 1)
+        # ── 새 항목 · 일반 한도 미산입 ──
+        n_prop, n_dec = gate_n("proposals"), gate_n("decisions")
+        r = await _bi_post(tok, b1)
+        assert r.status_code == 201, r.text
+        j = r.json()
+        assert j["state"] == "applied" and j["target_kind"] == "item" and j["duplicate"] is False, j
+        I1 = j["target_id"]
+        it = item(I1)
+        assert it["title"] == b1["title"] and it["body"] == "" and it["ingest_kind"] == "inbox", it
+        assert it["data"] == {"channel": "linkedin", "author_display": "합성 작성자", "post_url": b1["post_url"], "posted_on": "2026-11-10",
+                              "collected_on": "2026-11-12", "ai_grade": "signal", "ai_summary": "합성 AI 요약"}, it["data"]   # ai_ops 없음·ai_points 꼴 다름 = 건너뜀
+        assert links(I1) == [("axes", X1)]
+        assert gate_n("proposals") == n_prop and gate_n("decisions") == n_dec, "수집 글은 일반 제안·결정 한도에 세지 않는다"
+        with db.tx() as c:
+            e = c.execute("SELECT raw_id, target_item_id FROM import_entries WHERE user_id=%s AND id=%s", (C, j["import_id"])).fetchone()
+            h = c.execute("SELECT event_meta FROM item_history WHERE user_id=%s AND item_id=%s", (C, I1)).fetchall()
+        assert e == {"raw_id": raw1, "target_item_id": I1} and [x["event_meta"].get("ingest") for x in h] == ["device"], (e, h)
+        r = await _bi_post(tok, b1)
+        assert r.status_code == 200 and r.json()["duplicate"] is True and r.json()["target_id"] == I1
+        # 일반 한도가 가득 차도 수집 글은 들어간다(일반 경로는 막힌다)
+        saved = dict(db.DAILY_LIMITS)
+        db.DAILY_LIMITS.update(proposals=0, decisions=0)
+        try:
+            r = await _bi_post(tok, cp())
+            assert r.status_code == 201 and r.json()["state"] == "applied", r.text
+            expect("RATE-LIMIT", db.item_propose, C, OBJ, 2, None, 0, None, "일반 제안", "", {"channel": "web", "collected_on": "2026-11-12"}, [])
+        finally:
+            db.DAILY_LIMITS.clear()
+            db.DAILY_LIMITS.update(saved)
+        # ── 사용자가 고친 값·관계 보존 · 장치 키만 덮기 · 빠진 키 유지 · axes 교체 ──
+        R1 = db.record_add(C, "내 생각", "합성 내 생각 하나.")["id"]
+        R2 = db.record_add(C, "내 생각 둘", "합성 내 생각 둘.")["id"]
+        rev = item(I1)["revision"]
+        db.item_edit(C, I1, rev, b1["title"], "사용자가 쓴 본문", None,
+                     [{"field_key": "axes", "target_kind": "item", "target_id": X1},
+                      {"field_key": "my_notes", "target_kind": "record", "target_id": R1},
+                      {"field_key": "my_notes", "target_kind": "record", "target_id": R2}])
+        with db.tx() as c:   # R2 를 휴지통으로(서버 처리와 같은 전이) — 그 관계는 숨지만 행은 남아야 한다
+            db._user_lock(c, C)
+            db._trash_rows(c, C, "records", [R2], "move")
+        v2 = _bi_v()
+        b2 = {k: v for k, v in b1.items() if k not in ("posted_on", "author_display")}
+        b2.update(revision=v2, previous_revision=v1, title="합성 수집 글 바뀐 첫 줄", axes=[X2],
+                  ai={"summary": "합성 AI 요약 둘", "as_is": "합성 지금", "to_be": "합성 다음"})
+        r = await _bi_post(tok, b2)
+        assert r.status_code == 201 and r.json()["state"] == "applied" and r.json()["target_id"] == I1, r.text
+        it = item(I1)
+        assert it["title"] == "합성 수집 글 바뀐 첫 줄" and it["body"] == "사용자가 쓴 본문", it
+        assert it["data"] == {"channel": "linkedin", "author_display": "합성 작성자", "post_url": b1["post_url"], "posted_on": "2026-11-10",
+                              "collected_on": "2026-11-12", "ai_grade": "signal", "ai_summary": "합성 AI 요약 둘", "ai_as_is": "합성 지금",
+                              "ai_to_be": "합성 다음"}, it["data"]
+        assert links(I1) == sorted([("axes", X2), ("my_notes", R1), ("my_notes", R2)]), links(I1)
+        # noop — 반영 내용 같음
+        v3 = _bi_v()
+        rev = item(I1)["revision"]
+        r = await _bi_post(tok, {**b2, "revision": v3, "previous_revision": v2})
+        assert r.status_code == 201 and r.json()["state"] == "noop" and r.json()["target_id"] == I1 and item(I1)["revision"] == rev
+        # 사용자가 필드(ai_as_is)를 정의에서 빼도(보관) 재전송이 그 값을 지우지 않는다 — 필드를 되살리면 다시 보인다
+        p = db.definition_propose(C, OBJ, 2, {"id": OBJ, "key": imports.COLLECTED_OBJECT_KEY, "label": "수집 글", "semantic_kind": "collection",
+                                              "fields": [f for f in flds if f["key"] != "ai_as_is"]})
+        db.definition_apply(C, OBJ, p["proposal_id"], 2)
+        v3b = _bi_v()
+        r = await _bi_post(tok, {**b2, "revision": v3b, "previous_revision": v3, "title": "합성 필드 보관 뒤 제목"})
+        assert r.status_code == 201 and r.json()["state"] == "applied", r.text
+        it = item(I1)
+        assert it["title"] == "합성 필드 보관 뒤 제목" and it["data"].get("ai_as_is") == "합성 지금" and it["body"] == "사용자가 쓴 본문", it
+        assert links(I1) == sorted([("axes", X2), ("my_notes", R1), ("my_notes", R2)]), links(I1)
+        v3 = v3b
+        # ── raw_id 규칙 ──
+        r = await _bi_post(tok, {**b2, "revision": _bi_v(), "previous_revision": v3, "raw_id": secrets.token_hex(24)})
+        assert r.status_code == 400 and r.json()["code"] == "CONTRACT-INVALID" and "raw_id: changed" in r.json()["msg"], r.text
+        r = await _bi_post(tok, cp(raw_id=raw1))
+        assert r.status_code == 400 and "raw_id: in_use" in r.json()["msg"], r.text
+        # ── 남의 축 · 다른 사용자 ──
+        r = await _bi_post(tok, cp(axes=[XD]))
+        assert r.status_code == 403 and r.json()["code"] == "POLICY-DENIED", r.text
+        r = await _bi_post(d1["token"], cp(dev=d1["device"]["id"], original=o1, raw_id=raw1))   # 남의 장치·같은 original — 다른 체인, 오브젝트 없음
+        assert r.status_code == 503 and r.json()["code"] == "OBJECT-MISSING", r.text
+        expect("ARG-INVALID", db.item_get, D, I1)
+        assert item(I1)["title"] == "합성 필드 보관 뒤 제목"
+        # ── 후보 근거 불가 · 기록 안 만듦 ──
+        expect("RECORD-MISSING", db.candidates_propose, C, I1, "", [{"text": "후보", "quote": "합성"}], "ai")
+        assert _bi_count(C, "records") == n_rec + 2, "수집 글은 기록을 만들지 않는다(R1·R2 만)"
+        # ── collected 일일 한도 ──
+        lim = dict(imports.LIMITS)
+        imports.LIMITS[("device", "day", "collected")] = (1, None)
+        try:
+            r = await _bi_post(tok, cp())
+            assert r.status_code == 429 and r.json()["code"] == "IMPORT-QUOTA", r.text
+        finally:
+            imports.LIMITS.clear()
+            imports.LIMITS.update(lim)
+        # ── removed: 항목 없음 = excluded → 다음 개정 kept = 새 항목 ──
+        o4, v4 = _bi_o(), _bi_v()
+        b4 = cp(original=o4, revision=v4, state="removed")
+        r = await _bi_post(tok, b4)
+        assert r.status_code == 201 and r.json()["state"] == "excluded" and r.json()["target_id"] is None, r.text
+        v5 = _bi_v()
+        r = await _bi_post(tok, {**b4, "revision": v5, "previous_revision": v4, "state": "kept"})
+        assert r.status_code == 201 and r.json()["state"] == "applied" and r.json()["target_kind"] == "item", r.text
+        I4 = r.json()["target_id"]
+        # ── 보관한 항목 = 쓰지 않음(noop) ──
+        it = item(I4)
+        db.item_decide(C, I4, it["revision"], None, "archive")
+        rev = item(I4)["revision"]
+        v6 = _bi_v()
+        r = await _bi_post(tok, {**b4, "revision": v6, "previous_revision": v5, "state": "kept", "title": "보관 뒤 바뀐 제목"})
+        assert r.status_code == 201 and r.json()["state"] == "noop" and item(I4)["revision"] == rev and item(I4)["title"] != "보관 뒤 바뀐 제목"
+        # ── removed: 항목 휴지통 → 뒤 개정은 삭제된 원천 응답 ──
+        v7 = _bi_v()
+        r = await _bi_post(tok, {**b2, "revision": v7, "previous_revision": v3, "state": "removed"})
+        j = r.json()
+        assert r.status_code == 201 and j["state"] == "deleted" and j["source_deleted"] == "trash" and j["target_id"] is None, r.text
+        assert item(I1)["trashed_at"] is not None
+        r = await _bi_post(tok, {**b2, "revision": _bi_v(), "previous_revision": v7, "state": "kept"})
+        assert r.status_code == 200 and r.json()["state"] == "deleted" and r.json()["target_id"] is None, r.text
+        assert item(I1)["trashed_at"] is not None, "PC 가 다시 보관해도 휴지통 항목은 돌아오지 않는다(복원은 사용자)"
+        # ── 사용자가 더한 필수 필드(장치 값으로 못 채움) — 503 OBJECT-MISSING. 항목이 있는 오브젝트엔 필수 필드를 더할 수 없다(정의 검사) ──
+        p = db.definition_propose(D, None, 0, {"key": imports.COLLECTED_OBJECT_KEY, "label": "수집 글", "semantic_kind": "collection",
+                                               "fields": COL_FIELDS + [{"key": "importance", "label": "중요도", "value_type": "text", "required": True}]})
+        db.definition_apply(D, p["object_id"], p["proposal_id"], 0)
+        r = await _bi_post(d1["token"], cp(dev=d1["device"]["id"]))
+        assert r.status_code == 503 and r.json()["code"] == "OBJECT-MISSING", r.text
+        assert _bi_count(D, "items", "AND object_id=%s", (p["object_id"],)) == 0
+        # ── 골격 활동 board-feed/1(save · kakao) ──
+        with _bi_switch("IMPORTS_ENABLED", "ACTIVITY_IMPORTS_ENABLED"):
+            r = await _bi_post(tok, _bi_act(DEV, policy_revision=2, transform_version="board-feed/1", action="save", provider="kakao"))
+            assert r.status_code == 201 and r.json()["target_kind"] == "activity", r.text
+            r = await _bi_post(tok, _bi_act(DEV, policy_revision=2, transform_version="board-feed/1", action="like", provider="kakao"))
+            assert r.status_code == 400 and "action: not_in_transform" in r.json()["msg"], r.text
+    print("OK — 25h 수집 글(오브젝트 없음 503 · 새 항목 · 장치 키만 갱신·사용자 관계 보존 · noop · 일반 한도 미산입 · collected 한도 · "
+          "removed 휴지통·차단 · excluded · raw_id 규칙 · 보관 · 사용자 필수 필드 503 · 다른 사용자 · 후보 근거 불가 · board-feed/1) 통과")
 
 
 async def test_bi_aggregate():

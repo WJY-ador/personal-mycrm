@@ -17,7 +17,7 @@ from . import jcs
 # ---- 계약 식별 ---------------------------------------------------------------
 CONTRACT = "canon-inbox/1"
 SCHEMA_REVISION = 2
-KINDS = ("self_text", "activity", "self_summary")
+KINDS = ("self_text", "activity", "self_summary", "collected_post")
 EXECUTIONS = ("attended", "unattended")
 
 # ---- ID 형식 (서버와 맞출 것) ---------------------------------------------------
@@ -45,10 +45,13 @@ ACTIVITY_STATES = ("active", "retracted")
 PROVIDERS = ("sns", "web", "mail", "kakao")
 PERSON_ROLES = ("author", "counterparty", "participant")
 
-# 등록된 변환 버전 → 허용 kind. 골격 어댑터(feed·reactions·mail·kakao)의 변환은 등록하지 않는다
-# — 실수로 켜도 계약 검증에서 막힌다.
+# 등록된 변환 버전 → 허용 kind. 골격 어댑터(kakao)의 변환은 등록하지 않는다 — 실수로 켜도 계약 검증에서 막힌다.
 TRANSFORMS = {
     "board-likes/1": "activity",
+    "board-feed/1": "activity",        # 피드 보관 → save (명세 2026-11-12 S9)
+    "board-reactions/1": "activity",   # 내 반응 → like·comment·repost·reply
+    "board-mail/1": "activity",        # 메일 → read·save·send·reply (주소·제목·본문 없음)
+    "collected-post/1": "collected_post",   # 수집 글(외부 글) — URL·제목 줄·메타·AI 요약. 원문 본문은 PC 에만
     "self-text/1": "self_text",
     "self-summary/1": "self_summary",
     "session-wrap/1": "self_text",   # 세션 정리 묶음(agent/sessionwrap.py) — 서버 승인 뒤 정리 기록
@@ -56,7 +59,14 @@ TRANSFORMS = {
 # 변환 버전별 허용 행동·제공자(activity 만)
 TRANSFORM_ACTIVITY = {
     "board-likes/1": {"actions": ("like",), "providers": ("sns",)},
+    "board-feed/1": {"actions": ("save",), "providers": ("sns", "web", "kakao")},
+    "board-reactions/1": {"actions": ("like", "comment", "repost", "reply"), "providers": ("sns", "web")},
+    "board-mail/1": {"actions": ("read", "save", "send", "reply"), "providers": ("mail",)},
 }
+# 수집 글(collected-post/1)
+CHANNELS = ("linkedin", "reddit", "kakao", "threads", "blog", "web")
+COLLECTED_STATES = ("pending", "kept", "removed")
+AI_GRADES = ("signal", "news", "noise")
 SUMMARY_TOOLS = ("claude-cli", "unknown")
 SUMMARY_MODELS = ("unknown",)
 
@@ -78,7 +88,14 @@ KIND_FIELDS = {
         "required": ("body", "generation"),
         "optional": ("title", "source_created_at", "source_date"),
     },
+    # 선택 필드: 생성기는 값이 없으면 키를 뺀다. 검증기는 서버(공용 벡터)처럼 null 을 「없음」으로 받는다
+    "collected_post": {
+        "required": ("raw_id", "channel", "collected_on", "title", "state"),
+        "optional": ("post_url", "author_display", "posted_on", "axes", "ai"),
+    },
 }
+# 수집 글에서 URL 꼴을 허용하는 유일한 필드(이메일·경로 꼴은 여기서도 거절)
+URL_FIELDS = {"collected_post": ("post_url",)}
 
 # ---- 한도 -------------------------------------------------------------------
 MAX_REQUEST_BYTES = 64 * 1024
@@ -90,6 +107,11 @@ MAX_PEOPLE = 10
 MAX_AXES = 10
 MAX_SUMMARY_INPUTS = 20
 MAX_TRANSFORM_LEN = 40
+MAX_POST_URL = 2000
+MAX_AUTHOR_DISPLAY = 200
+AI_TEXT_LIMITS = {"summary": 500, "as_is": 1000, "to_be": 1000, "ops": 1000}
+MAX_AI_POINTS = 12
+MAX_AI_POINT = 300
 
 # ---- 문자열 차단 패턴(URL·이메일·명백한 경로) ------------------------------------
 _BLOCK_PATTERNS = (
@@ -154,17 +176,19 @@ def _is_int(v) -> bool:
     return isinstance(v, int) and not isinstance(v, bool)
 
 
-def _scan_strings(v, path: str) -> None:
+def _scan_strings(v, path: str, url_ok: tuple = ()) -> None:
     if isinstance(v, str):
         for code, pat in _BLOCK_PATTERNS:
+            if code == "url" and path in url_ok:
+                continue
             if pat.search(v):
                 raise ContractError("BLOCKED-" + code.upper(), path)
     elif isinstance(v, dict):
         for k, x in v.items():
-            _scan_strings(x, f"{path}.{k}" if path else k)
+            _scan_strings(x, f"{path}.{k}" if path else k, url_ok)
     elif isinstance(v, list):
         for i, x in enumerate(v):
-            _scan_strings(x, f"{path}[{i}]")
+            _scan_strings(x, f"{path}[{i}]", url_ok)
 
 
 def _valid_date(s) -> bool:
@@ -254,10 +278,12 @@ def validate(obj: dict, *, policy: dict | None = None) -> dict:
         _validate_activity(obj)
     elif kind == "self_text":
         _validate_self_text(obj)
+    elif kind == "collected_post":
+        _validate_collected_post(obj)
     else:
         _validate_self_summary(obj)
 
-    _scan_strings(obj, "")
+    _scan_strings(obj, "", URL_FIELDS.get(kind, ()))
 
     size = len(jcs.canonical_bytes(obj))
     if size > MAX_REQUEST_BYTES:
@@ -312,7 +338,10 @@ def _validate_activity(o: dict) -> None:
         if key in seen:
             raise ContractError("DUPLICATE", f)
         seen.add(key)
-    axes = o.get("axes", [])
+    _check_axes(o.get("axes", []))
+
+
+def _check_axes(axes) -> None:
     if not isinstance(axes, list):
         raise ContractError("TYPE", "axes")
     if len(axes) > MAX_AXES:
@@ -322,6 +351,63 @@ def _validate_activity(o: dict) -> None:
             raise ContractError("FORMAT", f"axes[{i}]")
     if len(set(axes)) != len(axes):
         raise ContractError("DUPLICATE", "axes")
+
+
+def _check_single_line(v, field: str, max_cp: int) -> None:
+    _check_text(v, field, max_cp, max_cp * 4, allow_null=False)
+    if "\n" in v or "\r" in v:
+        raise ContractError("SINGLE-LINE", field)
+
+
+def _validate_collected_post(o: dict) -> None:
+    """수집 글(외부 글). 원문 본문은 받지 않는다 — 제목 줄·URL·메타·AI 요약만. AI 문장은 ai 안에만."""
+    if not isinstance(o["raw_id"], str) or not RAW_ID_RE.match(o["raw_id"]):
+        raise ContractError("FORMAT", "raw_id")
+    if o["channel"] not in CHANNELS:
+        raise ContractError("ENUM", "channel")
+    if not _valid_date(o["collected_on"]):
+        raise ContractError("DATE", "collected_on")
+    _check_single_line(o["title"], "title", MAX_TITLE_CODEPOINTS)
+    if o["state"] not in COLLECTED_STATES:
+        raise ContractError("ENUM", "state")
+    u = o.get("post_url")
+    if u is not None:
+        if not isinstance(u, str):
+            raise ContractError("TYPE", "post_url")
+        if not u.startswith("https://") or len(u) <= len("https://"):
+            raise ContractError("FORMAT", "post_url")
+        if any(c.isspace() for c in u):
+            raise ContractError("SINGLE-LINE", "post_url")
+        if len(u) > MAX_POST_URL:
+            raise ContractError("TOO-LONG", "post_url")
+    if o.get("author_display") is not None:
+        _check_single_line(o["author_display"], "author_display", MAX_AUTHOR_DISPLAY)
+    if o.get("posted_on") is not None and not _valid_date(o["posted_on"]):
+        raise ContractError("DATE", "posted_on")
+    if o.get("axes") is not None:
+        _check_axes(o["axes"])
+    if o.get("ai") is not None:
+        _check_ai(o["ai"])
+
+
+def _check_ai(ai) -> None:
+    if not isinstance(ai, dict):
+        raise ContractError("TYPE", "ai")
+    for k in ai:
+        if k not in ("grade", "points") and k not in AI_TEXT_LIMITS:
+            raise ContractError("UNKNOWN-FIELD", "ai." + k)
+    if ai.get("grade") is not None and ai["grade"] not in AI_GRADES:
+        raise ContractError("ENUM", "ai.grade")
+    for k, lim in AI_TEXT_LIMITS.items():
+        _check_text(ai.get(k), "ai." + k, lim, lim * 4, allow_null=True)
+    if ai.get("points") is not None:
+        pts = ai["points"]
+        if not isinstance(pts, list):
+            raise ContractError("TYPE", "ai.points")
+        if len(pts) > MAX_AI_POINTS:
+            raise ContractError("TOO-MANY", "ai.points")
+        for i, p in enumerate(pts):
+            _check_text(p, f"ai.points[{i}]", MAX_AI_POINT, MAX_AI_POINT * 4, allow_null=False)
 
 
 def _validate_dates_pair(o: dict) -> None:
@@ -401,8 +487,9 @@ def _validate_policy(o: dict, policy: dict) -> None:
         actions = policy.get("actions")
         if actions is not None and o["action"] not in actions:
             raise ContractError("POLICY-ACTION", "action")
+    if o["kind"] in ("activity", "collected_post"):
         allowed_axes = set(policy.get("allowed_axes") or ())
-        for i, a in enumerate(o["axes"]):
+        for i, a in enumerate(o.get("axes") or []):
             if a not in allowed_axes:
                 raise ContractError("POLICY-AXIS", f"axes[{i}]")
 

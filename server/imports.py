@@ -1,7 +1,7 @@
 """연결 장치 · 수신(/api/imports) · 승인 대기 · 개정 · 한도 · board 이전 기본 연산 (board 이전, 2026-10-20).
 
 정본: notes/2026-10-20_board-마이그-구현계획.md(고정본) > notes/raw/2026-10-20_board-migr-astra-r3.md T1~T7. 계약 = contract/imports/.
-원문은 PC, 서버엔 구조화 데이터만. 이 모듈은 모델을 부르지 않고, 본문·토큰·URL 을 로그·감사·오류 문구에 넣지 않는다.
+원문은 PC, 서버엔 구조화 데이터만(수집 글 collected_post 는 원 URL·제목 줄·AI 요약까지, 원문 본문은 PC). 이 모듈은 모델을 부르지 않고, 본문·토큰·URL 을 로그·감사·오류 문구에 넣지 않는다.
 
 호출하는 곳
   · main.py  — POST /api/imports · GET /api/imports/{import_id}(장치 토큰) · MCP 읽기 inbox_list·inbox_get · MCP 확정 inbox_decide(facade)
@@ -30,7 +30,7 @@ from features import feature_on   # 판정 정본(2026-11-12) — 조직 설정 
 # 공개 상수 ─────────────────────────────────────────────
 CONTRACT = "canon-inbox/1"
 SCHEMA_REVISION = 2
-KINDS = ("self_text", "activity", "self_summary")
+KINDS = ("self_text", "activity", "self_summary", "collected_post")
 ACTIONS = ("like", "repost", "comment", "read", "save", "send", "reply")
 PROVIDERS = ("sns", "web", "mail", "kakao")
 PERSON_ROLES = ("author", "counterparty", "participant")
@@ -42,6 +42,12 @@ TRANSFORMS = {
     "self-text/1": {"kind": "self_text"},
     "self-summary/1": {"kind": "self_summary"},
     "session-wrap/1": {"kind": "self_text"},   # 세션 정리(2026-11-04 A안) — 대화 묶음 하나 = 내 글 하나. 승인 뒤 정리 기록(아래 SESSION_WRAP)
+    # 수집 글(2026-11-12 명세 S3·S9) — 남이 쓴 공개 글의 URL·제목 줄·메타·AI 요약. 원문 본문은 PC 에만. 승인 대기 없이 바로 항목(아래 COLLECTED)
+    "collected-post/1": {"kind": "collected_post"},
+    # 골격 어댑터의 활동(S9) — 명시된 행동만. 카톡(board-kakao/1)은 입력 원천이 생길 때까지 등록하지 않는다
+    "board-feed/1": {"kind": "activity", "actions": ("save",), "providers": ("sns", "web", "kakao")},
+    "board-reactions/1": {"kind": "activity", "actions": ("like", "comment", "repost", "reply"), "providers": ("sns", "web")},
+    "board-mail/1": {"kind": "activity", "actions": ("read", "save", "send", "reply"), "providers": ("mail",)},
 }
 DEFAULT_POLICY = {"actions": ["like"], "transform_versions": ["board-likes/1", "self-text/1", "self-summary/1", "session-wrap/1"], "axes": []}
 # 세션 정리 승인 = 내가 쓴(author self) 구조 정리(structured) · 나와 AI 가 함께 만든 글(mixed) · 「내 결정」 표시(decision_owner self — 화면엔 안 보인다)
@@ -49,6 +55,23 @@ SESSION_WRAP = "session-wrap/1"
 SESSION_WRAP_SOURCE = "세션 정리"
 # 세션 정리 묶음의 경로 가림 표기 — PC(agent/sessionwrap.py PATH_MASK)가 넣고, 서버는 승인 때 개수만 센다(기록 메타 redacted_paths)
 SESSION_WRAP_PATH_MASK = "‹경로›"
+# 수집 글(collected_post) — 서버가 담는 자리 = 사용자 계정의 커스텀 오브젝트 key collected_posts(S2, 자동으로 만들지 않는다).
+# 장치가 덮는 필드 키(DEVICE_FIELDS)만 쓴다. 사용자가 지웠거나 꼴이 다른 필드는 건너뛰고, 필수 둘(COLLECTED_REQUIRED)이 없으면 OBJECT-MISSING.
+COLLECTED_OBJECT_KEY = "collected_posts"
+COLLECTED_CHANNELS = ("linkedin", "reddit", "kakao", "threads", "blog", "web")
+COLLECTED_STATES = ("pending", "kept", "removed")          # removed = 서버가 그 항목을 휴지통으로 보낸다(S7)
+COLLECTED_GRADES = ("signal", "news", "noise")
+COLLECTED_AI_TEXT = {"summary": 500, "as_is": 1000, "to_be": 1000, "ops": 1000}
+COLLECTED_AI_POINTS, COLLECTED_AI_POINT_CP = 12, 300
+COLLECTED_AUTHOR_CP, COLLECTED_URL_CP = 200, 2000
+COLLECTED_REQUIRED = ("channel", "collected_on")
+# 요청 키 → 오브젝트 필드 키. ai.* 는 ai_* 필드로(AI 가 만든 값 — S5). axes 는 reference(links)
+COLLECTED_DATA_KEYS = (("channel", "channel"), ("author_display", "author_display"), ("post_url", "post_url"),
+                       ("posted_on", "posted_on"), ("collected_on", "collected_on"))
+COLLECTED_AI_KEYS = (("grade", "ai_grade"), ("summary", "ai_summary"), ("as_is", "ai_as_is"), ("to_be", "ai_to_be"),
+                     ("ops", "ai_ops"), ("points", "ai_points"))
+COLLECTED_AXES_FIELD = "axes"
+COLLECTED_INGEST = "inbox"   # items.ingest_kind — 장치 수집(기존 값). 일일 제안·결정 한도에 세지 않는다(db._DAILY_SOURCES)
 SUMMARY_TOOL_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,31}$")    # 신고 도구 코드(예 claude-cli) — 짧은 코드만
 SUMMARY_MODEL_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")   # 신고 모델 코드 또는 unknown
 
@@ -65,9 +88,11 @@ TITLE_MAX_CP = 200
 # 한도 (scope, period, bucket) → (건수, 바이트 또는 None). 같은 요청 재전송은 0, 실패·중복도 요청 속도엔 센다
 LIMITS = {("device", "minute", "request"): (10, None), ("user", "minute", "request"): (30, None),
           ("device", "day", "self"): (100, 1024 * 1024), ("user", "day", "self"): (200, 2 * 1024 * 1024),
-          ("device", "day", "activity"): (500, 1024 * 1024), ("user", "day", "activity"): (1000, 2 * 1024 * 1024)}
+          ("device", "day", "activity"): (500, 1024 * 1024), ("user", "day", "activity"): (1000, 2 * 1024 * 1024),
+          # 수집 글 — 건수만(바이트는 요청 64 KiB 상한이 막는다). 사용자 1000 = 활동 버킷과 같은 비례
+          ("device", "day", "collected"): (500, None), ("user", "day", "collected"): (1000, None)}
 PENDING_MAX, PENDING_MAX_BYTES = 300, 3 * 1024 * 1024
-BUCKETS = ("request", "self", "activity")
+BUCKETS = ("request", "self", "activity", "collected")
 # PR ②-a 작업 전달(2026-10-22, 구현계획 §5 · r2 R1) — 폴링은 별도 버킷(업무 요청·쓰기 버킷과 분리). 장치 /result·/fail 은 위 request 버킷.
 POLL_LIMITS = {("device", "minute"): 4, ("user", "minute"): 12}   # GET /api/device/jobs(장치·사용자) · GET /api/jobs/<id>(사용자)
 POLL_CONCURRENT = {"device": 1, "web": 2}                         # 동시 롱폴(장치당 · 사용자당 웹) — 서버 프로세스 메모리
@@ -116,6 +141,7 @@ KIND_KEYS = {
     "self_text": (("body",), ("title", "source_created_at", "source_date", "activity_ref", "generation")),
     "activity": (("action", "state", "occurred_on", "observed_on", "provider", "raw_id"), ("people", "axes")),   # observed_on = 필수 키·null 허용
     "self_summary": (("body", "generation"), ("title", "source_created_at", "source_date")),
+    "collected_post": (("raw_id", "channel", "collected_on", "title", "state"), ("post_url", "author_display", "posted_on", "axes", "ai")),
 }
 
 _HTTP = {"AUTH-INVALID": 401, "TOKEN-EXPIRED": 401, "TOKEN-REVOKED": 401, "AUTH-BLOCKED": 403,
@@ -124,7 +150,9 @@ _HTTP = {"AUTH-INVALID": 401, "TOKEN-EXPIRED": 401, "TOKEN-REVOKED": 401, "AUTH-
          "POLICY-DENIED": 403, "STREAM-MISMATCH": 403, "POLICY-STALE": 409, "IDEMPOTENCY-CONFLICT": 409,
          "SOURCE-REVISION-CONFLICT": 409, "KIND-CHANGED": 409, "CONFLICT": 409, "DEVICE-LIMIT": 409, "DEVICE-REVOKED": 409,
          "INBOX-RESOLVED": 409, "INBOX-NOT-LATEST": 409, "INBOX-EXPIRED": 409,
-         "RATE-LIMIT": 429, "PEOPLE-QUOTA": 429, "IMPORT-QUOTA": 429, "TARGET-REVISION-CONFLICT": 409, "MIGRATION-WINDOW-CLOSED": 409, "QUOTA-GLOBAL": 507, "INBOX-FULL": 429, "NOT-FOUND": 404, "NAME-REQUIRED": 403}
+         "RATE-LIMIT": 429, "PEOPLE-QUOTA": 429, "IMPORT-QUOTA": 429, "TARGET-REVISION-CONFLICT": 409, "MIGRATION-WINDOW-CLOSED": 409, "QUOTA-GLOBAL": 507, "INBOX-FULL": 429, "NOT-FOUND": 404, "NAME-REQUIRED": 403,
+         # 수집 글 오브젝트(collected_posts)가 없거나 받을 수 없는 꼴 — 503: PC 는 대기 유지·지수 대기(사용자가 오브젝트를 만들면 이어진다)
+         "OBJECT-MISSING": 503}
 
 
 def http_status(code: str) -> int:
@@ -229,6 +257,66 @@ def _text(v, path, max_cp, max_bytes=None, single_line=False):
     for rule, rx in LEAK_RULES:
         if rx.search(v):
             raise _bad(path, f"{rule}_not_allowed")
+
+
+def _post_url(v, path):
+    """수집 글 원 URL — 이 필드에서만 URL 꼴을 허용한다(S1). https:// 로 시작·한 줄·공백 없음·2,000자. 이메일·로컬 경로 꼴은 그대로 거절."""
+    if not isinstance(v, str):
+        raise _bad(path, "string_required")
+    if any(0xD800 <= ord(ch) <= 0xDFFF for ch in v) or "\x00" in v:
+        raise _bad(path, "invalid_char")
+    if any(ch.isspace() for ch in v):
+        raise _bad(path, "single_line")
+    if not v.startswith("https://") or len(v) <= len("https://"):
+        raise _bad(path, "https_required")
+    if len(v) > COLLECTED_URL_CP:
+        raise _bad(path, "too_long")
+    for rule, rx in LEAK_RULES:
+        if rule != "url" and rx.search(v):
+            raise _bad(path, f"{rule}_not_allowed")
+
+
+def _axes(axes):
+    """활동·수집 글 공용 축 목록 — 축 항목 id ≤10, 중복 금지."""
+    if not isinstance(axes, list) or len(axes) > MAX_AXES_PER_ACTIVITY:
+        raise _bad("axes", "list_max_10")
+    for i, a in enumerate(axes):
+        if not isinstance(a, str) or not _ITEM_ID_RE.match(a):
+            raise _bad(f"axes[{i}]", "format")
+    if len(set(axes)) != len(axes):
+        raise _bad("axes", "duplicate")
+
+
+def _collected(req):
+    """collected_post 종류 필드(명세 2절). 제목은 원문 첫 줄에서 잘라 낸 글자(요약 아님)·한 줄. ai 는 전부 선택."""
+    if not isinstance(req["raw_id"], str) or not _RAW_RE.match(req["raw_id"]):
+        raise _bad("raw_id", "format")
+    if req["channel"] not in COLLECTED_CHANNELS:
+        raise _bad("channel", "enum")
+    _date(req["collected_on"], "collected_on", nullable=False)
+    _text(req["title"], "title", TITLE_MAX_CP, single_line=True)
+    if req["state"] not in COLLECTED_STATES:
+        raise _bad("state", "enum")
+    if "post_url" in req:
+        _post_url(req["post_url"], "post_url")
+    if "author_display" in req:
+        _text(req["author_display"], "author_display", COLLECTED_AUTHOR_CP)
+    _date(req.get("posted_on"), "posted_on")
+    _axes(req.get("axes", []))
+    if "ai" in req:
+        ai = req["ai"]
+        _exact_keys(ai, "ai", (), ("grade",) + tuple(COLLECTED_AI_TEXT) + ("points",))
+        if "grade" in ai and ai["grade"] not in COLLECTED_GRADES:
+            raise _bad("ai.grade", "enum")
+        for k, cp in COLLECTED_AI_TEXT.items():
+            if k in ai:
+                _text(ai[k], f"ai.{k}", cp)
+        if "points" in ai:
+            pts = ai["points"]
+            if not isinstance(pts, list) or len(pts) > COLLECTED_AI_POINTS:
+                raise _bad("ai.points", "list_max_12")
+            for i, x in enumerate(pts):
+                _text(x, f"ai.points[{i}]", COLLECTED_AI_POINT_CP)
 
 
 def _date(v, path, nullable=True):
@@ -359,14 +447,10 @@ def validate(req: dict) -> dict:
             if (x["hmac"], x["role"]) in seen:
                 raise _bad(f"people[{i}]", "duplicate")
             seen.add((x["hmac"], x["role"]))
-        axes = req.get("axes", [])
-        if not isinstance(axes, list) or len(axes) > MAX_AXES_PER_ACTIVITY:
-            raise _bad("axes", "list_max_10")
-        for i, a in enumerate(axes):
-            if not isinstance(a, str) or not _ITEM_ID_RE.match(a):
-                raise _bad(f"axes[{i}]", "format")
-        if len(set(axes)) != len(axes):
-            raise _bad("axes", "duplicate")
+        _axes(req.get("axes", []))
+        return req
+    if kind == "collected_post":
+        _collected(req)
         return req
     _text(req["body"], "body", BODY_MAX_CP, BODY_MAX_BYTES)
     if "title" in req:
@@ -394,6 +478,11 @@ def projection(req: dict) -> dict:
                 "observed_on": req.get("observed_on"), "provider": req["provider"], "raw_id": req["raw_id"],
                 "people": sorted([x["hmac"], x["role"]] for x in req.get("people", [])),
                 "axes": sorted(req.get("axes", []))}
+    if req["kind"] == "collected_post":   # 빠진 선택 키와 null(posted_on)은 같다 — 서버 값을 그대로 둔다(재전송 규칙)
+        return {"kind": "collected_post", "raw_id": req["raw_id"], "channel": req["channel"], "collected_on": req["collected_on"],
+                "title": req["title"], "state": req["state"], "post_url": req.get("post_url"),
+                "author_display": req.get("author_display"), "posted_on": req.get("posted_on"),
+                "axes": sorted(req["axes"]) if "axes" in req else None, "ai": req.get("ai")}
     out = {"kind": req["kind"], "title": req.get("title"), "body": req["body"], "source_created_at": req.get("source_created_at"),
            "source_date": req.get("source_date")}
     if req["kind"] == "self_text":
@@ -685,7 +774,8 @@ def _quota(c, dev, bucket, nbytes):
 
 _ENTRY_COLS = ("id,stream_id,original_id,source_revision,previous_entry_id,kind,request_sha256,projection_sha256,state,"
                "is_latest_received,is_current_applied,payload,payload_bytes,expires_at,received_at,resolved_at,resolved_by,"
-               "target_object_id,target_item_id,target_record_id,target_activity_id,target_item_revision,transform_version,execution")
+               "target_object_id,target_item_id,target_record_id,target_activity_id,target_item_revision,transform_version,execution,"
+               "raw_id")
 
 
 def _target(e):
@@ -807,19 +897,21 @@ def _people_for(c, uid, ns, people):
 
 _INSERT_ENTRY = ("INSERT INTO import_entries (user_id,id,stream_id,original_id,source_revision,previous_entry_id,kind,request_sha256,"
                  "projection_sha256,state,is_latest_received,is_current_applied,payload,payload_bytes,expires_at,resolved_at,"
-                 "resolved_by,target_record_id,target_activity_id,transform_version,execution) "
-                 "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,true,%s,%s,%s,{expires},{resolved},%s,%s,%s,%s,%s) "
+                 "resolved_by,target_record_id,target_activity_id,target_item_id,transform_version,execution,raw_id) "
+                 "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,true,%s,%s,%s,{expires},{resolved},%s,%s,%s,%s,%s,%s,%s) "
                  f"RETURNING {_ENTRY_COLS}")
 
 
-def _insert_entry(c, dev, req, latest, req_sha, proj_sha, state, current, payload=None, pbytes=0, record_id=None, activity_id=None):
+def _insert_entry(c, dev, req, latest, req_sha, proj_sha, state, current, payload=None, pbytes=0, record_id=None, activity_id=None,
+                  item_id=None):
     pending = state == "pending"
     sql = _INSERT_ENTRY.format(expires=f"now() + make_interval(days => {PENDING_DAYS})" if pending else "NULL",
                                resolved="NULL" if pending else "now()")
     return _one(c, sql, (dev["user_id"], db.new_id("ie"), dev["id"], req["original_id"], req["revision"],
                          latest["id"] if latest else None, req["kind"], req_sha, proj_sha, state, current,
                          Jsonb(payload) if payload is not None else None, pbytes, None if pending else "system",
-                         record_id, activity_id, req["transform_version"], req["execution"]))
+                         record_id, activity_id, item_id, req["transform_version"], req["execution"],
+                         req["raw_id"] if req["kind"] == "collected_post" else None))
 
 
 def _apply_activity(c, dev, req, latest, current, req_sha, proj_sha, nbytes):
@@ -847,6 +939,142 @@ def _apply_activity(c, dev, req, latest, current, req_sha, proj_sha, nbytes):
         c.execute("INSERT INTO activity_links (user_id,id,activity_id,axis_item_id,relation) VALUES (%s,%s,%s,%s,'axis') "
                   "ON CONFLICT DO NOTHING", (uid, db.new_id("al"), aid, ax))
     return _insert_entry(c, dev, req, latest, req_sha, proj_sha, "applied", True, activity_id=aid)
+
+
+# ── 수집 글 (2026-11-12 명세 2절·S1~S8) ─────────────────────
+# 남이 쓴 공개 글의 URL·제목 줄·메타·AI 요약/분석 → 사용자 커스텀 오브젝트 collected_posts 의 항목 하나(원본 = 접수 체인 하나 = 항목 하나).
+# 승인 대기 없이 바로 항목(item_propose → item_decide apply, 한 트랜잭션 — 호출자 submit 이 tx_scope). 일반 제안·결정 한도는 세지 않고
+# (db.device_ingest_mode) 접수 한도(버킷 collected)만 센다. 기록(records)이 아니라서 후보 근거가 될 수 없다(후보는 기록에만 붙는다).
+# 재전송 = 장치가 보낸 키만 덮는다. 사용자가 고친 다른 필드 값·관계(my_notes 등, 상대가 휴지통인 관계 포함)는 그대로 둔다.
+
+def _obj_missing(why):
+    return CrmError("OBJECT-MISSING", f"수집 글을 담을 오브젝트({COLLECTED_OBJECT_KEY})를 쓸 수 없어요 — {why}.",
+                    f"key 가 {COLLECTED_OBJECT_KEY} 인 오브젝트를 만들고 적용하세요(필수 필드 channel·collected_on). 받은 글은 장치에 남아 있다가 다시 보내져요.")
+
+
+def _collected_target(c, uid):
+    """(오브젝트 행, 필드 dict) — 적용·미보관 오브젝트만. 없으면 OBJECT-MISSING(자동으로 만들지 않는다 — S2)."""
+    od = _one(c, "SELECT id, revision FROM object_defs WHERE user_id=%s AND key=%s AND revision > 0 AND archived_at IS NULL",
+              (uid, COLLECTED_OBJECT_KEY))
+    if not od:
+        raise _obj_missing("오브젝트가 없거나 보관됐어요")
+    return od, {f["key"]: f for f in db._fields(c, uid, od["id"])}
+
+
+def _collected_values(req, byk):
+    """장치가 보낸 값 → 오브젝트에 쓸 data(필드 키 → 값). 정의에 없거나 꼴이 다른 필드는 건너뛴다. null·빠진 키는 쓰지 않는다(서버 값 유지).
+    필수 둘(channel·collected_on)을 쓸 수 없으면 OBJECT-MISSING."""
+    vals = {fk: req[rk] for rk, fk in COLLECTED_DATA_KEYS if req.get(rk) is not None}
+    ai = req.get("ai") or {}
+    vals.update({fk: ai[rk] for rk, fk in COLLECTED_AI_KEYS if rk in ai})
+    out = {}
+    for fk, v in vals.items():
+        f = byk.get(fk)
+        if f is None or f["value_type"] == "reference" or db._value_error(f, v):
+            continue
+        out[fk] = v
+    miss = [k for k in COLLECTED_REQUIRED if k not in out]
+    if miss:
+        raise _obj_missing(f"필수 필드 {', '.join(miss)} 가 없거나 받을 수 있는 꼴이 아니에요")
+    return out
+
+
+def _collected_axes(c, uid, req, byk):
+    """axes → 그 필드의 links(None = 이번 전송은 축을 건드리지 않음). axes 필드가 없거나 꼴이 다르면(관계 아님·항목 아님·하나만) None.
+    분류 항목이 아닌 id = POLICY-DENIED(활동과 같다). 휴지통 축·필드가 가리키는 오브젝트 밖 축은 그 연결만 뺀다."""
+    if "axes" not in req:
+        return None
+    f = byk.get(COLLECTED_AXES_FIELD)
+    if f is None or f["value_type"] != "reference" or f["target_kind"] != "item":
+        return None
+    axes = req["axes"]
+    bad, gone = _axes_split(c, uid, axes)
+    if bad:
+        raise CrmError("POLICY-DENIED", "axes 에 분류(축) 항목이 아닌 id 가 있어요.")
+    keep = []
+    for a in axes:
+        if a in gone:
+            continue
+        t = db._resolve_target(c, uid, "item", a)
+        if t and (not f["target_object_id"] or t["object_id"] == f["target_object_id"]):
+            keep.append({"field_key": f["key"], "target_kind": "item", "target_id": a})
+    if not f["multiple"] and len(keep) > 1:
+        return None
+    return keep
+
+
+def _collected_write(c, uid, od, req, values, axes_links, item_id):
+    """항목 새로 만들기(item_id None) 또는 장치 키만 덮어 갱신 — 제안 → 적용(이력 한 줄·revision+1). 반환 item_id.
+    새 항목: title = 제목 줄, body = 빈 값, ingest_kind inbox. 갱신: 본문·다른 필드·관계는 그대로(상대가 휴지통인 관계도 다시 넣는다)."""
+    title = req["title"]
+    hidden, orphan = [], {}
+    if item_id is None:
+        data, links, body, base = values, axes_links or [], "", 0
+    else:
+        row = _one(c, "SELECT revision, body, data FROM items WHERE user_id=%s AND id=%s FOR UPDATE", (uid, item_id))
+        fields = {f["key"] for f in db._fields(c, uid, od["id"])}
+        # 정의에서 지웠거나 보관한 필드의 남은 값은 제안 검사(strict)에 걸리므로 넘기지 않고, 적용 뒤 그대로 되돌려 둔다(필드를 되살리면 다시 보인다)
+        old = row["data"] or {}
+        orphan = {k: v for k, v in old.items() if k not in fields and k not in values}
+        data = {**{k: v for k, v in old.items() if k in fields}, **values}
+        cur = db._links_by_item(c, uid, [item_id]).get(item_id, [])
+        if axes_links is not None:
+            cur = [ln for ln in cur if ln["field_key"] != COLLECTED_AXES_FIELD]
+        hidden = [ln for ln in cur if ln.get("hidden")]
+        links = [{k: ln[k] for k in ("field_key", "target_kind", "target_id")} for ln in cur if not ln.get("hidden")]
+        links += axes_links or []
+        body, base = row["body"], row["revision"]
+    try:
+        with c.transaction():   # 정의 검사 실패를 savepoint 로 잡아 장치가 알아들을 코드로 바꾼다
+            p = db.item_propose(uid, od["id"], od["revision"], item_id, base, None, title, body, data, links)
+            db.item_decide(uid, p["item_id"], base, p["proposal_id"], "apply")
+    except CrmError as e:
+        if e.code not in ("ARG-INVALID", "LINK-INVALID"):
+            raise
+        if item_id is None:   # 새 항목 — 사용자가 더한 필수 필드 등 오브젝트 꼴 문제(모든 글에 같다)
+            raise _obj_missing("장치 값만으로 항목을 만들 수 없어요(사용자가 더한 필수 필드 등)") from None
+        raise CrmError("CONFLICT", "서버의 이 수집 글 항목 값이 지금 정의와 맞지 않아요.",
+                       "그 항목을 화면에서 고친 뒤 장치에서 다시 보내세요.") from None
+    if orphan:
+        c.execute("UPDATE items SET data = %s || data WHERE user_id=%s AND id=%s", (Jsonb(orphan), uid, p["item_id"]))
+    for ln in hidden:   # 적용이 관계를 통째로 다시 넣었다 — 상대가 휴지통인 사용자 관계를 되살린다(복원되면 다시 보인다)
+        db._insert_link(c, uid, ln, source_item=p["item_id"], source_object=od["id"])
+    if item_id is None:
+        c.execute("UPDATE items SET ingest_kind=%s WHERE user_id=%s AND id=%s", (COLLECTED_INGEST, uid, p["item_id"]))
+    return p["item_id"]
+
+
+def _apply_collected(c, dev, req, latest, current, req_sha, proj_sha, nbytes):
+    """수집 글 한 개정 반영 → (접수 행, 휴지통으로 보냈나). state removed = 항목을 휴지통으로(S7, 서버 처리라 휴지통 스위치와 무관 —
+    일반 이용 차단·168시간 뒤 정리는 스위치와 무관하게 돈다). 항목이 없는 removed = 항목 없이 excluded 접수 행."""
+    uid = dev["user_id"]
+    raw_id = req["raw_id"]
+    if latest and latest["raw_id"] != raw_id:
+        raise _bad("raw_id", "changed")
+    if _one(c, "SELECT 1 FROM import_entries WHERE user_id=%s AND stream_id=%s AND raw_id=%s AND original_id<>%s LIMIT 1",
+            (uid, dev["id"], raw_id, req["original_id"])):
+        raise _bad("raw_id", "in_use")
+    _quota(c, dev, "collected", nbytes)
+    if latest:
+        c.execute("UPDATE import_entries SET is_latest_received=false WHERE user_id=%s AND id=%s", (uid, latest["id"]))
+    item_id = current["target_item_id"] if current else None
+    if req["state"] == "removed":
+        if not item_id:
+            return _insert_entry(c, dev, req, latest, req_sha, proj_sha, "excluded", False), False
+        c.execute("UPDATE import_entries SET is_current_applied=false WHERE user_id=%s AND id=%s", (uid, current["id"]))
+        db._trash_rows(c, uid, "items", [item_id], "move")
+        return _insert_entry(c, dev, req, latest, req_sha, proj_sha, "applied", True, item_id=item_id), True
+    if current:
+        c.execute("UPDATE import_entries SET is_current_applied=false WHERE user_id=%s AND id=%s", (uid, current["id"]))
+        archived = _one(c, "SELECT archived_at IS NOT NULL AS a FROM items WHERE user_id=%s AND id=%s", (uid, item_id))["a"]
+        if bytes(current["projection_sha256"]) == proj_sha or archived:   # 같은 내용 · 사용자가 보관한 항목 = 쓰지 않는다
+            return _insert_entry(c, dev, req, latest, req_sha, proj_sha, "noop", True, item_id=item_id), False
+    od, byk = _collected_target(c, uid)
+    values = _collected_values(req, byk)
+    axes_links = _collected_axes(c, uid, req, byk)
+    with db.device_ingest_mode():
+        item_id = _collected_write(c, uid, od, req, values, axes_links, item_id)
+    return _insert_entry(c, dev, req, latest, req_sha, proj_sha, "applied", True, item_id=item_id), False
 
 
 def _receive_self(c, dev, req, latest, current, req_sha, proj_sha):
@@ -910,11 +1138,11 @@ def submit(authorization: str, idempotency_key_header: str, raw: bytes) -> tuple
         raise CrmError("POLICY-STALE", "장치 허용 규칙이 바뀌었어요.", "장치에서 허용 규칙을 다시 받아 오세요.")
     if req["transform_version"] not in pol.get("transform_versions", []):
         raise CrmError("POLICY-DENIED", "이 장치에 허용하지 않은 변환 버전이에요.")
+    if kind in ("activity", "collected_post") and any(a not in pol.get("axes", []) for a in req.get("axes", [])):
+        raise CrmError("POLICY-DENIED", "이 장치에 허용하지 않은 축이에요.")
     if kind == "activity":
         if req["action"] not in pol.get("actions", []):
             raise CrmError("POLICY-DENIED", "이 장치에 허용하지 않은 행동이에요.")
-        if any(a not in pol.get("axes", []) for a in req.get("axes", [])):
-            raise CrmError("POLICY-DENIED", "이 장치에 허용하지 않은 축이에요.")
         if not feature_on(None, "activity_imports"):
             raise _off("ACTIVITY-IMPORTS-OFF", "활동 가져오기")
     if kind == "self_summary" and req["execution"] == "unattended" and not feature_on(None, "unattended_summary_imports"):
@@ -922,7 +1150,8 @@ def submit(authorization: str, idempotency_key_header: str, raw: bytes) -> tuple
     uid = dev["user_id"]
     req_sha = hashlib.sha256(jcs(req)).digest()
     proj_sha = hashlib.sha256(jcs(projection(req))).digest()
-    with tx() as c:
+    # tx_scope — 수집 글은 안에서 db.item_propose·item_decide(각자 tx())를 부른다. 같은 연결의 savepoint 로 합쳐져야 사용자 잠금에 막히지 않는다
+    with db.tx_scope() as c:
         db._user_lock(c, uid)   # 개정 경합·한도·승인·폐기·계정 삭제와 같은 잠금 순서(users → 입력원 → 접수 행)
         s = _one(c, "SELECT revoked_at, token_revoked_at, token_expires_at <= now() AS expired, policy_revision FROM import_streams "
                     "WHERE user_id=%s AND id=%s FOR NO KEY UPDATE", (uid, dev["id"]))
@@ -959,6 +1188,11 @@ def submit(authorization: str, idempotency_key_header: str, raw: bytes) -> tuple
                           "AND is_current_applied FOR UPDATE", (uid, dev["id"], req["original_id"]))
         if kind == "activity":
             e = _apply_activity(c, dev, req, latest, current, req_sha, proj_sha, len(raw))
+        elif kind == "collected_post":
+            e, trashed = _apply_collected(c, dev, req, latest, current, req_sha, proj_sha, len(raw))
+            if trashed:   # removed — 항목을 휴지통으로 보냈다. 응답은 삭제된 원천 꼴(대상 ID 없음)
+                c.execute("UPDATE import_streams SET last_used_at=now() WHERE user_id=%s AND id=%s", (uid, dev["id"]))
+                return 201, _deleted_resp(e, "trash", False)
         else:
             e = _receive_self(c, dev, req, latest, current, req_sha, proj_sha)
         c.execute("UPDATE import_streams SET last_used_at=now() WHERE user_id=%s AND id=%s", (uid, dev["id"]))

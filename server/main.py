@@ -62,6 +62,7 @@ INSTRUCTIONS = """이 서버는 사용자의 「내 판단 대시보드」다. �
 - 사용자가 '안 돼요/고쳐 주세요/이건 왜 이래요' 류를 말하면 feedback_send 로 운영자에게 문의하자고 제안한다. 보낼 글을 사용자에게 그대로 보여 주고, 사용자가 확인하면 그때 호출한다.
 - 이 노트의 쓰는 법·용어 질문은 help_get 으로 해당 topic(start 또는 words) 하나만 읽고 그 문서 안에서 답한다. 같은 대화에서 이미 읽었으면 다시 부르지 않는다. 문서에 없으면 '문서에서 확인되지 않아요' 라고 하고 가장 가까운 절을 안내한다. 제품 밖 일반 질문엔 적용하지 않는다.
 - 사람(person_save)은 사용자가 말한 별칭 하나만 저장한다. 연락처·소속·SNS·그 사람의 말·평가는 넣지 않는다.
+- 수집 글(key collected_posts 오브젝트의 항목)은 연결 장치가 남이 쓴 공개 글을 담은 것이다. 원 URL(post_url), 제목 줄, 작성자 표시 이름, 날짜는 서버에 있고, 원문 본문은 사용자 PC 에만 있다. 수집 글은 사용자의 판단이 아니고 판단 근거가 아니다 — 후보나 기준의 근거로 쓰거나 내 글로 옮기지 않는다. ai_* 필드(ai_grade, ai_summary, ai_as_is, ai_to_be, ai_ops, ai_points)는 AI 가 만든 값이다 — 사용자의 말이나 원문 인용으로 다루지 않고, 꺼내기의 인용으로 쓰지 않는다.
 - 출처 요약/반응(source_reflection_save)은 사용자가 출처를 접한 뒤 한 자기 생각만 저장한다. 타인의 말·경험·생각을 옮기거나 다시 정리하지 않는다. 검토 완료는 판단 확정이 아니고 근거로 인용할 수 없다 — 사용자가 말할 때만 source_reflection_review 를 부른다.
 - 삭제는 휴지통이다(휴지통이 켜졌을 때). 내 글·항목(기준·결정·축·커스텀)·사람·읽고 든 생각·활동은 사용자가 지우라고 말할 때만 trash_move 로 옮긴다. 삭제 시각부터 168시간 안에 trash_restore 로 복원할 수 있고, 그 뒤엔 서버 정리 때 영구 삭제된다. trash_purge(영구 삭제 요청)는 되돌릴 수 없으니 사용자가 분명히 말할 때만 부른다. 휴지통 대상은 다른 도구에서 보이지 않는다. 휴지통이 켜지면 기준의 남기지 않기·되돌리기(item_decide exclude·pending)는 없다 — 남기지 않을 기준은 삭제한다.
 - 도구 다섯 개(find·read·write·decide·purge): find 로 할 일(op)을 찾고 그 등급 도구로 부른다. op 이름은 위 규칙의 도구 이름 그대로다. 확정·삭제는 read(op="decide_preview") 의 shown 을 고치지 않고 그대로 사용자에게 보여 주고, 사용자가 말한 뒤에만 decide·purge 에 그 bind 를 넣어 부른다. 이관(migration_*) 반영은 decide_preview 대신 migration_apply_preview 를 쓴다.
@@ -196,7 +197,8 @@ BindArg = Annotated[str, Field(description='선택: read(op="decide_preview") �
 @mcp.tool()
 @guard
 def state_get(ctx: Context) -> dict:
-    """대시보드의 현재 상태 한 벌 — 프로필·질문·탭·후보·기록 목록·다음 할 일. 대화를 시작할 때 먼저 부른다."""
+    """대시보드의 현재 상태 한 벌 — 프로필·질문·탭·후보·기록 목록·다음 할 일. 대화를 시작할 때 먼저 부른다.
+    수집 글(collected_posts 항목)은 남이 쓴 글이라 판단 근거가 아니고, 그 ai_* 필드는 AI 가 만든 값이다."""
     return db.state(uid_of(ctx))
 
 
@@ -760,7 +762,8 @@ def activity_list(
 @mcp.tool()
 @guard
 def activity_get(activity_id: Annotated[str, Field(description="활동 ID (a_…)")], ctx: Context) -> dict:
-    """활동 하나 — 행동·날짜(occurred_on, 모르면 null)·처음 수집한 날·사람 별칭·축·승인된 메모·판 이력. 원문·원 URL 은 서버에 없다."""
+    """활동 하나 — 행동·날짜(occurred_on, 모르면 null)·처음 수집한 날·사람 별칭·축·승인된 메모·판 이력. 활동엔 원문과 원 URL 이 없다
+    (원문은 사용자 PC 에만). 장치가 담은 수집 글의 원 URL 과 AI 요약은 활동이 아니라 collected_posts 오브젝트 항목의 필드에 있다."""
     return activity.activity_get(uid_of(ctx), activity_id)
 
 

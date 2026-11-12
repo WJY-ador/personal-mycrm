@@ -131,9 +131,11 @@ _DAILY_SOURCES = {
     # 이관 경로(2026-11-02 메인 결정 2): 일반 집계(기록·제안·결정)에서 board 이전 행을 뺀다 — 이관은 아래 migration 전용 한도만 쓴다
     "records": (("records", "COALESCE(received_at, created)", "ingest_kind <> 'board_migration'"),),   # 받은 시각으로 센다(created 가 과거여도)
     "candidates": (("candidates", "created"),),
-    "decisions": (("candidate_history", "at"), ("item_history", "at", "COALESCE(event_meta->>'ingest', '') <> 'board_migration'")),
+    # 수집 글(2026-11-12 명세 2절): 장치 수집 항목(ingest_kind inbox · 이력 ingest device)도 제안·결정 한도에 세지 않는다
+    "decisions": (("candidate_history", "at"),
+                  ("item_history", "at", "COALESCE(event_meta->>'ingest', '') NOT IN ('board_migration','device')")),
     "proposals": (("object_defs", "created_at", "std_id IS NULL"),   # 표준 정의(시드·편입)는 사용자 제안이 아니다
-                  ("items", "COALESCE(received_at, created_at)", "ingest_kind <> 'board_migration'")),
+                  ("items", "COALESCE(received_at, created_at)", "ingest_kind NOT IN ('board_migration','inbox')")),
     # 이관 반영 행 = 이전 입력원 대응표의 적용 행(기록·항목, 받은 시각) + 이관 plan 의 출처 적용(반영 시각). noop·중복은 세지 않는다
     # 되돌린 행(reverted, MCP migration_revert)도 센다 — 되돌리기가 일일 한도를 돌려주지 않는다(가안 X §5 revert d)
     "migration": (("import_entries", "received_at", "kind IN ('migration_item','migration_record') AND state IN ('applied','reverted')"),
@@ -335,11 +337,38 @@ def migration_via():
     return v if isinstance(v, str) else None
 
 
+# 장치 수집 모드(수집 글, 2026-11-12 명세 2절) — device_ingest_mode() 안의 항목 제안·결정은 일반 한도를 보지 않는다(잠금만).
+# 장치 경로는 imports 의 접수 한도(버킷 collected)를 따로 건다. 항목 이력 event_meta 에 ingest=device 표식을 단다(이관 표식과 별개).
+_dev_ingest_var: "contextvars.ContextVar" = None
+
+
+def _dev_ingest():
+    global _dev_ingest_var
+    if _dev_ingest_var is None:
+        import contextvars
+        _dev_ingest_var = contextvars.ContextVar("crm_device_ingest", default=False)
+    return _dev_ingest_var
+
+
+@contextmanager
+def device_ingest_mode():
+    """장치 수집 반영 구간 — 안의 _daily_gate(records·proposals·decisions)는 잠금만, item_history.event_meta.ingest = device."""
+    token = _dev_ingest().set(True)
+    try:
+        yield
+    finally:
+        _dev_ingest().reset(token)
+
+
+def in_device_ingest() -> bool:
+    return bool(_dev_ingest().get())
+
+
 def _daily_gate(c, uid, kind, adding=1):
     """일일 한도 — users 행을 잠근 뒤 KST 오늘 0시 이후 행을 센다. n + adding > 상한이면 RATE-LIMIT.
-    같은 트랜잭션에서 다시 잠가도 된다(이미 잡은 잠금). migration_mode() 안에선 records·proposals·decisions 를 세지 않는다."""
+    같은 트랜잭션에서 다시 잠가도 된다(이미 잡은 잠금). migration_mode()·device_ingest_mode() 안에선 records·proposals·decisions 를 세지 않는다."""
     _user_lock(c, uid)
-    if kind in _MIGRATION_BYPASS and in_migration_mode():
+    if kind in _MIGRATION_BYPASS and (in_migration_mode() or in_device_ingest()):
         return
     n = 0
     for table, col, *extra in _DAILY_SOURCES[kind]:
@@ -524,6 +553,7 @@ def _init_schema(c):
         _migrate_record_edit(c)   # 수기 수정 A0′(2026-11-03) — records.revision · 후보 휴지통 열. record_history 표는 schema.sql
         _migrate_decision_owner(c)   # 세션 정리 → 판단 확정(2026-11-04) — records.decision_owner 열·CHECK
         _migrate_migration_path(c)   # 이관 경로(2026-11-02) — records.date_kind · 가안 X(plan reverted·via · 항목 created · 접수 reverted). 새 표 3개는 schema.sql
+        _migrate_collected(c)   # 수집 글(2026-11-12) — import_entries.raw_id 열·인덱스. 종류 CHECK 는 _WIDEN_CHECKS
         _init_tmp(c)   # PR ②-a 임시 보관 — schema.sql 의 jobs 뒤(FK 대상). 위치는 current_schema() 로 정한다
         _migrate_classify_roles(c)
         import features   # 관리자 프로필(2026-11-12) — 기본 프로필·권한 시드·users.profile_id·role 거울. 표는 schema.sql
@@ -556,7 +586,10 @@ _WIDEN_CHECKS = (
       "device_connect", "device_reissue", "device_revoke", "device_policy", "migration_apply", "migration_extend", "migration_close",
       "migration_token", "token_grant", "token_grant_redeem", "pc_forget", "device_rotate")),
     ("ticket_history", "ticket_history_kind_check", "kind", ("status", "reply", "note", "reclassify", "deleted")),
-    ("field_defs", "field_defs_target_kind_check", "target_kind", ("item", "record", "candidate", "person", "source", "activity")))
+    ("field_defs", "field_defs_target_kind_check", "target_kind", ("item", "record", "candidate", "person", "source", "activity")),
+    # 수집 글(2026-11-12) — 접수 종류 collected_post
+    ("import_entries", "import_entries_kind_check", "kind",
+     ("self_text", "self_summary", "activity", "migration_object", "migration_item", "migration_record", "collected_post")))
 
 # board 이전(2026-10-20) — 옛 DB 에 더할 열(schema.sql 최종형과 같은 모양). received_at·ingest_kind 는 옛 행 값이 다르다(아래 함수)
 _IMPORT_PROV_COLS = (("source_created_at", "timestamptz"), ("source_date", "date"),
@@ -727,6 +760,18 @@ def _migrate_decision_owner(c):
         c.execute("ALTER TABLE records ADD COLUMN decision_owner text")
     if not _has_constraint(c, "records", "ck_records_decision_owner"):
         c.execute("ALTER TABLE records ADD CONSTRAINT ck_records_decision_owner CHECK (decision_owner IS NULL OR decision_owner = 'self')")
+
+
+def _migrate_collected(c):
+    """수집 글(2026-11-12 명세 2절) — 옛 DB 에 import_entries.raw_id(수집 글 접수 행만, PC 원본 식별자 — raw_id ↔ 항목 대응) + 부분 인덱스.
+    매번 돌아도 된다(있으면 건드리지 않는다). 옛 행은 NULL(백필 없음)."""
+    if not _has_col(c, "import_entries", "raw_id"):   # 있으면 ALTER 를 부르지 않는다(IF NOT EXISTS 여도 테이블을 잠근다)
+        c.execute("ALTER TABLE import_entries ADD COLUMN IF NOT EXISTS raw_id text")
+    if not _has_constraint(c, "import_entries", "ck_import_entries_raw_id"):
+        c.execute("ALTER TABLE import_entries ADD CONSTRAINT ck_import_entries_raw_id CHECK (raw_id IS NULL OR "
+                  "(kind = 'collected_post' AND raw_id ~ '^[0-9a-f]{48}$'))")
+    if not c.execute("SELECT 1 FROM pg_class WHERE relname = 'ix_import_raw' AND relnamespace = current_schema()::regnamespace").fetchone():
+        c.execute("CREATE INDEX ix_import_raw ON import_entries (user_id, stream_id, raw_id) WHERE raw_id IS NOT NULL")
 
 
 def _migrate_migration_path(c):
@@ -3126,6 +3171,8 @@ def item_decide(uid, item_id, expected_revision, proposal_id, action, history_id
                 meta["ingest"] = "board_migration"
                 if migration_via():   # 가안 X 감사 — 반영 경로(web·mcp)
                     meta["via"] = migration_via()
+            elif in_device_ingest():   # 장치 수집(수집 글)이 만든 이력 — 일반 결정 한도에서 뺀다
+                meta["ingest"] = "device"
             c.execute("INSERT INTO item_history (user_id,item_id,action,prev_revision,prev_state,event_meta) VALUES (%s,%s,%s,%s,%s,%s)",
                       (uid, item_id, act, row["revision"], Jsonb(snap), Jsonb(meta)))
             c.execute("UPDATE items SET " + sets + (", " if sets else "") + "revision=revision+1, updated_at=now() WHERE user_id=%s AND id=%s",
