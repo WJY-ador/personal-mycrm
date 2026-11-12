@@ -17,7 +17,7 @@ export function roJosa(w: string): string {
 export function LoadFail({ err, what }: { err: ApiError; what: string }) {
   const say = err.code === "NOT-FOUND" ? "찾을 수 없어요. 지워졌을 수 있어요." : err.code === "OFFLINE" ? "서버에 연결하지 못했어요." : "읽는 중에 문제가 생겼어요.";
   return (
-    <div className="partfail" role="alert"><b>{what}{josa(what, "을", "를")} 불러오지 못했어요 · 나머지는 정상</b><p>{say} {FIXHINT}</p>
+    <div className="partfail" role="alert"><b>{what}{josa(what, "을", "를")} 불러오지 못했어요. 나머지는 정상이에요.</b><p>{say} {FIXHINT}</p>
       {err.code && err.code !== "OFFLINE" ? <Tech err={err} /> : null}</div>
   );
 }

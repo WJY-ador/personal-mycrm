@@ -42,7 +42,7 @@ export function MigTokens({ t, off, onToken, done }: Props) {
         return (
           <li key={x.id} className={css.tok}><div className={css.head}><span className={`chip ${c}`}>{s}</span><b>{x.label}</b>
             {x.active ? <button type="button" className="secondary small" disabled={busy} onClick={() => revoke(x.id)}>폐기</button> : null}</div>
-            <span className="meta">{`${mdhm(x.created_at)} 발급 · ${x.revoked_at ? `${mdhm(x.revoked_at)} 폐기` : `${mdhm(x.expires_at)} 만료`} · 마지막 사용 ${x.last_used_at ? mdhm(x.last_used_at) : "아직 없음"}`}</span></li>
+            <span className="meta">{`${mdhm(x.created_at)} 발급, ${x.revoked_at ? `${mdhm(x.revoked_at)} 폐기` : `${mdhm(x.expires_at)} 만료`}, 마지막 사용 ${x.last_used_at ? mdhm(x.last_used_at) : "아직 없음"}`}</span></li>
         );
       })}</ul> : <div className="empty">아직 발급한 이관 토큰이 없어요.</div>}
       <p className="ferr" role="alert" aria-atomic="true">{err}</p></section>

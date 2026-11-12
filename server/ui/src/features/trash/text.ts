@@ -19,7 +19,7 @@ export const loadErrText = (e: ApiError) =>
 export function actErrText(e: ApiError): string {
   if (e.code === "OFFLINE") return "서버에 연결하지 못했어요. 잠시 뒤 다시 해 보세요.";
   if (e.code === "TRASH-EXPIRED") return "복원 기간이 끝났어요.";
-  if (e.code === "CONFLICT") return "다른 곳에서 먼저 바뀌었어요. 다시 불러왔어요 — 확인하고 다시 해 주세요.";
+  if (e.code === "CONFLICT") return "다른 곳에서 먼저 바뀌었어요. 다시 불러왔어요. 확인하고 다시 해 주세요.";
   if (e.code === "NOT-FOUND") return "찾을 수 없어요. 지워졌을 수 있어요. 다시 불러왔어요.";
   return e.msg || "저장하지 못했어요. 다시 해 보세요.";
 }

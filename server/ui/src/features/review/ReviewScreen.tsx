@@ -44,7 +44,7 @@ export function ReviewScreen({ ctx }: ScreenProps) {
   const byRec = qid.startsWith("r:");
   const q = byRec ? null : (S.questions || []).find(x => x.id === qid);
   const rec = byRec ? (S.journal || []).find(j => j.id === qid.slice(2)) : null;
-  const qText = byRec ? `${NO_QUESTION} · ${w.record} 「${rec ? rec.title : w.recGone}」` : q ? q.text : "찾을 수 없는 질문";
+  const qText = byRec ? `${NO_QUESTION}, ${w.record}: ${rec ? rec.title : w.recGone}` : q ? q.text : "찾을 수 없는 질문";
   const base = `#${tabId}/review/${qid}/`;
   const ok = readOk(S, "candidates");
   const scopeReadOk = readOk(S, byRec ? "journal" : "questions");

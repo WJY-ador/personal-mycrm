@@ -5,7 +5,7 @@ import type { ChatApi } from "../features/chat/chatApi";
 import { ChatStore } from "../features/chat/store";
 import type { Change, Preview } from "../features/chat/types";
 
-export const NODEV = "이 기능은 본인 PC에서 본인 Claude 구독으로 실행하며, PC 연결과 에이전트 실행이 필요합니다.";   // PRD 1-2 고정 문구(글자 그대로)
+export const NODEV = "이 기능은 본인 PC에서 본인 Claude 구독으로 실행하며, PC 연결과 에이전트 실행이 필요해요.";   // PRD 1-2 고정 문구(글자 그대로, 2026-11-12 디자인 2 C6에서 해요체로)
 export const T = "2026-10-22T05:03:00+00:00";
 
 export function mk() {

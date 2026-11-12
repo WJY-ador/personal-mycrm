@@ -13,14 +13,14 @@ import css from "./Devices.module.css";
 function status(d: Device): [string, string] {
   if (!d.active) return ["st-off", "연결 해제됨"];
   if (d.token_revoked_at) return ["st-off", "토큰 폐기됨"];
-  if (d.token_expires_at && new Date(d.token_expires_at) < new Date()) return ["st-wait", "토큰 만료 · 재발급 필요"];
+  if (d.token_expires_at && new Date(d.token_expires_at) < new Date()) return ["st-wait", "토큰 만료, 재발급 필요"];
   return ["st-mine", "연결됨"];
 }
 
 function policyText(pol: Policy, ch: Choices, actions?: Record<string, string>) {
-  const a = (pol.actions || []).map(x => actLabel(actions, x)).join("·") || "없음";
+  const a = (pol.actions || []).map(x => actLabel(actions, x)).join(", ") || "없음";
   const t = (pol.transform_versions || []).map(k => (ch.transforms || []).find(x => x.key === k)?.label || k).join(", ") || "없음";
-  return `행동 ${a} · 받는 것 ${t} · 축 ${(pol.axes || []).length}개`;
+  return `행동 ${a}, 받는 것 ${t}, 축 ${(pol.axes || []).length}개`;
 }
 
 export type CardProps = {
@@ -57,7 +57,7 @@ export function DevCard({ d, ch, items, actions, onToken, done, fail }: CardProp
       {d.active ? <><div className="pacts"><button type="button" className="secondary" disabled={busy} onClick={() => act("reissue")}>토큰 재발급</button>
         <button type="button" className="secondary" disabled={busy} onClick={() => act("revoke")}>연결 해제</button></div>
         <PolicyForm key={d.policy_revision} d={d} ch={ch} items={items} done={done} fail={fail} /></>
-        : <p className="hint">해제한 장치는 되살리지 않아요(새로 연결해요). 이미 받은 활동·글은 남아요.</p>}
+        : <p className="hint">해제한 장치는 되살리지 않아요(새로 연결해요). 이미 받은 활동과 글은 남아요.</p>}
       <p className="ferr" role="alert" aria-atomic="true">{err}</p></article>
   );
 }

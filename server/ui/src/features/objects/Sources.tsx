@@ -21,13 +21,13 @@ export function Sources({ ctx, S, msg }: P) {
       <form className="fform" noValidate onSubmit={add}>
         <fieldset><legend>종류</legend>{Object.entries(SRC_KIND).map(([k, l], i) => <label key={k}><input type="radio" name="kind" value={k} defaultChecked={i === 0} /> {l}</label>)}</fieldset>
         <label htmlFor="source-new-name">이름</label><input className="finput" id="source-new-name" name="name" type="text" autoComplete="off" />
-        <label htmlFor="source-new-loc">위치 <span className="tech">선택 — 파일 경로·웹 주소</span></label><input className="finput" id="source-new-loc" name="location" type="text" autoComplete="off" />
-        <p className="hint">같은 종류·이름·위치의 출처가 이미 있으면 그 출처를 열어요.</p>
+        <label htmlFor="source-new-loc">위치 <span className="tech">선택, 파일 경로나 웹 주소</span></label><input className="finput" id="source-new-loc" name="location" type="text" autoComplete="off" />
+        <p className="hint">종류, 이름, 위치가 같은 출처가 이미 있으면 그 출처를 열어요.</p>
         <div className="frow"><button className="primary" type="submit" disabled={w.busy}>출처 저장</button></div>
         <p className="ferr" role="alert" aria-atomic="true">{w.errOf("new")}</p></form>
       <section className="sec">{srcs.length ? <div className="cards">{srcs.map(x => {
         const rn = (S.reflections || []).filter(r => r.source_id === x.id).length;
-        return <div key={x.id} className={`card ${css.pcard}`}><a href={`#_obj/source/${x.id}`}>{srcName(S, x.id)}</a><span className="tech">글 {by[x.id] || 0} · 읽고 든 생각 {rn}</span></div>;
+        return <div key={x.id} className={`card ${css.pcard}`}><a href={`#_obj/source/${x.id}`}>{srcName(S, x.id)}</a><span className="tech">글 {by[x.id] || 0}, 읽고 든 생각 {rn}</span></div>;
       })}</div> : <div className="empty">아직 출처가 없어요.</div>}</section>
     </div>
   );

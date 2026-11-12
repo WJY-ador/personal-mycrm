@@ -44,7 +44,7 @@ export function LayoutScreen({ def, blockLabel }: Props) {
   };
   return (
     <div className="paper">
-      <h2 className="title">페이지 레이아웃 — 「나」</h2>
+      <h2 className="title">페이지 레이아웃: 나</h2>
       <p className="hint" id="lay-help">끌어 놓으면 바로 저장돼요. 키보드는 항목에서 Alt + 화살표로 옮겨요.</p>
       <p className="sr" id="lay-pos" role="status" aria-live="polite" aria-atomic="true">{posText ? <span key={pos.n}>{posText}</span> : null}</p>
       <section className={css.layg}><h3>하위 탭 순서</h3><DndList keys={tabs} horiz label={tabLabel} onMove={moved("tabs", tabs.length, tabLabel)} /></section>

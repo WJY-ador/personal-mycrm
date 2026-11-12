@@ -16,7 +16,7 @@ function CardView({ S, c }: { S: AppState; c: Card }) {
   return (
     <article className="asset-card" tabIndex={0} role="button" {...(c.href ? { onClick: go, onKeyDown: key } : { "data-open": "mine" })}>
       <div className="top">{chip ? <span className={`chip ${chip[0]}`}>{chip[1]}</span> : null}</div><h3>{c.label}</h3>
-      <div className="meta">{c.api ? <span className="tech">{c.api}</span> : null}<span>{c.n}{c.href ? "" : " · 내 문의 열기"}</span></div>
+      <div className="meta">{c.api ? <span className="tech">{c.api}</span> : null}<span>{c.n}{c.href ? "" : ", 내 문의 열기"}</span></div>
     </article>
   );
 }

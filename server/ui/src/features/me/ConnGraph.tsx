@@ -17,7 +17,7 @@ export function ConnGraph({ W, center, all, hidden = 0, omitHint }: Props) {
   return (
     <>
       <Graph center={center} nodes={c.nodes} edges={c.edges} narrow={narrow} name={name} />
-      {(c.omitN > 0 || c.omitE > 0) && <p className="hint">{`노드 ${c.omitN}개·연결 ${c.omitE}개 생략 — ${omitHint}`}</p>}
+      {(c.omitN > 0 || c.omitE > 0) && <p className="hint">{`데이터 ${c.omitN}개와 연결 ${c.omitE}개를 생략했어요. ${omitHint}`}</p>}
       {c.filter && (
         <div className={css.connf}>
           <label className="sr" htmlFor="conn-kind">연결 종류</label>

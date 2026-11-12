@@ -19,7 +19,7 @@ export function AggFold({ S, fold, setFold }: Props) {
   const g = mine ? S.activity : q.data;
   let body;
   if (!ok) body = (   // 옛 partFail — /api/state 의 활동 부분만 못 읽음
-    <div className="paper"><div className="partfail" role="alert"><b>활동 집계를 읽지 못했어요 · 나머지는 정상</b>
+    <div className="paper"><div className="partfail" role="alert"><b>활동 집계를 읽지 못했어요. 나머지는 정상이에요.</b>
       <p>{S.read?.activity?.error?.code === "OFFLINE" ? "서버에 연결하지 못했어요." : "읽는 중에 문제가 생겼어요."} {FIXHINT}</p>
       <Tech err={S.read?.activity?.error || { code: "", msg: "" }} /></div></div>
   );

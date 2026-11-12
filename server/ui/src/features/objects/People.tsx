@@ -22,7 +22,7 @@ export function People({ ctx, S, msg }: P) {
         <label htmlFor="person-new-alias">별칭</label>
         <div className="frow" style={{ margin: 0 }}><input className="finput" id="person-new-alias" name="alias" type="text" autoComplete="off" aria-describedby="person-new-help" style={{ flex: "1 1 14rem" }} />
           <button className="primary" type="submit" disabled={w.busy}>추가</button></div>
-        <p className="hint" id="person-new-help">{PERSON_HELP} 연락처·소속·SNS·그 사람의 말·평가는 적지 않아요.</p>
+        <p className="hint" id="person-new-help">{PERSON_HELP} 연락처, 소속, SNS, 그 사람의 말과 평가는 적지 않아요.</p>
         <p className="ferr" role="alert" aria-atomic="true">{w.errOf("new")}</p></form>
       <section className="sec">{ps.length ? <div className="cards">{ps.map(p => <div key={p.id} className={`card ${css.pcard}`}><a href={`#_obj/person/${p.id}`}>{p.alias}</a><span className="tech">{md(p.created)} 추가</span></div>)}</div>
         : <div className="empty">아직 사람이 없어요.</div>}</section>

@@ -5,7 +5,7 @@ import { Blk } from "./Blk";
 import { today, type BlockProps } from "./block";
 import css from "./Summary.module.css";
 
-const TITLE = "13주 글·활동";
+const TITLE = "13주 글과 활동";
 
 export function Heatmap({ W, statsFail }: BlockProps) {
   const h = W.stats?.heatmap;
@@ -20,14 +20,14 @@ export function Heatmap({ W, statsFail }: BlockProps) {
   for (let w = 0; w < 13; w++) { const c = cells[w * 7]; if (!c) continue; const mo = c.d.slice(5, 7); if (mo !== pm) { months.push([w, +mo]); pm = mo; } }
   if (months.length > 1 && months[1][0] - months[0][0] < 2) months.shift();   // 첫 달이 1주뿐이면 라벨이 겹친다
   return (
-    <Blk title={TITLE} meta={`${sum} · ${dOnly(h.from)}–${dOnly(t)}`}>
-      <svg className={css.heat} viewBox={`0 0 ${Wd} ${H}`} role="img" aria-label={`13주 날짜별 글·활동 · 합 ${sum}(글 ${sumR} · 활동 ${sumA}) · 하루 최대 ${max}`}>
+    <Blk title={TITLE} meta={`${sum}건, ${dOnly(h.from)}–${dOnly(t)}`}>
+      <svg className={css.heat} viewBox={`0 0 ${Wd} ${H}`} role="img" aria-label={`13주 날짜별 글과 활동, 합 ${sum}(글 ${sumR}, 활동 ${sumA}), 하루 최대 ${max}`}>
         {months.map(([w, m]) => <text key={w} x={L + w * P} y={12}>{m}월</text>)}
         {([[0, "월"], [2, "수"], [4, "금"]] as const).map(([d, s]) => <text key={d} x={0} y={T + d * P + 11}>{s}</text>)}
-        {past.map(c => <rect key={c.d} className={css[`h${lvl(c.n)}`]} x={L + c.w * P} y={T + c.dw * P} width={C} height={C} rx={3}><title>{`${dOnly(c.d)} · 글 ${c.records || 0} · 활동 ${c.activities || 0}`}</title></rect>)}
+        {past.map(c => <rect key={c.d} className={css[`h${lvl(c.n)}`]} x={L + c.w * P} y={T + c.dw * P} width={C} height={C} rx={3}><title>{`${dOnly(c.d)}, 글 ${c.records || 0}, 활동 ${c.activities || 0}`}</title></rect>)}
       </svg>
       {sum ? <p className={css.legend}><span>적음</span>{[0, 1, 2, 3, 4].map(i => <i key={i} className={css[`h${i}`]} />)}<span>많음</span><span className={css.sep}>{`하루 최대 ${max}`}</span></p>
-        : <p className="hint">이 기간에 날짜가 있는 글·활동이 없어요.</p>}
+        : <p className="hint">이 기간에 날짜가 있는 글이나 활동이 없어요.</p>}
     </Blk>
   );
 }

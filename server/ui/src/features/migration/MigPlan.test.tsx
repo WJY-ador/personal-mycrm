@@ -34,13 +34,13 @@ test("확인 화면 — 자료군 표 · 항목 · 사유 · 기준마다 체크
   const el = await show();
   const t = el.textContent!;
   for (const w of ["자료군별 개수", "principle_c", "합계", "#0", "첫 기록", "새로 넣기", "이미 있음", "중복 의심", "충돌", "거절",
-    "사유 · 같은 내용이 다른 ID 로 있음", "duplicate_content", "사유 · 내부 자료(internal)", "(본문을 지웠어요)",
-    "항목 8개 · 기준 체크 1 / 3", "이 기준을 반영할게요", "오늘 남은 이관 한도 193행"]) expect(t).toContain(w);
+    "사유: 같은 내용이 다른 항목으로 있음", "duplicate_content", "사유: 내부 자료", "(본문을 지웠어요)",
+    "항목 8개, 기준 체크 1 / 3", "이 기준을 반영할게요", "오늘 남은 이관 한도 193행"]) expect(t).toContain(w);
   const boxes = [...el.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
   expect(boxes.map(b => [b.dataset.seq, b.checked])).toEqual([["2", true], ["3", false], ["4", false]]);
   expect(byText(el, "button", "본문 보기").length).toBe(8);
   const dlg = el.querySelector("dialog")!.textContent!;
-  for (const w of ["새로 넣을 항목 3개", "이미 있어 그대로 둘 항목 0개", "체크 안 한 기준 2개 — 반영하지 않아요", "중복 의심 1 · 충돌 1 · 거절 1개 — 반영하지 않아요",
+  for (const w of ["새로 넣을 항목 3개", "이미 있어 그대로 둘 항목 0개", "체크 안 한 기준 2개는 반영하지 않아요", "중복 의심 1, 충돌 1, 거절 1개는 반영하지 않아요",
     "오늘 남은 이관 한도 193행"]) expect(dlg).toContain(w);
   for (const w of ["전체 선택", "모두 체크", "모두 선택"]) expect(t).not.toContain(w);   // 일괄 체크 없음
 });
@@ -99,7 +99,7 @@ test("오류 — 사람 말 문구(코드는 기술 정보) · PLAN-STALE 바뀐
   const el = await show();
   const fail = async (status: number, j: object) => { post = () => json(status, j); await click(byText(el, "dialog button", "반영")[0]); return el.querySelector("#mig-err")!.textContent!; };
   let t = await fail(409, { code: "PLAN-STALE", msg: "서버", detail: { changed: [{ seq: 0, sealed: "insert", now: "noop" }, { seq: 7, sealed: "insert", now: "reject", reason: "ref-not-found" }] } });
-  for (const w of ["아무것도 반영하지 않았어요", "#0 첫 기록 — 새로 넣기 → 이미 있음", "#7 기준에 붙는 기록 — 새로 넣기 → 거절", "가리키는 항목을 찾을 수 없음", "취소한 뒤 PC에서 다시 올려 주세요", "PLAN-STALE"])
+  for (const w of ["아무것도 반영하지 않았어요", "#0 첫 기록: 새로 넣기 → 이미 있음", "#7 기준에 붙는 기록: 새로 넣기 → 거절", "가리키는 항목을 찾을 수 없음", "취소한 뒤 PC에서 다시 올려 주세요", "PLAN-STALE"])
     expect(t).toContain(w);
   t = await fail(409, { code: "PLAN-HASH-MISMATCH", msg: "x" });
   expect(t).toContain("서버에 저장한 plan이 달라요");
@@ -141,7 +141,7 @@ test("영수증 — 결과별 개수 · 항목별 결과·대상 id · 해시 �
   detail = { ...DETAIL, state: "applied" };
   const el = await show();
   const t = el.textContent!;
-  for (const w of ["이관 영수증", "import_batch_id", "receipt_hash", "결과별 개수", "반영함", "체크 안 함", "거절 · 건너뜀", "본문 해시 대조", "1 / 3 일치", "휴지통에 있음", "r_1", "i_1", "o_4"])
+  for (const w of ["이관 영수증", "import_batch_id", "receipt_hash", "결과별 개수", "반영함", "체크 안 함", "거절, 건너뜀", "본문 해시 대조", "1 / 3 일치", "휴지통에 있음", "r_1", "i_1", "o_4"])
     expect(t).toContain(w);
   expect(text(el, ".chip.st-mine")).toContain("일치");
   expect(text(el, ".chip.flag")).toEqual(["다름"]);
@@ -172,9 +172,9 @@ test("다시 받기 실패(sealed) — 받아 둔 확인 화면 그대로 + 이�
   expect(el.querySelector(".partfail")).toBeNull();   // 처음엔 불러오기 오류 없음(#mig-err 같은 폼 알림 칸은 세지 않는다)
   await refetchFail(["mig", "plan", PID], `/api/migrations/${PID}`);
   const t = el.textContent!;
-  for (const w of ["자료군별 개수", "첫 기록", "항목 8개 · 기준 체크 1 / 3", "오늘 남은 이관 한도 193행"]) expect(t).toContain(w);
+  for (const w of ["자료군별 개수", "첫 기록", "항목 8개, 기준 체크 1 / 3", "오늘 남은 이관 한도 193행"]) expect(t).toContain(w);
   expect(el.querySelectorAll('input[type="checkbox"]').length).toBe(3);
-  expect(text(el, '.partfail b')).toEqual(["이관 plan를 불러오지 못했어요 · 나머지는 정상"]);
+  expect(text(el, '.partfail b')).toEqual(["이관 plan를 불러오지 못했어요. 나머지는 정상이에요."]);
   expect(text(el, '.partfail code')).toEqual(["SERVER-ERROR"]);
 });
 
@@ -185,8 +185,8 @@ test("다시 받기 실패(applied) — 영수증 실패 = 영수증 그대로 +
   expect(el.querySelector(".partfail")).toBeNull();   // 처음엔 불러오기 오류 없음(#mig-err 같은 폼 알림 칸은 세지 않는다)
   await refetchFail(["mig", "receipt", PID], `/api/migrations/${PID}/receipt`);
   for (const w of ["이관 영수증", "receipt_hash", "1 / 3 일치", "r_1", "o_4"]) expect(el.textContent).toContain(w);
-  expect(text(el, '.partfail b')).toEqual(["영수증을 불러오지 못했어요 · 나머지는 정상"]);
+  expect(text(el, '.partfail b')).toEqual(["영수증을 불러오지 못했어요. 나머지는 정상이에요."]);
   await refetchFail(["mig", "plan", PID], `/api/migrations/${PID}`);
   for (const w of ["이관 영수증", "receipt_hash", "r_1"]) expect(el.textContent).toContain(w);
-  expect(text(el, '.partfail b')).toEqual(["이관 plan를 불러오지 못했어요 · 나머지는 정상", "영수증을 불러오지 못했어요 · 나머지는 정상"]);
+  expect(text(el, '.partfail b')).toEqual(["이관 plan를 불러오지 못했어요. 나머지는 정상이에요.", "영수증을 불러오지 못했어요. 나머지는 정상이에요."]);
 });

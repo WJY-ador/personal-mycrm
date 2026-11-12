@@ -13,7 +13,7 @@ export function Groups({ W, all, title, self = "" }: { W: World; all: Edge[]; ti
   for (const e of all) {
     const g = groups.get(e.node.kindName) || new Map();
     const row = g.get(e.node.key) || { node: e.node, rels: [] };
-    const rel = `${e.rel} · ${e.dir === "out" ? "가리킴" : "가리켜짐"}`;
+    const rel = `${e.rel}, ${e.dir === "out" ? "가리킴" : "가리켜짐"}`;
     if (!row.rels.includes(rel)) row.rels.push(rel);
     g.set(e.node.key, row);
     groups.set(e.node.kindName, g);
@@ -28,7 +28,7 @@ export function Groups({ W, all, title, self = "" }: { W: World; all: Edge[]; ti
           <More id={"grp:" + k} items={[...g.values()].map(r => (
             <li key={r.node.key}>
               {r.node.href ? <a href={r.node.href}>{name(r.node)}</a> : name(r.node)}
-              <span className="hk">{r.rels.concat(who(r.node)).join(" · ")}</span>
+              <span className="hk">{r.rels.concat(who(r.node)).join(", ")}</span>
             </li>
           ))} />
         </section>

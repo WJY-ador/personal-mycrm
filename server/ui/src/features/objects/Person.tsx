@@ -27,9 +27,9 @@ export function Person({ ctx, S, msg, id }: P & { id: string }) {
   return (
     <>
       <div className="paper sheet"><Crumbs xs={[HOME, ["#_obj/person", "사람"], ["", p.alias]]} />{msg}
-        <div className="eyebrow">사람 · r{p.revision}</div>
+        <div className="eyebrow">사람</div>
         {editing(key) ? <Editor /> : <h2 className={`title ${css.alias}`}><Editable spec={spec} look="name">{p.alias}</Editable></h2>}
-        <p className="recmeta">{mdhm(p.created)} 추가 · {mdhm(p.updated)} 고침</p>
+        <p className="recmeta">{mdhm(p.created)} 추가, {mdhm(p.updated)} 고침</p>
         <p className="hint">{PERSON_HELP}</p>
         {editing(key) ? null : <div className="frow"><button className="secondary" type="button" disabled={w.busy} onClick={del}>삭제</button></div>}
         <p className="ferr" role="alert" aria-atomic="true">{w.errOf("act")}</p>

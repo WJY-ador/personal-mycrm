@@ -55,17 +55,17 @@ export function Card({ S, c, head, qText, byRec, w, prev, next, locked, status, 
     const sent = text;   // 저장을 누른 때의 문장 — edit_confirm 이 성공하면 이것이 새 기준(실패·충돌·다른 결정이면 기준 그대로, 고친 문장은 보호된다)
     onDecide(action, t, () => { if (action === "edit_confirm") setBaseline(b => ({ ...b, text: sent, acked: b.acked + 1 })); }, baseline.revision);
   };
-  const dest = byRec ? `남기면 ${w.mine}에 들어가요(${NO_QUESTION}).` : `남기면 「${qText}」의 ${w.mine}에 들어가요.`;
+  const dest = byRec ? `남기면 ${w.mine}에 들어가요(${NO_QUESTION}).` : `남기면 이 질문의 ${w.mine}에 들어가요.`;
   return (
     <div className={css.review}>{head}
       <section className={css.card} data-candidate-id={c.id} aria-labelledby="candidate-title">
-        <p className={css.q}>{byRec ? "" : "질문 · "}{qText}</p><h3 id="candidate-title" className="sr">{w.cardTitle}</h3><p className={css.sent}>{c.text}</p>
+        <p className={css.q}>{byRec ? "" : "질문: "}{qText}</p><h3 id="candidate-title" className="sr">{w.cardTitle}</h3><p className={css.sent}>{c.text}</p>
         <Labels c={c} /><ReviewNote review={c.review} />
       </section>
       <Source S={S} c={c} j={q.data} fail={q.isError ? apiErr(q.error) : null} w={w} />
       <section className={css.act} aria-labelledby="decision-title" aria-busy={locked}>
         <h3 id="decision-title">남길지 정하기</h3>
-        <p id="decision-help" className={css.dest}>{`${dest} ${w.keepNote} 원문은 바뀌지 않아요.`}</p>
+        <p id="decision-help" className={css.dest}>{`${dest} ${w.keepNote}`}</p>
         <div className={`acts ${css.decide}`} id="rvacts" role="group" aria-label={w.group} aria-describedby="decision-help">
           <button className="secondary" type="button" disabled={off} onClick={() => decide("confirm")}>{w.confirm}</button>
           <button className="secondary" type="button" ref={eb} aria-expanded={open} aria-controls="rvedit" disabled={off} onClick={() => setOpen(!open)}>고쳐서 남기기</button>

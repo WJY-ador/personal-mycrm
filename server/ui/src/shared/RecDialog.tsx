@@ -13,7 +13,7 @@ import type { AppState, Rec } from "./state";
 // 글 이름 한 줄(옛 recLabel) — 없는 글·읽지 못한 글·「제목 · 날짜」
 export function recLabel(S: AppState, id: string) {
   const r = (S.journal || []).find(j => j.id === id);
-  return !r ? "찾을 수 없는 글" : r.broken ? "읽지 못한 글" : `${r.title} · ${md(r.created)}`;
+  return !r ? "찾을 수 없는 글" : r.broken ? "읽지 못한 글" : `${r.title}, ${md(r.created)}`;
 }
 
 function Body({ S, id, quote }: { S: AppState; id: string; quote: string }) {
@@ -22,8 +22,8 @@ function Body({ S, id, quote }: { S: AppState; id: string; quote: string }) {
   const qText = (qid: string) => (S.questions || []).find(x => x.id === qid)?.text || null;
   return (
     <>
-      <div className="dh"><div><b id="rec-dlg-title">{r ? r.title : recLabel(S, id).split(" · ")[0]}</b>
-        <div className="recmeta" style={{ margin: "2px 0 0" }}>{r ? `${mdhm(r.meta.created)} · ${srcLine(S.sources, rec?.source_id || null, r.meta.source)}` : ""}</div></div>
+      <div className="dh"><div><b id="rec-dlg-title">{r ? r.title : rec && !rec.broken ? rec.title : recLabel(S, id)}</b>
+        <div className="recmeta" style={{ margin: "2px 0 0" }}>{r ? `${mdhm(r.meta.created)}, ${srcLine(S.sources, rec?.source_id || null, r.meta.source)}` : ""}</div></div>
         <button className="small" type="button" data-close>닫기</button></div>
       <div className="db">{q.isError ? <PartFail err={apiErr(q.error)} what="이 글" />
         : !r ? <p style={{ color: "var(--muted)" }}>원문을 불러오는 중이에요…</p>

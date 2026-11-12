@@ -24,7 +24,7 @@ export function Refl(p: P & { id: string }) {
     <>
       <div className="paper sheet"><Crumbs xs={[HOME, ["#_obj/reflection", "읽고 든 생각"], ["", REFL_KIND[x.kind] || x.kind]]} />{msg}
         <div className="labels"><Badge x={x} /><span className="chip">{REFL_KIND[x.kind] || x.kind}</span><a className="chip src" href={`#_obj/source/${x.source_id}`}>{srcName(S, x.source_id)}</a></div>
-        <p className="recmeta" style={{ margin: ".3rem 0 .6rem" }}>{mdhm(x.created)} 씀 · {mdhm(x.updated)} 고침 · r{x.revision}{x.reviewed_at ? ` · ${mdhm(x.reviewed_at)} 확인했어요` : ""}</p>
+        <p className="recmeta" style={{ margin: ".3rem 0 .6rem" }}>{mdhm(x.created)} 씀, {mdhm(x.updated)} 고침{x.reviewed_at ? `, ${mdhm(x.reviewed_at)} 확인했어요` : ""}</p>
         <div className="doc"><p>{rich(x.body)}</p></div>
         <div className={css.pacts} style={{ margin: ".7rem 0 0" }}><ReviewBtn x={x} w={w} k="act" />
           <button className="secondary" type="button" disabled={w.busy} onClick={del}>삭제</button></div>

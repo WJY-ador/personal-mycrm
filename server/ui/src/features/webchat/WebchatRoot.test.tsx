@@ -77,7 +77,7 @@ test("켜짐 = 입력 칸 하나 + 모델 고르기 · 시작 단계 없이 첫 
   const pick = aside().querySelector("[aria-haspopup=dialog]") as HTMLButtonElement;
   expect(pick.textContent).toContain("시험용 가짜 AI, 기본 모델");
   expect(aside().textContent).toContain("대화 기록은 서버에 30일 보관돼요.");
-  expect(aside().textContent).toContain("도구는 내 판단 대시보드(my-crm)만 써요.");
+  expect(aside().textContent).toContain("AI는 내 판단 대시보드의 도구만 써요.");
   expect(s.api.create).not.toHaveBeenCalled();
   await type("안녕");
   await send();

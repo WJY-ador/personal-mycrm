@@ -33,7 +33,7 @@ test("안내 · PC 앱 설치 링크 하나(/download) · 이관 링크 · 장�
   expect(el.querySelector('a[href="#_setup/migration"]')!.textContent).toBe("이관");
   expect(text(el, "article h3")).toEqual(["집 노트북", "옛 PC"]);
   expect(text(el, "article .chip")).toEqual(["연결됨", "연결 해제됨"]);
-  expect(el.textContent).toContain("행동 좋아요 · 받는 것 좋아요 활동(바로 저장) · 축 1개");
+  expect(el.textContent).toContain("행동 좋아요, 받는 것 좋아요 활동(바로 저장), 축 1개");
   expect(el.textContent).toContain("연결 2 / 5");
   expect(byText(el, "article button", "토큰 재발급").length).toBe(1);
   expect(el.textContent).toContain("해제한 장치는 되살리지 않아요");
@@ -48,11 +48,11 @@ test("새 장치 — 빈 이름 = 요청 0 · 연결 = 토큰 한 번만(캐시�
   await click(byText(el, "button", "연결하기")[0]);
   expect(posts()).toEqual([{ url: "/api/devices", method: "POST", body: { label: "새 PC" } }]);
   expect((el.querySelector('input[aria-label="토큰"]') as HTMLInputElement).value).toBe(SECRET);
-  expect(el.textContent).toContain("「새 PC」 토큰 — 지금 한 번만 보여요");
+  expect(el.textContent).toContain("새 PC 토큰, 지금 한 번만 보여요");
   expect(text(el, "p.fok")[0]).toBe("장치를 연결했어요. 토큰을 지금 옮겨 두세요.");
   expect(cacheText()).not.toContain("SECRET");
   expect(reload).toHaveBeenCalledTimes(1);
-  await click(byText(el, "button", "붙여 넣었어요 · 지우기")[0]);
+  await click(byText(el, "button", "붙여 넣었어요, 지우기")[0]);
   expect(el.outerHTML).not.toContain("SECRET");
   await click(byText(el, "button", "토큰 재발급")[0]);
   expect(confirm.mock.calls[0][0]).toContain("지금 토큰은 바로 쓸 수 없게 돼요");
@@ -85,7 +85,7 @@ test("실패 — 충돌 = 머리 문구 + 다시 받기 · 그 밖 = 그 자리�
   const el = await show();
   post = () => json(409, { code: "CONFLICT", msg: "x" });
   await click(byText(el, "button", "허용 규칙 저장")[0]);
-  expect(text(el, "p.fok.bad")).toEqual(["다른 곳에서 먼저 바뀌었어요. 다시 불러왔어요 — 확인하고 다시 해 주세요."]);
+  expect(text(el, "p.fok.bad")).toEqual(["다른 곳에서 먼저 바뀌었어요. 다시 불러왔어요. 확인하고 다시 해 주세요."]);
   expect(reload).toHaveBeenCalledTimes(1);
   post = () => json(400, { code: "DEVICE-LIMIT", msg: "장치는 5대까지예요." });
   await type(el.querySelector("#dev-label") as HTMLInputElement, "또 PC");

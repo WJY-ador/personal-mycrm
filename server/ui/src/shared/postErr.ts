@@ -3,7 +3,7 @@
 import type { ApiError } from "./api";
 
 export const CORE_ERR: Record<string, string> = {
-  CONFLICT: "다른 곳에서 먼저 바뀌었어요. 다시 불러왔어요 — 확인하고 다시 해 주세요.",
+  CONFLICT: "다른 곳에서 먼저 바뀌었어요. 다시 불러왔어요. 확인하고 다시 해 주세요.",
   "NOT-FOUND": "찾을 수 없어요. 지워졌을 수 있어요. 다시 불러왔어요.",
 };
 // 판단 검토·구조 서랍 결정 충돌(서버 문구가 없을 때) — 새로 고침 안내

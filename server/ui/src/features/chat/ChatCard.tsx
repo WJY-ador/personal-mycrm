@@ -14,7 +14,7 @@ export function ChatCard({ s, p }: { s: ChatStore; p: Preview }) {
   const xname = new Map((p.excluded_changes || []).map(x => [x.cid, x.summary]));
   return (
     <section className={css.card} id="chat-card" aria-label="확인">
-      <p className={css.lead}>이렇게 정리했어요. 맞나요? 고칠 곳은 바로 고치세요 — 고친 글은 다시 정리해요.</p>
+      <p className={css.lead}>이렇게 정리했어요. 맞나요? 고칠 곳은 바로 고치세요. 고친 글은 다시 정리해요.</p>
       <div className={css.units} ref={unitsRef}>{(p.units || []).map(u => (
         <div className={css.unit} key={u.uid}>
           <textarea data-uid={u.uid} rows={Math.min(8, Math.max(2, Math.ceil(cp(u.text) / 34)))} aria-label="정리 글" readOnly={nodev}

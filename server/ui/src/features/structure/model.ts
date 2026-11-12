@@ -36,7 +36,7 @@ export const dataSummary = (it: Pick<Item, "data">, d: Def | undefined) => ((d &
   const v = (it.data || {})[f.key];
   if (v == null || v === "" || (Array.isArray(v) && !v.length)) return "";
   return `${f.label} ${Array.isArray(v) ? v.join(", ") : v}`;
-}).filter(Boolean).join(" · ");
+}).filter(Boolean).join(", ");
 // 적용 전 새 항목(revision 0)은 제안 값으로 보인다
 export const viewOf = (it: Item): Item => (it.revision ? it : { ...it, title: it.proposal?.title ?? null, body: it.proposal?.body ?? null,
   data: it.proposal?.data || {}, links: it.proposal?.links || [], code: it.proposal?.code ?? null });

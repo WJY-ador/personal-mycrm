@@ -52,14 +52,14 @@ export function DevicesScreen({ ctx }: ScreenProps) {
     body = (
       <>
         {q.isError ? <LoadFail err={apiErr(q.error)} what="연결 장치" /> : null}
-        {tok ? <TokenBox title={`「${tok.label}」 토큰`} region="새 토큰" inputLabel="토큰" token={tok.token} paste="로컬 에이전트의 연결 단계에 붙여 넣으세요."
+        {tok ? <TokenBox title={`${tok.label} 토큰`} region="새 토큰" inputLabel="토큰" token={tok.token} paste="로컬 에이전트의 연결 단계에 붙여 넣으세요."
           copied="복사했어요. 로컬 에이전트에 붙여 넣으세요." lost="잃어버리면 재발급" onDone={() => setTok(null)} /> : null}
         {j.switches?.imports ? null : <p className={`fnote ${css.off}`}>지금은 서버가 장치에서 보내는 자료를 받지 않아요(준비 중). 연결은 미리 해 둘 수 있어요.</p>}
         <form className="fform" noValidate onSubmit={connect}><label htmlFor="dev-label">새 장치 이름</label>
           <div className="frow" style={{ margin: 0 }}><input className="finput" id="dev-label" name="label" type="text" maxLength={80} autoComplete="off" aria-describedby="dev-label-help"
             style={{ flex: "1 1 14rem" }} disabled={full} value={label} onChange={e => setLabel(e.target.value)} />
             <button className="primary" type="submit" disabled={full || busy}>연결하기</button></div>
-          <p className="hint" id="dev-label-help">{`이 PC를 알아볼 이름이에요(예: 집 노트북). 실명·회사 이름은 넣지 마세요. 연결하면 토큰을 한 번만 보여 줘요 — ${ch.token_days}일 뒤 만료돼요.`}</p>
+          <p className="hint" id="dev-label-help">{`이 PC를 알아볼 이름이에요(예: 집 노트북). 실명이나 회사 이름은 넣지 마세요. 연결하면 토큰을 한 번만 보여 줘요. 토큰은 ${ch.token_days}일 뒤 만료돼요.`}</p>
           {full ? <p className="fnote">{`연결된 장치가 ${j.max}대라 더 연결할 수 없어요. 쓰지 않는 장치를 해제하세요.`}</p> : null}
           <p className="ferr" role="alert" aria-atomic="true">{err}</p></form>
         <section className="sec"><h2 className="sh">장치 <span className="speclabel">연결 {j.active} / {j.max}</span></h2>
@@ -71,7 +71,7 @@ export function DevicesScreen({ ctx }: ScreenProps) {
   return (
     <div className="paper sheet"><Crumbs xs={[["#_me", "나"], ["", "연결 장치"]]} /><Flash msg={msg} /><h2 className="title">연결 장치</h2>
       <p className="hint">{LEAD}</p>
-      <p className="hint"><a href="/download">PC 앱 설치</a> · 옛 자료 옮기기는 <a href="#_setup/migration">이관</a></p>
+      <p className="hint"><a href="/download">PC 앱 설치</a>, 옛 자료 옮기기는 <a href="#_setup/migration">이관</a></p>
       <div>{body}</div></div>
   );
 }

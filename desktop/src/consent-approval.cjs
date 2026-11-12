@@ -78,7 +78,9 @@ async function challengeMatches(challenge,claims,bytes){
 }
 
 function kst(seconds){
-  return new Date((seconds+9*3600)*1000).toISOString().replace('T',' ').slice(0,19)+' KST';
+  const d=new Date((seconds+9*3600)*1000);   // 한국 시각을 UTC 필드로 읽는다(PC 시간대와 무관)
+  const p=n=>String(n).padStart(2,'0');
+  return `${d.getUTCFullYear()}년 ${d.getUTCMonth()+1}월 ${d.getUTCDate()}일 ${p(d.getUTCHours())}:${p(d.getUTCMinutes())} (한국 시각)`;
 }
 
 function providerLabel(provider){
@@ -93,11 +95,11 @@ function dialogOptions(c){
     type:'question',buttons:['취소','허용'],defaultId:CANCEL,cancelId:CANCEL,noLink:true,
     title:'MyCRM AI 대화 시작',message:`이 PC에서 ${name} ${c.model} 대화를 시작할까요?`,
     detail:[
-      'AI는 대화에 필요한 MyCRM 기록을 조회합니다.',
-      '요청에 따라 기존 MyCRM 규칙으로 기록을 변경할 수 있습니다.',
-      '변경은 MyCRM의 기존 권한과 규칙을 따릅니다.',
-      '대화 내용은 선택한 모델로 전송됩니다.',
-      `이 PC의 ${name} CLI 기록에도 남을 수 있습니다.`,'',
+      'AI는 대화에 필요한 MyCRM 기록을 조회해요.',
+      '요청에 따라 기존 MyCRM 규칙으로 기록을 변경할 수 있어요.',
+      '변경은 MyCRM의 기존 권한과 규칙을 따라요.',
+      '대화 내용은 선택한 모델로 전송돼요.',
+      `이 PC의 ${name} CLI 기록에도 남을 수 있어요.`,'',
       `요청 모델: ${c.model}`,
       `요청 만료 시각: ${kst(c.expires_at)}`,
     ].join('\n'),

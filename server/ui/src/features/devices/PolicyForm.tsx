@@ -39,7 +39,7 @@ export function PolicyForm({ d, ch, items, done, fail }: Props) {
         <fieldset><legend>받을 자료</legend>{(ch.transforms || []).map(x => box("transform_versions", x.key, x.label))}</fieldset>
         <fieldset><legend>붙일 축 <span className="tech">최대 {ch.max_axes}개</span></legend>{axes.length ? axes.map(it => box("axes", it.id, it.title || "(제목 없음)"))
           : <span className="hint">분류(축) 자료 종류의 항목이 없어요.</span>}</fieldset>
-        <p className="hint">PC 경로·주소 같은 자유 글은 받지 않아요. 바꾸면 다음 업로드부터 적용돼요.</p>
+        <p className="hint">PC 경로나 주소 같은 자유 글은 받지 않아요. 바꾸면 다음 업로드부터 적용돼요.</p>
         <div className="frow"><button className="primary" type="submit" disabled={busy}>허용 규칙 저장</button></div>
         <p className="ferr" role="alert" aria-atomic="true">{err}</p></form>
     </details>

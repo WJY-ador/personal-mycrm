@@ -11,7 +11,7 @@ export function ConnList({ W, all }: { W: World; all: Edge[] }) {
       {all.map((e, i) => (
         <li key={i}>
           {e.node.href ? <a href={e.node.href}>{name(e.node)}</a> : name(e.node)}
-          <span className="hk">{`${e.node.kindName} · ${e.rel} · ${e.dir === "out" ? "이 데이터가 가리킴" : "이 데이터를 가리킴"}`}</span>
+          <span className="hk">{`${e.node.kindName}, ${e.rel}, ${e.dir === "out" ? "이 데이터가 가리킴" : "이 데이터를 가리킴"}`}</span>
         </li>
       ))}
     </ul>

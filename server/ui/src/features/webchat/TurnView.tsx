@@ -11,7 +11,7 @@ export function TurnView({ t }: { t: Turn }) {
       {t.user && <p className={css.user}>{t.user}</p>}
       {t.tools.length > 0 && (
         <details className={css.tools}><summary>{`도구 ${t.tools.length}번 사용`}</summary>
-          <ul>{t.tools.map((x, i) => <li key={i}><code>{x.name}</code>{x.ok === undefined ? " …" : x.ok ? " ✓" : " ✕"}{x.summary ? ` — ${x.summary}` : ""}</li>)}</ul>
+          <ul>{t.tools.map((x, i) => <li key={i}><code>{x.name}</code>{x.ok === undefined ? " …" : x.ok ? " ✓" : " ✕"}{x.summary ? `, ${x.summary}` : ""}</li>)}</ul>
         </details>)}
       {t.answer ? <p className={css.answer}>{rich(t.answer, t.id)}</p> : !t.end && <p className={css.wait}><Sprout label={WAITING} visible /></p>}
       {t.end === "error" && <p className={css.note}>{t.endNote}</p>}

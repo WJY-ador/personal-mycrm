@@ -24,7 +24,7 @@ export function Today({ ctx, sel, flash, say }: Props) {
       <div className="htools"><h3 id="today-h">들어온 것</h3>{n == null ? null : <span className="count">대기 {n}</span>}</div>
       {pend.isError || acts.isError ? <p className="ferr" role="alert">들어온 것 일부를 불러오지 못했어요. 새로 고침해 주세요.</p> : null}
       {ready ? <TodayList rows={todayRows(S, pend.data?.entries || [], acts.data?.activities || [])} sel={sel ? "inbox:" + sel : ""} /> : <p className="hint">{LOADING}</p>}
-      <p className={`hint ${css.more}`}>PC·연결 장치에서 들어온 내 글과 활동이에요. 지난 승인 대기(승인함·제외함·만료)는 <a href="#_inbox/all">여기</a>에서 봐요.</p>
+      <p className={`hint ${css.more}`}>지난 승인 대기(승인함, 제외함, 만료)는 <a href="#_inbox/all">여기</a>에서 봐요.</p>
     </section>
   );
   const back = () => { if (nav.fromList) { nav.fromList = false; history.back(); } else location.hash = "#_today"; };

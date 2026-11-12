@@ -16,10 +16,10 @@ function Target({ S, it, l, open }: { S: AppState; it: ItemFull; l: Link; open: 
   if (!v) return <span className="tech">근거를 이용할 수 없어요.</span>;   // 서버가 지운·휴지통 대상을 응답에서 뺀 빈 자리
   if (l.target_kind === "candidate")
     return <><div>{s(v.text)} <DecisionBadge status={s(v.status)} /></div>
-      <div className="ev">근거 <a {...press(() => open(s(v.record_id), s(v.quote)))}>{recLabel(S, s(v.record_id))}</a> · <q><mark>{rich(s(v.quote))}</mark></q></div></>;
+      <div className="ev">근거 <a {...press(() => open(s(v.record_id), s(v.quote)))}>{recLabel(S, s(v.record_id))}</a>, <q><mark>{rich(s(v.quote))}</mark></q></div></>;
   if (l.target_kind === "record") return <><a {...press(() => open(s(v.id)))}>{s(v.title)}</a> <span className="tech">{md(s(v.created))}</span></>;
   return <><a {...press(go(`#structure/${s(v.object_id)}/${s(v.id)}`))}>{v.code ? <><span className="chip code">{s(v.code)}</span> </> : null}{s(v.title)}</a>{" "}
-    <span className="tech">{s(v.object_label)}{v.archived_at ? " · 보관됨" : ""}</span></>;
+    <span className="tech">{s(v.object_label)}{v.archived_at ? ", 보관됨" : ""}</span></>;
 }
 
 export function Links({ S, it, cur, open }: { S: AppState; it: ItemFull; cur: Pick<ItemFull, "links">; open: Open }) {

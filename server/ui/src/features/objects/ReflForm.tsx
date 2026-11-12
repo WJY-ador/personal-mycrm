@@ -17,7 +17,7 @@ export function ReflForm({ ctx, S, x, sid = "" }: P & { x?: Refl; sid?: string }
     const f = e.currentTarget, d = new FormData(f);
     const body = { source_id: String(d.get("source_id") || ""), kind: String(d.get("kind") || ""), body: String(d.get("body") || "") };
     if (!body.body.trim()) return w.setErr(fid, "본문을 적어 주세요.");
-    if (!body.kind) return w.setErr(fid, "내 요약·내 반응 중 하나를 골라 주세요.");
+    if (!body.kind) return w.setErr(fid, "내 요약과 내 반응 중 하나를 골라 주세요.");
     if (!x) { if (await w.go(fid, () => objApi.reflNew(body), () => ["확인 전으로 저장했어요.", `#_obj/source/${body.source_id}`])) f.reset(); return; }
     await w.go(fid, () => objApi.reflEdit(x.id, { ...body, expected_revision: x.revision }),
       j => [j?.review === "pending" && x.review === "reviewed" ? "고쳤어요. 확인 전으로 돌아갔어요." : "고쳤어요."]);
@@ -31,7 +31,7 @@ export function ReflForm({ ctx, S, x, sid = "" }: P & { x?: Refl; sid?: string }
       <p className="fnote" id={`${fid}-help`}>{REFL_HELP}</p>
       <textarea id={`${fid}-body`} name="body" rows={6} aria-describedby={`${fid}-help`} defaultValue={x ? x.body : ""} />
       {x && x.review === "reviewed" ? <p className="fnote">고치면 확인 전으로 돌아가요.</p>
-        : x ? null : <p className="hint">저장하면 확인 전으로 들어가요. 「확인했어요」는 판단 확정이 아니고 근거로 인용하지 않아요.</p>}
+        : x ? null : <p className="hint">저장하면 확인 전으로 들어가요. <b>확인했어요</b> 표시는 판단 확정이 아니고 근거로 인용하지 않아요.</p>}
       <div className="frow"><button className="primary" type="submit" disabled={w.busy}>{x ? "고친 내용 저장" : "저장"}</button></div>
       <p className="ferr" role="alert" aria-atomic="true">{w.errOf(fid)}</p>
     </form>

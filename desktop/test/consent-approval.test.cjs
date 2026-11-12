@@ -86,10 +86,10 @@ test('native approval explains the AI access in plain Korean without exposing in
   assert.equal(options.cancelId,0);assert.equal(options.defaultId,0);
   assert.match(options.detail,/대화에 필요한 MyCRM 기록을 조회/);
   assert.match(options.detail,/요청에 따라 기존 MyCRM 규칙으로 기록을 변경/);
-  assert.match(options.detail,/대화 내용은 선택한 모델로 전송됩니다/);
-  assert.match(options.detail,/이 PC의 Claude CLI 기록에도 남을 수 있습니다/);
+  assert.match(options.detail,/대화 내용은 선택한 모델로 전송돼요/);
+  assert.match(options.detail,/이 PC의 Claude CLI 기록에도 남을 수 있어요/);
   assert.match(options.detail,/요청 모델: claude-sonnet-5-5/);
-  assert.match(options.detail,/요청 만료 시각: 2027-01-15 17:05:00 KST/);
+  assert.match(options.detail,/요청 만료 시각: 2027년 1월 15일 17:05 \(한국 시각\)/);
   assert.doesNotMatch(options.detail,/user_id|device_id|session_id|expires_at|synthetic|1800000300|nonce|token|private.?key/i);
 });
 
@@ -109,8 +109,8 @@ test('success only after explicit affirmative in the native dialog showing exact
   const {options}=f.calls.dialog[0];
   assert.equal(options.cancelId,0);assert.equal(options.defaultId,0);assert.equal(options.buttons[1],'허용');
   assert.ok(options.message.includes('Claude claude-sonnet-5-5'));
-  assert.ok(options.detail.includes('2027-01-15 17:05:00 KST'));
-  assert.ok(options.detail.includes(' KST'));
+  assert.ok(options.detail.includes('2027년 1월 15일 17:05 (한국 시각)'));
+  assert.ok(options.detail.includes('(한국 시각)'));
   assert.deepEqual(f.calls.idle,[1,1,1]); // before dialog, after dialog, before signing
   assert.equal(f.calls.challenge,2);
   assert.deepEqual({...result.claims},{...CLAIMS});

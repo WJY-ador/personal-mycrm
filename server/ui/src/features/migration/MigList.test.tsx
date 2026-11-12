@@ -36,7 +36,7 @@ test("켜짐 = 토큰 목록(상태·만료·마지막 사용) · 살아 있는 
   const t = el.textContent!;
   for (const w of ["사용 중", "폐기됨", "이관 업로더", "옛 업로더", "11월 16일 10:00 만료", "마지막 사용 아직 없음", "마지막 사용 10월 21일 10:00",
     "새로 발급하면 이전 토큰은 폐기돼요.", "14일 뒤 만료돼요", "오늘 반영 7 / 200행", "plan당 200항목", "열린 plan 3개까지", "보관 3일",
-    "확인 대기", "반영함", "8항목", "11월 5일 10:00 만료", "새로 넣기 5 · 중복 의심 2 · 거절 1", "영수증 보기"]) expect(t).toContain(w);
+    "확인 대기", "반영함", "8항목", "11월 5일 10:00 만료", "새로 넣기 5, 중복 의심 2, 거절 1", "영수증 보기"]) expect(t).toContain(w);
   expect(byText(el, "button", "폐기").length).toBe(1);
   expect(el.querySelector(`a[href="#_setup/migration/${PID}"]`)).not.toBeNull();
   expect(text(el, ".badge")).toEqual(["대화에서 반영됨"]);
@@ -48,11 +48,11 @@ test("발급 — 앞 토큰 있으면 확인 → 한 번만 보임(캐시 0) →
   expect(confirm.mock.calls[0][0]).toContain("이전 토큰은 폐기돼요");
   expect(calls.filter(c => c.method === "POST")).toEqual([{ url: "/api/migration-tokens", method: "POST", body: {} }]);
   expect((el.querySelector('input[aria-label="이관 토큰"]') as HTMLInputElement).value).toBe(SECRET);
-  expect(el.textContent).toContain("「이관 업로더」 이관 토큰 — 지금 한 번만 보여요");
+  expect(el.textContent).toContain("이관 업로더 이관 토큰, 지금 한 번만 보여요");
   expect(el.textContent).toContain("새 이관 토큰을 발급했어요. 지금 옮겨 두세요.");
   expect(reload).toHaveBeenCalledTimes(1);
   expect(cacheText()).not.toContain("SECRET");
-  await click(byText(el, "button", "붙여 넣었어요 · 지우기")[0]);
+  await click(byText(el, "button", "붙여 넣었어요, 지우기")[0]);
   expect(el.outerHTML).not.toContain("SECRET");
   await click(byText(el, "button", "새 토큰")[0]);
   expect(el.outerHTML).toContain("SECRET");
@@ -105,7 +105,7 @@ test("다시 받기 실패 — 받아 둔 토큰·plan 목록은 그대로 + 실
     expect(calls.map(c => c.url)).toEqual([url]);   // exact = 그 키 하나만 다시 받는다
     const t = el.textContent!;
     for (const w of ["이관 업로더", "옛 업로더", "오늘 반영 7 / 200행", "pc-test-1", "확인 대기", "영수증 보기"]) expect(t).toContain(w);
-    expect(text(el, ".partfail b")).toEqual([`${what} 불러오지 못했어요 · 나머지는 정상`]);
+    expect(text(el, ".partfail b")).toEqual([`${what} 불러오지 못했어요. 나머지는 정상이에요.`]);
     expect(text(el, ".partfail code")).toEqual(["SERVER-ERROR"]);
     hideScreen(); queryClient.clear();
     serve((u, m) => m === "POST" ? post(u) : u === "/api/migration-tokens" ? json(200, tok) : u === "/api/migrations" ? json(200, plans) : json(404, { code: "NOT-FOUND" }));

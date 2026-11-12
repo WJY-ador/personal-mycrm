@@ -23,5 +23,5 @@ test("칸반 세 열 · [대조] · [보기] · [원문]", async () => {
 test("못 읽음 = 그 목록 이름", async () => {
   installFetch();
   const el = await showScreen("map", "#_setup/map", ["map"], structState({ read: { journal: { ok: false, error: { code: "OFFLINE", msg: "" } } } }));
-  expect(el.querySelector(".partfail b")!.textContent).toBe("내 글 목록을 읽지 못했어요 · 나머지는 정상");
+  expect(el.querySelector(".partfail b")!.textContent).toBe("내 글 목록을 읽지 못했어요. 나머지는 정상이에요.");
 });
