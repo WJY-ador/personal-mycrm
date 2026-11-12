@@ -5,10 +5,10 @@ export const DESK_NOTICE = "이 글은 서버에 저장되고 운영자가 직�
 export const TICKET_KIND: Record<string, string> = { bug: "버그", request: "요청", question: "질문", privacy: "개인정보 요청" };
 export const TICKET_STATUS: Record<string, string> = { open: "접수", ack: "확인", doing: "처리중", done: "완료", wontfix: "보류" };
 export const DESK_CHIP: Record<string, string> = { open: "st-wait", ack: "", doing: "flag", done: "st-mine", wontfix: "st-off" };
-export const DESK_LEAD = "안 되는 것·바라는 것·궁금한 것을 운영자에게 보내요. 처리 상태는 「내 문의」에서 보여요.";
+export const DESK_LEAD = "안 되는 것, 바라는 것, 궁금한 것을 운영자에게 보내요. 처리 상태는 내 문의에서 보여요.";
 export const DESK = {
   sending: "보내고 있어요…",
-  sent: "보냈어요. 처리 상태는 「내 문의」에서 볼 수 있어요.",
+  sent: "보냈어요. 처리 상태는 내 문의에서 볼 수 있어요.",
   sendFail: "보내지 못했어요. 잠시 뒤 다시 보내 주세요.",
   listFail: "내 문의를 불러오지 못했어요. 새로 고침해 주세요.",
   empty: "아직 보낸 문의가 없어요.",

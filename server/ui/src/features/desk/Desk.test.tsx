@@ -68,7 +68,7 @@ test("바이트 = UTF-8 · 넘치면 「너무 길어요」 + 꺼짐 · 보내�
   history.replaceState(null, "", "#t-001");
   await show("desk", ["send"]);
   await type("가".repeat(1366));
-  expect(el.querySelector("#desk-count")!.textContent).toBe("4098 / 4096 바이트 — 너무 길어요");
+  expect(el.querySelector("#desk-count")!.textContent).toBe("4098 / 4096 바이트, 너무 길어요");
   expect(sendBtn().disabled).toBe(true);
   await type("저장이 안 돼요");
   expect(el.querySelector("#desk-count")!.textContent).toBe("20 / 4096 바이트");
@@ -116,11 +116,11 @@ test("상세 = 겹친 대화창(보낸 글·답변·공개 이력 글자로) · 
   const tk = el.querySelector("[aria-labelledby=desk-tk-title]") as HTMLDialogElement;
   expect(tk.open).toBe(true);
   expect(calls.at(-1)!.url).toBe("/api/feedback/tk_sample1");
-  expect(el.querySelector("#desk-tk-title")!.textContent).toBe("내 문의 · 버그");
+  expect(el.querySelector("#desk-tk-title")!.textContent).toBe("내 문의, 버그");
   expect(tk.textContent).toContain("<b>굵게</b>");
   expect(tk.querySelector("b:not(#desk-tk-title)")).toBeNull();
   expect(tk.textContent).toContain("견본 답변");
-  expect(text(tk, "li")[0]).toMatch(/ · 상태 접수 → 처리중$/);
+  expect(text(tk, "li")[0]).toMatch(/, 상태 접수 → 처리중$/);
   await click([...tk.querySelectorAll("button")].find(b => b.textContent === "닫기"));
   expect(el.querySelector("[aria-labelledby=desk-tk-title]")).toBeNull();
   one = () => json(404, { code: "NOT-FOUND", msg: "문의를 찾을 수 없어요." });
@@ -150,13 +150,13 @@ test("상세 다시 받기 실패(합성) — 받아 둔 글은 그대로 + role
   await flush(); await flush();
   expect(detailGets).toBe(2);
   expect(calls.filter(c => c.method === "GET" && c.url === "/api/feedback/tk_sample1").length).toBe(2);
-  expect(el.querySelector("#desk-tk-title")!.textContent).toBe("내 문의 · 버그");
+  expect(el.querySelector("#desk-tk-title")!.textContent).toBe("내 문의, 버그");
   expect(tk().querySelector("p")!.textContent).toBe("잠시 뒤 다시 해 주세요.");
   expect(tk().querySelector('[role="alert"]')!.textContent).toBe("잠시 뒤 다시 해 주세요.");
   expect(text(tk(), "h3")).toEqual(["보낸 글", "운영자 답변", "처리 이력"]);
   expect(tk().textContent).toContain("견본 문의");
   expect(tk().textContent).toContain("견본 답변");
-  expect(text(tk(), "li")[0]).toMatch(/ · 상태 접수 → 처리중$/);
+  expect(text(tk(), "li")[0]).toMatch(/, 상태 접수 → 처리중$/);
   await click([...tk().querySelectorAll("button")].find(b => b.textContent === "닫기"));
   expect(tk()).toBeNull();
   serve((url, m) => (m === "GET" && url === "/api/feedback" ? list() : json(500, {})));

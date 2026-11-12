@@ -2,8 +2,8 @@
 export const CHAT_MAX = 8000;   // 서버 JOB_TEXT_MAX_CP 와 같은 기준(코드포인트)
 export const CHAT_WAIT = ["queued", "leased", "running"];
 export const UNIT_JOIN = "\n\n";   // 정리 글 = units.text 를 이 구분으로 결합(PC stack/1 과 같은 값)
-// 장치 없음(③-0.2) — PRD 1-2 고정 문구(글자 그대로, 한 곳)
-export const CHAT_NODEV = "이 기능은 본인 PC에서 본인 Claude 구독으로 실행하며, PC 연결과 에이전트 실행이 필요합니다.";
+// 장치 없음(③-0.2) — PRD 1-2 고정 문구(글자 그대로, 한 곳, 2026-11-12 디자인 2 C6에서 해요체로)
+export const CHAT_NODEV = "이 기능은 본인 PC에서 본인 Claude 구독으로 실행하며, PC 연결과 에이전트 실행이 필요해요.";
 // PC 오프라인(장치 있음, 최근 수신 없음) — 서랍 안내 한 줄. 버튼·메뉴 이름 = 앱 문구 그대로(desktop/src/index.html 버튼 연결 장치 시작, main.cjs 메뉴 MyCRM > 연결 장치 CmdOrCtrl+2).
 // 오프라인에 보낸 글 = 서버에 queued 로 남고 PC 가 폴하면 이어서 할당된다(db.job_assign). 만료 = 첫 입력 뒤 24시간(db.JOB_TTL_HOURS, 세션 만료까지).
 export const CHAT_OFFLINE = "PC나 연결 장치가 꺼져 있어 지금은 정리되지 않아요. MyCRM 앱 메뉴의 연결 장치(⌘2, Windows는 Ctrl+2)에서 [연결 장치 시작]을 누르면 보낸 글을 이어서 정리해요(첫 입력 뒤 24시간까지).";
@@ -20,5 +20,5 @@ export const CHAT_ERR: Record<string, string> = {
 export const EMPTY_TURNS = "말하거나 원문을 붙여 넣으면 PC 가 내 구조에 맞춰 정리해요. 정리한 글을 한 번 확인하면 저장돼요.";
 export const EDITED = "고친 글은 입력 칸을 벗어나면 다시 정리해요.";
 export const STALE = "이 결과는 최신이 아니에요. 최신 상태를 불러올게요.";
-export const NEWER = "다른 탭에서 더 새로 정리했어요 — 최신 결과로 바꿨어요.";
+export const NEWER = "다른 탭에서 더 새로 정리했어요. 최신 결과로 바꿨어요.";
 export const cp = (s: string | null | undefined) => [...String(s || "")].length;

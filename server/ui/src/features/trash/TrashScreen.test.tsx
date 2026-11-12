@@ -49,7 +49,7 @@ test("행 = 종류 · 제목(글자 그대로) · 삭제 시각 · 복원 가능
   expect(text(el, ".chip")).toEqual(["내 글", "사람"]);
   expect(text(el, "li b")).toEqual(["<첫 글>", "민수"]);
   expect(el.querySelector("li b")!.children.length).toBe(0);   // 제목은 글자로만(요소가 생기지 않는다)
-  expect(text(el, ".recmeta")).toEqual(["10월 23일 10:00 삭제 · 복원 가능 기한 10월 30일 10:00", "10월 23일 00:30 삭제 · 복원 가능 기한 10월 30일 00:30"]);
+  expect(text(el, ".recmeta")).toEqual(["10월 23일 10:00 삭제, 복원 가능 기한 10월 30일 10:00", "10월 23일 00:30 삭제, 복원 가능 기한 10월 30일 00:30"]);
   expect(text(el, "button")).toEqual(["복원", "영구 삭제", "복원", "영구 삭제", "더 보기"]);
   expect(el.textContent).not.toMatch(/처리 중|영구 삭제 예정/);
 });

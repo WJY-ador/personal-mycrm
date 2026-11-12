@@ -30,7 +30,7 @@ export function RawBox({ raw }: { raw: { raw_id: string } | null }) {
     setPort(v);
   }
   return (
-    <div className={css.raw}><a className="btn" href={`http://127.0.0.1:${port}/raw/${id}`} target="_blank" rel="noopener noreferrer">원문 열기 · 이 PC</a>
+    <div className={css.raw}><a className="btn" href={`http://127.0.0.1:${port}/raw/${id}`} target="_blank" rel="noopener noreferrer">이 PC에서 원문 열기</a>
       <p className="hint">{RAW_LOCAL}. 로컬 에이전트가 켜진 PC에서만 열려요. 서버는 원문을 가져오거나 미리 보여 주지 않아요.</p>
       <details><summary>로컬 연결 포트 {port}</summary><form className="fform" noValidate onSubmit={save}>
         <label htmlFor="raw-port">포트</label><div className="frow" style={{ margin: 0 }}>

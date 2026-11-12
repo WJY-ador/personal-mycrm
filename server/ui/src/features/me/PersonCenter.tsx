@@ -15,7 +15,7 @@ export function PersonCenter({ W, p, state, retry }: Props) {
     <>
       <div className={css.kind}>사람<span className={`chip ${css.lensChip}`}>{ME_LENS.person}</span></div>
       <h2 className="title">{p.alias}</h2>
-      <p className="recmeta">{mdhm(p.created)} 추가 · <a href={`#_obj/person/${p.id}`}>별칭 고치기·삭제</a></p>
+      <p className="recmeta">{mdhm(p.created)} 추가, <a href={`#_obj/person/${p.id}`}>별칭 고치기, 삭제</a></p>
       {state === "loading" ? <p className="hint">{LOADING}</p>
         : state === "fail" ? <div className="empty">{CONN_FAIL} <button className="tertiary" type="button" onClick={retry}>다시 시도</button></div>
         : <ConnGraph W={W} center={node(W, "person", p.id)} all={edges(W, "person", p.id)} hidden={c ? c.activity_count - c.activities.length : 0} omitHint="옆 목록에서 전부 볼 수 있어요." />}

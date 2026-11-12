@@ -42,10 +42,10 @@ afterEach(() => { hideScreen(); vi.unstubAllGlobals(); });
 
 test("서버 배치 그대로 · 탭 이름·자물쇠(기본 종류) · 블록 이름 = 레지스트리 · 기본과 다르면 [기본으로 되돌리기] 켜짐", async () => {
   const el = await show();
-  expect(text(el, "h2")).toEqual(["페이지 레이아웃 — 「나」"]);
+  expect(text(el, "h2")).toEqual(["페이지 레이아웃: 나"]);
   expect(keys(el, 0)).toEqual(SWAP);
   expect(lis(el, 0).map(li => li.children[0].textContent + li.children[1].textContent)).toEqual(["⠿기준 ", "⠿요약", "⠿결정 ", "⠿축 ", "⠿커스텀", "⠿사람 ", "⠿출처 "]);
-  expect(lis(el, 0)[0].getAttribute("aria-label")).toBe("기준 — 1번째");
+  expect(lis(el, 0)[0].getAttribute("aria-label")).toBe("기준, 1번째");
   expect(lis(el, 1).map(li => li.children[1].textContent)).toEqual(DEF.regions.summary.map(s => reg.components[s.c as keyof typeof reg.components].label));
   expect(resetBtn(el).disabled).toBe(false);
 });
@@ -138,7 +138,7 @@ test("위·아래 버튼으로 탭과 요약 순서를 바꾸고 기존 저장 �
   expect((writes()[0].body as typeof server).layout.pages.me.tabs.slice(0, 3)).toEqual(["summary", "principle", "decision"]);
   expect(msg(el)).toBe(LAY_TEXT.saved);
 
-  await click(el.querySelector('button[aria-label="13주 글·활동 아래로 이동"]'));
+  await click(el.querySelector('button[aria-label="13주 글과 활동 아래로 이동"]'));
   expect(keys(el, 1)).toEqual(["kinds", "heatmap", "waiting", "recent"]);
   expect((writes()[1].body as typeof server).layout.pages.me.regions.summary.map(s => s.c)).toEqual(["kinds", "heatmap", "waiting", "recent"]);
   expect(msg(el)).toBe(LAY_TEXT.saved);
@@ -148,7 +148,7 @@ test("목록 끝의 이동 버튼은 비활성화되어 저장하지 않는다",
   const el = await show();
   expect(el.querySelector<HTMLButtonElement>('button[aria-label="기준 위로 이동"]')!.disabled).toBe(true);
   expect(el.querySelector<HTMLButtonElement>('button[aria-label="출처 아래로 이동"]')!.disabled).toBe(true);
-  expect(el.querySelector<HTMLButtonElement>('button[aria-label="13주 글·활동 위로 이동"]')!.disabled).toBe(true);
+  expect(el.querySelector<HTMLButtonElement>('button[aria-label="13주 글과 활동 위로 이동"]')!.disabled).toBe(true);
   expect(el.querySelector<HTMLButtonElement>('button[aria-label="최근 변경 아래로 이동"]')!.disabled).toBe(true);
   await click(el.querySelector('button[aria-label="기준 위로 이동"]'));
   expect(writes()).toHaveLength(0);
@@ -198,16 +198,16 @@ test("위·아래 버튼으로 옮기면 옮긴 행 이름 아래에 이름과 �
   expect(inl[0].parentElement!.textContent!.startsWith("기준")).toBe(true);   // 이름 span 안, 이름 뒤
   expect(inl[0].parentElement!.lastElementChild).toBe(inl[0]);
   expect(inl[0].closest("[role],[aria-live]")).toBeNull();
-  expect(row(el, "principle").getAttribute("aria-label")).toBe("기준 — 2번째");
+  expect(row(el, "principle").getAttribute("aria-label")).toBe("기준, 2번째");
   for (const k of SWAP.filter(k => k !== "principle")) expect(row(el, k).querySelector("[data-lay-pos]")).toBeNull();
   for (const li of lis(el, 1)) expect(li.querySelector("[data-lay-pos]")).toBeNull();
 
-  await click(el.querySelector('button[aria-label="13주 글·활동 아래로 이동"]'));
-  expect(p.textContent).toBe("13주 글·활동 2번째로 옮겼어요.");
+  await click(el.querySelector('button[aria-label="13주 글과 활동 아래로 이동"]'));
+  expect(p.textContent).toBe("13주 글과 활동 2번째로 옮겼어요.");
   // 다른 목록 행으로 옮기면 문구도 그 행으로 — 앞 행(기준)에선 사라진다
   expect(rowPos(el)).toHaveLength(1);
   expect(rowPos(el)[0].closest("li")).toBe(row(el, "heatmap"));
-  expect(rowPos(el)[0].textContent).toBe("13주 글·활동 2번째로 옮겼어요.");
+  expect(rowPos(el)[0].textContent).toBe("13주 글과 활동 2번째로 옮겼어요.");
   expect(row(el, "principle").querySelector("[data-lay-pos]")).toBeNull();
 });
 
@@ -267,8 +267,8 @@ test("저장 실패·연결 실패·STALE 로 되돌리면 자리 알림을 지�
 
 test("기본으로 되돌리기는 자리 알림을 지운다", async () => {
   const el = await show();
-  await click(el.querySelector('button[aria-label="13주 글·활동 아래로 이동"]'));   // 탭은 SWAP 그대로 = 기본과 달라 되돌리기 켜짐
-  expect(pos(el).textContent).toBe("13주 글·활동 2번째로 옮겼어요.");
+  await click(el.querySelector('button[aria-label="13주 글과 활동 아래로 이동"]'));   // 탭은 SWAP 그대로 = 기본과 달라 되돌리기 켜짐
+  expect(pos(el).textContent).toBe("13주 글과 활동 2번째로 옮겼어요.");
   expect(resetBtn(el).disabled).toBe(false);
   expect(rowPos(el)).toHaveLength(1);
   await click(resetBtn(el));
@@ -293,7 +293,7 @@ test("경계로 옮기면 마지막 자리를 알리고 반대 버튼에 초점 
   await click(el.querySelector('li[data-lay-key="waiting"] button[aria-label="기다리는 결정 아래로 이동"]'));   // 비활성
   expect(p.firstElementChild).toBe(before);
   expect(writes()).toHaveLength(3);
-  await click(el.querySelector('li[data-lay-key="heatmap"] button[aria-label="13주 글·활동 위로 이동"]'));   // 첫 자리 비활성
+  await click(el.querySelector('li[data-lay-key="heatmap"] button[aria-label="13주 글과 활동 위로 이동"]'));   // 첫 자리 비활성
   expect(p.firstElementChild).toBe(before);
   expect(writes()).toHaveLength(3);
 });
@@ -332,8 +332,8 @@ test("끌어 놓기(마우스)로 놓으면 자리 알림 · 끄는 중·취소�
   await ev(rows[0], "pointerup", 125);
   await flush();
   expect(keys(el, 1)).toEqual(["kinds", "waiting", "heatmap", "recent"]);
-  expect(pos(el).textContent).toBe("13주 글·활동 3번째로 옮겼어요.");
-  expect(rowPos(el).map(s => [s.closest("li")!.dataset.layKey, s.textContent])).toEqual([["heatmap", "13주 글·활동 3번째로 옮겼어요."]]);
+  expect(pos(el).textContent).toBe("13주 글과 활동 3번째로 옮겼어요.");
+  expect(rowPos(el).map(s => [s.closest("li")!.dataset.layKey, s.textContent])).toEqual([["heatmap", "13주 글과 활동 3번째로 옮겼어요."]]);
   expect(msg(el)).toBe(LAY_TEXT.saved);
 });
 

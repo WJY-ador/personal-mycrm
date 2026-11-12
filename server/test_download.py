@@ -68,7 +68,7 @@ def common(r):
     assert r.headers["cache-control"] == "no-store" and r.headers["x-frame-options"] == "DENY"
     assert re.findall(r'/assets/[^"?]+', r.text) == ["/assets/theme.js"] and r.text.count("data-theme-toggle") == 1, "도움말과 같은 껍데기"
     assert "<!--nav-->" not in r.text and '<nav class="toc"' not in r.text, "nav 치환 · 빈 목차 칸 없음"
-    assert "<title>대시보드 — PC 앱 설치</title>" in r.text
+    assert "<title>대시보드 PC 앱 설치</title>" in r.text
 
 
 def os_blocks(t):
@@ -102,14 +102,14 @@ async def test_flag_on(h):
         for u in (WIN, ARM, X64):
             assert t.count(f'href="{u}"') == 1, (ua, u)
         assert sorted(re.findall(r'href="(https://github\.com/[^"]+)"', t)) == sorted([WIN, ARM, X64, LATEST]), "GitHub 링크 = 직링크 3 + latest 1"
-        assert t.count(f'href="{LATEST}"') == 1 and "설치 경고 안내·체크섬" in t
-        assert "베타 — 서명이 없어 첫 실행 때 OS 경고가 떠요." in t
+        assert t.count(f'href="{LATEST}"') == 1 and "설치 경고 안내와 체크섬" in t
+        assert "베타 버전이라 서명이 없어 첫 실행 때 OS 경고가 떠요." in t
         for w in ("그래도 열기", "추가 정보", "개인정보 보호 및 보안", "shasum", "certutil", "SmartScreen"):
             assert w not in t, f"경고 절차 본문은 Release 본문에만: {w}"
         assert "Apple 칩용 받기" in t and "Intel 칩용 받기" in t and "칩 확인:" in t
         assert t.index("설치한 뒤") > t.index('class="dl-warn"')
         steps = re.search(r'<h2 id="download-after">설치한 뒤</h2><ol>(.*?)</ol>', t).group(1)
-        assert steps.count("<li>") == 3 and "로그인" in steps and "「연결 장치」" in steps and "토큰" in steps and "붙여 넣고 시작" in steps
+        assert steps.count("<li>") == 3 and "로그인" in steps and "연결 장치에서" in steps and "토큰" in steps and "붙여 넣고 시작" in steps
     print("OK — B 플래그 켜짐 = 직링크 3(고정 이름)·releases/latest 1·경고 절차 본문 0·설치 뒤 3단계")
 
 

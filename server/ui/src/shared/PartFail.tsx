@@ -9,7 +9,7 @@ export const FAIL_SAY: Record<string, string> = { "RECORD-MISSING": REC_MISSING,
 export function PartFail({ err, what, recMissing = REC_MISSING }: { err: Pick<ApiError, "code" | "msg">; what: string; recMissing?: string }) {
   const say: Record<string, string> = { ...FAIL_SAY, "RECORD-MISSING": recMissing };
   return (
-    <div className="partfail" role="alert"><b>{what}을 읽지 못했어요 · 나머지는 정상</b>
+    <div className="partfail" role="alert"><b>{what}을 읽지 못했어요. 나머지는 정상이에요.</b>
       <p>{say[err.code] || "읽는 중에 문제가 생겼어요."} {FIXHINT}</p><Tech err={err} /></div>
   );
 }

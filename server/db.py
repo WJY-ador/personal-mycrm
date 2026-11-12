@@ -5006,7 +5006,7 @@ def _restack_arg(restack, text, session_id):
             "answers": out_ans}
 
 
-JOB_NO_DEVICE_MSG = "이 기능은 본인 PC에서 본인 Claude 구독으로 실행하며, PC 연결과 에이전트 실행이 필요합니다."   # PRD 1-2 고정 문구
+JOB_NO_DEVICE_MSG = "이 기능은 본인 PC에서 본인 Claude 구독으로 실행하며, PC 연결과 에이전트 실행이 필요해요."   # PRD 1-2 고정 문구(2026-11-12 디자인 2 C6에서 해요체로)
 
 
 def job_create(uid, kind, text, session_id=None, input_kind=None, restack=None):

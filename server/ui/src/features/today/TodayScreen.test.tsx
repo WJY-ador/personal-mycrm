@@ -40,7 +40,7 @@ afterEach(() => { hideScreen(); vi.unstubAllGlobals(); });
 test("오늘 목록 — 대기·보관됨 줄 · 오늘 머리글(KST) · 그냥 쓴 글 0 · 활동 5줄 + 「더 1」 · [삭제]·쓰기 0", async () => {
   const el = await show("#_today", ["today", "", ""]);
   expect(calls.map(c => c.url).sort()).toEqual(["/api/activities?limit=50", "/api/inbox?state=pending"]);
-  expect(el.querySelector("h3:not(#today-h)")!.textContent).toMatch(/^오늘 · /);
+  expect(el.querySelector("h3:not(#today-h)")!.textContent).toMatch(/^오늘, /);
   expect(el.textContent).toContain("대기 2");
   const kinds = text(el, ".hrows .ht").map(t => t!.replace(/\s+/g, " ").trim());
   expect(kinds.filter(k => k.startsWith("대기"))).toEqual(["대기 내 글 e1 제목", "대기 내 글 AI 요약 e2 제목"]);
@@ -91,7 +91,7 @@ test("대기 하나 — 내 글 안내(서버 문구 없음) · 승인 못 함(�
   POST = () => json(400, { code: "CONFLICT", msg: "" });
   const e2 = await show("#_today/inbox/y", ["today", "inbox", "y"]);
   await click(byText(e2, "button", "승인")[0]);
-  expect(e2.querySelector(".hhead .fok")!.textContent).toBe("다른 곳에서 먼저 바뀌었어요. 다시 불러왔어요 — 확인하고 다시 해 주세요.");
+  expect(e2.querySelector(".hhead .fok")!.textContent).toBe("다른 곳에서 먼저 바뀌었어요. 다시 불러왔어요. 확인하고 다시 해 주세요.");
   expect(reload).toHaveBeenCalledTimes(1);
   POST = () => json(503, { code: "APPROVALS-OFF", msg: "승인 대기 글의 승인은 지금 꺼져 있어요." });
   await click(byText(e2, "button", "승인")[0]);

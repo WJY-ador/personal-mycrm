@@ -37,8 +37,8 @@ export function RecDetail({ W, id, x, trashOn }: { W: World; id: string; x: Rec 
   if (!x && q.isError) return <div className="empty">{GONE} <a href="#_me">목록으로</a></div>;
   if (!x && !j) return <p className="hint">{LOADING}</p>;
   const qn = x?.question_id ? qById(W, x.question_id) : null;
-  const meta = x ? [mdhm(x.created), srcText(W, x.source_id), qn ? `질문 「${qn.text}」` : ""]
-    : [mdhm(j!.meta.created), srcText(W, null) + (oldSrc(j!.meta.source) ? ` · 쓸 당시 표기 「${oldSrc(j!.meta.source)}」` : "")];
+  const meta = x ? [mdhm(x.created), srcText(W, x.source_id), qn ? `질문: ${qn.text}` : ""]
+    : [mdhm(j!.meta.created), srcText(W, null) + (oldSrc(j!.meta.source) ? `, 쓸 당시 표기 ${oldSrc(j!.meta.source)}` : "")];
   const title = x ? x.title || x.excerpt || "(제목 없음)" : j!.title;
   const can = !!j && (x?.author_kind ?? j.author_kind) !== "external";
   const [ts, bs] = j ? specs(j) : [null, null];
@@ -46,9 +46,9 @@ export function RecDetail({ W, id, x, trashOn }: { W: World; id: string; x: Rec 
   return (
     <>
       {ts && editing(ts.key) ? <><div className={css.kind}>내 글</div><Editor /></>
-        : <Head kind="내 글" title={can && ts ? <Editable spec={ts} look="inline">{title}</Editable> : title} meta={meta.filter(Boolean).join(" · ")} />}
+        : <Head kind="내 글" title={can && ts ? <Editable spec={ts} look="inline">{title}</Editable> : title} meta={meta.filter(Boolean).join(", ")} />}
       {trashOn && <Acts W={W} r={{ k: "journal", id, title, kind: "내 글", at: x?.created || "", x: x || ({ id } as Rec) }} trashOn />}
-      {fail ? <div className="partfail" role="alert"><b>이 글을 읽지 못했어요 · 나머지는 정상</b><p>{fail.code === "OFFLINE" ? "서버에 연결하지 못했어요." : "글이 지워졌거나 찾을 수 없어요."} 새로 고침해도 그대로면 다시 로그인해 보세요.</p></div>
+      {fail ? <div className="partfail" role="alert"><b>이 글을 읽지 못했어요. 나머지는 정상이에요.</b><p>{fail.code === "OFFLINE" ? "서버에 연결하지 못했어요." : "글이 지워졌거나 찾을 수 없어요."} 새로 고침해도 그대로면 다시 로그인해 보세요.</p></div>
         : !j ? <p className="hint">{LOADING}</p>
         : bs && editing(bs.key) ? <Editor />
         : can && bs ? <Editable spec={bs} block look="doc"><Doc title={j.title} body={j.body} qText={id2 => qById(W, id2)?.text || null} /></Editable>

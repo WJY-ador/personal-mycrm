@@ -1,15 +1,15 @@
 // 웹 「대화」(구독 AI 채팅) 문구 — 서버 오류 코드 → 사용자 문장. 모르는 코드 = 서버 msg. 화면 글자는 이 파일에 모은다.
 export const TEXT_MAX = 8000;   // server/webchat.py TEXT_MAX_CHARS 와 같은 값
 export const TITLE = "AI 대화";
-export const EMPTY = "연결된 AI와 자유롭게 대화해요. 기록을 남기거나 바꾸는 일은 MyCRM의 기존 권한과 확인 규칙을 따릅니다.";
+export const EMPTY = "연결된 AI와 대화해요. 기록을 남기거나 바꾸는 일은 MyCRM의 기존 권한과 확인 규칙을 따라요.";
 export const PC_ON = "PC 연결됨";
 export const PC_OFF = "PC 꺼짐";
 export const WAITING = "답을 기다리는 중";
 export const KEEP = "대화 기록은 서버에 30일 보관돼요.";
-export const TOOLS_ONLY = "도구는 내 판단 대시보드(my-crm)만 써요.";
+export const TOOLS_ONLY = "AI는 내 판단 대시보드의 도구만 써요.";
 export const REPLACED = "다른 탭에서 이 대화를 열었어요. 여기서 이어 하려면 닫았다가 다시 여세요.";
 export const TRIMMED = "앞의 대화는 생략했어요(최근 대화만 보여요).";
-export const PLACEHOLDER = "무엇이든 말해 보세요";
+export const PLACEHOLDER = "오늘 있었던 일이나 궁금한 것을 적어 보세요";
 
 // 모델 고르기 — 목록은 PC 가 알려 준 것(서버 capabilities)만
 export const PICK = "모델 고르기";

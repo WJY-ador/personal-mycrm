@@ -26,7 +26,7 @@ function Center({ W, t, sel, trashOn, recs, person }: Omit<Props, "rows" | "want
 export function LensView(p: Props) {
   const { W, t, rows, sel, want } = p, mobile = useMobile(), lens = !!ME_LENS[t];
   const showList = !mobile || !want, showDetail = !mobile || !!want;
-  const title = t === "axis" ? "이 축에 묶인 데이터" : t === "person" ? "이 사람과의 관계" : "근거·연결";
+  const title = t === "axis" ? "이 축에 묶인 데이터" : t === "person" ? "이 사람과의 관계" : "근거와 연결";
   return (
     <div className={`${css.lens}${lens ? " " + css.three : ""}`}>
       {showList && <MeList W={W} tab={t} rows={rows} sel={sel} />}

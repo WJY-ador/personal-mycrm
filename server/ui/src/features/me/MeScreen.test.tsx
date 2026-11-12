@@ -27,7 +27,7 @@ const posts = () => calls.filter(c => c.method !== "GET");
 test("요약 = 레이아웃 regions.summary 순서 · 레지스트리 밖 블록은 건너뜀 · 숫자는 서버 통계 그대로 · 버튼 0", async () => {
   LAYOUT = layout(["decision", ...TABS.filter(t => t !== "decision")], ["recent", "kinds", "nope", "heatmap"]);
   const el = await showMe("#_me/summary", meState());
-  expect(text(el, "#me-summary h3")).toEqual(["최근 변경", "종류별 건수", "13주 글·활동"]);
+  expect(text(el, "#me-summary h3")).toEqual(["최근 변경", "종류별 건수", "13주 글과 활동"]);
   expect(text(el, "nav a").map(t => t!.replace(/\d/g, ""))).toEqual(["결정", "요약", "기준", "축", "커스텀", "사람", "출처"]);
   expect(el.querySelector("#me-summary")!.textContent).toContain("기준 2");
   expect(el.querySelectorAll("nav a svg[role=img][aria-label=표준]").length).toBe(5);   // 자물쇠 = 접근성 이름 「표준」(결정·기준·축·사람·출처)
@@ -42,10 +42,10 @@ test("기록을 성공적으로 모두 읽어 0건일 때만 첫 기록 안내�
   let el = await showMe("#_me/summary", empty);
   const intro = el.querySelector("#first-record-intro");
   expect(intro).toBeTruthy();
-  expect(intro!.textContent).toContain("ChatGPT·Claude");
-  expect(intro!.querySelector("p")!.textContent).toContain("ChatGPT·Claude에 MyCRM을 연결한 대화");
+  expect(intro!.textContent).toContain("ChatGPT나 Claude");
+  expect(intro!.querySelector("p")!.textContent).toContain("ChatGPT나 Claude에 MyCRM을 연결한 대화");
   expect(intro!.querySelector("p")!.textContent).not.toContain("PC 연결");
-  expect(intro!.querySelectorAll("p")[1].textContent).toContain("웹의 「대화」는 본인 PC 연결");
+  expect(intro!.querySelectorAll("p")[1].textContent).toContain("웹의 AI 대화는 본인 PC 연결");
   const help = intro!.querySelector("a");
   expect(help?.tagName).toBe("A");
   expect(help?.getAttribute("href")).toBe("/help");
@@ -73,7 +73,7 @@ test("레이아웃 못 받음 = 기본 배치(server/layout_registry.json defaul
   LAYOUT = null; STATS_R = null;
   const el = await showMe("#_me/summary", meState());
   const def = REGISTRY.pages.me.default;
-  expect(text(el, "#me-summary h3")).toEqual(["13주 글·활동", "종류별 건수", "기다리는 결정", "최근 변경"]);
+  expect(text(el, "#me-summary h3")).toEqual(["13주 글과 활동", "종류별 건수", "기다리는 결정", "최근 변경"]);
   expect(def.regions.summary.map(s => s.c)).toEqual(["heatmap", "kinds", "waiting", "recent"]);
   expect(el.textContent).toContain("통계를 불러오지 못했어요. 새로 고침해 주세요.");
   expect(text(el, "nav a").length).toBe(def.tabs.length);
@@ -131,7 +131,7 @@ test("없는 데이터 = 열 수 없음 + 목록 링크 · 연결 목록 보기 
   el = await showMe("#_me/cand/c1", meState());
   const { click } = await import("../../test/fakeServer");
   await click([...el.querySelectorAll("button")].find(b => b.textContent === "목록으로 보기"));
-  expect(text(el, "#home-detail li .hk")).toEqual(["내 글 · 근거 · 이 데이터가 가리킴", "질문 · 질문 · 이 데이터가 가리킴", "기준 · claims · 이 데이터를 가리킴"]);
+  expect(text(el, "#home-detail li .hk")).toEqual(["내 글, 근거, 이 데이터가 가리킴", "질문, 질문, 이 데이터가 가리킴", "기준, claims, 이 데이터를 가리킴"]);
 });
 
 test("1열(좁은 폭) 첫 진입 = 목록만(주소 그대로) · 상세 = [목록] 버튼", async () => {

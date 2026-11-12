@@ -75,7 +75,7 @@ test("사람 하나 — 별칭 = 상시 연필 클릭 편집(저장 = revision �
   expect(el.querySelector('h2.title button svg[aria-label="고치기"]')).not.toBeNull();
   expect(el.textContent).not.toContain("옛 판 활동 연결");   // 켜짐 = 휴지통이 옛 판 연결도 옮긴다
   expect(el.querySelector('a[href="#_me/journal/r_sample"]')).not.toBeNull();
-  expect(el.querySelector('a[href="#structure/od_principles/i_sample"]')!.parentElement!.textContent).toContain("기준 · 사람");
+  expect(el.querySelector('a[href="#structure/od_principles/i_sample"]')!.parentElement!.textContent).toContain("기준, 사람");
   await click(el.querySelector("h2.title button"));
   await type(el.querySelector("#hedit-input")!, "고친 별칭");
   await submit(el, "저장");
@@ -89,7 +89,7 @@ test("사람 하나 — 별칭 = 상시 연필 클릭 편집(저장 = revision �
 
 test("휴지통 꺼짐 — 사람·읽고 든 생각 [삭제] = 기존 즉시 삭제(확인창 문구 그대로) · 옛 판 연결 안내 · 취소 = 요청 0", async () => {
   const el = await show("#_obj/person/p1", ["person", "p1", ""], st(false));
-  expect(el.textContent).toContain("옛 판 활동 연결 2 — 이 연결 때문에 지울 수 없어요.");
+  expect(el.textContent).toContain("옛 판 활동 연결이 2개 있어 지울 수 없어요.");
   confirm.mockReturnValueOnce(false);
   await submit(el, "삭제");
   expect(posts()).toEqual([]);
@@ -127,7 +127,7 @@ test("읽고 든 생각 — 확인(판단 확정 아님 문구) · 쓰기(유형
   expect((n.querySelector("#refl-new-src") as HTMLSelectElement).value).toBe("s2");
   await type(n.querySelector("#refl-new-body")!, "내 생각");
   await submit(n, "저장");
-  expect(n.querySelector(".ferr")!.textContent).toBe("내 요약·내 반응 중 하나를 골라 주세요.");
+  expect(n.querySelector(".ferr")!.textContent).toBe("내 요약과 내 반응 중 하나를 골라 주세요.");
   await click(n.querySelector('input[name="kind"][value="reaction"]'));
   await submit(n, "저장");
   expect(posts().at(-1)).toEqual({ url: "/api/reflections", body: { source_id: "s2", kind: "reaction", body: "내 생각" } });
@@ -142,7 +142,7 @@ test("읽고 든 생각 — 확인(판단 확정 아님 문구) · 쓰기(유형
   POST = () => json(400, { code: "CONFLICT", msg: "revision 이 달라요" });
   reload.mockClear();
   await submit(d, "확인 전으로");
-  expect(d.querySelector("#core-msg")!.textContent).toBe("다른 곳에서 먼저 바뀌었어요. 다시 불러왔어요 — 확인하고 다시 해 주세요.");
+  expect(d.querySelector("#core-msg")!.textContent).toBe("다른 곳에서 먼저 바뀌었어요. 다시 불러왔어요. 확인하고 다시 해 주세요.");
   expect(reload).toHaveBeenCalledTimes(1);
   POST = () => json(400, { code: "ARG-INVALID", msg: "본문이 너무 길어요." });
   await submit(d, "고친 내용 저장");
@@ -185,9 +185,9 @@ test("사람 하나 문맥 — 다시 받기 실패 = 받아 둔 활동·글·�
   expect(heads()).toEqual(["연결된 활동 3", "연결된 글 1", "이 사람을 가리키는 항목 1"]);
   expect(el.querySelector('a[href="#_me/journal/r_sample"]')).not.toBeNull();
   expect(el.querySelector('a[href="#structure/od_principles/i_sample"]')).not.toBeNull();
-  expect(partfail(el)).toContain("연결된 활동·글을 불러오지 못했어요");
+  expect(partfail(el)).toContain("연결된 활동과 글을 불러오지 못했어요");
   hideScreen(); queryClient.clear();
   const cold = await show("#_obj/person/p1", ["person", "p1", ""]);
-  expect(partfail(cold)).toContain("연결된 활동·글을 불러오지 못했어요");
+  expect(partfail(cold)).toContain("연결된 활동과 글을 불러오지 못했어요");
   expect(cold.querySelector("h2.sh")).toBeNull();
 });

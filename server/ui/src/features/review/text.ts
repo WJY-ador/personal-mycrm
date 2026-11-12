@@ -25,4 +25,4 @@ export const SAVING = "저장하고 있어요…";
 export const CHECKING = "저장 결과를 확인하고 있어요…";
 export const UNKNOWN = "저장 여부를 확인하지 못했어요. 새로 고침해 확인해 주세요.";
 export const SAVE_FAIL = "저장하지 못했어요. 다시 시도해 주세요.";
-export const unsavedEdit = (t: string) => ` 고치던 문장은 저장되지 않았어요: 「${t}」`;
+export const unsavedEdit = (t: string) => ` 고치던 문장은 저장되지 않았어요: ${t}`;

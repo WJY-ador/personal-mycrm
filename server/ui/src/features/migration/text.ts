@@ -9,14 +9,14 @@ export const MIG_ACTIONS = ["insert", "noop", "warn", "conflict", "reject"];
 export const MIG_ACT: Record<string, string> = { insert: "새로 넣기", noop: "이미 있음", warn: "중복 의심", conflict: "충돌", reject: "거절" };
 export const MIG_RESULTS = ["applied", "noop", "skipped_unchecked", "skipped_warn", "skipped_conflict", "skipped_reject"];
 export const MIG_RES: Record<string, string> = {
-  applied: "반영함", noop: "이미 있음", skipped_unchecked: "체크 안 함", skipped_warn: "중복 의심 · 건너뜀", skipped_conflict: "충돌 · 건너뜀", skipped_reject: "거절 · 건너뜀",
+  applied: "반영함", noop: "이미 있음", skipped_unchecked: "체크 안 함", skipped_warn: "중복 의심, 건너뜀", skipped_conflict: "충돌, 건너뜀", skipped_reject: "거절, 건너뜀",
 };
 export const MIG_WHY: Record<string, string> = {
-  unit_deferred: "이번 이관 대상이 아닌 자료군", review_pending: "검토가 끝나지 않음", sensitivity_internal: "내부 자료(internal)",
-  provenance_unknown: "출처 정보에 unknown 이 있음", scope_self_only: "내 글만 받음", provenance_contradiction: "출처 정보가 서로 맞지 않음",
-  file_mtime_not_allowed: "파일 수정 시각은 날짜로 쓸 수 없음", date_invalid: "날짜 형식이 틀림", content_hash_mismatch: "본문 해시가 맞지 않음",
-  url_not_allowed: "URL 이 있음", email_not_allowed: "이메일 주소가 있음", path_not_allowed: "로컬 경로가 있음", body_empty: "본문이 비어 있음",
-  dependency_cycle: "서로 가리키는 고리", duplicate_content: "같은 내용이 다른 ID 로 있음", "ref-not-found": "가리키는 항목을 찾을 수 없음",
+  unit_deferred: "이번 이관 대상이 아닌 자료군", review_pending: "검토가 끝나지 않음", sensitivity_internal: "내부 자료",
+  provenance_unknown: "출처 정보에 모르는 값이 있음", scope_self_only: "내 글만 받음", provenance_contradiction: "출처 정보가 서로 맞지 않음",
+  file_mtime_not_allowed: "파일 수정 시각은 날짜로 쓸 수 없음", date_invalid: "날짜 형식이 틀림", content_hash_mismatch: "본문 확인 값이 맞지 않음",
+  url_not_allowed: "웹 주소가 있음", email_not_allowed: "이메일 주소가 있음", path_not_allowed: "로컬 경로가 있음", body_empty: "본문이 비어 있음",
+  dependency_cycle: "서로 가리키는 고리", duplicate_content: "같은 내용이 다른 항목으로 있음", "ref-not-found": "가리키는 항목을 찾을 수 없음",
 };
 export const MIG_LEAD = "PC에 모아 둔 옛 자료를 이 계정으로 옮겨요. PC 업로더가 올린 plan을 여기서 항목마다 확인한 뒤 [반영]해요. 반영은 웹에서만 해요.";
 export const MIG_TOK_WARN = "새로 발급하면 이전 토큰은 폐기돼요.";

@@ -19,19 +19,19 @@ export function StdPreview({ ctx }: { ctx: UiCtx }) {
     setMsg(""); setCard({ key: o.std_key, st: "저장하고 있어요…", er: "" }); setBusy(true);
     try { await stdApi.choose(o, state); } catch (x) {
       const e = apiErr(x);
-      if (e.code === "CONFLICT" || e.code === "DEF-INVALID") { setMsg(`표준 「${o.std_name}」 — ${STD_ERR[e.code]}`); setCard(null); await ctx.reload(); setBusy(false); return; }
+      if (e.code === "CONFLICT" || e.code === "DEF-INVALID") { setMsg(`표준 ${o.std_name}: ${STD_ERR[e.code]}`); setCard(null); await ctx.reload(); setBusy(false); return; }
       setCard({ key: o.std_key, st: "", er: STD_ERR[e.code] || (e.code === "OFFLINE" ? "서버에 연결하지 못했어요. 잠시 뒤 다시 해 보세요." : e.msg || "저장하지 못했어요. 다시 해 보세요.") });
       setBusy(false);
       return;
     }
-    setMsg(`표준 「${o.std_name}」 — ${STD_DONE[state]}`); setCard(null);
+    setMsg(`표준 ${o.std_name}: ${STD_DONE[state]}`); setCard(null);
     await ctx.reload();
     setBusy(false);
   }
   const pv = q.data;
   return (
     <section className="sec" aria-labelledby="std-pv-title"><h3 id="std-pv-title">공통 구조 적용 검토</h3>
-      <p className="hint">표준 정의마다 편입·보류·거절을 골라요. 편입한 정의는 「표준 정의 보호」를 받아요. 고르지 않아도 다른 기능은 그대로예요.</p>
+      <p className="hint">표준 정의마다 편입, 보류, 거절을 골라요. 편입한 정의는 표준 정의 보호를 받아요. 고르지 않아도 다른 기능은 그대로예요.</p>
       <p id="std-msg" role="status" aria-atomic="true">{msg}</p>
       <div id="std-pv" aria-busy={!pv && !q.isError}>{q.isError || (pv && !Array.isArray(pv.objects))
         ? <PartFail err={q.isError ? { code: apiErr(q.error).code || "OFFLINE", msg: apiErr(q.error).msg } : { code: "OFFLINE", msg: "" }} what="편입 미리보기" />

@@ -16,7 +16,7 @@ export function AxisBand({ W, sel, fail }: { W: World; sel: string; fail: boolea
   return (
     <section className={css.axis} aria-label="축별 연결 건수">
       <div className={css.axrow}><span className={css.axl}>축</span>
-        <div className={`${css.strip}${tot ? "" : " " + css.none}`} role="img" aria-label={`축별 연결 비율 · 합 ${tot}`}>
+        <div className={`${css.strip}${tot ? "" : " " + css.none}`} role="img" aria-label={`축별 연결 비율, 합 ${tot}`}>
           {tot ? ax.map((a, i) => (a.n ? <span key={a.id} style={{ flex: `${a.n} 1 0`, background: axColor(i) }} title={axTip(a)} /> : null)) : null}
         </div></div>
       <div className={css.chips}>{ax.map((a, i) => (

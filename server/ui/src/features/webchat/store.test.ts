@@ -99,7 +99,7 @@ test("legacy active 세션은 재생할 수 있지만 새 턴은 보낼 수 없�
 });
 
 test("초기 안내는 MyCRM 권한과 확인 규칙을 명시한다", () => {
-  expect(EMPTY).toContain("MyCRM의 기존 권한과 확인 규칙을 따릅니다");
+  expect(EMPTY).toContain("MyCRM의 기존 권한과 확인 규칙을 따라요");
 });
 
 test("새 세션 충돌과 선택 공급자 미지원은 자동 대체 없이 원인을 알린다", () => {

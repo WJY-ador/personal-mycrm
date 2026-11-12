@@ -12,7 +12,7 @@ const SAY: Record<string, string> = { record: "기록 남기자", digest: "후�
 export function SayLine({ phrase }: { phrase: string }) {
   const [done, setDone] = useState(false);
   const copy = () => { navigator.clipboard?.writeText(phrase).then(() => { setDone(true); setTimeout(() => setDone(false), 1500); }, () => {}); };
-  return <div className="say">연결한 AI 대화에서 「{phrase}」라고 말하기 <button className="small" type="button" onClick={copy}>{done ? "요청을 복사했어요." : "요청 복사"}</button></div>;
+  return <div className="say">연결한 AI 대화에서 <b>{phrase}</b>라고 말하기 <button className="small" type="button" onClick={copy}>{done ? "요청을 복사했어요." : "요청 복사"}</button></div>;
 }
 
 export function NextLine({ S }: { S: AppState }) {
@@ -39,7 +39,7 @@ export function FirstRun({ S }: { S: AppState }) {
 export function EvLine({ S, c, open }: { S: AppState; c: Cand; open: Open }) {
   return (
     <div className="ev">근거 <a {...press(() => open(c.record_id, c.quote))}>{recLabel(S, c.record_id)}</a>
-      {" · "}<q><mark>{rich(c.quote)}</mark></q></div>
+      {", "}<q><mark>{rich(c.quote)}</mark></q></div>
   );
 }
 

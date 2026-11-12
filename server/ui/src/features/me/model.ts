@@ -24,7 +24,7 @@ export const itemById = (W: World, id: string) => (W.S.items || []).concat(W.S.i
 export const qById = (W: World, id: string) => (W.S.questions || []).find(q => q.id === id);
 export const srcById = (W: World, id: string | null) => (W.S.sources || []).find(x => x.id === id);
 export const srcText = (W: World, sid: string | null) => srcTextOf(W.S.sources, sid);
-export const srcName = (W: World, sid: string) => { const x = srcById(W, sid); return x ? `${x.name} · ${SRC_KIND[x.kind] || x.kind}` : "찾을 수 없는 출처"; };
+export const srcName = (W: World, sid: string) => { const x = srcById(W, sid); return x ? `${x.name}(${SRC_KIND[x.kind] || x.kind})` : "찾을 수 없는 출처"; };
 export const records = (W: World) => (readOk(W.S, "journal") ? W.recs : []);
 
 export const stdDef = (W: World, tab: string): Def | undefined => defs(W).find(d => d.std_id === ME_STD[tab]);
@@ -46,7 +46,7 @@ export function homeRows(W: World): Row[] {
   }
   if (readOk(S, "items")) for (const it of S.items || []) out.push({ k: "item", id: it.id, title: it.title || "(제목 없음)", kind: objLabel(W, it.object_id), at: it.created_at, x: it });
   if (readOk(S, "reflections")) for (const x of S.reflections || []) out.push({ k: "refl", id: x.id, title: firstLine(x.body) || "(내용 없음)",
-    kind: `읽고 든 생각 · ${REFL_KIND[x.kind] || x.kind}`, at: x.created, x });
+    kind: `읽고 든 생각, ${REFL_KIND[x.kind] || x.kind}`, at: x.created, x });
   return out.map((r, i) => [r, i] as const).sort((a, b) => timeOf(b[0].at) - timeOf(a[0].at) || a[1] - b[1]).map(p => p[0]);
 }
 
@@ -81,4 +81,4 @@ export type Axis = ReturnType<typeof axes>[number];
 export const AX_COLORS = 8;   // 축 색 = 코드 순 1~8, 9번째부터 회색(건수와 무관하게 고정)
 export const axColor = (i: number) => (i < AX_COLORS ? `var(--ax${i + 1})` : "var(--soft)");
 export const axShort = (t: string) => String(t || "").replace(/\s*\(.*\)\s*$/, "").replace(/\s+—\s+.*$/, "");
-export const axTip = (a: Axis) => `${a.code ? a.code + " " : ""}${axShort(a.title)}${a.n === null ? "" : ` · 항목 ${a.items} · 글 ${a.records} · 읽기 자료 ${a.readings || 0}`}`;
+export const axTip = (a: Axis) => `${a.code ? a.code + " " : ""}${axShort(a.title)}${a.n === null ? "" : `, 항목 ${a.items}, 글 ${a.records}, 읽기 자료 ${a.readings || 0}`}`;

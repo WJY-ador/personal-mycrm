@@ -13,12 +13,12 @@ function Day({ day, rows, sel }: { day: string; rows: Row[]; sel: string }) {
   const hide = new Set(all ? [] : acts.slice(SHOW).map(r => r.key));
   return (
     <>
-      <h3 className={css.day}>{day === kstToday() ? `오늘 · ${dOnly(day)}` : dOnly(day) || "날짜 미확인"}</h3>
+      <h3 className={css.day}>{day === kstToday() ? `오늘, ${dOnly(day)}` : dOnly(day) || "날짜 미확인"}</h3>
       <ul className="hrows">{rows.filter(r => !hide.has(r.key)).map(r => (
         <li key={r.key}><a href={r.href} aria-current={r.key === sel ? "true" : undefined} onClick={() => { nav.fromList = true; }}>
           <span className="ht"><span className={`chip ${css.tst} ${r.st === "대기" ? css.wait : css.kept}`}>{r.st}</span>{" "}
             <span className={`chip${r.ai ? " o-ai" : ""}`}>{r.kind}</span> {r.title}</span>
-          <span className="hk">{r.meta.filter(Boolean).join(" · ")}</span></a></li>
+          <span className="hk">{r.meta.filter(Boolean).join(", ")}</span></a></li>
       ))}</ul>
       {all ? null : <button className="tertiary mmore" type="button" onClick={() => setOpen(true)}>{`더 ${hide.size}`}</button>}
     </>

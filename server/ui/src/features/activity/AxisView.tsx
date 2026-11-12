@@ -23,11 +23,11 @@ export function AxisView({ S, id }: { S: AppState; id: string }) {
       <h2 className="sh">내 글 <span className="speclabel">{recs.length}</span></h2>
       {recs.length ? <ul className="mini">{recs.map(r => <li key={r.id}><a href={`#_me/journal/${r.id}`}>{r.title || "(제목 없음)"}</a>{r.created ? <span className="tech">{md(r.created)}</span> : null}</li>)}</ul>
         : <div className="empty">이 축에 붙은 글이 없어요.</div>}
-      <h2 className="sh">이 축을 가리키는 판단·기준 <span className="speclabel">{its.length}</span></h2>
+      <h2 className="sh">이 축을 가리키는 판단과 기준 <span className="speclabel">{its.length}</span></h2>
       {its.length ? <ul className="mini">{its.map(it => {
         const d = def(it.object_id), f = (d?.fields || []).find(x => x.key === it.field_key);
         return <li key={it.id}><a href={`#structure/${it.object_id}/${it.id}`}>{it.title || "(제목 없음)"}</a>
-          <span className="tech">{d?.label || "항목"}{it.field_key ? ` · ${f ? f.label : it.field_key}` : ""}</span></li>;
+          <span className="tech">{d?.label || "항목"}{it.field_key ? `, ${f ? f.label : it.field_key}` : ""}</span></li>;
       })}</ul> : <div className="empty">없어요.</div>}
     </>
   );

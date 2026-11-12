@@ -16,12 +16,12 @@ export function DefsList({ S, hit }: { S: AppState; hit: string }) {
   const card = (o: StructObj, i: number) => (
     <article key={o.id} className={`sobj${o.locked ? " locked" : ""}${h(`dmo-o${i + 1}`)}`} id={`dmo-o${i + 1}`} tabIndex={-1} aria-labelledby={`sobj-${o.id}`}>
       <div className="sohead"><h3 id={`sobj-${o.id}`}>{o.label}</h3><span className="tech">{o.key}</span></div>
-      <div className="labels"><OriginChip S={S} o={o.origin} /><Lock on={o.locked} />{o.std_name ? <span className="chip">표준 「{o.std_name}」</span> : null}
+      <div className="labels"><OriginChip S={S} o={o.origin} /><Lock on={o.locked} />{o.std_name ? <span className="chip">표준 {o.std_name}</span> : null}
         <span className="chip">{KIND_LABEL[o.semantic_kind || ""] || o.semantic_kind}</span><span className="chip">항목 {nItems(o.id)}</span></div>
-      {(o.fields || []).length ? <div className="sftbl-wrap"><table className="sftbl"><thead><tr><th scope="col">필드</th><th scope="col">key</th><th scope="col">값</th>
+      {(o.fields || []).length ? <div className="sftbl-wrap"><table className="sftbl"><thead><tr><th scope="col">필드</th><th scope="col">키</th><th scope="col">값</th>
         <th scope="col">구분</th><th scope="col">보호</th></tr></thead><tbody>{(o.fields || []).map(f => {
           const r = f.value_type === "reference" ? relOf(o.id, f.key) : undefined;
-          return <tr key={f.key}><td>{f.label}{f.std_name && f.std_name !== f.label ? <> <span className="tech">표준 「{f.std_name}」</span></> : null}</td>
+          return <tr key={f.key}><td>{f.label}{f.std_name && f.std_name !== f.label ? <> <span className="tech">표준 {f.std_name}</span></> : null}</td>
             <td><span className="tech">{f.key}</span></td>
             <td>{VTYPE[f.value_type] || f.value_type}{r ? <> → {tgt(r)} <span className="chip">{r.cardinality}</span></> : null}</td>
             <td><OriginChip S={S} o={f.origin} /></td><td>{f.locked ? <Lock on /> : <span className="tech">—</span>}</td></tr>;
@@ -38,7 +38,7 @@ export function DefsList({ S, hit }: { S: AppState; hit: string }) {
           return <li key={i} id={`dmo-r${i + 1}`} tabIndex={-1} className={h(`dmo-r${i + 1}`).trim() || undefined}><b>{o?.label || ""}</b><span className="tech">{f?.label || r.field_key}</span> → <b>{tgt(r)}</b>
             {" "}<span className="chip">{r.cardinality}</span><OriginChip S={S} o={r.origin} /><Lock on={r.locked} /></li>;
         })}</ul> : <div className="empty">참조 필드가 없어요.</div>}
-        {core.length ? <p className="hint" style={{ margin: ".6rem 0 0" }}><OriginChip S={S} o="core" /> 공통으로 쓰는 {core.map((x, i) => <span key={x.kind}>{i ? "·" : ""}
+        {core.length ? <p className="hint" style={{ margin: ".6rem 0 0" }}><OriginChip S={S} o="core" /> 공통으로 쓰는 {core.map((x, i) => <span key={x.kind}>{i ? ", " : ""}
           <b id={`dmo-core-${x.kind}`} tabIndex={-1} className={h(`dmo-core-${x.kind}`).trim() || undefined}>{CORE_LABEL[x.kind] || x.kind}</b></span>)}{josa(last, "을", "를")} 가리키는 관계가 있어요.</p> : null}</section>
     </>
   );

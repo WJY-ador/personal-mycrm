@@ -92,7 +92,7 @@ test("장치 없음 + 확정 전 세션 — 작업 접수 0(새 턴·재정리·
   expect(s.preview!.id).toBe("p2");
   await s.confirm();
   expect((s.api.confirm as ReturnType<typeof vi.fn>).mock.calls[0][1].preview_id).toBe("p2");
-  expect([s.line, s.sid]).toEqual(["저장했어요 · 변경 1", ""]);
+  expect([s.line, s.sid]).toEqual(["저장했어요. 변경 1건", ""]);
   expect(reload).toHaveBeenCalledTimes(1);
 });
 

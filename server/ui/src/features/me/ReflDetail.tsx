@@ -20,7 +20,7 @@ export function ReflDetail({ W, r, trashOn }: { W: World; r: Extract<Row, { k: "
     save: (d: Record<string, string>) => meApi.reflection(x.id, { source_id: x.source_id, kind: x.kind, body: d.body, expected_revision: x.revision }) };
   return (
     <>
-      <Head kind={r.kind} title={srcName(W, x.source_id)} meta={[mdhm(r.at), x.review === "reviewed" ? "확인했어요" : "확인 전"].join(" · ")} />
+      <Head kind={r.kind} title={srcName(W, x.source_id)} meta={[mdhm(r.at), x.review === "reviewed" ? "확인했어요" : "확인 전"].join(", ")} />
       {editing(key) ? <Editor /> : <><Editable spec={spec} look="body" cls={css.body}>{rich(x.body)}</Editable><Acts W={W} r={r} trashOn={trashOn} /></>}
       <Conn W={W} kind="refl" id={x.id} />
     </>

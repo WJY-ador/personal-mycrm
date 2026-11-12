@@ -34,7 +34,7 @@ export function kindName(W: World | null, kind: string, id = ""): string {
 }
 
 export const actName = (W: World, a: { action: string; action_label?: string; occurred_on: string | null }) =>
-  `${a.action_label || W.S.activity_ui?.actions?.[a.action] || a.action} · ${a.occurred_on ? dOnly(a.occurred_on) : "날짜 미확인"}`;
+  `${a.action_label || W.S.activity_ui?.actions?.[a.action] || a.action}, ${a.occurred_on ? dOnly(a.occurred_on) : "날짜 미확인"}`;
 
 // 노드 — lazy = 이름을 따로 받아야 하는 노드(이어 받지 않은 기록·문맥 API 밖 활동)
 export function node(W: World, kind: string, id: string): GNode {

@@ -31,7 +31,7 @@ export function Graph({ center, nodes, edges, narrow, name }: Props) {
         const anchor = Math.abs(c) < .08 ? "middle" : c > 0 ? "start" : "end" as const;   // 정확히 위·아래만 가운데 — 이웃 라벨과 겹치지 않게
         const lx = p.x + (anchor === "middle" ? 0 : c > 0 ? 16 : -16), ly = p.y + (anchor === "middle" ? (s > 0 ? 30 : -30) : 4);
         const ls = lines(label, narrow), ty = anchor === "middle" && s < 0 ? ly - (ls.length - 1) * 14 : ly;
-        const body = <><circle cx={p.x.toFixed(1)} cy={p.y.toFixed(1)} r={10} className={css[`k-${p.nd.kind}`]} /><Label ls={ls} x={lx} y={ty} anchor={anchor} /><title>{`${p.nd.kindName} · ${label}`}</title></>;
+        const body = <><circle cx={p.x.toFixed(1)} cy={p.y.toFixed(1)} r={10} className={css[`k-${p.nd.kind}`]} /><Label ls={ls} x={lx} y={ty} anchor={anchor} /><title>{`${p.nd.kindName}, ${label}`}</title></>;
         return p.nd.href
           ? <a key={p.nd.key} href={p.nd.href} className={css.node} aria-label={`${p.nd.kindName} ${label}`}>{body}</a>
           : <g key={p.nd.key} className={css.node}>{body}</g>;

@@ -36,8 +36,8 @@ CONTEXT_MAX = 50                                            # 상세 화면 활�
 ACTION_LABELS = {"like": "좋아요", "repost": "리포스트", "comment": "댓글", "read": "읽음", "save": "보관", "send": "보냄", "reply": "답장"}
 PROVIDER_LABELS = {"sns": "SNS", "web": "웹", "mail": "메일", "kakao": "카카오톡"}
 ROLE_LABELS = {"author": "작성자", "counterparty": "상대", "participant": "참여자"}
-NOTICE = ("연결된 활동과 내 글을 정해진 계산 규칙으로 보여 줍니다. 활동량을 성격이나 능력으로 해석하지 않습니다. "
-          "AI가 작성한 설명은 저장 승인 대기에 표시합니다.")
+NOTICE = ("연결된 활동과 내 글을 정해진 계산 규칙으로 보여 줘요. 활동량을 성격이나 능력으로 해석하지 않아요. "
+          "AI가 작성한 설명은 저장 승인 대기에 표시해요.")
 
 # 현재 판 활동 — 원본마다 현재 접수 행 하나(ux_import_current)가 가리키는 판. noop 개정이 같은 판을 가리켜도 한 번
 # 휴지통 PR-1: 휴지통 원천의 판(모든 판이 같은 삭제 사건)은 빠진다. 영구 삭제분은 정리가 is_current_applied 를 내려 빠진다

@@ -8,7 +8,7 @@ import { LOADING } from "./text";
 
 export function SourceActs({ W, sid }: { W: World; sid: string }) {
   const q = useQuery({ queryKey: ["me", "source", sid], queryFn: () => meApi.source(sid) });
-  if (q.isError) return <div className="partfail" role="alert"><b>이 출처의 활동을 불러오지 못했어요 · 나머지는 정상</b></div>;
+  if (q.isError) return <div className="partfail" role="alert"><b>이 출처의 활동을 불러오지 못했어요. 나머지는 정상이에요.</b></div>;
   if (!q.data) return <p className="hint">{LOADING}</p>;
   const j = q.data;
   return (

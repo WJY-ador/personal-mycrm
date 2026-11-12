@@ -6,7 +6,7 @@ import css from "./Me.module.css";
 
 export function SubTabs({ W, tabs, cur }: { W: World; tabs: MeTab[]; cur: string }) {
   return (
-    <nav className={css.sub} aria-label="「나」 하위 탭">{tabs.map(t => {
+    <nav className={css.sub} aria-label="나 하위 탭">{tabs.map(t => {
       const n = tabCount(W, t), on = t === cur;
       return (
         <a key={t} href={`#_me/${t}`} aria-current={on ? "page" : undefined} className={on ? css.on : undefined}>

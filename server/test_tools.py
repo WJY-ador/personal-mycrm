@@ -8431,7 +8431,7 @@ async def test_pr2a_jobs():
                         for kind in ("converse", "routine_ingest"):
                             r = await new(kind)
                             assert r.status_code == 409 and r.json()["code"] == "NO-DEVICE", (step, kind, r.text)
-                            assert r.json()["msg"] == "이 기능은 본인 PC에서 본인 Claude 구독으로 실행하며, PC 연결과 에이전트 실행이 필요합니다.", r.text
+                            assert r.json()["msg"] == "이 기능은 본인 PC에서 본인 Claude 구독으로 실행하며, PC 연결과 에이전트 실행이 필요해요.", r.text
                         assert _job_rows(U) == before, ("NO-DEVICE = 작업 행·임시 입력 0 생성", step)
                         if step == "none":   # 등록만 된(오프라인 — 아직 수신 0) 장치 = 접수(대기). 그 뒤 연결 해제 = 다시 0
                             gone = imports.device_connect(U, "합성 해제 장치")
