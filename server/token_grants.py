@@ -357,6 +357,8 @@ def pc_forget(uid: str, installation_id: str) -> dict:
         db._user_lock(c, uid)
         inst = _inst(c, uid, installation_id, lock=True)
         c.execute("UPDATE desktop_installations SET revoked_at=COALESCE(revoked_at, now()) WHERE user_id=%s AND id=%s", (uid, inst["id"]))
+        # 대화 하나로 J(JD3): 이 PC(설치본)의 서 있는 대화 허용을 지운다. 장치 쪽은 imports.revoke_in 이 지운다
+        c.execute("DELETE FROM chat_provider_permits WHERE user_id=%s AND installation_id=%s", (uid, inst["id"]))
         n = c.execute("UPDATE token_grants SET state='cancelled' WHERE user_id=%s AND installation_id=%s AND state='waiting'",
                       (uid, inst["id"])).rowcount
         dev = _device(c, uid, inst["device_id"], lock=True)

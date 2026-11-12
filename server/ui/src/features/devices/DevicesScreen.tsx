@@ -22,7 +22,10 @@ export function DevicesScreen({ ctx }: ScreenProps) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const q = useQuery({ queryKey: ["devices"], queryFn: devApi.list });
-  const done = async (t: string) => { say(t); await ctx.reload(); };
+  // J(JD3): AI 대화 허용 — 웹 대화 스위치가 켜졌을 때만 읽는다. 못 읽으면 허용 줄을 보이지 않는다(장치 화면은 그대로)
+  const chatOn = !!S.switches?.webchat;
+  const pq = useQuery({ queryKey: ["chat-permits"], queryFn: devApi.permits, enabled: chatOn, retry: false });
+  const done = async (t: string) => { say(t); if (chatOn) void pq.refetch(); await ctx.reload(); };
   const fail = async (t: string) => { say(t, true); await ctx.reload(); };
   async function connect(e: React.FormEvent) {
     e.preventDefault();
@@ -64,7 +67,7 @@ export function DevicesScreen({ ctx }: ScreenProps) {
           <p className="ferr" role="alert" aria-atomic="true">{err}</p></form>
         <section className="sec"><h2 className="sh">장치 <span className="speclabel">연결 {j.active} / {j.max}</span></h2>
           {ds.length ? <div className="cards">{ds.map(d => <DevCard key={d.id} d={d} ch={ch} items={S.items || []} actions={S.activity_ui?.actions}
-            onToken={setTok} done={done} fail={fail} />)}</div> : <div className="empty">아직 연결한 장치가 없어요.</div>}</section>
+            permits={chatOn ? pq.data?.permits || [] : []} onToken={setTok} done={done} fail={fail} />)}</div> : <div className="empty">아직 연결한 장치가 없어요.</div>}</section>
       </>
     );
   }

@@ -544,6 +544,11 @@ def pending_in(c, uid: str, device_id: str) -> tuple:
     """M2 대기 토큰 발급(트랜잭션 c 안, 장치 행은 호출하는 쪽이 잠갔다) — 새 토큰을 pending_* 에 둔다(있던 대기 토큰은 덮어쓴다).
     옛 토큰은 새 토큰이 처음 인증될 때(authenticate) 무효가 되고, 그 전까지는 자기 만료까지 유효하다. 반환 (토큰 원문, 새 토큰 만료 시각)."""
     tid, h, token = _new_token(device_id)
+    # 대화 하나로 J(JD3): 장치 토큰이 만료되거나 폐기되면 서 있는 대화 허용도 끝난다 — 새 토큰으로 되살리지 않는다.
+    # 살아 있는 토큰의 교체(agent 자동 rotate)는 허용을 지우지 않는다
+    c.execute("DELETE FROM chat_provider_permits WHERE user_id=%s AND device_id=%s AND EXISTS (SELECT 1 FROM import_streams "
+              "WHERE user_id=%s AND id=%s AND (token_expires_at <= clock_timestamp() OR token_revoked_at IS NOT NULL))",
+              (uid, device_id, uid, device_id))
     r = _one(c, "UPDATE import_streams SET pending_token_id=%s, pending_secret_hash=%s, pending_expires_at = now() + make_interval(days => %s) "
                 "WHERE user_id=%s AND id=%s AND channel='device' RETURNING pending_expires_at", (tid, h, TOKEN_DAYS, uid, device_id))
     return token, r["pending_expires_at"]
@@ -558,6 +563,8 @@ def device_reissue(uid: str, device_id: str) -> dict:
         if r["revoked_at"] is not None:
             raise CrmError("DEVICE-REVOKED", "연결 해제한 장치예요.", "새 장치로 다시 연결하세요.")
         token, _ = pending_in(c, uid, r["id"])
+        # 대화 하나로 J(JD3): 웹에서 토큰을 다시 받으면 이 장치의 서 있는 대화 허용도 지운다(다시 쓰려면 PC 에서 다시 허용)
+        c.execute("DELETE FROM chat_provider_permits WHERE user_id=%s AND device_id=%s", (uid, r["id"]))
         db._audit(c, "device_reissue", uid, uid, {"device_id": r["id"], "result": "ok"})
         return {"device": _dev_get(c, uid, r["id"]), "token": token}
 
@@ -578,6 +585,8 @@ def revoke_in(c, uid: str, r: dict, via: str = "web") -> bool:
         return False
     c.execute("UPDATE import_streams SET revoked_at=now(), token_revoked_at=COALESCE(token_revoked_at, now()), "
               "pending_token_id=NULL, pending_secret_hash=NULL, pending_expires_at=NULL WHERE user_id=%s AND id=%s", (uid, r["id"]))
+    # 대화 하나로 J(JD3): PC 연결을 해제하면 그 장치의 서 있는 대화 허용도 함께 지운다(device_revoke, pc_forget 이 함께 지난다)
+    c.execute("DELETE FROM chat_provider_permits WHERE user_id=%s AND device_id=%s", (uid, r["id"]))
     db._audit(c, "device_revoke", uid, uid, {"device_id": r["id"], "via": via, "result": "ok"})
     return True
 
@@ -632,6 +641,12 @@ def authenticate(authorization: str) -> dict:
         raise CrmError("AUTH-BLOCKED", "이 계정은 지금 쓸 수 없어요.")
     if pending:   # 첫 사용 — 대기 토큰을 현재 토큰으로(옛 토큰 무효). 동시에 두 요청이 와도 한 번만 바뀐다(조건부 UPDATE)
         with tx() as c:
+            # 대화 하나로 J(JD3): 옛 토큰이 이미 만료되거나 폐기된 뒤의 승격이면 서 있는 대화 허용을 지운다 — 만료 전에 받아 둔 대기 토큰으로도
+            # 허용이 되살아나지 않는다(pending_in 의 같은 규칙을 승격 시점에도 본다)
+            c.execute("DELETE FROM chat_provider_permits WHERE user_id=%s AND device_id=%s AND EXISTS (SELECT 1 FROM import_streams "
+                      "WHERE user_id=%s AND id=%s AND pending_token_id=%s "
+                      "AND (token_expires_at <= clock_timestamp() OR token_revoked_at IS NOT NULL))",
+                      (r["user_id"], r["id"], r["user_id"], r["id"], tid))
             c.execute("UPDATE import_streams SET token_id=pending_token_id, secret_hash=pending_secret_hash, token_expires_at=pending_expires_at, "
                       "token_revoked_at=NULL, pending_token_id=NULL, pending_secret_hash=NULL, pending_expires_at=NULL "
                       "WHERE user_id=%s AND id=%s AND pending_token_id=%s AND revoked_at IS NULL", (r["user_id"], r["id"], tid))

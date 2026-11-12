@@ -1,22 +1,26 @@
 // 웹 「대화」 상태 — 화면 없는 순수 TS. 열면 활성 세션이 있으면 그것(SSE 하나로 재생과 실시간), 없으면 빈 새 대화.
 // 새 대화는 첫 메시지를 보낼 때 고른 모델로 시작한다(세션에 공급자와 모델을 고정하는 서버 계약 그대로). Claude, Codex 는 PC 허용(grant)을 먼저 받는다:
 //   요청(POST /api/chat/grants) → 대기(GET 상태 1.5초 간격) → 허용 = 같은 id 로 세션 생성 → 보내려던 글 보내기.
+// 대화 하나로 J(JD1): 허용은 PC와 AI 종류마다 한 번이다. capabilities 가 그 PC 의 그 공급자에 서 있는 허용이 있다고 하면 허용 창 없이 바로 세션을 만든다.
+//   그 표시는 낡을 수 있다 — 세션 생성이 CONSENT_REQUIRED 면 허용 흐름으로 간다. 허용 요청이 진행 중이면 같은 요청을 다시 보내지 않는다(J-F3).
 // 턴 = 사용자 글 + 답(delta 합) + 도구 호출 목록 + 끝 상태. 같은 SSE id 는 두 번 그리지 않는다.
 // 브라우저 저장소에는 모델 선택(PC, 공급자, 모델 이름) 하나만 쓴다. 글과 대화 내용은 쓰지 않는다.
 import { apiErr } from "../../shared/api";
 import { webchatApi, type Capabilities, type Es, type Grant, type Message, type Session, type WebchatApi } from "./api";
 import type { Approval } from "./api";
 import { BUSY_NEW, PAST_END, REPLACED, TEXT_MAX, TRIMMED, endText, errText } from "./text";
+import { splitModels } from "./models";
 
 export type Tool = { name: string; input?: unknown; ok?: boolean; summary?: string };
 export type Turn = { id: string; user: string; answer: string; tools: Tool[]; end: "" | "done" | "error"; endNote: string; last: number };
 export type Choice = { device: string; provider: string; model: string | null };
-export type GrantNote = "" | "asking" | "none" | "open" | "approved" | "closed" | "declined" | "expired" | "offline";
+export type GrantNote = "" | "asking" | "none" | "open" | "approved" | "closed" | "declined" | "failed" | "locked" | "expired" | "offline";
 type Ev = { turn_id: string; seq?: number; data?: Record<string, unknown>; text?: string };
 
 export const MODEL_KEY = "mycrm-webchat-model";
 export const GRANT_PROVIDERS = ["claude", "codex"];   // server/webchat.py GRANT_PROVIDERS 와 같은 값 — fake 는 허용 없이 시작
 export const GRANT_POLL_MS = 1500;
+export const CAPS_REFRESH_GAP_MS = 2000;   // R-J3: 창 focus, 탭 다시 보임 때 다시 읽기 — 이 간격 안의 중복(focus + visibilitychange 등)은 한 번으로
 const cid = () => (crypto.randomUUID ? crypto.randomUUID() : `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`);
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 export const choiceKey = (c: Choice) => `${c.device}|${c.provider}|${c.model ?? ""}`;
@@ -33,6 +37,7 @@ export class WebchatStore {
   api: WebchatApi = { ...webchatApi };
   saved: Saved = local;
   sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+  now = () => performance.now();
   open = false; sid = ""; device = ""; connected = false; turns: Turn[] = []; input = ""; line = ""; bad = false; sending = false;
   provider = ""; model: string | null = null; bindingVersion = 0; readOnly = false;
   loading = false; capabilities: Capabilities = { devices: [] }; capsLoaded = false; capsLoading = false;
@@ -44,6 +49,8 @@ export class WebchatStore {
   replaced = false; trimmed = "";   // replaced = 다른 탭이 이 대화를 열어 이 탭의 SSE 가 끝남(다시 붙지 않는다) · trimmed = 재생에서 생략된 앞부분 안내
   private es: Es | null = null;
   private grantSeq = 0;
+  private capsAt: number | null = null;   // 마지막 capabilities 읽기를 시작한 시각(now)
+  private grantFlight = false;   // J-F3: 허용 요청부터 세션 생성까지 — 이 동안 보내기, 다시 요청, Enter 가 같은 요청을 또 보내지 않는다
   private approvalsRequest = false;
   private approvalsRequestSid = "";
   private approvalsRequestSeq = 0;
@@ -55,7 +62,7 @@ export class WebchatStore {
   emit() { this.v++; this.subs.forEach(f => f()); }
 
   running() { const t = this.turns[this.turns.length - 1]; return !!t && !t.end; }
-  waiting() { return this.grantNote === "asking" || this.grantNote === "none" || this.grantNote === "open" || this.grantNote === "approved"; }
+  waiting() { return this.grantFlight || this.grantNote === "asking" || this.grantNote === "none" || this.grantNote === "open" || this.grantNote === "approved"; }
   canSend() {
     const n = [...this.input].length;
     if (this.readOnly || this.replaced || this.sending || this.running() || this.waiting() || !this.input.trim() || n > TEXT_MAX) return false;
@@ -95,7 +102,7 @@ export class WebchatStore {
   // 지난번 선택 복원 — 목록에 없으면 버린다. 목록이 비었으면(PC 꺼짐 등) 기억은 지우지 않고 선택만 비운다
   async loadCapabilities() {
     if (this.capsLoading) return;
-    this.capsLoading = true; this.emit();
+    this.capsLoading = true; this.capsAt = this.now(); this.emit();
     try {
       this.capabilities = await this.api.capabilities(); this.capsLoaded = true;
       const list = this.choices();
@@ -103,9 +110,16 @@ export class WebchatStore {
       const saved = this.saved.get();
       const fromSaved = saved ? list.find(c => choiceKey(c) === saved) : undefined;
       if (saved && !fromSaved && list.length) this.saved.drop();
-      this.choice = keep || fromSaved || list[0] || null;
+      this.choice = keep || fromSaved || splitModels(list).top[0] || list[0] || null;   // J-F5: 기억이 없으면 접히지 않은 첫 모델
     } catch (e) { this.say(errText(apiErr(e)), true); }
     finally { this.capsLoading = false; this.emit(); }
+  }
+
+  // R-J3(보안 검토 발견 7): 창 focus, 탭이 다시 보일 때 허용 표시를 새로 읽는다(다른 탭, PC 앱에서 세우거나 해제했을 수 있다).
+  // 패널이 열려 있을 때만. 직전 읽기에서 CAPS_REFRESH_GAP_MS 안이면 건너뛴다(짧은 간격의 중복 요청을 묶는다)
+  refreshCapabilities() {
+    if (!this.open || (this.capsAt !== null && this.now() - this.capsAt < CAPS_REFRESH_GAP_MS)) return;
+    void this.loadCapabilities();
   }
 
   togglePicker(on = !this.pickerOpen) {
@@ -141,6 +155,7 @@ export class WebchatStore {
   newChat() {
     if (this.running() || this.sending) { this.say(BUSY_NEW, true); return; }
     this.cancelGrant(); this.detach(); this.view = "chat"; this.emit();
+    void this.loadCapabilities();   // J(JD1): 허용 표시를 새로(다른 탭, PC 앱에서 세우거나 해제했을 수 있다)
   }
 
   private resetApprovals() {
@@ -237,10 +252,33 @@ export class WebchatStore {
   // ── 새 대화 시작(첫 메시지) — fake 는 바로, Claude 와 Codex 는 PC 허용 뒤 같은 id 로 ──
   private async begin(c: Choice) {
     if (!GRANT_PROVIDERS.includes(c.provider)) return this.create(c, cid());
+    if (this.allowed(c)) {   // J(JD1): 서 있는 허용 = 허용 창 없이
+      try { this.attach(await this.api.create(c.device, c.provider, c.model, cid())); return true; }
+      catch (e) {
+        const err = apiErr(e);
+        if (err.code !== "CONSENT_REQUIRED") { this.say(errText(err), true); return false; }
+        this.forget(c);   // 그새 해제됨 — 허용 흐름으로
+      }
+    }
     return this.requestGrant(c, cid());
   }
 
+  // 그 PC 의 그 공급자에 서 있는 허용이 있다고 서버가 알렸나(capabilities.allowed_providers)
+  allowed(c: Choice) { return this.capabilities.devices.some(d => d.device_id === c.device && (d.allowed_providers || []).includes(c.provider)); }
+  private remember(c: Choice) {
+    for (const d of this.capabilities.devices) if (d.device_id === c.device && !(d.allowed_providers || []).includes(c.provider)) d.allowed_providers = [...(d.allowed_providers || []), c.provider];
+  }
+  private forget(c: Choice) {
+    for (const d of this.capabilities.devices) if (d.device_id === c.device) d.allowed_providers = (d.allowed_providers || []).filter(p => p !== c.provider);
+  }
+
   async requestGrant(c: Choice, rid: string) {
+    if (this.grantFlight) return false;
+    this.grantFlight = true;
+    try { return await this.grantFlow(c, rid); } finally { this.grantFlight = false; this.emit(); }
+  }
+
+  private async grantFlow(c: Choice, rid: string) {
     const seq = ++this.grantSeq;
     this.grantNote = "asking"; this.grantText = this.input; this.line = ""; this.bad = false; this.emit();
     try {
@@ -253,7 +291,9 @@ export class WebchatStore {
       if (g.state === "expired" || g.state === "consumed") { this.grantNote = "expired"; this.emit(); return false; }
       if (g.connected === false) { this.grantNote = "offline"; this.emit(); return false; }
       if (g.prompt === "declined") { this.grantNote = "declined"; this.emit(); return false; }   // PC 앱이 허용하지 않음을 알렸다 — 폴링 멈춤
-      if (g.prompt === "closed") { this.grantNote = "closed"; this.emit(); return false; }
+      if (g.prompt === "closed") {   // J-F2: 실패(창을 못 띄움)와 잠김을 나눈다. 이유를 알리지 않는 옛 앱 = closed
+        this.grantNote = g.close_reason === "failed" ? "failed" : g.close_reason === "locked" ? "locked" : "closed"; this.emit(); return false;
+      }
       this.grantNote = g.prompt === "open" ? "open" : "none"; this.emit();
       await this.sleep(GRANT_POLL_MS);
       if (seq !== this.grantSeq) return false;
@@ -263,6 +303,7 @@ export class WebchatStore {
     if (seq !== this.grantSeq) return false;
     this.grantNote = "approved"; this.emit();
     const made = await this.create(c, rid);
+    if (made) this.remember(c);   // J(JD1): 서버가 이 PC 의 이 공급자에 허용을 세웠다 — 같은 화면의 다음 새 대화는 허용 창 없이
     if (seq === this.grantSeq) { this.grantNote = ""; this.grant = null; }
     this.emit();
     return made;
@@ -271,7 +312,7 @@ export class WebchatStore {
   // 다시 요청 = 새 id 로 새 허용 요청(옛 요청은 5분 뒤 서버에서 만료). 같은 id 를 다시 쓰면 앞 창의 끝난 상태(closed)가 남아 바로 다시 끝난다
   async retryGrant() {
     const g = this.grant;
-    if (!g || this.waiting()) return;
+    if (!g || this.waiting() || this.sending) return;
     if (await this.requestGrant({ device: g.device_id, provider: g.provider, model: g.model }, cid())) await this.send();
   }
 
@@ -333,6 +374,9 @@ export class WebchatStore {
     } catch (e) {
       const err = apiErr(e);
       if (err.code === "DEVICE-GONE" || err.code === "SESSION-CLOSED") this.detach();
+      // J(JD3): 이 대화의 PC 허용이 끝남(해제, 또는 J 이전 세션) — 화면을 빈 새 대화로 떼고(입력은 그대로) 허용 표시를 다시 읽는다.
+      // 다음 보내기는 새 대화를 허용 흐름으로 연다
+      if (err.code === "CONSENT_REQUIRED") { this.detach(); void this.loadCapabilities(); }
       this.say(errText(err), true);
     } finally { this.sending = false; this.emit(); }
   }
