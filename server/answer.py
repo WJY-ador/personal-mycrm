@@ -30,11 +30,14 @@ JOSA = ("으로", "에서", "에게", "까지", "부터", "이랑", "하고", "�
         "은", "는", "이", "가", "을", "를", "에", "의", "도", "만", "로", "와", "과", "랑")
 STOPWORDS = frozenset(("무엇", "어떻게", "어떤", "왜", "언제", "해야", "하나", "있나", "그래서", "같아", "뭔가"))
 _TOKEN = re.compile(r"[0-9A-Za-z가-힣]+")
-_LINE = re.compile(r"[^\n]+")
+_LINE = re.compile(r"[^\r\n]+")         # 줄 끝 = \r\n, \r, \n
+_LINE_SPLIT = re.compile(r"\r\n|\r|\n")
 _CUT = re.compile(r"(?<=[.?!。])\s+")   # 문장 끝 부호 뒤 공백에서 나눈다
+_CTRL = ("Cc", "Cf", "Zl", "Zp")        # 거절할 범주: 제어 문자, 보이지 않는 서식 문자(U+202E, U+200B 등), 줄과 문단 구분
 
 NOTICE = "내 기록 원문만 모았어요. 문장을 새로 쓰지 않았어요. 글로 다듬으면 그건 내 판단이 아니에요."
-REFLECTION_LABEL = "읽고 든 생각"     # markdown 근거 줄 — 출처 표시도 text_process 도 없는 재료(읽고 든 생각)의 고정 낱말
+# markdown 근거 줄 셋째 칸 — 읽고 든 생각(source_reflections)은 출처 표시도 text_process 도 없어 kind 로 고정 낱말을 쓴다
+REFLECTION_LABELS = {"reaction": "읽고 든 생각", "summary": "읽고 쓴 요약"}
 
 # 부족한 곳 — 표 순서 그대로 낸다. 문구 안의 {n}, {date} 만 값으로 채운다
 GAPS = (
@@ -61,8 +64,8 @@ def _clean(v, what, max_len):
     if not isinstance(v, str):
         raise _bad(f"{what}은 문자열이에요.")
     v = v.strip()
-    if any(unicodedata.category(ch) in ("Cc", "Zl", "Zp") for ch in v):
-        raise _bad(f"{what}에 줄바꿈이나 제어 문자는 넣을 수 없어요.")
+    if any(unicodedata.category(ch) in _CTRL for ch in v):
+        raise _bad(f"{what}에 줄바꿈, 제어 문자, 보이지 않는 서식 문자는 넣을 수 없어요.")
     if not v:
         raise _bad(f"{what}이 비었어요.")
     if len(v) > max_len:
@@ -71,15 +74,18 @@ def _clean(v, what, max_len):
 
 
 def _args(question, question_id, terms):
-    q = question.strip() if isinstance(question, str) else question
-    qid = question_id.strip() if isinstance(question_id, str) else question_id
+    """question, question_id = 문자열 또는 None 만. terms = 문자열 목록 또는 None 만. 다른 형식은 ARG-INVALID."""
+    for v, what in ((question, "question"), (question_id, "question_id")):
+        if v is not None and not isinstance(v, str):
+            raise _bad(f"{what}은 문자열이에요.")
+    q, qid = (question or "").strip(), (question_id or "").strip()
     if bool(q) == bool(qid):
         raise _bad("question 과 question_id 중 하나만 주세요.")
     q = _clean(q, "question", QUESTION_MAX) if q else ""
     qid = _clean(qid, "question_id", db.LIMIT_TEXT) if qid else ""
     if terms is None:
         terms = []
-    if not isinstance(terms, list):
+    if not isinstance(terms, list) or not all(isinstance(t, str) for t in terms):
         raise _bad("terms 는 문자열 목록이에요.")
     if len(terms) > TERMS_MAX:
         raise _bad(f"terms 는 {TERMS_MAX}개까지예요.")
@@ -99,19 +105,21 @@ def question_terms(text):
 
 
 def merge_terms(given, from_question):
-    """호출자 검색어 먼저, 질문에서 만든 검색어 뒤. 중복 제거(라틴 문자 대소문자 무시), 앞에서 12개."""
+    """호출자 검색어 먼저, 질문에서 만든 검색어 뒤. 중복 제거(라틴 문자 대소문자 무시) → 다른 검색어를 부분 문자열로 품은 긴 검색어는 뺀다
+    ('팀'과 '팀에' → '팀', 긴 쪽이 든 문장은 짧은 쪽도 들어 있어 한 문장이 점수 2를 거저 받는 것을 막는다) → 앞에서 12개."""
     out, seen = [], set()
     for t in [*given, *from_question]:
         if t.lower() not in seen:
             seen.add(t.lower())
             out.append(t)
-    return out[:TERMS_MAX]
+    low = [t.lower() for t in out]
+    return [t for t, lt in zip(out, low) if not any(o != lt and o in lt for o in low)][:TERMS_MAX]
 
 
 # ── 문장, 점수 ──────────────────────────────────────────
 
 def sentences(body):
-    """본문 → (start, end, 문장). 줄바꿈, 또는 . ? ! 。 뒤 공백에서 나눈다. 문장 = 앞뒤 공백을 뺀 연속 구간(body[start:end] 와 같다)."""
+    """본문 → (start, end, 문장). 줄 끝(\r\n, \r, \n), 또는 . ? ! 。 뒤 공백에서 나눈다. 문장 = 앞뒤 공백을 뺀 연속 구간(body[start:end] 와 같다)."""
     for m in _LINE.finditer(body):
         line, base, pos = m.group(), m.start(), 0
         cuts = [(c.start(), c.end()) for c in _CUT.finditer(line)] + [(len(line), len(line))]
@@ -157,7 +165,7 @@ def _over(c, uid):
 
 
 def _reflections(c, uid, pats):
-    return db._all(c, "SELECT x.* FROM (SELECT sr.id, sr.body, sr.revision, sr.created, s.name AS title, "
+    return db._all(c, "SELECT x.* FROM (SELECT sr.id, sr.kind, sr.body, sr.revision, sr.created, s.name AS title, "
                       "(sr.created AT TIME ZONE 'Asia/Seoul')::date AS d "
                       "FROM source_reflections sr JOIN sources s ON s.user_id=sr.user_id AND s.id=sr.source_id "
                       "WHERE sr.user_id=%(uid)s AND sr.trashed_at IS NULL ORDER BY sr.created DESC, sr.id DESC LIMIT %(lim)s) x "
@@ -175,15 +183,15 @@ def _posts(c, uid, pats):
 
 
 def _pinned(c, uid, qid):
-    """질문에 묶인 확정 후보(지운 글, 휴지통 글의 후보는 뺀다 — export_forms 와 같은 조건). 근거 글 날짜 = db.RECORD_SORT."""
-    rows = db._all(c, "SELECT c.id, c.record_id, c.quote, c.revision FROM candidates c JOIN records r ON r.user_id=c.user_id "
+    """질문에 묶인 확정 후보(지운 글, 휴지통 글의 후보는 뺀다 — export_forms 와 같은 조건). rec = 근거 기록 행(날짜 = db.RECORD_SORT)."""
+    rows = db._all(c, "SELECT c.id, c.record_id, c.quote, c.quote_start, c.quote_end, c.revision FROM candidates c JOIN records r ON r.user_id=c.user_id "
                       "AND r.id=c.record_id AND r.deleted_at IS NULL AND r.trashed_at IS NULL "
                       "WHERE c.user_id=%s AND c.question_id=%s AND c.decision='confirmed' ORDER BY c.created, c.quote_start, c.id",
                    (uid, qid))
     ids = sorted({r["record_id"] for r in rows})
-    dates = {x["id"]: x["d"] for x in db._all(c, f"SELECT id, {db.RECORD_SORT} AS d FROM records WHERE user_id=%s AND id = ANY(%s)",
-                                              (uid, ids))} if ids else {}
-    return [{**r, "d": dates[r["record_id"]]} for r in rows]
+    recs = {x["id"]: x for x in db._all(c, f"SELECT {_REC_COLS} FROM records r WHERE r.user_id=%s AND r.id = ANY(%s)",
+                                        (uid, ids))} if ids else {}
+    return [{**r, "rec": recs[r["record_id"]], "d": recs[r["record_id"]]["d"]} for r in rows]
 
 
 # ── 조립 ──────────────────────────────────────────────
@@ -192,27 +200,70 @@ def _ref(kind, row):
     return {"kind": kind, "id": row["id"], "revision": row["revision"]}
 
 
-def _md_line(text):
-    return export_forms._md_text(export_forms._one_line(text))[0]
+_HEAD_CHARS = tuple("#>-*+_=`~<[")    # 줄 머리에 오면 구조(소제목, 인용, 목록, 가로줄, setext 밑줄, 코드 울타리, HTML, 링크 정의)가 될 수 있는 글자
+_ORDERED = re.compile(r"\d{1,9}(?=[.)])")   # 정렬 목록 꼴 '1. ', '1) '
+_INDENT = re.compile(r"[ \t]*")
 
 
-def _markdown(question, draft, evidence, gaps):
-    lines = [f"## {export_forms._one_line(question)}", ""]
+def _md_escape(line):
+    """markdown 줄 하나를 글자 그대로 보이게 한다(값은 그대로, markdown 만). 4칸 이상 들여쓰기(탭 포함)는 들여쓴 코드가 되므로
+    첫 공백을 &#32; 로 바꾼다. 3칸 이하는 첫 글자 앞에 백슬래시(정렬 목록은 숫자 뒤 '.' ')' 앞). 백슬래시 + ASCII 문장 부호는 그 글자로 보인다."""
+    ws = _INDENT.match(line).group()
+    body = line[len(ws):]
+    if not body:
+        return line
+    if len(ws.expandtabs(4)) >= 4:
+        return "&#32;" + line[1:]
+    m = _ORDERED.match(body)
+    if m:
+        return ws + body[:m.end()] + "\\" + body[m.end():]
+    return ws + "\\" + body if body.startswith(_HEAD_CHARS) else line
+
+
+def _md_lines(text):
+    """원문 → 이스케이프한 markdown 줄 목록. 줄 끝 = \r\n, \r, \n(export_forms._md_text 는 \n 만 본다)."""
+    return [_md_escape(ln) for ln in _LINE_SPLIT.split(text)]
+
+
+def _md_heading(text):
+    """질문 → '## ' 뒤 소제목 글자. 줄 머리 이스케이프 + 끝의 '#' 이스케이프(ATX 닫는 '#' 으로 사라지지 않게, 'C# 도입 #')."""
+    return re.sub(r"(?<!\\)(#+)$", r"\\\1", _md_escape(export_forms._one_line(text)))
+
+
+def _markdown(question, draft, evidence, gaps, labels):
+    lines = [f"## {_md_heading(question)}", ""]
     if draft:
         lines += ["### 답변 초안", ""]
         for d in draft:
-            ql = export_forms._md_text(d["quote"])
+            ql = _md_lines(d["quote"])
             ql[-1] = f"{ql[-1]} ({d['ref']['id']})"
             lines += [("> " + ln) if ln else ">" for ln in ql] + [""]
     if evidence:
         lines += ["### 근거", ""]
         for e in evidence:
-            label = e["source"] or e["provenance"]["text_process"] or REFLECTION_LABEL
-            lines.append(f"- {_md_line(e['title'])}, {e['date']}, {label}")
+            # 줄 머리 = "- (ref id)" 라 제목이 구조 꼴로 시작해도 이스케이프가 필요 없다. 초안 끝의 (ref id) 와 이 줄이 이어진다
+            lines.append(f"- ({e['ref']['id']}) {export_forms._one_line(e['title'])}, {e['date']}, {labels[e['ref']['id']]}")
         lines.append("")
     if gaps:
         lines += ["### 부족한 곳", ""] + [f"- {g['text']}" for g in gaps] + [""]
     return "\n".join(lines)
+
+
+def _group(groups, labels, kind, r, sws):
+    """근거 기록 하나(처음 볼 때 만든다, 20편 넘으면 None). labels = 근거 줄 셋째 칸(출력에 싣지 않는다). sws = 세션 정리 출처 문자열."""
+    g = groups.get(r["id"])
+    if g is None and len(groups) < EVIDENCE_MAX:
+        is_rec = kind == "record"
+        src = sws if is_rec and r["source"] == sws else None
+        g = groups[r["id"]] = {
+            "ref": _ref(kind, r), "title": r["title"], "date": r["d"].isoformat(), "source": src,
+            "provenance": {"text_process": r["text_process"] if is_rec else None,
+                           "generation_kind": r["generation_kind"] if is_rec else None,
+                           "decision_owner": r["decision_owner"] if is_rec else None},
+            "quotes": []}
+        labels[r["id"]] = (src or r["text_process"]) if is_rec else REFLECTION_LABELS[r["kind"]]
+        g["_d"] = r["d"]
+    return g
 
 
 def _gap(code, count, **kw):
@@ -274,24 +325,17 @@ def assemble(uid, question="", question_id="", terms=None, now=None):
             dates.append(k["row"]["d"])
         draft = [{"n": i, **d} for i, d in enumerate(draft, 1)]
 
-        # 근거 — 남긴 문장을 기록별로 묶는다(정렬 순서, 처음 나온 순)
-        groups = {}
-        for k in kept:
-            r = k["row"]
-            g = groups.get(r["id"])
-            if g is None:
-                if len(groups) >= EVIDENCE_MAX:
-                    continue
-                is_rec = k["kind"] == "record"
-                g = groups[r["id"]] = {
-                    "ref": _ref(k["kind"], r), "title": r["title"], "date": r["d"].isoformat(),
-                    "source": (imports.SESSION_WRAP_SOURCE if is_rec and r["source"] == imports.SESSION_WRAP_SOURCE else None),
-                    "provenance": {"text_process": r["text_process"] if is_rec else None,
-                                   "generation_kind": r["generation_kind"] if is_rec else None,
-                                   "decision_owner": r["decision_owner"] if is_rec else None},
-                    "quotes": []}
-            if len(g["quotes"]) < QUOTES_MAX:
-                g["quotes"].append({"text": k["text"], "start": k["start"], "end": k["end"], "score": k["score"]})
+        # 근거 — 질문에 묶인 확정 후보의 기록이 먼저(점수 무관, 그 quote 를 인용으로), 이어서 남긴 문장을 기록별로(정렬 순서, 처음 나온 순).
+        # 같은 구간(start, end)은 한 번만
+        groups, labels = {}, {}
+        sws = imports.SESSION_WRAP_SOURCE
+        quotes = [("record", p["rec"], p["quote_start"], p["quote_end"], p["quote"], score(p["quote"], keys)) for p in pinned] + \
+                 [(k["kind"], k["row"], k["start"], k["end"], k["text"], k["score"]) for k in kept]
+        for kind, r, st, en, text, n in quotes:
+            g = _group(groups, labels, kind, r, sws)
+            if g is not None and len(g["quotes"]) < QUOTES_MAX and all((q["start"], q["end"]) != (st, en) for q in g["quotes"]):
+                g["quotes"].append({"text": text, "start": st, "end": en, "score": n})
+        dates += [g.pop("_d") for g in groups.values()]   # stale = 초안과 근거 전체에서 가장 새 날짜
         evidence = list(groups.values())
 
         related = [{"id": p["id"], "title": p["title"], "post_url": p["post_url"], "author_display": p["author_display"],
@@ -324,5 +368,5 @@ def assemble(uid, question="", question_id="", terms=None, now=None):
 
     return {"kind": "answer_material", "question": {"text": q, "id": qid or None}, "terms": keys_terms,
             "draft": draft, "evidence": evidence, "related_posts": related, "gaps": gaps,
-            "markdown": _markdown(q, draft, evidence, gaps), "notice": NOTICE,
+            "markdown": _markdown(q, draft, evidence, gaps, labels), "notice": NOTICE,
             "assembled_at": local.isoformat(timespec="seconds")}

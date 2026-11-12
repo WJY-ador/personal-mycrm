@@ -142,8 +142,8 @@ def setup():
     (S["c_conf"],) = cands(A, S["r_conf"], q1, ["알파도구 베타검증 확정 근거 문장이다."])
     db.candidate_decide(A, S["c_conf"], "confirm")
     # 질문에 묶인 확정 후보지만 검색어와 무관(question_id 면 점수 무관하게 맨 앞)
-    S["r_pin"] = rec(A, "질문 답 메모", "점수와 무관한 확정 문장이다.\n둘째 줄", date=days_ago(3))
-    (S["c_pin"],) = cands(A, S["r_pin"], q1, ["점수와 무관한 확정 문장이다.\n둘째 줄"])
+    S["r_pin"] = rec(A, "질문 답 메모", "점수와 무관한 확정 문장이다.\n둘째 줄\n셋째 줄 메모", date=days_ago(3))
+    S["c_pin"], S["c_pin_pend"] = cands(A, S["r_pin"], q1, ["점수와 무관한 확정 문장이다.\n둘째 줄", "셋째 줄 메모"])
     db.candidate_decide(A, S["c_pin"], "confirm")
     # 세션 정리 꼴 — self, structured, mixed, decision_owner self, 출처 「세션 정리」
     S["r_wrap"] = rec(A, "세션 정리 기록", "결정: 알파도구 베타검증은 팀 합의로 정했다.", source=imports.SESSION_WRAP_SOURCE,
@@ -160,6 +160,8 @@ def setup():
     # 읽고 든 생각
     src = db.source_create(A, "url", "읽은 글", LOC_MARK)["id"]
     S["refl"] = db.source_reflection_save(A, src, "reaction", "알파도구 베타검증은 우리 팀에도 맞겠다.", "", None)["id"]
+    src2 = db.source_create(A, "url", "요약한 글", "https://example.com/sum")["id"]
+    S["refl_sum"] = db.source_reflection_save(A, src2, "summary", "알파도구 베타검증 순서를 내 말로 요약해 둔다.", "", None)["id"]
     # 항목(기준) — 어디에도 없어야 한다
     o = std_obj(A, "principles")
     p = db.item_propose(A, o["id"], o["revision"], None, 0, None, f"알파도구 베타검증 기준 {ITEM_MARK}", f"알파도구 베타검증 {ITEM_MARK}", {}, [])
@@ -173,6 +175,12 @@ def setup():
     # markdown 이스케이프 — 구조 꼴로 시작하는 원문과 제목
     S["r_esc1"] = rec(A, "# 제목꼴 제목", "# 감마표식 델타표식 제목꼴\n> 감마표식 델타표식 인용꼴")
     S["r_esc2"] = rec(A, "목록꼴 메모", "--- 감마표식 델타표식 가로줄꼴\n- 감마표식 델타표식 목록꼴")
+    # bare CR 줄 끝(\r, \r\n)
+    S["r_cr"] = rec(A, "CR 메모", "카파표식 람다표식 첫줄\r카파표식 람다표식 둘째줄\r\n카파표식 람다표식 셋째줄")
+    # stale = 초안과 근거 전체 — 점수 3인 옛 기록 4편이 초안 8개를 채우고, 점수 2인 새 기록은 근거에만
+    S["r_hi"] = [rec(A, f"옛 고득점 {i}", "에타표식 테타표식 요타표식 문장 하나. 에타표식 테타표식 요타표식 문장 둘.", date=days_ago(400))
+                 for i in range(4)]
+    S["r_new"] = rec(A, "새 저득점", "에타표식 테타표식 새 문장.")
 
     # 다른 사용자 — 같은 검색어의 자료(섞이면 안 된다)
     qb = db.question_add(B, f"{OTHER_MARK} 질문")["id"]
@@ -215,7 +223,7 @@ def test_shape_and_determinism(S):
     # 정렬: 점수 같으면 확정 후보 있는 기록(10일 전)이 오늘 기록보다 먼저 · 한 기록에서 초안 2개까지
     ids = draft_ids(a)
     assert ids[0] == S["r_conf"], ids
-    assert ids.count(S["r_main"]) == 2 and set(ids) == {S["r_conf"], S["r_main"], S["r_wrap"], S["refl"]}, ids
+    assert ids.count(S["r_main"]) == 2 and set(ids) == {S["r_conf"], S["r_main"], S["r_wrap"], S["refl"], S["refl_sum"]}, ids
     assert [d["n"] for d in a["draft"]] == list(range(1, len(ids) + 1))
     assert all(set(d) == {"n", "quote", "ref"} for d in a["draft"])
     ev = {e["ref"]["id"]: e for e in a["evidence"]}
@@ -252,7 +260,8 @@ def _body(uid, kind, rid):
 
 def test_quote_verbatim(S):
     n = 0
-    for kw in ({"question": Q_MAIN}, {"question_id": S["q1"]}, {"question": "감마표식 델타표식"}, {"question": "엡실론표식 제타표식"}):
+    for kw in ({"question": Q_MAIN}, {"question_id": S["q1"]}, {"question": "감마표식 델타표식"}, {"question": "엡실론표식 제타표식"},
+               {"question": "카파표식 람다표식"}):
         res = get(S["A"], **kw)
         spans = set()
         for e in res["evidence"]:
@@ -288,8 +297,12 @@ def test_session_wrap(S):
     assert S["r_wrap"] in draft_ids(a)
     e = next(e for e in a["evidence"] if e["ref"]["id"] == S["r_wrap"])
     assert e["source"] == "세션 정리" and e["provenance"] == {"text_process": "structured", "generation_kind": "mixed", "decision_owner": "self"}
-    assert "- 세션 정리 기록, " + TODAY.isoformat() + ", 세션 정리" in a["markdown"].split("\n")
-    ok("6) 세션 정리 꼴 기록(structured, mixed, decision_owner self)은 초안에 들어간다")
+    md = a["markdown"].split("\n")
+    assert f"- ({S['r_wrap']}) 세션 정리 기록, {TODAY.isoformat()}, 세션 정리" in md, md
+    assert f"- ({S['refl']}) 읽은 글, {TODAY.isoformat()}, 읽고 든 생각" in md, md   # reaction
+    assert f"- ({S['refl_sum']}) 요약한 글, {TODAY.isoformat()}, 읽고 쓴 요약" in md, md   # summary
+    assert f"- ({S['r_main']}) 도입 메모, {TODAY.isoformat()}, verbatim" in md, md
+    ok("6) 세션 정리 꼴 기록(structured, mixed, decision_owner self)은 초안에 들어간다 · 근거 줄 꼴(ref id, 제목, 날짜, 셋째 칸)")
 
 
 def test_collected(S):
@@ -319,6 +332,14 @@ def test_question_id(S):
     assert S["r_conf"] not in draft_ids(a)
     assert a["draft"][1]["quote"] == "점수와 무관한 확정 문장이다.\n둘째 줄"
     assert f"> 점수와 무관한 확정 문장이다.\n> 둘째 줄 ({S['c_pin']})" in a["markdown"]
+    # 맨 앞에 둔 확정 후보의 기록은 점수와 무관하게 근거에(그 quote 가 인용, 같은 구간은 한 번)
+    ev = {e["ref"]["id"]: e for e in a["evidence"]}
+    assert [e["ref"]["id"] for e in a["evidence"][:2]] == [S["r_conf"], S["r_pin"]], a["evidence"][:2]
+    assert [q["text"] for q in ev[S["r_pin"]]["quotes"]] == ["점수와 무관한 확정 문장이다.\n둘째 줄"] and ev[S["r_pin"]]["quotes"][0]["score"] == 0
+    assert [q["text"] for q in ev[S["r_conf"]]["quotes"]] == ["알파도구 베타검증 확정 근거 문장이다."]
+    assert f"- ({S['r_pin']}) 질문 답 메모, {days_ago(3).isoformat()}, verbatim" in a["markdown"].split("\n")
+    pend = next(g for g in a["gaps"] if g["code"] == "pending_candidates")
+    assert pend["count"] == 2, pend   # r_main 1 + r_pin 1(근거에 들어와 집계에도)
     by_text = get(S["A"], question=Q_MAIN)
     assert draft_ids(a)[2:] == [i for i in draft_ids(by_text) if i != S["r_conf"]]
     e = expect("NOT-FOUND", answer.assemble, S["A"], question_id=S["qb"])
@@ -332,10 +353,13 @@ def test_terms():
     assert answer.question_terms("검증으로 Salesforce를 고른 이유가 왜 있나") == ["검증", "Salesforce", "고른", "이유"]
     assert answer.merge_terms(["도입", "도구", "SALESFORCE"], ["도구", "Salesforce", "팀에"]) == ["도입", "도구", "SALESFORCE", "팀에"]
     assert answer.merge_terms([f"t{i:02d}" for i in range(12)], ["도구"]) == [f"t{i:02d}" for i in range(12)]
+    # 다른 검색어를 품은 긴 검색어는 뺀다('팀'과 '팀에' → '팀')
+    assert answer.merge_terms(["팀"], answer.question_terms("새 도구를 팀에 들일 때 무엇부터 확인해야 하나")) == ["팀", "도구", "들일", "확인해야"]
+    assert answer.merge_terms(["Tool"], ["toolkit", "도구"]) == ["Tool", "도구"]
     # 검색어가 없으면 아무것도 남기지 않는다
     res = answer.assemble(db.user_by_email(MAIN)["id"], question="무엇 어떻게 왜", now=NOW)
     assert res["terms"] == [] and res["draft"] == [] and codes(res)[0] == "no_match"
-    ok("10) 검색어 만들기: 조사 하나 제거(남는 길이 2자 이상만) · 불용어 · 호출자 검색어 먼저, 대소문자 무시 중복 제거, 12개 · 검색어 없음 = no_match")
+    ok("10) 검색어 만들기: 조사 하나 제거(남는 길이 2자 이상만) · 불용어 · 호출자 검색어 먼저, 대소문자 무시 중복 제거, 품은 긴 검색어 뺌, 12개 · 검색어 없음 = no_match")
 
 
 def test_gaps(S):
@@ -350,6 +374,9 @@ def test_gaps(S):
     assert codes(old) == ["thin", "one_record", "stale"], codes(old)
     assert old["gaps"][0]["text"] == "근거가 2개뿐이에요." and old["gaps"][2]["text"] == f"가장 새 근거가 {days_ago(400).isoformat()}예요. 지금도 같은지 확인하세요."
     seen |= set(codes(old))
+    hi = get(S["A"], question="에타표식 테타표식 요타표식")
+    assert len(hi["draft"]) == 8 and set(draft_ids(hi)) == set(S["r_hi"]), draft_ids(hi)
+    assert S["r_new"] in {e["ref"]["id"] for e in hi["evidence"]} and "stale" not in codes(hi), codes(hi)   # 초안은 400일 전뿐, 근거에 오늘 기록
     po = get(S["A"], question="수집전용표식 이타표식")
     assert codes(po) == ["no_match", "posts_without_thought"] and [p["id"] for p in po["related_posts"]] == [S["post_only"]], po
     assert po["gaps"][0]["text"] == answer.GAP_TEXT["no_match"]
@@ -375,10 +402,24 @@ def test_markdown_escape(S):
     for line in (f"> \\# 감마표식 델타표식 제목꼴 ({i1})", f"> \\> 감마표식 델타표식 인용꼴 ({i1})",
                  f"> \\--- 감마표식 델타표식 가로줄꼴 ({i2})", f"> \\- 감마표식 델타표식 목록꼴 ({i2})"):
         assert line in md, (line, md)
-    assert any(ln.startswith("- \\# 제목꼴 제목, ") for ln in md), md
+    assert f"- ({i1}) # 제목꼴 제목, {TODAY.isoformat()}, verbatim" in md, md   # 근거 줄 = "- (ref id) 제목, 날짜, 셋째 칸"
     assert md[0] == "## 감마표식 델타표식" and "### 답변 초안" in md and "### 근거" in md
     assert {d["quote"] for d in res["draft"]} >= {"# 감마표식 델타표식 제목꼴", "- 감마표식 델타표식 목록꼴"}   # 값은 그대로
-    ok("12) markdown 줄머리 이스케이프(#, >, ---, - 로 시작하는 원문과 제목) · 초안 값은 원문 그대로")
+    # 줄 머리 꼴 각 1건(정렬 목록, 글머리 *, +, 코드 울타리 ```, ~~~, HTML <, 링크 정의 [, setext = -, 들여쓴 코드 4칸, 탭)
+    for raw, want in (("1. 하나", "1\\. 하나"), ("12) 둘", "12\\) 둘"), ("* 별", "\\* 별"), ("+ 더하기", "\\+ 더하기"),
+                      ("```py", "\\```py"), ("~~~", "\\~~~"), ("<div>태그", "\\<div>태그"), ("[x]: https://e.x", "\\[x]: https://e.x"),
+                      ("===", "\\==="), ("--", "\\--"), ("    코드", "&#32;   코드"), ("\t코드", "&#32;코드"), ("  # 두 칸", "  \\# 두 칸"),
+                      ("보통 줄", "보통 줄")):
+        assert answer._md_escape(raw) == want, (raw, answer._md_escape(raw))
+    # bare CR 도 줄 끝
+    assert answer._md_lines("앞\r# 뒤\r\n> 끝") == ["앞", "\\# 뒤", "\\> 끝"]
+    cr = get(S["A"], question="카파표식 람다표식")
+    assert [q["text"] for e in cr["evidence"] for q in e["quotes"]] == ["카파표식 람다표식 첫줄", "카파표식 람다표식 둘째줄", "카파표식 람다표식 셋째줄"]
+    assert "\r" not in cr["markdown"]
+    # 질문 소제목: 줄 머리와 끝의 '#'
+    assert get(S["A"], question="C# 도입 #")["markdown"].split("\n")[0] == "## C# 도입 \\#"
+    assert get(S["A"], question="# 감마표식 델타표식")["markdown"].split("\n")[0] == "## \\# 감마표식 델타표식"
+    ok("12) markdown 줄머리 이스케이프(#, >, ---, -, 정렬 목록, *, +, 코드 울타리, <, [, setext, 들여쓰기) · bare CR · 질문 소제목 끝 # · 근거 줄 맨 앞 ref id")
 
 
 def test_arg_invalid(S):
@@ -386,11 +427,14 @@ def test_arg_invalid(S):
     for kw in ({}, {"question": "   "}, {"question": Q_MAIN, "question_id": S["q1"]}, {"question": "가" * 301},
                {"question": Q_MAIN, "terms": [f"t{i}" for i in range(13)]}, {"question": "줄\n바꿈"}, {"question": "탭\t문자"},
                {"question": Q_MAIN, "terms": ["좋은", "제어\x07"]}, {"question": Q_MAIN, "terms": ["  "]},
-               {"question": Q_MAIN, "terms": ["가" * 31]}, {"question": Q_MAIN, "terms": "도구"}, {"question_id": "q\x00x"}):
+               {"question": Q_MAIN, "terms": ["가" * 31]}, {"question": Q_MAIN, "terms": "도구"}, {"question_id": "q\x00x"},
+               {"question": 5}, {"question": 0}, {"question_id": []}, {"question": Q_MAIN, "terms": ("도입",)}, {"question": Q_MAIN, "terms": [1]},
+               {"question": "알파\u202e도구"}, {"question": Q_MAIN, "terms": ["도\u200b구"]}):
         expect("ARG-INVALID", answer.assemble, A, **kw)
     assert get(A, question="가" * 300)["question"]["text"] == "가" * 300
     assert get(A, question=f"  {Q_MAIN}  ", terms=[" 도입 "])["terms"] == ["도입", "알파도구", "베타검증"]
-    ok("13) ARG-INVALID: 둘 다 없음, 둘 다 있음, 301자, terms 13개, 제어 문자, 빈 검색어, 31자 검색어 · 앞뒤 공백 자름")
+    assert get(A, question=None, question_id=S["q1"])["question"]["id"] == S["q1"]
+    ok("13) ARG-INVALID: 둘 다 없음, 둘 다 있음, 301자, terms 13개, 제어 문자, 서식 문자(Cf), 빈 검색어, 31자 검색어, 문자열 아닌 형식 · 앞뒤 공백 자름")
 
 
 async def test_catalog(S):
@@ -405,6 +449,7 @@ async def test_catalog(S):
     for ex in o.examples:
         facade.validate(o, ex)
     assert "answer_get 을 부른다. markdown 은 고치지 않고 그대로 보여 준다. 초안 사이에 문장을 더하거나 요약하지 않는다." in main.INSTRUCTIONS
+    assert "읽고 든 생각은 내 글이라 근거에 들어간다. 검토 완료 표시는 판단 확정이 아니다." in main.INSTRUCTIONS
     async with Client(main.mcp) as c:
         tools = {t.name for t in (await c.list_tools()).tools}
         assert "answer_get" not in tools, "facade 전용 — 직접 도구로 등록하지 않는다"
