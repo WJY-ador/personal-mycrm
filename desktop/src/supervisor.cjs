@@ -3,8 +3,8 @@ const cp = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 class Supervisor {
-  constructor({binary,home,spawn=cp.spawn,log=()=>{},changed=()=>{},restartDelay=30000,stopGrace=50000,killConfirmGrace=5000,authRestartDelay=2000,authWindow=600000,now=Date.now}) {
-    Object.assign(this,{binary,home,spawn,log,changed,restartDelay,stopGrace,killConfirmGrace,authRestartDelay,authWindow,now}); this.entries=new Map(); this.closing=false;
+  constructor({binary,home,spawn=cp.spawn,log=()=>{},changed=()=>{},exited=()=>{},restartDelay=30000,stopGrace=50000,killConfirmGrace=5000,authRestartDelay=2000,authWindow=600000,now=Date.now}) {
+    Object.assign(this,{binary,home,spawn,log,changed,exited,restartDelay,stopGrace,killConfirmGrace,authRestartDelay,authWindow,now}); this.entries=new Map(); this.closing=false;
   }
   snapshot() { return Object.fromEntries([...this.entries].map(([k,v])=>[k,{state:v.state,restarts:v.restarts,code:v.code ?? null}])); }
   start(name,args,{allowCli=false,env={}}={}) {
@@ -31,6 +31,8 @@ class Supervisor {
     child.once('close',(code,signal)=> {
       if(e.child !== child) return;
       e.child=null;e.code=code;e.state='stopped';this.log(name,'exit',code);
+      // exited(name): every child exit, before any restart (main aborts the chat consent approvals the child held).
+      try{this.exited(name);}catch{}
       if(e.intent && !this.closing && signal && e.restarts<3) {
         e.restarts++;e.state='retry-wait';
         e.timer=setTimeout(()=> {e.timer=null;this._launch(name,e);},this.restartDelay*e.restarts);

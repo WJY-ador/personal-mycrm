@@ -63,6 +63,27 @@ function claimRequest(hosted, code, verifier, state) {
     },
   };
 }
+// mycrm://connection?step=<step> — the web chat's connection guide opens this window at one place (J-F1, contract with
+// server/ui webchat appLink). step is one of a fixed list and the only parameter; anything else is not a setup link.
+const SETUP_STEPS = Object.freeze(['connect', 'provider', 'permits']);
+function parseSetupLink(raw) {
+  if (typeof raw !== 'string' || raw.length > MAX_LINK) return null;
+  let u;
+  try { u = new URL(raw); } catch { return null; }
+  if (u.protocol !== 'mycrm:' || u.hostname !== 'connection' || !/^\/?$/.test(u.pathname)) return null;
+  if (u.username || u.password || u.port || u.hash) return null;
+  const keys = [...u.searchParams.keys()];
+  if (keys.length !== 1 || keys[0] !== 'step') return null;
+  const step = u.searchParams.get('step');
+  return SETUP_STEPS.includes(step) ? step : null;
+}
+// R-J5: any web page can open mycrm://…, so a deep link raises a window at most once per FOCUS_GAP_MS. The link itself
+// is still handled (login callback, setup step); only the raise is skipped. The first raise always passes. Monotonic clock.
+const FOCUS_GAP_MS = 2000;
+function focusLimiter(gapMs = FOCUS_GAP_MS, now = () => performance.now()) {
+  let last = null;
+  return () => { const t = now(); if (last !== null && t - last < gapMs) return false; last = t; return true; };
+}
 function findLink(argv) { return (Array.isArray(argv) ? argv : []).find(a => typeof a === 'string' && /^mycrm:/i.test(a)) || null; }
 // In-app navigations that start a login are taken over by the app: /login (any query) and /desktop/login.
 function isLoginNav(input, hosted) {
@@ -71,4 +92,4 @@ function isLoginNav(input, hosted) {
     return u.origin === new URL(hosted).origin && (u.pathname === '/login' || u.pathname === '/desktop/login');
   } catch { return false; }
 }
-module.exports = {TTL_MS, challengeOf, begin, loginUrl, wantsFresh, parseCallback, accept, claimBody, claimRequest, findLink, isLoginNav};
+module.exports = {TTL_MS, SETUP_STEPS, FOCUS_GAP_MS, focusLimiter, challengeOf, begin, loginUrl, wantsFresh, parseCallback, parseSetupLink, accept, claimBody, claimRequest, findLink, isLoginNav};

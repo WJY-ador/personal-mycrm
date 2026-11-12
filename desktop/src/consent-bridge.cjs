@@ -14,7 +14,7 @@ const MAX_LINE=8192;
 const REQUEST_ID=/^[A-Za-z0-9_-]{1,64}$/;
 const TOKEN=/^[A-Za-z0-9_-]{43}$/;
 const BEARER=/^Bearer [A-Za-z0-9._~+/-]{16,500}$/;
-// Requests: approval {version:1,token,request_id,device_bearer} or revoke {version:1,token,kind:"revoke",device_bearer}.
+// Request: approval {version:1,token,request_id,device_bearer}.
 // Reply contract: {"ok":true} or {"ok":false,"reason":"declined"|"locked"|"failed"}.
 // Anything the handler returns other than ok===true becomes a refusal; an unknown reason becomes "failed".
 const REASONS=new Set(['declined','locked','failed']);
@@ -30,10 +30,9 @@ function validDirectory(directory,uid){
 }
 
 class ConsentBridge{
- constructor({directory,uid=process.getuid?.(),handler,revokeHandler=null,platform=process.platform}={}){
-  if(typeof directory!=='string'||!path.isAbsolute(directory)||typeof handler!=='function'
-     ||(revokeHandler!==null&&typeof revokeHandler!=='function'))throw new TypeError('bridge options');
-  Object.assign(this,{directory,uid,handler,revokeHandler,platform});
+ constructor({directory,uid=process.getuid?.(),handler,platform=process.platform}={}){
+  if(typeof directory!=='string'||!path.isAbsolute(directory)||typeof handler!=='function')throw new TypeError('bridge options');
+  Object.assign(this,{directory,uid,handler,platform});
   this.server=null;this.socketPath=null;this.token=null;
   this.clients=new Set();
   this.aborters=new Set();
@@ -47,7 +46,10 @@ class ConsentBridge{
   // is not the authenticator; the per-run 256-bit capability is.
   this.socketPath=path.join(this.directory,'c'+crypto.randomBytes(8).toString('hex'));
   this.token=crypto.randomBytes(32).toString('base64url');
-  this.server=net.createServer(socket=>this._handle(socket));
+  // allowHalfOpen: the agent sends its one line and then shuts down its write side (SHUT_WR) while it waits for the
+  // reply. Without it Node ends the socket on that FIN, 'close' fires and the handler is aborted before it answers
+  // (J-F2). A half-close therefore no longer aborts; the supervised chat child's exit does (main: abortPending).
+  this.server=net.createServer({allowHalfOpen:true},socket=>this._handle(socket));
   await new Promise((resolve,reject)=>{
    const onError=e=>{this.server?.removeListener('listening',onListen);reject(e);};
    const onListen=()=>{this.server?.removeListener('error',onError);resolve();};
@@ -67,7 +69,7 @@ class ConsentBridge{
   this.aborters.add(aborter);
   socket.on('close',()=>{aborter.abort();this.aborters.delete(aborter);this.clients.delete(socket);});
   socket.setTimeout(5000,()=>socket.destroy());
-  let raw=Buffer.alloc(0),settled=false;
+  let raw=Buffer.alloc(0),settled=false,dispatched=false;
   const finish=async(result)=>{
    if(settled)return;settled=true;
    try{socket.end(JSON.stringify(reply(result))+'\n');}catch{socket.destroy();}
@@ -81,21 +83,6 @@ class ConsentBridge{
    if(newline!==raw.length-1){void finish(null);return;}
    let request;
    try{request=JSON.parse(raw.subarray(0,newline).toString('utf8'));}catch{void finish(null);return;}
-   // Revoke request from a one-shot `chat-consent-revoke` run (app start, screen lock): the device token only.
-   // It runs while the screen is locked and is not cancelled by abortPending (a lock stops chat at the same moment).
-   if(request&&typeof request==='object'&&!Array.isArray(request)
-      &&Object.keys(request).sort().join(',')==='device_bearer,kind,token,version'){
-    if(request.version!==1||request.kind!=='revoke'||typeof request.token!=='string'||!TOKEN.test(request.token)
-       ||!crypto.timingSafeEqual(Buffer.from(request.token),Buffer.from(this.token||''))
-       ||typeof request.device_bearer!=='string'||!BEARER.test(request.device_bearer)||!this.revokeHandler){
-     void finish(null);return;
-    }
-    socket.setTimeout(30000,()=>socket.destroy());
-    const revoke=this.revokeHandler;
-    Promise.resolve().then(()=>revoke(Object.freeze({device_bearer:request.device_bearer})))
-     .then(result=>finish(result),()=>finish(null));
-    return;
-   }
    if(!request||typeof request!=='object'||Array.isArray(request)
       ||Object.keys(request).sort().join(',')!=='device_bearer,request_id,token,version'
       ||request.version!==1||typeof request.token!=='string'||!TOKEN.test(request.token)
@@ -107,9 +94,13 @@ class ConsentBridge{
    // A native prompt can remain open until the server challenge expires. Keep the
    // IPC channel alive for that interval; child exit still aborts the handler.
    socket.setTimeout(360000,()=>socket.destroy());
+   dispatched=true;
    Promise.resolve().then(()=>this.handler(Object.freeze({request_id:request.request_id,device_bearer:request.device_bearer}),aborter.signal))
     .then(result=>finish(result),()=>finish(null));
   });
+  // The client's write side ended. Before a complete request line that is a malformed request; after it, the
+  // normal half-close of request_approval: the reply is still written.
+  socket.on('end',()=>{if(!dispatched)void finish(null);});
   socket.on('error',()=>{settled=true;});
  }
  abortPending(){for(const aborter of this.aborters)aborter.abort();}

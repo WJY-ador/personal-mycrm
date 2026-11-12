@@ -79,29 +79,73 @@ test('desktop Stop aborts native approval immediately before the supervised chil
  }
 });
 
-test('closing the supervised child socket aborts the native approval handler',{skip:process.platform==='win32'},async()=>{
- const root=await fs.mkdtemp(path.join(os.tmpdir(),'mycrm-consent-bridge-close-'));
+// J-F2: agent/consent_bridge.py sends one line and then shuts down its write side (SHUT_WR) while it waits.
+// The handler awaits real work (key load, server calls) before it answers; the half-close must not abort it.
+async function halfCloseCase(){
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'mycrm-consent-bridge-half-'));
  await fs.chmod(root,0o700);
- let signal,startedResolve;
- const started=new Promise(resolve=>{startedResolve=resolve;});
- const bridge=new ConsentBridge({directory:root,uid:process.getuid?.(),handler:(_request,s)=>{
-  signal=s;startedResolve();return new Promise(()=>{});
- }});
- let client;
+ const seen=[];
+ const slow=async(_request,signal)=>{
+  await new Promise(resolve=>setTimeout(resolve,80));
+  seen.push(signal?signal.aborted:'no-signal');return {ok:true};
+ };
+ const bridge=new ConsentBridge({directory:root,uid:process.getuid?.(),handler:slow});
  try{
   const env=await bridge.start();
-  client=net.createConnection(env.MYCRM_CHAT_BRIDGE_SOCKET);
-  await new Promise((resolve,reject)=>{
-   client.once('connect',()=>client.write(JSON.stringify({version:1,token:env.MYCRM_CHAT_BRIDGE_TOKEN,
-    request_id:'session_request_1',device_bearer:'Bearer synthetic-device-token'})+'\n'));
-   client.once('error',reject);started.then(resolve,reject);
+  const body={version:1,token:env.MYCRM_CHAT_BRIDGE_TOKEN,request_id:'session_request_1',device_bearer:'Bearer synthetic-device-token'};
+  assert.deepEqual(await send(env.MYCRM_CHAT_BRIDGE_SOCKET,body),{ok:true});   // send() half-closes after the line
+  return seen;
+ }finally{await bridge.close();await fs.rm(root,{recursive:true,force:true});}
+}
+
+test('J-F2: a client that half-closes after its request still gets the reply, approval is not aborted',{skip:process.platform==='win32'},async()=>{
+ assert.deepEqual(await halfCloseCase(),[false]);
+});
+
+test('J-F2: a half-close before a complete request line is refused without calling the handler',{skip:process.platform==='win32'},async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'mycrm-consent-bridge-partial-'));
+ await fs.chmod(root,0o700);
+ let called=false;
+ const bridge=new ConsentBridge({directory:root,uid:process.getuid?.(),handler:async()=>{called=true;return {ok:true};}});
+ try{
+  const env=await bridge.start();
+  const reply=await new Promise((resolve,reject)=>{
+   const socket=net.createConnection(env.MYCRM_CHAT_BRIDGE_SOCKET);let data='';socket.setEncoding('utf8');
+   socket.on('connect',()=>socket.end('{"version":1'));socket.on('data',c=>data+=c);
+   socket.on('end',()=>{try{resolve(JSON.parse(data));}catch{reject(new Error('bad response'));}});socket.on('error',reject);
   });
-  assert.equal(signal.aborted,false);
-  const closed=new Promise(resolve=>client.once('close',resolve));
-  client.destroy();await closed;
-  for(let i=0;i<50&&!signal.aborted;i++)await new Promise(resolve=>setTimeout(resolve,10));
-  assert.equal(signal.aborted,true);
- }finally{client?.destroy();await bridge.close();await fs.rm(root,{recursive:true,force:true});}
+  assert.deepEqual(reply,{ok:false,reason:'failed'});
+  assert.equal(called,false);
+ }finally{await bridge.close();await fs.rm(root,{recursive:true,force:true});}
+});
+
+// The real client: agent/consent_bridge.py request_approval against this bridge.
+const PYTHON=process.env.MYCRM_TEST_PYTHON||'python3';
+function pythonAvailable(){try{return require('node:child_process').spawnSync(PYTHON,['-c','import sys'],{stdio:'ignore'}).status===0;}catch{return false;}}
+test('J-F2: the Python agent client (SHUT_WR after the line) gets ok for approval',{skip:process.platform==='win32'||!pythonAvailable()},async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'mycrm-consent-bridge-py-'));
+ await fs.chmod(root,0o700);
+ const seen=[];
+ const slow=async(_request,signal)=>{await new Promise(resolve=>setTimeout(resolve,80));seen.push(signal?signal.aborted:'no-signal');return {ok:true};};
+ const bridge=new ConsentBridge({directory:root,uid:process.getuid?.(),handler:slow});
+ try{
+  const env=await bridge.start();
+  const repo=path.join(__dirname,'..','..');
+  const code='import sys,os;sys.path.insert(0,sys.argv[1]);from agent.consent_bridge import request_approval;'
+   +'s,t=os.environ["MYCRM_CHAT_BRIDGE_SOCKET"],os.environ["MYCRM_CHAT_BRIDGE_TOKEN"];b="Bearer "+"a"*40;'
+   +'print(request_approval(s,t,"req_1",b,timeout=5))';
+  const out=await new Promise((resolve,reject)=>{
+   const child=require('node:child_process').spawn(PYTHON,['-I','-c',code,repo],{env:{...process.env,...env},stdio:['ignore','pipe','pipe']});
+   let text='';child.stdout.on('data',d=>text+=d);child.on('error',reject);child.on('close',()=>resolve(text.trim().split('\n')));
+  });
+  assert.deepEqual(out,['(True, None)']);
+  assert.deepEqual(seen,[false]);
+ }finally{await bridge.close();await fs.rm(root,{recursive:true,force:true});}
+});
+
+test('a fully closed child socket no longer aborts by itself; the chat child exit does (main wiring)',()=>{
+ const main=require('node:fs').readFileSync(path.join(__dirname,'..','src','main.cjs'),'utf8');
+ assert.match(main,/exited:name=>\{if\(name==='chat'\)consentBridge\?\.abortPending\(\);\}/);
 });
 
 test('Windows bridge refuses startup before creating a socket or invoking the handler',async()=>{
@@ -157,61 +201,23 @@ test('desktop main passes the runtime result object to the bridge instead of a b
  assert.match(line,/consentRuntime\.handle\(input,signal\)/);
 });
 
-test('R5: revoke request carries only the device token, needs the capability, and abortPending does not cancel it',{skip:process.platform==='win32'},async()=>{
- const root=await fs.mkdtemp(path.join(os.tmpdir(),'mycrm-consent-bridge-revoke-'));
- await fs.chmod(root,0o700);
- const approvals=[],revokes=[];
- let releaseRevoke;
- const bridge=new ConsentBridge({directory:root,uid:process.getuid?.(),handler:async request=>{approvals.push(request);return {ok:true};},
-  revokeHandler:async request=>{revokes.push(request);if(releaseRevoke)await new Promise(resolve=>{releaseRevoke=resolve;});return {ok:true};}});
- try{
-  const env=await bridge.start();
-  const request={version:1,token:env.MYCRM_CHAT_BRIDGE_TOKEN,kind:'revoke',device_bearer:'Bearer synthetic-device-token'};
-  assert.deepEqual(await send(env.MYCRM_CHAT_BRIDGE_SOCKET,request),{ok:true});
-  assert.deepEqual(revokes,[{device_bearer:'Bearer synthetic-device-token'}]);
-  for(const bad of [{...request,token:'wrong'},{...request,kind:'approve'},{...request,version:2},
-   {...request,device_bearer:'synthetic-device-token'},{...request,request_id:'session_request_1'}]){
-   assert.deepEqual(await send(env.MYCRM_CHAT_BRIDGE_SOCKET,bad),{ok:false,reason:'failed'});
-  }
-  assert.equal(revokes.length,1);
-  assert.equal(approvals.length,0);
-  releaseRevoke=true;
-  const pending=send(env.MYCRM_CHAT_BRIDGE_SOCKET,request);
-  while(revokes.length<2)await new Promise(resolve=>setImmediate(resolve));
-  bridge.abortPending();   // a screen lock aborts approvals at the same moment
-  releaseRevoke();
-  assert.deepEqual(await pending,{ok:true});
- }finally{
-  await bridge.close();
-  await fs.rm(root,{recursive:true,force:true});
- }
-});
-
-test('R5: a bridge without a revoke handler refuses revoke requests',{skip:process.platform==='win32'},async()=>{
+test('JD2: desktop main revokes nothing at start or on lock and has no stored-token revoke path; the bridge takes approvals only',async()=>{
+ const main=require('node:fs').readFileSync(path.join(__dirname,'..','src','main.cjs'),'utf8');
+ for(const gone of ['revokeAtStart','ensureStartRevoked','invalidateOnLock','stopChatForLock','consent-start-revoke-unconfirmed',
+  'consent-lock-locked','consent-lock-unsupported','consent-lock-revoke-unconfirmed','chat-consent-revoke','revokeHandler','revokeWith','keys/revoke'])
+  assert.equal(main.includes(gone),false,gone);
+ const start=main.slice(main.indexOf('async function startChatAgent('));
+ assert.ok(start.indexOf('startChatSidecar(')>0);
+ assert.match(main,/onLock:\(\)=>\{\s*consentBridge\?\.abortPending\(\);consentRuntime\?\.cancel\(\);\s*\}/);
+ if(process.platform==='win32')return;
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'mycrm-consent-bridge-norevoke-'));
  await fs.chmod(root,0o700);
- const bridge=new ConsentBridge({directory:root,uid:process.getuid?.(),handler:async()=>({ok:true})});
+ let called=false;
+ const bridge=new ConsentBridge({directory:root,uid:process.getuid?.(),handler:async()=>{called=true;return {ok:true};}});
  try{
   const env=await bridge.start();
   assert.deepEqual(await send(env.MYCRM_CHAT_BRIDGE_SOCKET,{version:1,token:env.MYCRM_CHAT_BRIDGE_TOKEN,kind:'revoke',
    device_bearer:'Bearer synthetic-device-token'}),{ok:false,reason:'failed'});
- }finally{
-  await bridge.close();
-  await fs.rm(root,{recursive:true,force:true});
- }
-});
-
-test('R5: desktop main wires the revoke handler and starts one revoke at app start without awaiting it',()=>{
- const main=require('node:fs').readFileSync(path.join(__dirname,'..','src','main.cjs'),'utf8');
- assert.match(main,/revokeHandler:async input=>consentRuntime\?await consentRuntime\.revokeWith\(input\)/);
- const starts=main.split('\n').filter(l=>l.includes('revokeAtStart('));
- assert.equal(starts.length,1);
- assert.doesNotMatch(starts[0],/await\s+consentRuntime\.revokeAtStart/);
- assert.match(starts[0],/log\('consent','start-revoke-'\+outcome\)/);
- assert.match(main,/command\(\['chat-consent-revoke'\],null,env\)/);
- const start=main.slice(main.indexOf('async function startChatAgent('));
- const gate=start.indexOf('ensureStartRevoked()'),launch=start.indexOf('startChatSidecar(');
- assert.ok(gate>0&&gate<launch);
- assert.match(start.slice(gate,launch),/throw new Error\('consent-start-revoke-unconfirmed'\)/);
- assert.match(main,/'consent-start-revoke-unconfirmed':'/);
+  assert.equal(called,false,'a revoke-shaped request is not an approval');
+ }finally{await bridge.close();await fs.rm(root,{recursive:true,force:true});}
 });
