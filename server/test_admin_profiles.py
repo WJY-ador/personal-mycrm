@@ -30,6 +30,7 @@ if _u.hostname not in ("localhost", "127.0.0.1", "::1", None) or not _u.path.lst
     raise SystemExit("중단: 로컬 시험 DB(이름 crm_test*)만 허용해요.")
 PUBLIC = "http://127.0.0.1:8800"
 os.environ.pop("CRM_DEV", None)
+os.environ.pop("CRM_DEV_USER", None)   # CI 잡 env 에 있다 — DEV 없이 DEV_USER 만 있으면 기동 거절
 os.environ["AUTHKIT_ISSUER"] = "https://fake.authkit.test"
 os.environ["CRM_PUBLIC_URL"] = PUBLIC
 sys.path.insert(0, str(HERE))
