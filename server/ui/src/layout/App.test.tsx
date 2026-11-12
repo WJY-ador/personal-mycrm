@@ -877,3 +877,17 @@ test("PC 앱 창(Electron UA)이면 #bands 에 새 버전 띠 · 일반 브라�
     expect($("bands").querySelector(".band.update")?.textContent).toContain("지금 v0.1.1, 새 버전 v0.1.2.");
   } finally { vi.restoreAllMocks(); }
 });
+
+test("AI 하나로 A1, A2: 웹 AI가 켜져 있으면 탭 줄의 대화 버튼은 AI 하나, 꺼져 있으면 옛 정리 서랍이 그대로", async () => {
+  state = { ...ST, switches: { trash: false, converse: true, webchat: true } };
+  await start("#_me");
+  const nav = $("ui-chatnav");
+  expect([...nav.querySelectorAll("a.tab")].map(a => a.textContent)).toEqual(["AI"]);
+  expect(nav.textContent).toBe("AI");
+  expect(document.getElementById("chat")).toBeNull();   // 옛 서랍도 그리지 않는다
+  act(() => root!.unmount()); root = null; queryClient.clear();
+  state = { ...ST, switches: { trash: false, converse: true, webchat: false } };
+  await start("#_me");
+  expect($("ui-chatnav").textContent).not.toContain("AI");
+  expect($("ui-chatnav").textContent).not.toBe("");   // 옛 서랍 진입(버튼 또는 장치 없음 안내)은 그대로
+});

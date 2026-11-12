@@ -89,20 +89,20 @@ HTTP = {"SWITCH-OFF": 503, "UNAUTHORIZED": 401, "ORIGIN": 403, "NOT-FOUND": 404,
         "GRANT-CONFLICT": 409, "GRANT-INVALID": 409, "GRANT-USED": 409, "GRANT-EXPIRED": 409,
         "TEXT-LIMIT": 413, "RATE-LIMIT": 429, "AUTH-INVALID": 401, "TOKEN-EXPIRED": 401, "TOKEN-REVOKED": 401,
         "AUTH-BLOCKED": 403, "MCP-ERROR": 400}
-HTTP.update({"APPROVAL-STALE": 409, "APPROVAL-CLOSED": 409})
+HTTP.update({"APPROVAL-STALE": 409, "APPROVAL-CLOSED": 409, "APPROVAL-CONFIRM-AGAIN": 409})
 
-# Operations with complete existing HMAC previews only. Sending content to
-# third parties, device authority changes and migration's own bind protocol
-# stay disabled until their separate confirmation contracts are implemented.
-CHAT_APPROVABLE_OPS = frozenset({
-    "record_edit", "record_provenance_set", "candidate_decide",
-    "definition_archive", "definition_restore", "person_delete",
-    "source_reflection_review", "source_reflection_delete", "trash_move", "trash_restore",
-})
+# AI 하나로 A3(2026-11-12): 사용자가 MCP 로 하는 확정, 삭제 op 은 대화에서도 전부 확인 카드로 연다 — decide 등급 전부와 purge(trash_purge).
+# 판정은 이름 나열이 아니라 등급(chat_mcp._PINNED_TIERS)이다. 바로 실행은 계속 막는다(chat_mcp.validate_call). 카드 문구는 서버가 만든다(A4):
+# hmac op = facade 미리보기(decide_preview 의 shown), 이관 op(bind self) = migration_apply_preview 결과.
+from chat_mcp import _PINNED_TIERS as _CHAT_TIERS  # noqa: E402
+CHAT_APPROVABLE_OPS = frozenset(n for n, t in _CHAT_TIERS.items() if t in ("decide", "purge"))
+# A5: 되돌릴 수 없는 카드 — 미리보기의 irreversible 표시에 더해 이 op 들은 늘 되돌릴 수 없음으로 본다(영구 삭제, 토큰 폐기, PC 해제,
+# 밖으로 보내기, 이관 취소 = 받아 둔 본문 즉시 영구 삭제). 확정은 두 번 확인(irreversible_ack)이 있어야 실행한다
+CHAT_IRREVERSIBLE_OPS = frozenset({"trash_purge", "token_revoke", "pc_forget", "migration_token_send", "feedback_send",
+                                   "migration_cancel"})
 # 대화 하나로 F1(2026-11-11): 자유 대화의 write 등급은 pc_connect 를 빼고 전부 카드를 거친다. 판정은 이름 나열이 아니라
 # 등급(chat_mcp._PINNED_TIERS)이다 — 나중에 더한 write op 도 카드를 건너뛰지 못한다. 강제는 _chat_mcp_execute 한 곳.
 # 이 집합은 다음 턴 outcomes 필터와 F11 대조(서버, agent, 화면)에만 쓴다.
-from chat_mcp import _PINNED_TIERS as _CHAT_TIERS  # noqa: E402
 CHAT_WRITE_CARD_OPS = frozenset(n for n, t in _CHAT_TIERS.items() if t == "write" and n != "pc_connect")
 CHAT_CARD_OPS = CHAT_APPROVABLE_OPS | CHAT_WRITE_CARD_OPS
 APPROVAL_TTL_SECONDS = 600
@@ -143,7 +143,8 @@ _WRITE_LABELS = {
     "question_add": {"text": "질문 문장"},
     "profile_set": {"key": "프로필 항목", "value": "값", "status": "상태", "source": "어디서 알았나"},
     "record_add": {"text": "본문", "title": "제목", "question_id": "질문 ID", "source": "출처 메모", "source_name": "출처 이름",
-                   "source_kind": "출처 종류", "source_location": "출처 위치", "decision_owner": "내 결정 표시"},
+                   "source_kind": "출처 종류", "source_location": "출처 위치", "decision_owner": "내 결정 표시",
+                   "text_process": "가공 방식"},
     "record_attach": {"record_id": "기록 ID", "attach_to": "붙일 곳", "axes": "축", "use_at": "쓸 때", "unattached": "붙이지 않음"},
     "record_title_set": {"record_id": "기록 ID", "title": "새 제목", "expected_revision": "기록 판"},
     "candidates_propose": {"record_id": "기록 ID", "question_id": "질문 ID", "candidates": "판단 후보", "origin": "뽑은 쪽"},
@@ -263,9 +264,11 @@ def _chat_mcp_execute(dev, authorization, body):
             if any(type(args.get(k, "")) is not str or len(args.get(k, "")) > 1200 for k in ("query", "family", "op")):
                 raise CrmError("ARG-INVALID", "find 인자가 올바르지 않아요.")
             return gateway.find(query=args.get("query", ""), family=args.get("family", ""), op=args.get("op", ""))
-        if tool == "decide" and body["op"] in CHAT_APPROVABLE_OPS:
+        if tool in ("decide", "purge"):
+            # A3: decide, purge 겉면은 어떤 op 이든 바로 실행하지 않는다. 모델이 준 bind 는 무시한다.
+            # 등급이 겉면과 다르거나 카드 대상이 아니면 approval_prepare 가 거절한다(그래서 gateway.call 에 닿지 않는다).
             return approval_prepare(principal.user_id, session.session_id, body["turn_id"],
-                                    body["op"], body["params"])
+                                    body["op"], body["params"], surface=tool)
         if tool == "write":
             # F1: write 겉면은 어떤 op 이든 바로 실행하지 않는다. 모델이 준 bind 는 무시한다.
             # 등급이 write 가 아니거나 pc_connect 면 chat_write_prepare 가 거절한다(그래서 gateway.call 에 닿지 않는다).
@@ -1296,22 +1299,86 @@ def _created(op, result) -> dict:
     return out
 
 
-def approval_prepare(uid, sid, tid, op, params):
+# A4: 이관 op(bind self) 카드 — migration_apply_preview 결과로 서버가 만든다. 모델 문구는 없다.
+_MIGRATION_TODO = {
+    "migration_apply": "이관 반영 — 기준은 모두 미확정으로 들어가요(확정은 하나씩 따로)",
+    "migration_cancel": "반영 전 이관 취소 — 받아 둔 본문을 바로 영구 삭제해요",
+    "migration_revert": "반영 되돌리기 — 이 이관이 새로 만든 기록과 항목을 휴지통으로 옮겨요(168시간 안에 복원)",
+}
+_MIGRATION_KEYS = {"migration_apply": {"plan_id", "plan_hash", "expected_counts"},
+                   "migration_cancel": {"plan_id"}, "migration_revert": {"plan_id"}}
+
+
+def _migration_params(uid, op, params):
+    """이관 카드의 실행 params. migration_apply 의 plan_hash, expected_counts 는 모델 값을 쓰지 않고 서버 미리보기 값으로 채운다
+    (카드에 보이는 값 = 실행되는 값). 반환 (params, 미리보기)."""
+    import migration_mcp
+    plan_id = params.get("plan_id")
+    if set(params) - _MIGRATION_KEYS[op] or not isinstance(plan_id, str) or not plan_id or len(plan_id) > 128:
+        raise _approval_closed()
+    ap = migration_mcp.migration_apply_preview(uid, plan_id)
+    out = {"plan_id": plan_id}
+    if op == "migration_apply":
+        out.update({"plan_hash": ap.get("plan_hash") or "", "expected_counts": ap.get("expected_counts") or {}})
+    return out, ap
+
+
+def _migration_preview(uid, op, norm):
+    """A4: 이관 카드 미리보기 = migration_apply_preview 결과 전체를 해시에 넣는다. 확정 때 다시 만들어 plan_hash, expected_counts 등
+    어느 하나라도 바뀌면 APPROVAL-STALE 이다."""
+    import facade
+    import migration_mcp
+    ap = migration_mcp.migration_apply_preview(uid, norm["plan_id"])
+    shown = {"할 일": _MIGRATION_TODO[op], "이관 ID": ap.get("plan_id"), "지금 상태": ap.get("state")}
+    if op == "migration_apply":
+        shown.update({"반영할 행 수": ap.get("will_apply_rows"), "결과별 개수": ap.get("expected_counts"),
+                      "미확정으로 들어갈 기준": ap.get("decision_deferred"), "들여오지 않을 기준": ap.get("decision_excluded"),
+                      "오늘 남은 반영 한도": ap.get("remaining_today")})
+    else:
+        shown["항목 수"] = ap.get("counts")
+    if ap.get("blocked"):
+        shown["막힘"] = ap["blocked"]
+    if op == "migration_apply" and ap.get("message"):
+        shown["안내"] = ap["message"]
+    return {"op": op, "shown": shown, "impact": {"plan_id": ap.get("plan_id"), "state": ap.get("state")},
+            "irreversible": op in CHAT_IRREVERSIBLE_OPS,
+            "hash": hashlib.sha256(facade._canon([op, norm, ap])).hexdigest()}
+
+
+def _decide_spec(op, surface=None):
+    """카드가 될 수 있는 decide, purge op 의 facade 등록부 항목. 등급이 겉면과 다르거나 bind 방식이 hmac, self 가 아니면 거절."""
+    import facade
+    spec = facade.OPS.get(op) if isinstance(op, str) else None
+    tier = _CHAT_TIERS.get(op)
+    if (op not in CHAT_APPROVABLE_OPS or not spec or spec.tier != tier or tier not in ("decide", "purge")
+            or (surface is not None and surface != tier) or spec.bind not in ("hmac", "self")):
+        raise _approval_closed()
+    return spec
+
+
+def _decide_preview(spec, op, norm, uid):
+    """A4: decide, purge 카드 미리보기 — hmac op = facade 미리보기(shown, impact, bind 그대로), self op = 이관 미리보기.
+    A5: irreversible = 미리보기 표시 또는 CHAT_IRREVERSIBLE_OPS. 만들 때와 확정 때 같은 함수로 만든다."""
+    import facade
+    if spec.bind == "self":
+        return _migration_preview(uid, op, norm)
+    pv = facade.preview(op, norm, uid)
+    return {**pv, "irreversible": bool(pv.get("irreversible")) or op in CHAT_IRREVERSIBLE_OPS}
+
+
+def approval_prepare(uid, sid, tid, op, params, surface=None):
     """Create a server-owned preview only; this path never executes the action."""
     import facade
-    if (op not in CHAT_APPROVABLE_OPS or not isinstance(params, dict)
-            or any(k in params for k in ("uid", "user_id", "bind"))):
+    if not isinstance(params, dict) or any(k in params for k in ("uid", "user_id", "bind")):
         raise _approval_closed()
-    spec = facade.OPS.get(op)
-    if not spec or spec.tier != "decide" or spec.bind != "hmac":
-        raise _approval_closed()
+    spec = _decide_spec(op, surface)
     with db.tx_scope() as c:
         _approval_slot(c, uid, sid, tid)
+        if spec.bind == "self":
+            params, _ap = _migration_params(uid, op, params)
         facade.validate(spec, params)
         norm = facade.normalize(op, params)
-        preview = facade.preview(op, norm, uid)
-        if preview.get("irreversible") is not False:
-            raise _approval_closed()
+        preview = _decide_preview(spec, op, norm, uid)
         aid = _id("ca")
         c.execute("INSERT INTO chat_approvals (id,user_id,session_id,turn_id,op,params,preview,expires_at) "
                   "VALUES (%s,%s,%s,%s,%s,%s,%s,clock_timestamp()+make_interval(secs => %s))",
@@ -1332,8 +1399,9 @@ def approvals_list(uid, sid):
                  "finished_at": _iso(r["finished_at"]), "result": r["result"]} for r in rows]
 
 
-def approval_confirm(uid, sid, aid):
-    """Execute exactly the stored action, after current consent and preview revalidation."""
+def approval_confirm(uid, sid, aid, irreversible_ack=False):
+    """Execute exactly the stored action, after current consent and preview revalidation.
+    A5: 되돌릴 수 없는 카드는 irreversible_ack(화면의 두 번째 확인)가 있어야 실행한다. 없으면 아무것도 바꾸지 않고 APPROVAL-CONFIRM-AGAIN."""
     import facade
     from chat_mcp_gateway import _mint_trusted_principal
     if not chat_mcp_enabled():
@@ -1349,21 +1417,20 @@ def approval_confirm(uid, sid, aid):
             c.execute("UPDATE chat_approvals SET state='confirmed',result=%s,finished_at=clock_timestamp() WHERE id=%s",
                       (Jsonb(value), aid))
             return {"status": "confirmed", "result": value}
-        if (row.get("kind", "decide") != "decide" or op not in CHAT_APPROVABLE_OPS
-                or not isinstance(params, dict) or not isinstance(previous, dict)):
+        if row.get("kind", "decide") != "decide" or not isinstance(params, dict) or not isinstance(previous, dict):
             raise _approval_closed()
-        spec = facade.OPS.get(op)
-        if not spec or spec.tier != "decide" or spec.bind != "hmac":
-            raise _approval_closed()
-        now_preview = facade.preview(op, params, uid)
-        if (previous.get("irreversible") is not False or now_preview.get("irreversible") is not False
-                or not hmac.compare_digest(previous["bind"], now_preview["bind"])
-                or previous != now_preview):
+        spec = _decide_spec(op)
+        now_preview = _decide_preview(spec, op, params, uid)
+        key = "hash" if spec.bind == "self" else "bind"
+        if (not isinstance(previous.get(key), str) or not isinstance(now_preview.get(key), str)
+                or not hmac.compare_digest(previous[key], now_preview[key]) or previous != now_preview):
             raise CrmError("APPROVAL-STALE", "대상이 바뀌어 다시 확인해야 해요.")
+        if (previous.get("irreversible") is not False or now_preview.get("irreversible") is not False) and irreversible_ack is not True:
+            raise CrmError("APPROVAL-CONFIRM-AGAIN", "되돌릴 수 없는 작업이에요. 한 번 더 확인해야 실행해요.")
         principal = _mint_trusted_principal(user_id=uid, device_id=session["device_id"], session_id=sid,
                                            provider=session["provider"], model=session["model"],
                                            expires_at=_db_clock(c) + timedelta(seconds=15))
-        result = facade.dispatch("decide", op, params, principal, previous["bind"])
+        result = facade.dispatch(spec.tier, op, params, principal, previous["bind"] if spec.bind == "hmac" else None)
         if getattr(result, "isError", False):
             raise CrmError("MCP-ERROR", "작업을 완료하지 못했어요.")
         value = getattr(result, "structured_content", None)
@@ -1503,7 +1570,7 @@ def _turn_create(uid, sid, text, client_turn_id, connected, capable=None):
                            "AND state IN ('confirmed','cancelled') ORDER BY finished_at DESC,id DESC LIMIT %s",
                         (uid, sid, APPROVAL_SESSION_LIMIT))
         safe_outcomes, size = [], 2   # 최신부터(F13). size = agent 꼴 JSON 배열 바이트([] + 항목 + 쉼표)
-        for row in outcomes:   # 승인 가능 집합 24개(decide 10 + write 14). 종류와 op 등급이 맞는 행만
+        for row in outcomes:   # 승인 가능 집합 35개(decide 20 + purge 1 + write 14). 종류와 op 등급이 맞는 행만
             if not ((row["kind"] == "decide" and row["op"] in CHAT_APPROVABLE_OPS)
                     or (row["kind"] == "write" and row["op"] in CHAT_WRITE_CARD_OPS)):
                 continue
@@ -1960,9 +2027,12 @@ class Routes:
         if err:
             return err
         try:
-            if await self._body(request) != {}:
+            body = await self._body(request)
+            # A5: 확인 본문은 빈 객체 또는(확인만) 두 번째 확인 표시 하나뿐. 작업 내용은 넣을 수 없다
+            if body != {} and not (action is approval_confirm and set(body) == {"irreversible_ack"} and body["irreversible_ack"] is True):
                 raise CrmError("ARG-INVALID", "확인 요청에는 작업 내용을 넣을 수 없어요.")
-            out = await run_in_threadpool(action, uid, request.path_params["sid"], request.path_params["aid"])
+            args = (uid, request.path_params["sid"], request.path_params["aid"])
+            out = await run_in_threadpool(action, *args, **({"irreversible_ack": True} if body else {}))
             return JSONResponse(out, headers={"cache-control": "no-store"})
         except CrmError as e:
             return _err(e)
@@ -2103,7 +2173,7 @@ class Routes:
                               parse_constant=lambda _v: (_ for _ in ()).throw(ValueError("constant")))
         except (ValueError, UnicodeDecodeError, RecursionError):
             raise CrmError("ARG-INVALID", "JSON 본문이 필요해요.") from None
-        if not isinstance(body, dict) or body.get("tool") not in ("list", "find", "read", "write", "decide"):
+        if not isinstance(body, dict) or body.get("tool") not in ("list", "find", "read", "write", "decide", "purge"):
             raise CrmError("ARG-INVALID", "도구 이름이 올바르지 않아요.")
         tool = body["tool"]
         common = {"session_id", "turn_id", "tool", "params"}
@@ -2114,9 +2184,9 @@ class Routes:
         if (not isinstance(body["session_id"], str) or not re.fullmatch(r"cs_[0-9a-f]{24}", body["session_id"])
                 or not isinstance(body["turn_id"], str) or not re.fullmatch(r"ct_[0-9a-f]{24}", body["turn_id"])):
             raise CrmError("ARG-INVALID", "현재 대화와 턴 식별자가 필요해요.")
-        if tool in ("read", "write", "decide") and (not isinstance(body.get("op"), str) or not body["op"] or len(body["op"]) > 128):
+        if tool in ("read", "write", "decide", "purge") and (not isinstance(body.get("op"), str) or not body["op"] or len(body["op"]) > 128):
             raise CrmError("ARG-INVALID", "op 값이 올바르지 않아요.")
-        if tool in ("read", "write", "decide") and "bind" in body and (not isinstance(body["bind"], str) or len(body["bind"]) > 128):
+        if tool in ("read", "write", "decide", "purge") and "bind" in body and (not isinstance(body["bind"], str) or len(body["bind"]) > 128):
             raise CrmError("ARG-INVALID", "bind 값이 올바르지 않아요.")
         if not isinstance(body["params"], dict):
             raise CrmError("ARG-INVALID", "params 객체가 필요해요.")

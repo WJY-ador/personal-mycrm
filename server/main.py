@@ -49,7 +49,7 @@ from envnames import env
 INSTRUCTIONS = """이 서버는 사용자의 「내 판단 대시보드」다. 사용자의 기록에서 판단 후보를 찾고, 사용자가 원문과 대조해 남길지 정한다.
 
 규칙:
-- 기록(record_add)은 사용자의 말을 그대로 저장한다. 다듬거나 요약하지 않는다.
+- 기록(record_add)은 사용자의 말을 그대로 저장한다. 다듬거나 요약하지 않는다. 예외 하나: 웹 AI 대화에서 사용자가 "이 대화 남겨 줘"류를 말하면 대화를 정리한 기록 초안(text_process=structured, decision_owner=self)을 쓴다. 이 기록은 확인 카드에 전문이 보이고, 사용자가 카드로 확인해야 저장된다. 그 카드 확인을 사용자가 "이 정리의 결정은 내가 했다"고 말한 것으로 본다.
 - 후보 근거는 원문 그대로인 기록이거나, 사용자가 「이 정리의 결정은 내가 했다」고 말한 정리 기록(decision_owner=self)이다. 그 표시는 사용자가 그렇게 말한 기록에만 붙인다(record_add 인자, 이미 넣은 기록은 record_provenance_set). 네가 추정해서 붙이지 않는다.
 - 사용자가 고치라고 말한 구절만 record_edit 로 바꾼다. 다듬기·맞춤법 제안을 스스로 하지 않는다. 내가 결정한(남기기·남기지 않기) 판단이 붙은 글은 고칠 수 없다 — 고친 글은 새 기록으로 남긴다.
 - 후보(candidates_propose)는 네가 뽑되, 각 후보의 quote 는 그 기록 원문에서 글자 그대로 복사한 연속 구간이어야 한다. 원문에 같은 구간이 두 번 이상 나오면 앞뒤를 포함해 한 곳만 가리키게 더 길게 인용한다. 원문에 없는 사실·수치를 만들지 않는다. 타인의 말로 보이는 문장은 후보로 내지 않는다. 기록 1편당 최대 3개 — 넘기면 거절된다.
@@ -229,6 +229,9 @@ def record_add(
     source_location: Annotated[str, Field(description="출처 연결: 위치 — 파일 경로·URL 등 (선택)")] = "",
     decision_owner: Annotated[Literal["", "self"],
                               Field(description="self = 사용자가 이 기록의 결정은 「내 결정」이라고 말했을 때만. 비우면 표시 없음")] = "",
+    text_process: Annotated[Literal["verbatim", "structured"],
+                            Field(description="verbatim = 사용자 말 그대로(기본). structured = 대화를 정리한 기록 — 웹 AI 확인 카드로 사용자가 "
+                                              "전문을 보고 확인한 대화 기록에만")] = "verbatim",
 ) -> dict:
     """기록 1편을 원문 그대로 남긴다. 직접 쓴 내 기록만 넣는다 — 남의 말·AI 요약은 넣지 않는다.
     남이 쓴 글은 넣지 않는다. 이미 넣었다면 record_provenance_set 으로 author_kind=external 표시한다.
@@ -237,7 +240,8 @@ def record_add(
     저장 뒤 사용자에게 '지금 후보를 뽑을까요?' 하나만 묻는다.
     저장한 본문은 사용자가 고치라고 말한 구절만 record_edit 로 바꾼다(내가 결정한 판단이 붙지 않은 글만, 이력이 남는다)."""
     ref = {"kind": source_kind, "name": source_name, "location": source_location} if source_name.strip() else None
-    r = db.record_add(uid_of(ctx), title, text, question_id or None, source, source_ref=ref, decision_owner=decision_owner or None)
+    r = db.record_add(uid_of(ctx), title, text, question_id or None, source, text_process=text_process, source_ref=ref,
+                      decision_owner=decision_owner or None)
     out = {"id": r["id"], "title": r["title"], "created": r["created"]}
     if ref is not None:
         out["source_id"], out["source_linked"] = r["source_id"], r["source_linked"]

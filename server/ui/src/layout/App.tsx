@@ -102,7 +102,8 @@ export function App() {
       {body}
       {at("ui-mast", gate ? null : <Mast ctx={island} />)}
       {at("foot", gate ? "표시 이름을 정하면 대시보드가 열려요." : loadedAt ? `불러온 시각 ${loadedAt}.` : "")}
-      {gate ? null : <ChatRoot ctx={island} />}
+      {/* AI 하나로 A2: 웹 AI가 켜져 있으면 옛 정리 서랍(features/chat)은 버튼, 안내, 서랍을 통째로 그리지 않는다. 꺼져 있으면 그대로 */}
+      {gate || S.switches?.webchat ? null : <ChatRoot ctx={island} />}
       {gate || !S.switches?.webchat ? null : <WebchatRoot ctx={island} />}
       <NameDialog ctx={nameCtx} />
       {at("ui-desk", <DeskDialog ctx={deskCtx} />)}

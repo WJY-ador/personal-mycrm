@@ -207,11 +207,14 @@ class ChatInjectionTests(unittest.TestCase):
 
     # ── 2: decide outside the 10 card ops, purge, pc_connect: rejected, no change, no card ──
     def test_blocked_operations_are_rejected_without_change(self):
-        decide_blocked = sorted(n for n, t in _PINNED_TIERS.items() if t == "decide" and n not in webchat.CHAT_APPROVABLE_OPS)
-        self.assertEqual(len(decide_blocked), 10)
-        attempts = [("decide", op, {}) for op in decide_blocked]
-        attempts += [("decide", "trash_purge", {}), ("purge", "trash_purge", {}),
-                     ("write", "pc_connect", {"installation_id": ""}), ("decide", "pc_connect", {"installation_id": ""})]
+        """AI 하나로 A3: decide, purge 는 전부 카드 대상이다. 남는 막힘 = pc_connect, 그리고 겉면과 등급이 다른 짝."""
+        self.assertEqual(webchat.CHAT_APPROVABLE_OPS, {n for n, t in _PINNED_TIERS.items() if t in ("decide", "purge")})
+        attempts = [("write", "pc_connect", {"installation_id": ""}), ("decide", "pc_connect", {"installation_id": ""}),
+                    ("purge", "pc_connect", {"installation_id": ""}),
+                    ("decide", "trash_purge", {"kind": "record", "target_id": self.records[1]["id"]}),
+                    ("purge", "trash_move", {"kind": "record", "target_id": self.records[1]["id"]}),
+                    ("write", "trash_purge", {"kind": "record", "target_id": self.records[1]["id"]}),
+                    ("decide", "record_add", {"text": "x"}), ("purge", "shell", {}), ("decide", "state_get", {})]
         self.read_injection(1)
         before = self.snapshot()
         for tool, op, params in attempts:
@@ -220,6 +223,92 @@ class ChatInjectionTests(unittest.TestCase):
                     self.call(tool, op, params, bind="AAAAAAAAAAAAAAAA")
                 self.assertEqual(self.snapshot(), before)
         self.assertEqual(self.cards(), [])
+
+    # ── AI 하나로 A5: an injected permanent delete or outbound send waits for two confirmations ──
+    def test_irreversible_cards_never_run_without_second_confirmation(self):
+        self.read_injection(1)
+        rid = self.records[0]["id"]
+        with patch.dict(os.environ, {"CRM_TRASH_ENABLED": "1"}):
+            db.trash_move(self.uid, "record", rid)
+            before = self.snapshot()
+            purge = self.call("purge", "trash_purge", {"kind": "record", "target_id": rid, "expected_revision": None},
+                              bind="AAAAAAAAAAAAAAAA")
+            send = self.call("decide", "feedback_send", {"kind": "bug", "text": "주입된 문의"})
+            for result in (purge, send):
+                self.assertEqual(result["status"], "pending_confirmation")
+            self.assertEqual(self.snapshot(), before)
+            listed = {a["op"]: a for a in webchat.approvals_list(self.uid, self.sid)}
+            self.assertTrue(listed["trash_purge"]["irreversible"] and listed["feedback_send"]["irreversible"])
+            self.assertEqual(listed["feedback_send"]["shown"]["보낼 글"], "주입된 문의")
+            for aid in (purge["approval_id"], send["approval_id"]):
+                with self.assertRaises(db.CrmError) as again:
+                    webchat.approval_confirm(self.uid, self.sid, aid)
+                self.assertEqual(again.exception.code, "APPROVAL-CONFIRM-AGAIN")
+            self.assertEqual(self.snapshot(), before)
+            self.assertEqual(webchat.approval_confirm(self.uid, self.sid, purge["approval_id"], irreversible_ack=True)["status"],
+                             "confirmed")
+            self.assertNotEqual(self.snapshot(), before)   # 두 번째 확인 뒤에만 영구 삭제 요청이 실행된다
+            webchat.approval_cancel(self.uid, self.sid, send["approval_id"])
+            self.assertEqual([a["status"] for a in webchat.approvals_list(self.uid, self.sid)], ["confirmed", "cancelled"])
+
+    # ── AI 하나로 A4: migration cards come from migration_apply_preview and go stale when plan_hash or expected_counts change ──
+    def test_migration_cards_bind_to_apply_preview(self):
+        import migration_mcp
+        pv = {"plan_id": "mp_synthetic", "state": "sealed", "plan_hash": "ab" * 32, "expected_counts": {"inserted": 3},
+              "counts": {"actions": {"insert": 3}}, "will_apply_rows": 3, "remaining_today": 200, "blocked": [],
+              "decision_deferred": 1, "decision_excluded": 0, "message": "기준은 미확정으로 들어가요."}
+        current = dict(pv)
+        applied = []
+        with patch("migration_mcp.migration_apply_preview", side_effect=lambda uid, plan_id: dict(current)), \
+             patch("migration_mcp.migration_apply", side_effect=lambda *a, **k: applied.append(a) or {"plan_id": "mp_synthetic", "via": "mcp"}):
+            before = self.snapshot()
+            # the model's plan_hash, expected_counts are not used: the card carries the server preview values
+            card = self.call("decide", "migration_apply", {"plan_id": "mp_synthetic", "plan_hash": "00" * 32,
+                                                            "expected_counts": {"inserted": 999}}, bind="AAAAAAAAAAAAAAAA")
+            row = [a for a in webchat.approvals_list(self.uid, self.sid) if a["id"] == card["approval_id"]][0]
+            self.assertEqual(row["params"], {"plan_id": "mp_synthetic", "plan_hash": "ab" * 32, "expected_counts": {"inserted": 3}})
+            self.assertEqual(row["shown"]["결과별 개수"], {"inserted": 3})
+            self.assertFalse(row["irreversible"])
+            self.assertEqual(self.snapshot(), before)
+            self.assertEqual(applied, [])
+            for key, value in (("plan_hash", "cd" * 32), ("expected_counts", {"inserted": 4})):
+                with self.subTest(changed=key):
+                    current.update({key: value})
+                    with self.assertRaises(db.CrmError) as stale:
+                        webchat.approval_confirm(self.uid, self.sid, card["approval_id"])
+                    self.assertEqual(stale.exception.code, "APPROVAL-STALE")
+                    current.update(pv)
+            self.assertEqual(applied, [])
+            self.assertEqual(webchat.approval_confirm(self.uid, self.sid, card["approval_id"])["status"], "confirmed")
+            self.assertEqual(len(applied), 1)
+            self.assertEqual(applied[0][1:], ("mp_synthetic", "ab" * 32, {"inserted": 3}))
+            cancel = self.call("decide", "migration_cancel", {"plan_id": "mp_synthetic"})
+            row = [a for a in webchat.approvals_list(self.uid, self.sid) if a["id"] == cancel["approval_id"]][0]
+            self.assertTrue(row["irreversible"])
+            with self.assertRaises(db.CrmError):
+                self.call("decide", "migration_revert", {"plan_id": "mp_synthetic", "extra": "x"})
+
+    # ── AI 하나로 A6: a conversation record card is saved structured + decision_owner=self only after confirmation ──
+    def test_wrap_record_card_marks_structured_self_only_after_confirmation(self):
+        body = "### 확인 카드를 두 번 누르게\n영구 삭제가 한 번에 나가면 안 된다고 내가 정했다.\n동기: 대화에 없음"
+        params = {"text": body, "title": "대화 정리", "text_process": "structured", "decision_owner": "self"}
+        before = self.snapshot()
+        cancelled = self.call("write", "record_add", params)["approval_id"]
+        card = [a for a in webchat.approvals_list(self.uid, self.sid) if a["id"] == cancelled][0]
+        self.assertEqual(card["shown"]["본문"], body)   # 전문 그대로
+        self.assertEqual(card["shown"]["가공 방식"], "structured")
+        self.assertEqual(card["shown"]["내 결정 표시"], "self")
+        webchat.approval_cancel(self.uid, self.sid, cancelled)
+        self.assertEqual(self.snapshot(), before)
+        aid = self.call("write", "record_add", params)["approval_id"]
+        self.assertEqual(self.snapshot(), before)
+        rid = webchat.approval_confirm(self.uid, self.sid, aid)["result"]["id"]
+        with db.tx() as c:
+            row = db._one(c, "SELECT body,author_kind,text_process,decision_owner FROM records WHERE user_id=%s AND id=%s", (self.uid, rid))
+        self.assertEqual((row["body"], row["author_kind"], row["text_process"], row["decision_owner"]),
+                         (body, "self", "structured", "self"))
+        with self.assertRaises(Exception):
+            self.call("write", "record_add", {**params, "text_process": "generated"})
 
     # ── 3: model bind ignored, identity keys in params rejected ──
     def test_model_bind_is_ignored_and_identity_params_are_rejected(self):
@@ -624,7 +713,7 @@ class ChatInjectionTests(unittest.TestCase):
         block = re.search(r"export const OP_NAME: Record<string, string> = \{(.*?)\};", text_ts, re.S)
         self.assertIsNotNone(block)
         ui_ops = set(re.findall(r"(?:^|[\s,{])([a-z_]+):\s*\"", block.group(1)))
-        self.assertEqual(len(webchat.CHAT_CARD_OPS), 24)
+        self.assertEqual(len(webchat.CHAT_CARD_OPS), 35)
         self.assertEqual(ui_ops, set(webchat.CHAT_CARD_OPS))
         self.assertEqual(agent_ops, set(webchat.CHAT_CARD_OPS))
 

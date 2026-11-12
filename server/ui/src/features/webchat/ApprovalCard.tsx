@@ -1,10 +1,10 @@
 // 확인 카드 — 무엇을 하려는지 한 줄 제목(op 한국어 이름) · 상태 · 바뀌는 내용(서버 shown 을 이름과 값의 줄로, 원문은 인용 꼴로).
 // shown 은 고쳐 쓰지 않는다: 서버가 준 순서 그대로, 값을 요약하거나 빼지 않는다(표현만 바꾼다). 긴 값은 높이 제한 상자 안에서 스크롤로 전부 보인다. 원본 JSON(shown, impact, params, 결과)은 "자세히" 안에 접는다.
-// 버튼과 서버 계약(취소, 확인하고 실행)은 그대로.
+// 버튼과 서버 계약(취소, 확인하고 실행)은 그대로. A5: 되돌릴 수 없는 카드는 표시 한 줄을 두고, 확인하고 실행 뒤 정말 실행을 한 번 더 눌러야 실행한다.
 import { mdhm } from "../../shared/date";
 import type { Approval } from "./api";
 import type { WebchatStore } from "./store";
-import { CARD_EMPTY, CARD_HEAD, CARD_IRREVERSIBLE, CARD_MORE, CARD_NULL, CARD_RAW, CARD_SHOWN, CARD_STATUS, OP_NAME } from "./text";
+import { CARD_AGAIN, CARD_BACK, CARD_CONFIRM, CARD_EMPTY, CARD_HEAD, CARD_IRREVERSIBLE, CARD_MORE, CARD_NULL, CARD_RAW, CARD_REALLY, CARD_SHOWN, CARD_STATUS, OP_NAME } from "./text";
 import css from "./Webchat.module.css";
 
 const QUOTE = /인용|원문|본문|문장|^전$|^후$/;   // 사용자가 쓴 글을 그대로 옮긴 값 — 인용 꼴
@@ -33,19 +33,26 @@ function Card({ a, s }: { a: Approval; s: WebchatStore }) {
   const when = a.status === "pending" ? `, ${mdhm(a.expires_at)}까지` : a.finished_at ? `, ${mdhm(a.finished_at)}` : "";
   const raw: [string, unknown][] = [["shown", a.shown], ["impact", a.impact], ["params", a.params]];
   if (a.status === "confirmed" && a.result !== null) raw.push(["result", a.result]);
+  const armed = a.status === "pending" && a.irreversible && s.approvalArmed === a.id;
+  const busy = s.approvalsLoading || !!s.approvalAction;
   return (
-    <article className={css.approval} data-op={a.op}>
+    <article className={css.approval} data-op={a.op} data-irreversible={a.irreversible ? "" : undefined}>
       <h5>{OP_NAME[a.op] || a.op}</h5>
-      <p className={css.approvalMeta}>{CARD_STATUS[a.status] || a.status}{when}{a.irreversible ? `, ${CARD_IRREVERSIBLE}` : ""}</p>
+      <p className={css.approvalMeta}>{CARD_STATUS[a.status] || a.status}{when}</p>
+      {a.irreversible && <p className={css.irreversible} data-irreversible-note="">{CARD_IRREVERSIBLE}</p>}
       <div className={css.shown} data-shown="" tabIndex={0} role="region" aria-label={CARD_SHOWN}><Shown v={a.shown} /></div>
       <details className={css.raw}><summary>{CARD_MORE}</summary>
         {raw.map(([k, v]) => <div key={k}><h6>{CARD_RAW[k]}</h6><pre>{jsonText(v)}</pre></div>)}
       </details>
       {a.status === "pending" && s.approvalAction === a.id && <p className={css.empty} role="status">처리 중…</p>}
-      {a.status === "pending" && <div className={css.row}>
-        <button type="button" className="secondary" disabled={s.approvalsLoading || !!s.approvalAction} onClick={() => void s.actOnApproval(a.id, "cancel")}>취소</button>
-        <button type="button" className="primary" disabled={s.approvalsLoading || !!s.approvalAction} onClick={() => void s.actOnApproval(a.id, "confirm")}>확인하고 실행</button>
-      </div>}
+      {armed && <p className={css.irreversible} role="alert">{CARD_AGAIN}</p>}
+      {a.status === "pending" && (armed ? <div className={css.row}>
+        <button type="button" className="secondary" disabled={busy} onClick={() => s.disarmApproval()}>{CARD_BACK}</button>
+        <button type="button" className="primary" disabled={busy} onClick={() => void s.actOnApproval(a.id, "confirm")}>{CARD_REALLY}</button>
+      </div> : <div className={css.row}>
+        <button type="button" className="secondary" disabled={busy} onClick={() => void s.actOnApproval(a.id, "cancel")}>취소</button>
+        <button type="button" className="primary" disabled={busy} onClick={() => void s.actOnApproval(a.id, "confirm")}>{CARD_CONFIRM}</button>
+      </div>)}
     </article>
   );
 }

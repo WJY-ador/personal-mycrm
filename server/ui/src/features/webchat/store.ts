@@ -46,6 +46,7 @@ export class WebchatStore {
   view: "chat" | "history" = "chat"; past: Session[] = []; pastLoading = false; pastError = "";
   approvals: Approval[] = []; approvalsLoading = false; approvalsError = ""; approvalAction = ""; approvalLine = ""; approvalBad = false;
   approvalResult: { id: string; result: unknown } | null = null;
+  approvalArmed = "";   // A5: 되돌릴 수 없는 카드의 첫 확인을 누른 카드 id — 정말 실행을 한 번 더 눌러야 서버로 간다
   replaced = false; trimmed = "";   // replaced = 다른 탭이 이 대화를 열어 이 탭의 SSE 가 끝남(다시 붙지 않는다) · trimmed = 재생에서 생략된 앞부분 안내
   private es: Es | null = null;
   private grantSeq = 0;
@@ -159,7 +160,7 @@ export class WebchatStore {
   }
 
   private resetApprovals() {
-    this.approvals = []; this.approvalsLoading = false; this.approvalsError = ""; this.approvalAction = ""; this.approvalLine = ""; this.approvalBad = false; this.approvalResult = null;
+    this.approvals = []; this.approvalsLoading = false; this.approvalsError = ""; this.approvalAction = ""; this.approvalLine = ""; this.approvalBad = false; this.approvalResult = null; this.approvalArmed = "";
     this.approvalsRequest = false; this.approvalsRequestSid = ""; this.approvalsRequestSeq++; this.approvalsPromise = null;
   }
 
@@ -227,13 +228,20 @@ export class WebchatStore {
     await request;
   }
 
+  // A5: 되돌릴 수 없는 카드(irreversible)는 첫 확인에서 서버로 보내지 않고 정말 실행을 기다린다. 두 번째 확인만 irreversible_ack 를 싣는다
+  disarmApproval() { if (this.approvalArmed) { this.approvalArmed = ""; this.emit(); } }
+
   async actOnApproval(id: string, action: "confirm" | "cancel") {
-    if (!this.sid || this.approvalAction || !this.approvals.some(a => a.id === id && a.status === "pending")) return;
+    const card = this.approvals.find(a => a.id === id && a.status === "pending");
+    if (!this.sid || this.approvalAction || !card) return;
     const sid = this.sid;
+    const ack = action === "confirm" && card.irreversible && this.approvalArmed === id;
+    if (action === "confirm" && card.irreversible && !ack) { this.approvalArmed = id; this.approvalLine = ""; this.approvalBad = false; this.emit(); return; }
+    this.approvalArmed = "";
     this.approvalAction = id; this.approvalLine = ""; this.approvalBad = false; this.approvalResult = null; this.emit();
     try {
       if (action === "confirm") {
-        const response = await this.api.confirmApproval(sid, id);
+        const response = await this.api.confirmApproval(sid, id, ack);
         if (this.sid !== sid) return;
         this.approvalResult = { id, result: response.result ?? null };
       } else {

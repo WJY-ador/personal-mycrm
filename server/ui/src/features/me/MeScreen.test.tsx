@@ -45,7 +45,7 @@ test("기록을 성공적으로 모두 읽어 0건일 때만 첫 기록 안내�
   expect(intro!.textContent).toContain("ChatGPT나 Claude");
   expect(intro!.querySelector("p")!.textContent).toContain("ChatGPT나 Claude에 MyCRM을 연결한 대화");
   expect(intro!.querySelector("p")!.textContent).not.toContain("PC 연결");
-  expect(intro!.querySelectorAll("p")[1].textContent).toContain("웹의 AI 대화는 본인 PC 연결");
+  expect(intro!.querySelectorAll("p")[1].textContent).toContain("웹의 AI는 본인 PC 연결");
   const help = intro!.querySelector("a");
   expect(help?.tagName).toBe("A");
   expect(help?.getAttribute("href")).toBe("/help");

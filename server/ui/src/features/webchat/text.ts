@@ -1,6 +1,6 @@
-// 웹 「대화」(구독 AI 채팅) 문구 — 서버 오류 코드 → 사용자 문장. 모르는 코드 = 서버 msg. 화면 글자는 이 파일에 모은다.
+// 웹 AI(구독 AI 채팅, AI 하나로 A1: 탭 줄 버튼과 패널 제목은 "AI") 문구 — 서버 오류 코드 → 사용자 문장. 모르는 코드 = 서버 msg. 화면 글자는 이 파일에 모은다.
 export const TEXT_MAX = 8000;   // server/webchat.py TEXT_MAX_CHARS 와 같은 값
-export const TITLE = "AI 대화";
+export const TITLE = "AI";
 export const EMPTY = "연결된 AI와 대화해요. 기록을 남기거나 바꾸는 일은 MyCRM의 기존 권한과 확인 규칙을 따라요.";
 export const PC_ON = "PC 연결됨";
 export const PC_OFF = "PC 꺼짐";
@@ -54,13 +54,17 @@ export const PAST_NOTE = "지난 대화예요. 읽기만 할 수 있어요. 이�
 export const PAST_EMPTY = "이 대화에는 남은 메시지가 없어요.";
 export const BUSY_NEW = "답이 끝난 뒤 새 대화를 시작할 수 있어요.";
 
-// 확인 카드 — 확인 카드 대상 op(server/webchat.py CHAT_CARD_OPS) 24개 = decide 10 + write 14. 모르는 op = op 이름 그대로.
+// 확인 카드 — 확인 카드 대상 op(server/webchat.py CHAT_CARD_OPS) 35개 = decide 20 + purge 1 + write 14(AI 하나로 A3). 모르는 op = op 이름 그대로.
 // 키 집합은 서버, agent/chat_approval_context.py 와 같아야 한다(server/test_chat_injection.py 가 대조한다)
 export const OP_NAME: Record<string, string> = {
   record_edit: "기록 고치기", record_provenance_set: "기록 작성자 표시 바꾸기", candidate_decide: "판단 후보 정하기",
   definition_archive: "자료 종류 보관하기", definition_restore: "자료 종류 보관 풀기", person_delete: "사람 지우기",
   source_reflection_review: "읽고 든 생각 검토 표시 바꾸기", source_reflection_delete: "읽고 든 생각 지우기",
   trash_move: "휴지통으로 옮기기", trash_restore: "휴지통에서 되살리기",
+  definition_apply: "자료 종류 제안 적용하기", item_decide: "항목 정하기", inbox_decide: "승인 대기 글 정하기",
+  feedback_send: "운영자에게 문의 보내기", migration_apply: "이관 반영하기", migration_cancel: "이관 취소하기",
+  migration_revert: "이관 되돌리기", migration_token_send: "이관 토큰을 PC 앱으로 보내기", pc_forget: "PC 연결 해제하기",
+  token_revoke: "토큰 폐기하기", trash_purge: "영구 삭제하기",
   layout_set: "화면 배치 바꾸기", layout_reset: "화면 배치 처음으로", display_name_set: "표시 이름 바꾸기",
   question_add: "질문 더하기", profile_set: "프로필 항목 저장하기", record_add: "기록 남기기",
   record_attach: "기록 붙일 곳 정하기", record_title_set: "기록 제목 바꾸기", candidates_propose: "판단 후보 제안하기",
@@ -72,7 +76,12 @@ export const CARD_MORE = "자세히";
 export const CARD_SHOWN = "실행할 내용";
 export const CARD_RAW: Record<string, string> = { shown: "화면에 보인 내용(원본)", impact: "영향(원본)", params: "실행할 매개변수(원본)", result: "실행 결과(원본)" };
 export const CARD_STATUS: Record<string, string> = { pending: "확인 대기", confirmed: "확인해 실행함", cancelled: "취소함" };
-export const CARD_IRREVERSIBLE = "되돌릴 수 없음";
+export const CARD_IRREVERSIBLE = "되돌릴 수 없어요";
+// A5: 되돌릴 수 없는 카드는 두 번 확인 — 첫 버튼 뒤 정말 실행 한 번 더(서버도 두 번째 확인 표시 없이는 실행하지 않는다)
+export const CARD_CONFIRM = "확인하고 실행";
+export const CARD_AGAIN = "되돌릴 수 없는 작업이에요. 실행하려면 한 번 더 눌러 주세요.";
+export const CARD_REALLY = "정말 실행";
+export const CARD_BACK = "그만두기";
 export const CARD_NULL = "없음";
 export const CARD_EMPTY = "빈 값";
 

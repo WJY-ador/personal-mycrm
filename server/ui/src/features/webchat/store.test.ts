@@ -363,13 +363,29 @@ test("승인 확인과 취소는 본문 없는 명시 endpoint를 호출하고 �
   await s.toggle(true);
   s.approvals = [{ id: "ap_1", turn_id: "ct_1", op: "update", params: {}, shown: {}, impact: {}, irreversible: false, status: "pending", created_at: "", expires_at: "", finished_at: null, result: null }];
   await s.actOnApproval("ap_1", "confirm");
-  expect(s.api.confirmApproval).toHaveBeenCalledWith("cs_1", "ap_1");
+  expect(s.api.confirmApproval).toHaveBeenCalledWith("cs_1", "ap_1", false);
   expect(s.approvalLine).toBe("요청을 확인했어요.");
   s.approvals = [{ ...s.approvals[0], id: "ap_2", status: "pending" }];
   await s.actOnApproval("ap_2", "cancel");
   expect(s.api.cancelApproval).toHaveBeenCalledWith("cs_1", "ap_2");
   expect(s.approvalLine).toBe("요청을 취소했어요.");
   expect(s.api.approvals).toHaveBeenCalledTimes(3);
+});
+
+test("A5: 되돌릴 수 없는 카드는 첫 확인에서 서버로 가지 않고, 두 번째 확인만 irreversible_ack 로 간다 · 다른 카드나 취소는 표시를 푼다", async () => {
+  const { s } = mk();
+  await s.toggle(true);
+  s.approvals = [{ id: "ap_1", turn_id: "ct_1", op: "trash_purge", params: {}, shown: {}, impact: {}, irreversible: true, status: "pending", created_at: "", expires_at: "", finished_at: null, result: null }];
+  await s.actOnApproval("ap_1", "confirm");
+  expect(s.api.confirmApproval).not.toHaveBeenCalled();
+  expect(s.approvalArmed).toBe("ap_1");
+  s.disarmApproval();
+  expect(s.approvalArmed).toBe("");
+  await s.actOnApproval("ap_1", "confirm");
+  await s.actOnApproval("ap_1", "confirm");
+  expect(s.api.confirmApproval).toHaveBeenCalledTimes(1);
+  expect(s.api.confirmApproval).toHaveBeenCalledWith("cs_1", "ap_1", true);
+  expect(s.approvalArmed).toBe("");
 });
 
 test("승인 실패는 이유를 알리고 재조회해 만료·중복 대기 카드를 제거한다", async () => {

@@ -46,8 +46,9 @@ _PINNED_TIERS = {
     "migration_cancel": "decide", "migration_revert": "decide", "migration_token_send": "decide",
     "pc_forget": "decide", "token_revoke": "decide", "trash_purge": "purge",
 }
-_ALLOWED_OPS = frozenset((tier, name) for name, tier in _PINNED_TIERS.items() if tier != "purge")
-CHAT_TOOL_NAMES = ("find", "read", "write", "decide")
+# AI 하나로 A3(2026-11-12): purge(trash_purge)도 대화 도구 목록에 든다. 실행은 decide 와 같이 확인 카드로만 한다(validate_call 이 바로 실행을 막는다)
+_ALLOWED_OPS = frozenset((tier, name) for name, tier in _PINNED_TIERS.items())
+CHAT_TOOL_NAMES = ("find", "read", "write", "decide", "purge")
 _TOOL_NAME_SET = frozenset(CHAT_TOOL_NAMES)
 _TIERS = frozenset(("read", "write", "decide", "purge"))
 
@@ -109,7 +110,7 @@ def _deny() -> ChatMcpDenied:
 
 
 def filter_tool_names(names) -> tuple[str, ...]:
-    """Expose only the four MyCRM facade surfaces; all direct/other tools vanish."""
+    """Expose only the five MyCRM facade surfaces; all direct/other tools vanish."""
     if isinstance(names, (str, bytes)):
         raise _deny()
     try:
@@ -147,7 +148,7 @@ def _catalog_object(catalog):
 
 
 def allowed_operations(catalog) -> frozenset[tuple[str, str]]:
-    """Return the pinned read/write/decide set only if catalog v1 matches exactly.
+    """Return the pinned read/write/decide/purge set only if catalog v1 matches exactly.
 
     `catalog` may be raw JSON text/bytes so duplicate JSON keys are detectable.
     Mapping callers must load trusted repository data without duplicate keys.
@@ -227,14 +228,15 @@ def validate_scope(principal, session, consent, now) -> ValidatedScope:
 def validate_call(surface: str, op: str, params, allowed_ops) -> None:
     """Validate a facade call before invoking the existing guarded dispatcher."""
     _check_allowed_ops(allowed_ops)
-    if surface not in ("read", "write", "decide") or not isinstance(op, str):
+    if surface not in ("read", "write", "decide", "purge") or not isinstance(op, str):
         raise _deny()
     if (surface, op) not in _ALLOWED_OPS:
         raise _deny()
     # A facade bind proves that the model obtained a preview, not that a
-    # human saw or approved it. Until chat has server-verified confirmation,
-    # do not let the agent execute decide operations or initiate PC pairing.
-    if surface == "decide" or op == "pc_connect":
+    # human saw or approved it. decide and purge run only from a server-owned
+    # confirmation card (webchat.approval_confirm calls facade.dispatch itself),
+    # so the agent never executes them here, nor initiates PC pairing.
+    if surface in ("decide", "purge") or op == "pc_connect":
         raise _deny()
     if params is None:
         params = {}
@@ -244,12 +246,12 @@ def validate_call(surface: str, op: str, params, allowed_ops) -> None:
         target, nested = params.get("op"), params.get("params")
         if not isinstance(target, str) or not isinstance(nested, Mapping) or ("bind" in nested or "uid" in nested or "user_id" in nested):
             raise _deny()
-        if not any(tier == "decide" and name == target for tier, name in _ALLOWED_OPS):
+        if not any(tier in ("decide", "purge") and name == target for tier, name in _ALLOWED_OPS):
             raise _deny()
 
 
 def _scrub_preview_schema(schema):
-    """find(op="decide_preview") lists every D∪P target in its op enum; keep allowlisted decide ops only."""
+    """find(op="decide_preview") lists every D∪P target in its op enum; keep allowlisted decide/purge ops only."""
     if not isinstance(schema, Mapping) or not isinstance(schema.get("properties"), Mapping):
         raise _deny()
     props = dict(schema["properties"])
@@ -261,7 +263,7 @@ def _scrub_preview_schema(schema):
         enum = op_prop["enum"]
         if not isinstance(enum, list) or any(not isinstance(name, str) for name in enum):
             raise _deny()
-        op_prop["enum"] = [name for name in enum if ("decide", name) in _ALLOWED_OPS]
+        op_prop["enum"] = [name for name in enum if ("decide", name) in _ALLOWED_OPS or ("purge", name) in _ALLOWED_OPS]
     props["op"] = op_prop
     return {**schema, "properties": props}
 
@@ -283,7 +285,7 @@ def filter_find_result(result, allowed_ops) -> dict:
             item = dict(family)
             tiers = family["ops_by_tier"]
             item["ops_by_tier"] = {tier: list(names) for tier, names in tiers.items()
-                                    if tier in ("read", "write", "decide") and isinstance(names, list)}
+                                    if tier in ("read", "write", "decide", "purge") and isinstance(names, list)}
             if any(tier in _TIERS and not isinstance(names, list) for tier, names in tiers.items()):
                 raise _deny()
             for tier, names in item["ops_by_tier"].items():
@@ -346,7 +348,7 @@ def find_existing(principal, session, consent, *, catalog, now, find_callback: C
     validate_scope(principal, session, consent, now)
     allowed_ops = allowed_operations(catalog)
     if op:
-        # `find(op=...)` may describe only an allowlisted read/write/decide op.
+        # `find(op=...)` may describe only an allowlisted read/write/decide/purge op.
         if not any(name == op for _tier, name in allowed_ops):
             raise _deny()
     result = find_callback(query=query, family=family, op=op)

@@ -36,6 +36,25 @@ class ApprovalHttpTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         confirm.assert_not_called()
 
+    def test_confirm_body_is_empty_or_exactly_the_second_confirmation(self):
+        """AI 하나로 A5: 확인 본문은 {} 또는 {"irreversible_ack": true} 하나뿐. 취소는 {} 뿐. 다른 꼴은 실행 전에 거절한다."""
+        cases = ((b'{}', 200, {}), (b'{"irreversible_ack":true}', 200, {"irreversible_ack": True}),
+                 (b'{"irreversible_ack":1}', 400, None), (b'{"irreversible_ack":"true"}', 400, None),
+                 (b'{"irreversible_ack":false}', 400, None), (b'{"irreversible_ack":true,"op":"trash_purge"}', 400, None))
+        for raw, status, kwargs in cases:
+            with self.subTest(body=raw), patch("webchat.enabled", return_value=True), \
+                 patch("webchat.approval_confirm", return_value={"status": "confirmed"}) as confirm:
+                response = asyncio.run(self.routes.approval_confirm(Request("POST", raw)))
+                self.assertEqual(response.status_code, status)
+                if kwargs is None:
+                    confirm.assert_not_called()
+                else:
+                    confirm.assert_called_once_with("synthetic-user", Request.path_params["sid"], Request.path_params["aid"], **kwargs)
+        with patch("webchat.enabled", return_value=True), patch("webchat.approval_cancel") as cancel:
+            response = asyncio.run(self.routes.approval_cancel(Request("POST", b'{"irreversible_ack":true}')))
+        self.assertEqual(response.status_code, 400)
+        cancel.assert_not_called()
+
     def test_list_returns_server_approvals_only(self):
         with patch("webchat.enabled", return_value=True), patch("webchat.approvals_list", return_value=[{"id": "ca_x"}]):
             response = asyncio.run(self.routes.approvals(Request()))
