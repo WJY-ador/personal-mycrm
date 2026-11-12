@@ -45,22 +45,29 @@ class ApprovalOutcomesContextTest(unittest.TestCase):
 
     def test_fixed_instructions_say_writes_wait_for_the_card_and_chain_next_turn(self):
         context = format_approval_outcomes(())
-        self.assertIn("쓰기(write)도 사용자가 카드로 확인한 뒤에만 실행된다", context)
+        self.assertIn("쓰기, 확정, 삭제(write, decide, purge)는 모두 사용자가 카드로 확인한 뒤에만 실행된다", context)
+        self.assertIn("되돌릴 수 없는 카드는 사용자가 두 번 확인한다", context)
         self.assertIn("다음 턴에 confirmed 결과의 created id", context)
+        # AI 하나로 A6: wrap 형식 규칙(짧게)
+        for rule in ("record_add(text_process=structured, decision_owner=self)", "주제마다 제목 한 줄과 문단 하나",
+                     "사용자 1인칭", "결정 하나에 문단 하나", "어휘는 사용자 것만", "AI 내부 추론은 쓰지 않는다",
+                     "동기: 대화에 없음"):
+            self.assertIn(rule, context)
 
-    def test_approvable_ops_are_decide_ten_plus_write_fourteen(self):
+    def test_approvable_ops_are_every_decide_purge_plus_write_fourteen(self):
         from agent import chat_approval_context as c
         writes = {"layout_set", "layout_reset", "display_name_set", "question_add", "profile_set",
                   "record_add", "record_attach", "record_title_set", "candidates_propose", "definition_propose",
                   "item_propose", "person_save", "source_create", "source_reflection_save"}
         self.assertEqual(c._CREATED_OPS, writes)
-        self.assertEqual(len(c._APPROVABLE_OPS), 24)
+        self.assertEqual(len(c._APPROVABLE_OPS), 35)
         self.assertEqual(c._APPROVABLE_OPS - writes, {
-            "record_edit", "record_provenance_set", "candidate_decide", "definition_archive",
-            "definition_restore", "person_delete", "source_reflection_review",
-            "source_reflection_delete", "trash_move", "trash_restore"})
-        for op in ("pc_connect", "trash_purge", "feedback_send", "migration_apply", "item_decide"):
-            self.assertNotIn(op, c._APPROVABLE_OPS)
+            "record_edit", "record_provenance_set", "candidate_decide", "definition_apply", "definition_archive",
+            "definition_restore", "item_decide", "person_delete", "source_reflection_review",
+            "source_reflection_delete", "inbox_decide", "trash_move", "trash_restore", "feedback_send",
+            "migration_apply", "migration_cancel", "migration_revert", "migration_token_send", "pc_forget",
+            "token_revoke", "trash_purge"})
+        self.assertNotIn("pc_connect", c._APPROVABLE_OPS)
         for op in sorted(writes):
             with self.subTest(op=op):
                 row = {"id": "ca_" + "1" * 24, "op": op, "status": "cancelled"}

@@ -31,8 +31,11 @@ from .chat_approval_context import format_approval_outcomes
 _SESSION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 _SERVER_NAME = "my-crm"
 _TOOL_PREFIX = "mcp__my-crm__"
-_ALLOWED_TIERS = {"read", "write", "decide"}
-_DENIED_TOOLS = {"purge", "trash_purge"}  # exact MyCRM aliases after _TOOL_PREFIX
+_ALLOWED_TIERS = {"read", "write", "decide", "purge"}
+# The purge surface (AI 하나로 A3) only creates a server-owned confirmation card, like decide. The direct
+# trash_purge tool name must never be exposed as a surface.
+_DENIED_TOOLS = {"trash_purge"}  # exact MyCRM aliases after _TOOL_PREFIX
+_SURFACE_NAMES = frozenset(("find", "read", "write", "decide", "purge"))  # the only MyCRM tools a turn may expose
 _ENV_ALLOW = {"HOME", "PATH", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL"}
 _FORBIDDEN_ENV = {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "ANTHROPIC_BASE_URL",
                   "OPENAI_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX"}
@@ -161,6 +164,10 @@ def _validate_launch(launch_context, verifier, model, cli_path, *, verify_files=
         for name, tier in tools.items():
             if (not isinstance(name, str) or not name.startswith(_TOOL_PREFIX)
                     or name[len(_TOOL_PREFIX):] in _DENIED_TOOLS or tier not in _ALLOWED_TIERS):
+                return None
+            # Each MyCRM surface carries exactly its own tier (find is read), so a purge alias cannot ride a decide grant.
+            tail = name[len(_TOOL_PREFIX):]
+            if tail not in _SURFACE_NAMES or tier != ("read" if tail == "find" else tail):
                 return None
         config = launch_context.config
         if not isinstance(config, dict) or set(config) != {"mcpServers"}:
@@ -356,7 +363,8 @@ def build_argv(cli_path: str, model: str, tools: tuple[str, ...], config_path: s
         raise ClaudeProviderUnavailable("cli-unavailable")
     if not _valid_model_id(model):
         raise ClaudeProviderUnavailable("model-unavailable")
-    if not tools or any(not isinstance(t, str) or not t.startswith(_TOOL_PREFIX) or t[len(_TOOL_PREFIX):] in _DENIED_TOOLS for t in tools):
+    if not tools or any(not isinstance(t, str) or not t.startswith(_TOOL_PREFIX) or t[len(_TOOL_PREFIX):] in _DENIED_TOOLS
+                        or t[len(_TOOL_PREFIX):] not in _SURFACE_NAMES for t in tools):
         raise ClaudeProviderUnavailable("tool-scope")
     argv = [cli_path, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
             "--model", model, "--restricted", "--strict-mcp-config", "--tools", "",
@@ -859,7 +867,7 @@ class ClaudeProviderFactory:
                 or not authorization.tools):
             raise ClaudeProviderUnavailable("launch-binding")
         tools = {"mcp__my-crm__find": "read"}
-        for tier in ("read", "write", "decide"):
+        for tier in ("read", "write", "decide", "purge"):
             if any(value == tier for value in authorization.tools.values()):
                 tools["mcp__my-crm__" + tier] = tier
         owner = tempfile.TemporaryDirectory(prefix="chat-claude-turn-", dir=self.temp_parent)

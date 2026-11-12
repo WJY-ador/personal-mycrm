@@ -108,6 +108,24 @@ class McpStdioBridgeTest(unittest.TestCase):
         self.assertIn("error", response)
         self.assertFalse(any(c[0] == "call" for c in self.client.calls))
 
+    def test_purge_surface_lists_trash_purge_and_forwards_to_card_path(self):
+        """AI 하나로 A3: purge 등급 op 가 허가에 있으면 purge 겉면이 보이고, 부르면 서버(카드 경로)로 그대로 간다."""
+        old = self.client.scope
+        self.client.scope = LaunchAuthorization(old.user_id, old.device_id, old.session_id, old.turn_id, old.provider,
+            old.model, old.grant_id, old.consent_challenge_id, old.expires_at,
+            MappingProxyType({**old.tools, "mcp__my-crm__trash_purge": "purge"}))
+        tools = self.message("tools/list")["result"]["tools"]
+        purge = {x["name"]: x for x in tools}["purge"]
+        self.assertEqual(purge["inputSchema"]["properties"]["op"]["enum"], ["trash_purge"])
+        for phrase in ("확인 카드", "두 번 확인"):
+            self.assertIn(phrase, purge["description"])
+        params = {"kind": "record", "target_id": "r_synthetic", "expected_revision": None}
+        result = self.message("tools/call", {"name": "purge", "arguments": {"op": "trash_purge", "params": params}}, 2)
+        self.assertIn("result", result)
+        self.assertEqual(self.client.calls[-1], ("call", "cs_synthetic", "ct_synthetic", "purge", "trash_purge", params, ""))
+        wrong = self.message("tools/call", {"name": "decide", "arguments": {"op": "trash_purge", "params": params}}, 3)
+        self.assertIn("error", wrong)
+
     def test_bridge_revalidation_rejects_changed_user_binding(self):
         self.assertIn("result", self.message("tools/list"))
         old = self.client.scope

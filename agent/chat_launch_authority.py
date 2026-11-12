@@ -20,7 +20,7 @@ from types import MappingProxyType
 AUTH_PATH = "/api/chat/launch-authorization"
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 _TOOL = re.compile(r"^mcp__my-crm__[a-z][a-z0-9_]{0,63}$")
-_TIERS = frozenset(("read", "write", "decide"))
+_TIERS = frozenset(("read", "write", "decide", "purge"))
 
 
 class LaunchAuthorizationDenied(RuntimeError):
@@ -93,7 +93,7 @@ class LaunchAuthorizationClient:
         """Post one facade call, bound to the session/turn from the checked grant."""
         try:
             if (type(authorization) is not LaunchAuthorization or authorization.expires_at <= time.time()
-                    or tool not in ("find", "read", "write", "decide") or not isinstance(params, dict)
+                    or tool not in ("find", "read", "write", "decide", "purge") or not isinstance(params, dict)
                     or any(key in params for key in ("uid", "user_id", "device_id", "session_id", "turn_id", "bind"))):
                 raise ValueError("scope")
             body = {"session_id": authorization.session_id, "turn_id": authorization.turn_id,
@@ -108,7 +108,7 @@ class LaunchAuthorizationClient:
                         or authorization.tools.get("mcp__my-crm__" + op) != tool):
                     raise ValueError("operation")
                 body["op"] = op
-                if tool == "decide":
+                if tool in ("decide", "purge"):
                     if not isinstance(bind, str) or len(bind) > 128:
                         raise ValueError("bind")
                     if bind:
@@ -169,8 +169,9 @@ class LaunchAuthorizationClient:
             raise ValueError("tools")
         for name, tier in tools.items():
             tail = name.removeprefix("mcp__my-crm__") if isinstance(name, str) else ""
-            if (not isinstance(name, str) or not _TOOL.fullmatch(name) or tail in {"purge", "trash_purge"}
-                    or tier not in _TIERS):
+            # AI 하나로 A3: trash_purge may appear only on the purge tier (a server card path); never as a tool named purge.
+            if (not isinstance(name, str) or not _TOOL.fullmatch(name) or tail == "purge"
+                    or tier not in _TIERS or (tier == "purge") != (tail == "trash_purge")):
                 raise ValueError("tools")
         return LaunchAuthorization(
             user_id=binding["user_id"], device_id=binding["device_id"], session_id=session_id,

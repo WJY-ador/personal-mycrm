@@ -552,12 +552,17 @@ class ClaudeProviderTest(unittest.TestCase):
         bad.tools = {"mcp__my-crm__trash_purge": "purge", "Bash": "write"}
         with self.assertRaises(chat_claude.ClaudeProviderUnavailable):
             self.provider(launch_context=bad)
-        # Otherwise-valid launch: only the exact MyCRM `purge` alias (allowed tier) may cause rejection.
+        # Otherwise-valid launch: a surface must carry its own tier (AI 하나로 A3: purge rides only the purge tier).
         self.launch.tools = {"mcp__my-crm__find": "read", "mcp__my-crm__purge": "decide"}
         with self.assertRaises(chat_claude.ClaudeProviderUnavailable):
             self.provider()
+        self.launch.tools = {"mcp__my-crm__find": "read", "mcp__my-crm__trash_purge": "purge"}
         with self.assertRaises(chat_claude.ClaudeProviderUnavailable):
-            chat_claude.build_argv(self.exe, "claude-sonnet-4-5", ("mcp__my-crm__purge",), "/tmp/c.json")
+            self.provider()
+        with self.assertRaises(chat_claude.ClaudeProviderUnavailable):
+            chat_claude.build_argv(self.exe, "claude-sonnet-4-5", ("mcp__my-crm__trash_purge",), "/tmp/c.json")
+        argv = chat_claude.build_argv(self.exe, "claude-sonnet-4-5", ("mcp__my-crm__find", "mcp__my-crm__purge"), "/tmp/c.json")
+        self.assertIn("mcp__my-crm__purge", argv)
 
     def test_rejects_session_ref_that_is_not_safe_cli_identifier(self):
         provider = self.provider()

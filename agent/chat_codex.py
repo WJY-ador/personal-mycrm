@@ -30,7 +30,7 @@ _THREAD_ID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA
 _ENV_ALLOW = {"HOME", "CODEX_HOME", "PATH", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL"}
 _FORBIDDEN_ENV = {"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_BASE_URL", "ANTHROPIC_BASE_URL"}
 _SERVER = "my_crm"
-_FORBIDDEN_TOOL_NAMES = {"trash_purge", "purge"}
+_FORBIDDEN_TOOL_NAMES = {"trash_purge"}
 MAX_LINE_BYTES = 256 * 1024
 MAX_STREAM_BYTES = 8 * 1024 * 1024
 
@@ -256,11 +256,11 @@ class CodexProviderFactory:
                 or not authorization.tools.get("mcp__my-crm__find")):
             raise CodexProviderUnavailable("launch-binding")
         tools = {"mcp__my-crm__find": "read"}
-        for tier in ("read", "write", "decide"):
+        for tier in ("read", "write", "decide", "purge"):
             if any(value == tier for name, value in authorization.tools.items()
                    if name != "mcp__my-crm__find"):
                 tools["mcp__my-crm__" + tier] = tier
-        # The server's decide surface only creates a pending confirmation card;
+        # The server's decide and purge surfaces only create a pending confirmation card;
         # final execution is a separate user-confirmed, one-time server action.
         owner = tempfile.TemporaryDirectory(prefix="codex-chat-turn-", dir=self.agent_home)
         context = None
@@ -282,7 +282,7 @@ class CodexProviderFactory:
             gateway_args = list(bridge_args)
             config = {"mcp_servers": {_SERVER: {"command": executable, "args": gateway_args,
                 "enabled": True, "required": True, "enabled_tools": enabled_tools,
-                "disabled_tools": ["purge", "trash_purge"]}},
+                "disabled_tools": ["trash_purge"]}},
                 "features": {name: False for name in _DISABLED_FEATURES}}
             env = dict(self.env)
             env["TMPDIR"] = runtime_dir
@@ -392,7 +392,8 @@ def _validate_launch(grant, verifier, model):
         if any(not isinstance(x, str) for x in denied):
             return None
         if server_minted:
-            allowed_surfaces = {"mcp__my-crm__find", "mcp__my-crm__read", "mcp__my-crm__write", "mcp__my-crm__decide"}
+            allowed_surfaces = {"mcp__my-crm__find", "mcp__my-crm__read", "mcp__my-crm__write", "mcp__my-crm__decide",
+                                "mcp__my-crm__purge"}
             if (set(tools) != set(grant.tools) or not set(tools) <= allowed_surfaces
                     or len(tools) != len(set(tools))):
                 return None
