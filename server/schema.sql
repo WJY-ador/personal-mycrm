@@ -655,6 +655,43 @@ CREATE TABLE IF NOT EXISTS schema_marks (
   at   timestamptz NOT NULL DEFAULT now()
 );
 
+-- 관리자 프로필·조직 기능 설정(2026-11-12, Salesforce Profile·Feature Settings·Setup Audit Trail). 조직 데이터 — 사용자 데이터가 아니라
+-- user_id 열이 없고 계정 삭제(DELETE_TABLES) 대상이 아니다. 판정·변경은 features.py 한 곳. 기본 프로필 2개·권한 시드·users.profile_id 열(FK,
+-- NULL = 표준 사용자)은 features.migrate 가 init_schema 끝에서 맞춘다. users.role 은 profile_id 의 거울(system_admin = admin).
+CREATE TABLE IF NOT EXISTS access_profiles (
+  id          text PRIMARY KEY CHECK (id ~ '^[a-z0-9_]{1,40}$'),   -- system_admin · standard_user · p_<hex>
+  name        text NOT NULL UNIQUE CHECK (char_length(name) BETWEEN 1 AND 80 AND name = btrim(name)),
+  description text NOT NULL DEFAULT '' CHECK (char_length(description) <= 500),
+  builtin     boolean NOT NULL DEFAULT false,               -- 기본 프로필 — 지울 수 없다
+  created     timestamptz NOT NULL DEFAULT now(),
+  updated     timestamptz NOT NULL DEFAULT now()
+);
+-- 기능 권한 체크 — 행 = 켬. 시스템 관리자는 행과 상관없이 전부(고정). feature = features.FEATURES 의 profile 범위 키
+CREATE TABLE IF NOT EXISTS access_profile_perms (
+  profile_id text NOT NULL REFERENCES access_profiles(id) ON DELETE CASCADE,
+  feature    text NOT NULL CHECK (feature ~ '^[a-z0-9_]{1,40}$'),
+  PRIMARY KEY (profile_id, feature)
+);
+-- 조직 기능 설정 — 기능마다 조직 전체 켜짐·꺼짐. 행이 없으면 env == "1"(첫 시작 시드 전). 시드 = main.lifespan 의 features.seed_org_from_env
+CREATE TABLE IF NOT EXISTS org_features (
+  feature    text PRIMARY KEY CHECK (feature ~ '^[a-z0-9_]{1,40}$'),
+  enabled    boolean NOT NULL,
+  updated    timestamptz NOT NULL DEFAULT now(),
+  updated_by text                                           -- 실행자 user id(FK 없음). 시드는 NULL
+);
+-- 변경 기록(P8) — 누가·언제·무엇을·전과 후. FK 없음(계정·프로필이 지워져도 남는다). subject = 기능 키 · 프로필 id · 사용자 id.
+-- from_val·to_val 엔 열거값·이름·권한 키만(본문·이메일 없음)
+CREATE TABLE IF NOT EXISTS setup_changes (
+  id        bigserial PRIMARY KEY,
+  at        timestamptz NOT NULL DEFAULT now(),
+  actor_id  text,                                           -- NULL = 시스템(시작 시드·CLI)
+  kind      text NOT NULL CHECK (kind IN ('seed','org_feature','profile_create','profile_update','profile_perm','profile_delete','user_profile')),
+  subject   text NOT NULL,
+  from_val  jsonb,
+  to_val    jsonb
+);
+CREATE INDEX IF NOT EXISTS ix_setup_changes_at ON setup_changes (at DESC);
+
 -- 문의 이력(P3, 2026-10-19). public = 사용자에게 보이는 사건(상태·답변), internal = 운영자만(메모·재분류).
 -- from_val·to_val 에는 열거값만(상태·kind). reply·note 사건은 값 없이 「바뀜」만. reason = privacy 에서 다른 kind 로 재분류한 사유.
 -- 문의 파기 = cascade 로 함께 지운다.

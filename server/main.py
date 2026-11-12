@@ -38,6 +38,7 @@ import auth
 import db
 import export_forms
 import facade
+import features
 import imports
 import migration
 import migration_mcp
@@ -544,8 +545,9 @@ def display_name_set(display_name: Annotated[str, Field(description="사용자�
 @mcp.tool()
 @guard
 def me_get(ctx: Context) -> dict:
-    """「나」 — 표시 이름 · nav(항상 "new" — 탐색은 하나) · 개수(확정 판단·기준·결정·사람·출처·요약/반응)."""
-    return db.me_home(uid_of(ctx))
+    """「나」 — 표시 이름 · nav(항상 "new" — 탐색은 하나) · 개수(확정 판단·기준·결정·사람·출처·요약/반응) · access(내 프로필 이름·켜진 기능, 읽기만)."""
+    uid = uid_of(ctx)
+    return {**db.me_home(uid), "access": features.access_of(uid)}
 
 
 @mcp.tool()
@@ -1218,6 +1220,12 @@ async def lifespan(app: Starlette) -> AsyncIterator[None]:
             print(f"[admin] 첫 관리자 지정(bootstrap) — {n}명 승격", flush=True)
     except Exception as e:
         print(f"[admin] bootstrap 실패 — 기동은 계속: {type(e).__name__}", flush=True)
+    try:   # 조직 기능 설정 첫 시드(2026-11-12) — 행이 없는 기능만 지금 env 값으로. 두 번째 시작부터 덮어쓰지 않는다. 실패해도 기동은 계속(행 없음 = env 그대로)
+        seeded = await run_in_threadpool(features.seed_org_from_env)
+        if seeded:
+            print(f"[features] 조직 기능 설정 초기값 {len(seeded)}개를 환경변수에서 채웠어요", flush=True)
+    except Exception as e:
+        print(f"[features] 초기값 시드 실패 — 기동은 계속: {type(e).__name__}", flush=True)
     await purge_once()   # 시작 때 1회 — 그 뒤는 _purger 가 PURGE_EVERY 마다
     flusher = asyncio.create_task(_usage_flusher())
     purger = asyncio.create_task(_purger())

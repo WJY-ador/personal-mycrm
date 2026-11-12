@@ -13,8 +13,9 @@ def env(name: str, default: str | None = None) -> str | None:
     return os.environ.get(PREFIX + name, default)
 
 
-# board 이전·연결 장치 스위치(구현계획 §2-10·§2-11 D5) — 코드 기본값 꺼짐. 값이 정확히 "1" 일 때만 켜진다.
-# 운영 env 는 켤 때만 하나씩 더한다(배포 때 미리 넣지 않는다). 각 쓰기 직전에 매번 읽는다(재시작 없이 시험이 바꾼다).
+# board 이전·연결 장치 스위치(구현계획 §2-10·§2-11 D5) — 코드 기본값 꺼짐.
+# 2026-11-12 관리자 프로필: 켜고 끄기는 관리자 화면의 조직 기능 설정(features.py)으로 옮겼다. 이 env 는 ① 첫 시작 때 조직 설정 초기값
+# ② 비상 끄기("1"·빈 값 = 조직 설정을 따름, 그 밖의 값 = 꺼짐)로만 남는다. 판정은 features.feature_on 하나다.
 SWITCHES = ("IMPORTS_ENABLED",                       # /api/imports 수신 전체
             "ACTIVITY_IMPORTS_ENABLED",              # 활동 즉시 적재
             "UNATTENDED_SUMMARY_IMPORTS_ENABLED",    # 무인(execution=unattended) AI 요약 접수 — 약관 확인 전 꺼 둔다
@@ -27,7 +28,9 @@ SWITCHES = ("IMPORTS_ENABLED",                       # /api/imports 수신 전�
 
 
 def switch_on(name: str) -> bool:
-    """SWITCHES 의 하나가 켜졌나 — env CRM_<name> == "1". 모르는 이름은 ValueError(오타로 늘 꺼지는 것을 막는다)."""
+    """SWITCHES 의 하나가 조직 단위로 켜졌나 — features.org_on 위임(사용자 프로필은 보지 않는다. 사용자 경로는 features.feature_on).
+    모르는 이름은 ValueError(오타로 늘 꺼지는 것을 막는다)."""
     if name not in SWITCHES:
         raise ValueError(name)
-    return env(name, "") == "1"
+    import features
+    return features.org_on(features.BY_ENV[name].key)

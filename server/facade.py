@@ -378,14 +378,14 @@ def _pv_person_delete(uid, p):
     r = _row("SELECT id,alias,revision FROM people WHERE user_id=%s AND id=%s AND trashed_at IS NULL", (uid, str(p["person_id"] or "")))
     if not r:
         raise db._nf("그 사람")
-    on = db.trash_on()
+    on = db.trash_on(uid)
     shown = {"사람": r["alias"], "결과": _delete_shown(on)}
     return {"revision": r["revision"], "body": _h(r["alias"]), "trash_on": on}, shown, {"person_id": r["id"]}, not on
 
 
 def _pv_source_reflection_delete(uid, p):
     r = _refl_row(uid, p["reflection_id"])
-    on = db.trash_on()
+    on = db.trash_on(uid)
     shown = {"유형": r["kind"], "본문": r["body"], "결과": _delete_shown(on)}
     return {"revision": r["revision"], "body": _h(r["kind"], r["body"]), "trash_on": on}, shown, {"reflection_id": r["id"]}, not on
 

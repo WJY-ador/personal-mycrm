@@ -25,7 +25,7 @@ from psycopg.types.json import Jsonb
 
 import db
 from db import CrmError, _all, _one, tx
-from envnames import switch_on
+from features import feature_on   # 판정 정본(2026-11-12) — 조직 설정 + 프로필 권한 + env 비상 끄기
 
 # 공개 상수 ─────────────────────────────────────────────
 CONTRACT = "canon-inbox/1"
@@ -539,11 +539,11 @@ def _new_token(stream_id):
     return tid, hashlib.sha256(secret.encode("ascii")).digest(), f"imp_{stream_id}.{tid}.{secret}"
 
 
-def switches() -> dict:
-    """스위치 5개 현재 값(웹 표시용)."""
-    return {"imports": switch_on("IMPORTS_ENABLED"), "activity": switch_on("ACTIVITY_IMPORTS_ENABLED"),
-            "unattended_summary": switch_on("UNATTENDED_SUMMARY_IMPORTS_ENABLED"), "inbox_approvals": switch_on("INBOX_APPROVALS_ENABLED"),
-            "board_migration": switch_on("BOARD_MIGRATION_ENABLED")}
+def switches(uid=None) -> dict:
+    """스위치 5개 현재 값(웹 표시용). uid = 그 사용자 프로필까지 본 값."""
+    return {"imports": feature_on(uid, "imports"), "activity": feature_on(uid, "activity_imports"),
+            "unattended_summary": feature_on(uid, "unattended_summary_imports"), "inbox_approvals": feature_on(uid, "inbox_approvals"),
+            "board_migration": feature_on(uid, "board_migration")}
 
 
 def _axes_split(c, uid, ids):
@@ -590,7 +590,7 @@ def device_list(uid: str) -> dict:
         rows = _all(c, f"SELECT {_DEV_COLS} FROM import_streams WHERE user_id=%s AND channel='device' ORDER BY created_at DESC, id DESC",
                     (uid,))
     devs = [_dev_out(r) for r in rows]
-    return {"devices": devs, "active": sum(1 for d in devs if d["active"]), "max": MAX_DEVICES, "switches": switches()}
+    return {"devices": devs, "active": sum(1 for d in devs if d["active"]), "max": MAX_DEVICES, "switches": switches(uid)}
 
 
 def _dev_lock(c, uid, device_id):
@@ -1117,7 +1117,7 @@ def submit(authorization: str, idempotency_key_header: str, raw: bytes) -> tuple
     삭제된 원천(휴지통·영구 삭제)이면 200 + _deleted_resp 꼴({..., "state": "deleted", "target_kind": None, "target_id": None,
       "source_deleted": "trash"|"purged"}) — 새 4xx 없음.
     실패는 CrmError — main.py 가 http_status(code) 와 {"code", "msg"} 로 바꾼다(본문·값을 되돌려 주지 않는다)."""
-    if not switch_on("IMPORTS_ENABLED"):
+    if not feature_on(None, "imports"):
         raise _off("IMPORTS-OFF", "가져오기")
     dev = authenticate(authorization)
     _rate(dev)
@@ -1143,9 +1143,9 @@ def submit(authorization: str, idempotency_key_header: str, raw: bytes) -> tuple
     if kind == "activity":
         if req["action"] not in pol.get("actions", []):
             raise CrmError("POLICY-DENIED", "이 장치에 허용하지 않은 행동이에요.")
-        if not switch_on("ACTIVITY_IMPORTS_ENABLED"):
+        if not feature_on(None, "activity_imports"):
             raise _off("ACTIVITY-IMPORTS-OFF", "활동 가져오기")
-    if kind == "self_summary" and req["execution"] == "unattended" and not switch_on("UNATTENDED_SUMMARY_IMPORTS_ENABLED"):
+    if kind == "self_summary" and req["execution"] == "unattended" and not feature_on(None, "unattended_summary_imports"):
         raise _off("SUMMARY-IMPORTS-OFF", "무인 요약 가져오기")
     uid = dev["user_id"]
     req_sha = hashlib.sha256(jcs(req)).digest()
@@ -1343,7 +1343,7 @@ def inbox_approve(uid: str, import_id: str) -> dict:
     · self_text 중 session-wrap/1 → records(self/structured, generation_kind=mixed, decision_owner=self, 출처 「세션 정리」)
     · activity_ref 있으면 activity_links(활동 → 기록, relation=reaction) · 접수 행 applied·현재 판 이동·payload 삭제.
     반환 {"import_id", "state": "applied", "record_id"}. 실패하면 전체 롤백."""
-    if not switch_on("INBOX_APPROVALS_ENABLED"):
+    if not feature_on(uid, "inbox_approvals"):
         raise _off("APPROVALS-OFF", "승인 대기 글의 승인")
     with tx() as c:
         db._daily_gate(c, uid, "records")   # users 잠금 + 기록 한도
@@ -1401,7 +1401,7 @@ def inbox_decide_preview(uid: str, p: dict):
     if r["state"] != "pending":
         raise CrmError("INBOX-RESOLVED", "이미 처리한 승인 대기예요.", "목록을 새로 고치세요.")
     if action == "approve":
-        if not switch_on("INBOX_APPROVALS_ENABLED"):
+        if not feature_on(uid, "inbox_approvals", c):
             raise _off("APPROVALS-OFF", "승인 대기 글의 승인")
         _approve_check(r)
     pl = r["payload"]
@@ -1543,7 +1543,7 @@ def migration_apply_row(uid: str, stream_id: str, row: dict, *, batch_id: str, m
     결과 {"import_id", "state": applied|noop, "target_kind": item|record, "target_id", "duplicate": bool}. 한 트랜잭션 — 실패하면
     업무 쓰기·대응표·관계·한도·감사 전부 롤백. 오류 = MIGRATION-OFF · MIGRATION-WINDOW-CLOSED · SOURCE-REVISION-CONFLICT ·
     IDEMPOTENCY-CONFLICT · KIND-CHANGED · TARGET-REVISION-CONFLICT · REF-NOT-FOUND · RATE-LIMIT(기록 200·제안 100·결정 300) · ARG-INVALID·LINK-INVALID."""
-    if not switch_on("BOARD_MIGRATION_ENABLED"):
+    if not feature_on(None, "board_migration"):
         raise _off("MIGRATION-OFF", "board 이전")
     if not isinstance(row, dict):
         raise CrmError("ARG-INVALID", "행은 객체예요.")

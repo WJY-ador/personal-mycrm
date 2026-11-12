@@ -31,11 +31,12 @@ class ChatMcpRouteTests(unittest.TestCase):
 
     def test_route_on_only_with_both_switches(self):
         # 2026-11-12 K: ATOMIC_DISPATCH_READY on. Both switches are still required.
-        with patch("webchat.enabled", return_value=True), patch("webchat.env", return_value=""):
+        # 2026-11-12: chat_mcp 판정은 features.feature_on(조직 설정·프로필 권한·env 비상 끄기) — 여기선 그 결과만 바꾼다
+        with patch("webchat.enabled", return_value=True), patch("features.feature_on", return_value=False):
             self.assertFalse(webchat.chat_mcp_enabled())
-        with patch("webchat.enabled", return_value=False), patch("webchat.env", return_value="1"):
+        with patch("webchat.enabled", return_value=False), patch("features.feature_on", return_value=True):
             self.assertFalse(webchat.chat_mcp_enabled())
-        with patch("webchat.enabled", return_value=True), patch("webchat.env", return_value="1"):
+        with patch("webchat.enabled", return_value=True), patch("features.feature_on", return_value=True):
             self.assertTrue(webchat.chat_mcp_enabled())
 
     def test_body_rejects_duplicates_unknown_identity_and_purge(self):

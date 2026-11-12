@@ -34,7 +34,8 @@ import db
 import imports
 import migrate_cli as _cli   # resolve_object·_field_problems·order_rows(명세 해석·순서 — CLI 와 같은 규칙)
 from db import CrmError, _all, _one, tx
-from envnames import env, switch_on
+from envnames import env
+from features import feature_on   # 판정 정본(2026-11-12)
 
 # ── 공개 상수(계약) ────────────────────────────────────────
 CONTRACT = "board-migration/2"
@@ -147,14 +148,14 @@ def allowed_users() -> set:
 
 def gate(uid: str):
     """켜는 조건 = 스위치 BOARD_MIGRATION_ENABLED + 사용자 allowlist. 발급·토큰 사용·확인·반영 때마다 본다."""
-    if not switch_on("BOARD_MIGRATION_ENABLED"):
+    if not feature_on(None, "board_migration"):
         raise _err("MIGRATION-OFF", "이관이 지금 꺼져 있어요.", "운영자가 켤 때까지 기다리세요. 스테이징한 자료는 PC 에 남아 있어요.")
     if uid not in allowed_users():
         raise _err("MIGRATION-NOT-ALLOWED", "이 계정은 이관을 쓸 수 없어요.", "운영자에게 이관 허용 목록에 넣어 달라고 하세요.")
 
 
 def switch_state(uid: str) -> dict:
-    return {"enabled": switch_on("BOARD_MIGRATION_ENABLED"), "allowed": uid in allowed_users()}
+    return {"enabled": feature_on(None, "board_migration"), "allowed": uid in allowed_users()}
 
 
 # 가안 X — 대화(MCP) 이관 스위치. CRM_MIGRATION_MCP_ENABLED == "1" 만 켜짐(기본 꺼짐, envnames.SWITCHES).
@@ -163,13 +164,13 @@ MCP_DEFER_MSG = ("대화 반영에선 기준이 모두 미확정으로 들어갑
                  "한 번에 확정까지 하려면 웹에서 반영하세요.")
 
 
-def mcp_on() -> bool:
-    return switch_on(MCP_SWITCH)
+def mcp_on(uid=None) -> bool:
+    return feature_on(uid, "migration_mcp")   # MCP_SWITCH 는 비상 끄기 env 이름(features.FEATURES 와 같다)
 
 
 def mcp_gate(uid: str):
     """MCP 이관 op(읽기 포함) — 스위치 CRM_MIGRATION_MCP_ENABLED 를 먼저 보고, 기존 스위치·allowlist(gate)를 그 위에 본다."""
-    if not mcp_on():
+    if not mcp_on(uid):
         raise _err("MIGRATION-OFF", "대화(MCP)에서 이관은 지금 꺼져 있어요.", "웹 「이관」 화면에서 하거나 운영자가 켤 때까지 기다리세요.")
     gate(uid)
 
@@ -235,7 +236,7 @@ def token_revoke(uid: str, token_id: str) -> dict:
 def authenticate(authorization: str) -> dict:
     """Bearer 이관 토큰 → {"user_id", "token_id"}. 순서: 스위치 → 토큰(상수 시간 비교) → 폐기·만료·사용자 상태 → allowlist → 요청 속도.
     일반 연결 장치 토큰(imp_…)·MCP·웹 쿠키는 받지 않는다. 사용자는 토큰으로만 정한다."""
-    if not switch_on("BOARD_MIGRATION_ENABLED"):
+    if not feature_on(None, "board_migration"):
         raise _err("MIGRATION-OFF", "이관이 지금 꺼져 있어요.", "운영자가 켤 때까지 기다리세요.")
     m = _TOKEN_RE.match(authorization or "")
     if not m:
@@ -946,7 +947,7 @@ def plans_list(uid: str) -> dict:
         _close_due(c, uid)
         rows = _all(c, f"SELECT {_PLAN_COLS} FROM migration_plans WHERE user_id=%s ORDER BY created_at DESC, id DESC LIMIT 20", (uid,))
         used = _used_today(c, uid)
-    return {"plans": [_plan_out(r) for r in rows], **switch_state(uid), "mcp_enabled": mcp_on(),
+    return {"plans": [_plan_out(r) for r in rows], **switch_state(uid), "mcp_enabled": mcp_on(uid),
             "limits": {"daily": DAILY_LIMIT, "used_today": used, "plan_items": PLAN_MAX_ITEMS, "plan_days": PLAN_DAYS,
                        "staging_bytes": USER_STAGING_MAX_BYTES, "open_plans": OPEN_PLANS_MAX}}
 
@@ -1260,7 +1261,7 @@ def plan_revert(uid: str, plan_id: str) -> dict:
     휴지통이 꺼져 있으면 SWITCH-OFF. 반환 {plan_id, state, trashed:{record,item}, kept_source, kept_updated, restore_until, already_reverted}."""
     _sweep(uid)
     gate(uid)
-    if not db.trash_on():
+    if not db.trash_on(uid):
         raise db._trash_off()
     with db.tx_scope() as c:
         db._user_lock(c, uid)
