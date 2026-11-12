@@ -114,6 +114,18 @@ principle 정의의 `policy.promotion`. 기본 `{"confirmed_claims_min":2,"claim
 | user_roles | 역할 → 오브젝트 1개. 지금 role = classify(기록 분류 대상) | users M-D · object_defs(CASCADE) |
 기능 플래그 `CRM_FEATURE_STANDARD`·`SOURCES`(미설정 off)는 신규 시드·편입·출처 쓰기만 막는다 — 읽기·잠금은 항상. 상세: `server/README.md` 「표준·출처·기능 플래그」 절.
 
+## 관리자 프로필·조직 기능 설정 (2026-11-12)
+
+조직 데이터다 — `user_id` 열이 없고 계정 삭제(`DELETE_TABLES`) 대상이 아니다. 판정·변경의 정본은 `features.py`, 운영 절차는 `README.md` 「관리자 프로필·조직 기능 설정」.
+
+| 테이블 | 역할 | 관계 |
+|---|---|---|
+| access_profiles | 프로필(Salesforce Profile). 기본 둘 `system_admin`·`standard_user`(`builtin`, 지울 수 없다) + 복제한 `p_<hex>`. 이름 UNIQUE | — |
+| access_profile_perms | 프로필의 기능 권한 체크(행 = 켬). 시스템 관리자는 행과 상관없이 전부 | access_profiles M-D |
+| org_features | 조직 기능 설정(기능마다 켜짐·꺼짐). 행 없음 = 시드 전(env == "1" 이 판정) | — |
+| setup_changes | 변경 기록(Setup Audit Trail) — 실행자·종류·대상·전·후 값. FK 없음 | — |
+| users.profile_id | 사용자 프로필(NULL = 표준 사용자). `users.role` 은 이 열의 거울(`system_admin` = admin) | access_profiles Lookup |
+
 ## 제약 검증
 Governor limit 없음. M-D 깊이 최대 2(users→candidates→candidate_history). cascade 끝은 users 삭제 = 그 사용자 데이터 전체 삭제 — 계정 삭제 요청 처리와 같다. 인덱스: `(user_id, question_id, decision)`, `(user_id, created)`.
 
