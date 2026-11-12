@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "canon-inbox-1.schema.json",
   "title": "canon-inbox/1 schema_revision 2 — POST /api/imports 요청 본문",
-  "$comment": "정본 판정 = server/imports.py validate() + 공용 벡터 vectors/canon-inbox-1.json. 이 스키마로 표현 못 하는 규칙: (1) UTF-8 JSON 객체 하나·중복 키 금지·실수(1.0 포함) 금지 (2) previous_revision ≠ revision (3) transform_version 별 허용 kind·action·provider(board-likes/1 = activity·like·sns, self-text/1 = self_text, self-summary/1 = self_summary, session-wrap/1 = self_text) (4) title·body 에 URL·이메일·로컬 경로 꼴 금지, title 한 줄, body 8000 코드 포인트·UTF-8 32 KiB (5) source_created_at 과 source_date 는 함께 쓰지 않음 (6) people 의 (hmac, role) 중복·axes 중복 금지 (7) 요청 64 KiB, activity 요청 8 KiB. Idempotency-Key = ci1_ + sha256hex(JCS([\"canon-inbox/1\", 2, source_instance_id, original_id, revision])). JCS = json.dumps(sort_keys=True, separators=(',', ':'), ensure_ascii=False).",
+  "$comment": "정본 판정 = server/imports.py validate() + 공용 벡터 vectors/canon-inbox-1.json. 이 스키마로 표현 못 하는 규칙: (1) UTF-8 JSON 객체 하나·중복 키 금지·실수(1.0 포함) 금지 (2) previous_revision ≠ revision (3) transform_version 별 허용 kind·action·provider(board-likes/1 = activity·like·sns, board-feed/1 = activity·save·sns|web|kakao, board-reactions/1 = activity·like|comment|repost|reply·sns|web, board-mail/1 = activity·read|save|send|reply·mail, self-text/1 = self_text, self-summary/1 = self_summary, session-wrap/1 = self_text, collected-post/1 = collected_post) (4) title·body 에 URL·이메일·로컬 경로 꼴 금지, title 한 줄, body 8000 코드 포인트·UTF-8 32 KiB (5) source_created_at 과 source_date 는 함께 쓰지 않음 (6) people 의 (hmac, role) 중복·axes 중복 금지 (7) 요청 64 KiB, activity 요청 8 KiB (8) collected_post: title·author_display·ai 문자열에 URL·이메일·로컬 경로 꼴 금지, title 한 줄. post_url 만 URL 허용 — https:// 시작·공백 없음·2000 코드 포인트, 이메일·로컬 경로 꼴은 거절. posted_on 은 빠짐과 null 이 같다. Idempotency-Key = ci1_ + sha256hex(JCS([\"canon-inbox/1\", 2, source_instance_id, original_id, revision])). JCS = json.dumps(sort_keys=True, separators=(',', ':'), ensure_ascii=False).",
   "type": "object",
   "required": ["contract", "schema_revision", "source_instance_id", "original_id", "revision", "previous_revision", "kind", "execution",
                "transform_version", "policy_revision"],
@@ -13,9 +13,10 @@
     "original_id": {"type": "string", "pattern": "^o_[0-9a-f]{32}$"},
     "revision": {"type": "string", "pattern": "^v_[0-9a-f]{32}$"},
     "previous_revision": {"type": ["string", "null"], "pattern": "^v_[0-9a-f]{32}$"},
-    "kind": {"enum": ["self_text", "activity", "self_summary"]},
+    "kind": {"enum": ["self_text", "activity", "self_summary", "collected_post"]},
     "execution": {"enum": ["attended", "unattended"]},
-    "transform_version": {"enum": ["board-likes/1", "self-text/1", "self-summary/1", "session-wrap/1"]},
+    "transform_version": {"enum": ["board-likes/1", "board-feed/1", "board-reactions/1", "board-mail/1", "self-text/1", "self-summary/1",
+                                   "session-wrap/1", "collected-post/1"]},
     "policy_revision": {"type": "integer", "minimum": 1}
   },
   "oneOf": [
@@ -78,6 +79,36 @@
         }
       },
       "required": ["body", "generation"],
+      "additionalProperties": false
+    },
+    {
+      "$comment": "수집 글(2026-11-12) — 남이 쓴 공개 글의 URL·제목 줄·메타·AI 요약/분석. 원문 본문은 PC(raw_id)에만. 서버는 사용자 오브젝트 collected_posts 의 항목으로 바로 담는다(없으면 OBJECT-MISSING 503). state removed = 그 항목을 휴지통으로.",
+      "properties": {
+        "kind": {"const": "collected_post"},
+        "contract": true, "schema_revision": true, "source_instance_id": true, "original_id": true, "revision": true,
+        "previous_revision": true, "execution": true, "transform_version": true, "policy_revision": true,
+        "raw_id": {"type": "string", "pattern": "^[0-9a-f]{48}$", "$comment": "PC 원본 식별자 — 원본마다 하나, 다시 보낼 때 같은 값"},
+        "channel": {"enum": ["linkedin", "reddit", "kakao", "threads", "blog", "web"]},
+        "collected_on": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
+        "title": {"type": "string", "minLength": 1, "maxLength": 200, "$comment": "원문 첫 줄에서 잘라 낸 글자 그대로(요약 아님), 줄바꿈 없음"},
+        "state": {"enum": ["pending", "kept", "removed"]},
+        "post_url": {"type": "string", "pattern": "^https://\\S+$", "maxLength": 2000},
+        "author_display": {"type": "string", "minLength": 1, "maxLength": 200, "$comment": "공개 글에 보이는 표시 이름 — 표시용 글자만(사람 항목 아님)"},
+        "posted_on": {"type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
+        "axes": {"type": "array", "maxItems": 10, "uniqueItems": true, "items": {"type": "string", "pattern": "^i_[A-Za-z0-9_-]{4,40}$"}},
+        "ai": {
+          "type": "object", "additionalProperties": false, "$comment": "AI 가 만든 값 — 서버 ai_* 필드에만. 내 글·후보·꺼내기 인용 아님",
+          "properties": {
+            "grade": {"enum": ["signal", "news", "noise"]},
+            "summary": {"type": "string", "minLength": 1, "maxLength": 500},
+            "as_is": {"type": "string", "minLength": 1, "maxLength": 1000},
+            "to_be": {"type": "string", "minLength": 1, "maxLength": 1000},
+            "ops": {"type": "string", "minLength": 1, "maxLength": 1000},
+            "points": {"type": "array", "maxItems": 12, "items": {"type": "string", "minLength": 1, "maxLength": 300}}
+          }
+        }
+      },
+      "required": ["raw_id", "channel", "collected_on", "title", "state"],
       "additionalProperties": false
     }
   ]

@@ -80,6 +80,10 @@
       "required": false
     },
     {
+      "path": "agent/adapters/collected.py",
+      "required": false
+    },
+    {
       "path": "agent/adapters/likes.py",
       "required": false
     },

@@ -19,10 +19,11 @@ VEC = os.path.join(os.path.dirname(__file__), "..", "..", "server", "contract", 
 # 클라이언트 코드 → 허용되는 서버 규칙
 RULE_MAP = {
     "UNKNOWN-FIELD": {"unknown_field"}, "MISSING": {"required"}, "CONTRACT": {"const"},
-    "SCHEMA-REVISION": {"const"}, "ENUM": {"enum"}, "FORMAT": {"format", "positive_int"},
+    "SCHEMA-REVISION": {"const"}, "ENUM": {"enum"}, "FORMAT": {"format", "positive_int", "https_required"},
+    "TYPE": {"string_required", "object_required"},
     "SELF-PARENT": {"same_as_revision"}, "UNREGISTERED-TRANSFORM": {"unregistered"},
     "TRANSFORM-KIND": {"kind_mismatch"}, "NOT-IN-TRANSFORM": {"not_in_transform"},
-    "DATE": {"date_required", "date_invalid"}, "DUPLICATE": {"duplicate"}, "TOO-MANY": {"list_max_10"},
+    "DATE": {"date_required", "date_invalid"}, "DUPLICATE": {"duplicate"}, "TOO-MANY": {"list_max_10", "list_max_12"},
     "EMPTY": {"empty"}, "TOO-LONG": {"too_long"}, "BLOCKED-URL": {"url_not_allowed"},
     "BLOCKED-EMAIL": {"email_not_allowed"}, "BLOCKED-PATH": {"path_not_allowed"},
     "SINGLE-LINE": {"single_line"}, "BOTH-DATES": {"exclusive_with_source_created_at"},

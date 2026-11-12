@@ -179,7 +179,8 @@ class ForbiddenFieldsTest(unittest.TestCase):
         self.assertCode(self_summary(generation=g), "SHAPE")
 
     def test_transform_registry(self):
-        self.assertCode(activity(transform_version="board-feed/1"), "UNREGISTERED-TRANSFORM")
+        self.assertCode(activity(transform_version="board-kakao/1"), "UNREGISTERED-TRANSFORM")
+        self.assertCode(activity(transform_version="collected-post/1"), "TRANSFORM-KIND")
         self.assertCode(activity(transform_version="self-summary/1"), "TRANSFORM-KIND")
         self.assertCode(activity(transform_version="x" * 100), "UNREGISTERED-TRANSFORM")
 
