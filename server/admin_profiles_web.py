@@ -95,13 +95,13 @@ async def profiles(site, request):
            f'{_profile_options(rows, features.STANDARD_USER)}</select></label>'
            f'<label>새 이름<input name="name" maxlength="{features.NAME_MAX}" required></label>'
            f'<label>설명<input name="description" maxlength="{features.DESC_MAX}"></label><button type="submit">새 프로필 만들기</button></form>')
-    body = (f'<div class="hdr"><div><p class="eyebrow">Setup</p><h1>Profiles — 프로필 {len(rows)}개</h1></div></div>'
+    body = (f'<div class="hdr"><div><p class="eyebrow">Setup</p><h1>프로필 {len(rows)}개</h1></div></div>'
             f'<p class="note">사용자마다 프로필 하나예요. 프로필은 쓸 수 있는 기능 권한 묶음이에요. 기능은 조직 기능 설정이 켜져 있고 '
             f'프로필에 권한이 있을 때만 열려요. 관리자 화면은 시스템 관리자 프로필만 써요.</p>'
             f'<h2 class="sec">새 프로필</h2><p class="note">기존 프로필을 복제해 만들어요. 권한 체크를 그대로 가져와요(시스템 관리자를 복제해도 관리자 화면은 따라오지 않아요).</p>{new}'
             f'<h2 class="sec">모든 프로필</h2>'
             + w._table(['<th>프로필 이름</th><th>종류</th><th>설명</th><th class="num">기능 권한</th><th class="num">사용자</th><th>마지막 수정</th>'], trs))
-    return w._admin_page("관리 — Profiles", body, cur="profiles")
+    return w._admin_page("관리 — 프로필", body, cur="profiles")
 
 
 async def profile(site, request):
@@ -117,12 +117,12 @@ async def profile(site, request):
     except db.CrmError as e:
         if e.code != "NOT-FOUND":
             raise
-        return w._admin_page("프로필을 찾지 못했어요", '<h1>프로필을 찾지 못했어요</h1><p>NOT-FOUND</p><p><a href="/admin/profiles">Profiles로</a></p>',
+        return w._admin_page("프로필을 찾지 못했어요", '<h1>프로필을 찾지 못했어요</h1><p>NOT-FOUND</p><p><a href="/admin/profiles">프로필 목록으로</a></p>',
                              404, cur="profiles")
     edit, fixed = "edit" in q, p["id"] == features.SYSTEM_ADMIN
     href = _pid_href(p["id"])
     orgon = {r["feature"].key: r["effective"] for r in org}
-    crumbs = [("Profiles", "/admin/profiles"), (p["name"], None)]
+    crumbs = [("프로필", "/admin/profiles"), (p["name"], None)]
     kind = "기본 프로필" if p["builtin"] else "사용자 지정 프로필"
     perms = set(p["perms"])
     if edit:
@@ -163,7 +163,7 @@ async def profile(site, request):
             f'<dt>관리자 화면</dt><dd>{"있음" if fixed else "없음"}</dd></dl>'
             f'<h2 class="sec">기능 권한</h2><p class="note">조직 열 = 지금 조직 기능 설정(환경변수 비상 끄기 포함). 둘 다 켜져야 그 사용자에게 열려요.</p>'
             + w._table(['<th class="ck">권한</th><th>기능</th><th>설명</th><th>조직</th>'], trs)
-            + f'<h2 class="sec">이 프로필의 사용자 {len(p["users"])}명</h2><p class="note">프로필은 <a href="/admin/users">Users</a>에서 바꿔요.</p>'
+            + f'<h2 class="sec">이 프로필의 사용자 {len(p["users"])}명</h2><p class="note">프로필은 <a href="/admin/users">사용자</a>에서 바꿔요.</p>'
             + w._table(['<th>이메일</th><th>상태</th>'], urows, "이 프로필을 쓰는 사용자가 없어요"))
     return w._admin_page(f"관리 — {p['name']}", body, cur="profiles", crumbs=crumbs)
 
@@ -243,11 +243,11 @@ async def org_features(site, request):
                        f'<td>{act}</td></tr>')
         out.append(f'<h2 class="sec">{w._esc(title)}</h2>'
                    + w._table(['<th>기능</th><th>설명</th><th>조직 설정</th><th>환경변수(비상 끄기)</th><th>동작</th>'], trs))
-    body = (f'<div class="hdr"><div><p class="eyebrow">Setup</p><h1>Feature Settings — 조직 기능 설정</h1></div></div>'
+    body = (f'<div class="hdr"><div><p class="eyebrow">Setup</p><h1>조직 기능 설정</h1></div></div>'
             f'<p class="note">기능마다 조직 전체 켜짐·꺼짐이에요. 바꾸면 다음 요청부터 바로 적용돼요(재배포 없음, 서버 캐시 {features.CACHE_SECONDS}초 이내). '
             f'환경변수는 비상 끄기로만 남아요 — 값이 0이면 여기 설정과 상관없이 꺼져요. 사용자 기능은 프로필 권한도 있어야 열려요.</p>'
             + "".join(out))
-    return w._admin_page("관리 — Feature Settings", body, cur="features")
+    return w._admin_page("관리 — 조직 기능 설정", body, cur="features")
 
 
 async def org_feature_set(site, request):
@@ -309,8 +309,8 @@ async def changes(site, request):
     trs = [f'<tr><td>{w._esc(w._kst(r["at"]))}</td><td class="email">{w._esc(r["actor_email"]) if r["actor_email"] else "<span class=muted>시스템</span>"}</td>'
            f'<td>{w._esc(KIND_LABELS.get(r["kind"], r["kind"]))}</td><td>{subject(r)}</td><td class="long">{pv(r, r["from_val"])}</td>'
            f'<td class="long">{pv(r, r["to_val"])}</td></tr>' for r in rows]
-    body = (f'<div class="hdr"><div><p class="eyebrow">Setup</p><h1>Setup Audit Trail — 변경 기록</h1></div></div>'
+    body = (f'<div class="hdr"><div><p class="eyebrow">Setup</p><h1>변경 기록</h1></div></div>'
             f'<p class="note">조직 기능 설정 · 프로필 · 사용자 프로필 지정을 누가, 언제, 무엇을 바꿨는지 최근 {features.CHANGES_LIST}건을 보여요. '
             f'관리자 부여·차단 같은 계정 동작은 <a href="/admin/setup">Administration</a> 감사 로그에 있어요.</p>'
             + w._table(['<th>시각</th><th>실행자</th><th>무엇을</th><th>대상</th><th>전</th><th>후</th>'], trs, "아직 변경 기록이 없어요"))
-    return w._admin_page("관리 — Setup Audit Trail", body, cur="changes")
+    return w._admin_page("관리 — 변경 기록", body, cur="changes")

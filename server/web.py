@@ -730,12 +730,12 @@ form.inline{display:flex;gap:4px;align-items:center}.tag.deleted{background:var(
 ADMIN_MENU = (("overview", "/admin", "Setup Home", "개요·확인할 오류·문의", ("개요", "홈", "home", "setup home")),
               ("schema", "/admin/schema", "Object Manager", "서비스 표준(코어 + std@1) 정의 조회",
                ("스키마", "오브젝트", "표준", "구조", "필드", "관계", "schema", "object manager")),
-              ("users", "/admin/users", "Users", "사용자 목록·프로필 바꾸기·사용자 구조 상세", ("사용자", "계정", "구조", "dmo", "users")),
+              ("users", "/admin/users", "사용자", "사용자 목록·프로필 바꾸기·사용자 구조 상세", ("사용자", "계정", "구조", "dmo", "users")),
               # 관리자 프로필(2026-11-12) — Profile · 조직 기능 설정(Render 환경변수 대신) · 변경 기록. 화면은 admin_profiles_web
-              ("profiles", "/admin/profiles", "Profiles", "프로필·기능 권한", ("프로필", "권한", "profile", "profiles", "permission")),
-              ("features", "/admin/features", "Feature Settings", "조직 기능 켜기·끄기(환경변수 대신)",
+              ("profiles", "/admin/profiles", "프로필", "프로필·기능 권한", ("프로필", "권한", "profile", "profiles", "permission")),
+              ("features", "/admin/features", "조직 기능 설정", "조직 기능 켜기·끄기(환경변수 대신)",
                ("기능", "스위치", "환경변수", "설정", "feature", "feature settings")),
-              ("changes", "/admin/changes", "Setup Audit Trail", "설정 변경 기록(누가·언제·무엇을)", ("변경", "기록", "이력", "audit", "setup audit trail")),
+              ("changes", "/admin/changes", "변경 기록", "설정 변경 기록(누가·언제·무엇을)", ("변경", "기록", "이력", "audit", "setup audit trail")),
               ("reports", "/admin/reports", "Reports", "데이터셋 리포트", ("리포트", "보고서", "통계", "reports")),
               ("tickets", "/admin/tickets", "Support", "문의·개인정보 요청 처리", ("문의", "개인정보", "답변", "support")),
               ("setup", "/admin/setup", "Administration", "관리자 부여·차단·감사 로그", ("관리자", "차단", "감사", "권한", "administration")))
@@ -1037,7 +1037,7 @@ def render_object_manager() -> str:
     n_core = sum(1 for o in objs if o["origin"] == "core")
     return (f'<h1>Object Manager</h1><p class="note">조회 전용 — 서비스 표준(코어 + std@1)의 정의를 보여 줘요. 편집·설치·편입은 여기서 하지 않아요.</p>'
             f'<p class="note warn">서비스 정의이며, 개별 계정에 설치된 구조와 다를 수 있습니다.</p>'
-            f'<p class="note">계정별 구조(설치·편입 상태)는 <a href="/admin/users">Users</a> 상세에서 봐요. '
+            f'<p class="note">계정별 구조(설치·편입 상태)는 <a href="/admin/users">사용자</a> 상세에서 봐요. '
             f'API 이름은 서비스가 정한 제품 이름(코어 열·표준 key)이에요 — 사용자 데이터가 아니에요.</p>'
             f'<h2>서비스 표준 그래프 — 코어 {n_core} + std@1 {len(objs) - n_core}</h2>{_om_legend()}'
             f'<div class="dmo">{structure_svg.render(resp, hrefs)}</div>'
@@ -2819,7 +2819,7 @@ class Web:
         more = lambda key: f' <a class="note" href="{_esc(links[key])}">리포트로</a>'   # noqa: E731
         body = (f'<h1>Setup Home</h1>'
                 f'<h2>개요</h2>{bar}<p class="note">서비스 표준: 코어 + std@1 · 표준 정의 조회 전용 — <a href="/admin/schema">Object Manager</a>. '
-                f'계정별 std@1 편입 여부는 <a href="/admin/users">Users</a> 상세에서 봐요.</p>'
+                f'계정별 std@1 편입 여부는 <a href="/admin/users">사용자</a> 상세에서 봐요.</p>'
                 f'<h3>사용자 {len(users)}명</h3><p class="note">최근 활동일 = usage_daily 마지막 날 · 14일 = 오늘(KST) 포함 '
                 f'{admin_db.RECENT_DAYS}일 · 정의 수 = 적용된 오브젝트(보관 제외)</p>{user_t}'
                 f'<h3>정의 분포{more("defs")}</h3><p class="note">사용자별 오브젝트·필드 개수 구간(보관 제외, 이름 없음)</p>{dist_t}'
@@ -2991,7 +2991,7 @@ class Web:
         users = await run_in_threadpool(admin_db.users, request.state.role)
         u = next((x for x in users if self._opaque(x["id"]) == items[0][1]), None)
         if u is None:
-            return _admin_page("사용자를 찾지 못했어요", '<h1>사용자를 찾지 못했어요</h1><p>NOT-FOUND</p><p><a href="/admin/users">Users로</a></p>',
+            return _admin_page("사용자를 찾지 못했어요", '<h1>사용자를 찾지 못했어요</h1><p>NOT-FOUND</p><p><a href="/admin/users">사용자 목록으로</a></p>',
                                404, cur="schema")
         return RedirectResponse(f"/admin/users/{self._opaque(u['id'])}", status_code=302)
 
@@ -3287,12 +3287,12 @@ class Web:
                        f'<td class="num">{_esc(sum(1 for n in st["linked"] if n))}</td><td class="num">{_esc(resp["counts"]["fields"])}</td>'
                        f'<td>{_uv_std(resp["std"])}</td>'
                        f'<td><a href="{href}">상세</a></td></tr>')
-        body = (f'<h1>Users — 사용자 {len(trs)}명</h1><p class="note">오브젝트·필드 = 적용된 사용자 정의(보관 제외) · 관계 = 참조 필드 · '
+        body = (f'<h1>사용자 {len(trs)}명</h1><p class="note">오브젝트·필드 = 적용된 사용자 정의(보관 제외) · 관계 = 참조 필드 · '
                 f'연결 있음 = 정상 연결이 1개 이상인 관계 · 표준 = 설치 버전·표식 상태·표준 오브젝트별 상태 코드 · '
                 f'이름 공유 = 유효 선택 동의(현재 버전). 개수만, 이름 없음.</p>'
                 + _table(['<th>이메일</th><th>가입일</th><th>역할</th><th>프로필</th><th>이름 공유</th><th class="num">오브젝트</th><th class="num">관계</th>'
                           '<th class="num">연결 있음</th><th class="num">필드</th><th>표준</th><th></th>'], trs))
-        return _admin_page("관리 — Users", body, cur="users")
+        return _admin_page("관리 — 사용자", body, cur="users")
 
     async def admin_user(self, request):
         """/admin/users/<불투명 id> — 요약 → DMO 그래프 → 관계 집계 → 무결성 → 표준 상태 → 구조 트리 → 문의 요약.
@@ -3315,7 +3315,7 @@ class Web:
                                404, cur="users")
         resp, st = uv_build(v, onames, fnames)
         body = render_userview(u, self._opaque(u["id"]), v["names"], resp, st, v["tickets"])
-        return _admin_page("관리 — Users", body, cur="users", crumbs=[("Users", "/admin/users"), ("사용자 상세", None)])
+        return _admin_page("관리 — 사용자", body, cur="users", crumbs=[("사용자", "/admin/users"), ("사용자 상세", None)])
 
     def _profile_routes(self):
         """관리자 프로필·조직 기능 설정·변경 기록 화면(admin_profiles_web) — 핸들러는 (site, request) 함수다."""
