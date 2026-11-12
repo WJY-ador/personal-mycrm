@@ -707,8 +707,8 @@ def cmd_validate(path: str, uid: str) -> int:
 
 
 def _switch() -> bool:
-    import envnames
-    return envnames.switch_on("BOARD_MIGRATION_ENABLED")
+    import features   # 판정 정본(2026-11-12) — CLI 는 사용자 문맥이 없어 조직 설정 + env 비상 끄기만 본다
+    return features.feature_on(None, "board_migration")
 
 
 def _stream_read(uid: str) -> dict | None:

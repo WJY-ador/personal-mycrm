@@ -722,7 +722,7 @@ def confirm(uid, job_id, body):
                 return ev["response"]
             raise CrmError("CONFIRM-REQUEST-MISMATCH", "같은 확정 요청 ID 로 다른 내용을 보냈어요.", "새 확정 요청 ID 로 다시 하세요.")
         # ②
-        if not db.job_switch_on("converse"):
+        if not db.job_switch_on("converse", uid, c):
             raise db._job_off()
         pre = db._one(c, "SELECT session_id, kind FROM jobs WHERE user_id=%s AND id=%s", (uid, jid))
         if not pre or pre["kind"] != "converse":

@@ -47,6 +47,11 @@ import facade  # noqa: E402
 import imports  # noqa: E402
 import main  # noqa: E402
 import webchat  # noqa: E402
+import features  # noqa: E402
+
+# 조직 기능 설정 첫 시드(2026-11-12)는 test_admin_profiles.py 가 본다. 이 파일의 시험 서버(uvicorn)는 lifespan 을 도는데, 그때 시드하면
+# (env 스위치는 비어 있다) 뒤 env 스위치("1")가 조직 꺼짐에 막힌다 — 조직 설정 행이 없을 때만 env 가 판정한다
+features.seed_org_from_env = lambda: []
 from agent import chat as agent_chat  # noqa: E402
 from agent import wsclient  # noqa: E402
 

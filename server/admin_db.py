@@ -761,3 +761,66 @@ def link_stats(v, user_input):
     if v["md_broken"]:
         errors.append({"code": "MD-ORPHAN", "rel": None, "n": v["md_broken"], "why": "candidate"})
     return {"linked": linked, "errors": errors, "unchecked": unchecked}
+
+
+# ── 관리자 프로필 · 조직 기능 설정 · 변경 기록(2026-11-12) — 조회자 확인만. 판정·SQL·규칙·변경 기록은 features.py 한 곳 ──
+# 화면(admin_profiles_web.py)은 이 함수들만 부른다. 조직 데이터라 본문·사용자 자료 열이 없다(프로필 이름·기능 키·이메일·시각만).
+
+def profiles(role):
+    _admin_only(role)
+    import features
+    return features.profiles()
+
+
+def profile_detail(role, pid):
+    _admin_only(role)
+    import features
+    return features.profile_detail(pid)
+
+
+def user_profiles(role):
+    _admin_only(role)
+    import features
+    return features.user_profiles()
+
+
+def org_features(role):
+    _admin_only(role)
+    import features
+    return features.org_rows()
+
+
+def setup_changes(role):
+    _admin_only(role)
+    import features
+    return features.changes()
+
+
+def profile_clone(role, actor_id, src, name, desc):
+    _admin_only(role)
+    import features
+    return features.profile_clone(actor_id, src, name, desc)
+
+
+def profile_update(role, actor_id, pid, name, desc, perms):
+    _admin_only(role)
+    import features
+    return features.profile_update(actor_id, pid, name, desc, perms)
+
+
+def profile_delete(role, actor_id, pid):
+    _admin_only(role)
+    import features
+    return features.profile_delete(actor_id, pid)
+
+
+def user_profile_set(role, actor_id, target_id, pid):
+    _admin_only(role)
+    import features
+    return features.user_profile_set(actor_id, target_id, pid)
+
+
+def org_feature_set(role, actor_id, feature, enabled):
+    _admin_only(role)
+    import features
+    return features.org_set(actor_id, feature, enabled)

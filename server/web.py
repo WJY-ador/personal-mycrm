@@ -39,7 +39,8 @@ import service_schema
 import stack_service
 import structure_svg
 import token_grants
-from envnames import env, switch_on
+from envnames import env
+import features   # 관리자 프로필·조직 기능 설정(2026-11-12) — 기능 판정 정본 feature_on
 
 SESSION_COOKIE = "crm_session"
 FLOW_COOKIE = "crm_login"
@@ -479,7 +480,7 @@ def render_privacy(md: str) -> str:
 
 # ── PC 앱 설치 /download (2026-10-30 설치 페이지 가안 A) ─────────────────────
 # 파일은 GitHub Release asset 에서만 받는다 — 서버는 링크만 내고 GitHub API 를 부르지 않는다.
-# env CRM_DOWNLOAD_PUBLIC == "1" 일 때만 직링크를 보인다(첫 Release publish 뒤 켠다). 요청마다 읽는다.
+# 조직 기능 설정 download_public(features, env CRM_DOWNLOAD_PUBLIC 은 비상 끄기·첫 시드)이 켜졌을 때만 직링크를 보인다(첫 Release publish 뒤 켠다).
 # 설치 경고 절차의 정본은 Release 본문(packaging/release-notes.md) 하나 — 이 페이지엔 한 줄과 링크만 둔다.
 RELEASES_LATEST = "https://github.com/WJY-ador/personal-mycrm/releases/latest"
 DOWNLOAD_FILES = {"win": "MyCRM-win-x64.exe", "mac-arm64": "MyCRM-mac-arm64.dmg", "mac-x64": "MyCRM-mac-x64.dmg"}
@@ -710,13 +711,31 @@ ul.tree li:target,tr:target td{background:var(--warn-bg)}ul.tree>li:target{borde
 .err{color:var(--fail);font-weight:600}td.long{white-space:normal;word-break:break-word;min-width:16em}.tag.lock{background:var(--mine-bg);color:var(--mine)}
 @media (max-width:600px){.wrap{padding:16px 12px 40px}th,td{padding:5px 6px}}"""
 _ADMIN_CSS += structure_svg.tokens_css(dark_media=False)   # DMO 그래프 토큰(--dmo-*) — 운영 화면은 밝게 고정(OS 미추종, 스크립트 0 이라 토글 없음)
+# 관리자 프로필 화면(2026-11-12) — 머리 띠(제목 + 동작) · 절 띠 · 편집 form · 버튼 모양 링크. 색은 토큰만
+_ADMIN_CSS += """
+.hdr{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:flex-end;justify-content:space-between;padding:12px 14px;margin:0 0 12px;border:1px solid var(--line);border-radius:8px;background:var(--card)}
+.hdr h1{margin:0}.eyebrow{margin:0 0 2px;font-size:12px;color:var(--muted);font-weight:600}
+h2.sec{font-size:14px;margin:22px 0 8px;padding:6px 10px;border-radius:6px;background:var(--memo-bg);color:var(--ink)}
+a.btn{display:inline-block;font-size:12px;padding:3px 10px;border:1px solid var(--line);border-radius:5px;background:var(--paper);color:var(--ink);text-decoration:none}
+a.btn.primary,button.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.hdr .acts{align-items:center}.acts.top{margin:0 0 4px}.acts.bottom{margin:12px 0 0;justify-content:flex-start}
+form.pf .fields{display:grid;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card)}
+form.pf label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}form.pf input,form.pf textarea{font:inherit;font-size:14px;max-width:520px;padding:5px 8px;border:1px solid var(--line);border-radius:5px;background:var(--card);color:var(--ink)}
+.tag.on{background:var(--accent);color:var(--on-accent);font-weight:600}
+td.ck,th.ck{width:3em;text-align:center}td.ck input{width:16px;height:16px;accent-color:var(--accent)}.yes{color:var(--mine);font-weight:700}
+form.inline{display:flex;gap:4px;align-items:center}.tag.deleted{background:var(--fail-bg);color:var(--fail)}"""
 
 # 왼쪽 세로 메뉴(PR A — Salesforce Setup 꼴) — 메뉴 정본. (현재 표시 키, 경로, 표시명, 설명, Quick Find 고정 별칭).
 # 키는 화면 핸들러의 cur 값이다(바꾸지 않는다). 상세 화면은 메뉴를 늘리지 않고 상위 메뉴 활성 + breadcrumb 로 위치를 알린다.
 ADMIN_MENU = (("overview", "/admin", "Setup Home", "개요·확인할 오류·문의", ("개요", "홈", "home", "setup home")),
               ("schema", "/admin/schema", "Object Manager", "서비스 표준(코어 + std@1) 정의 조회",
                ("스키마", "오브젝트", "표준", "구조", "필드", "관계", "schema", "object manager")),
-              ("users", "/admin/users", "Users", "사용자 목록·사용자 구조 상세", ("사용자", "계정", "구조", "dmo", "users")),
+              ("users", "/admin/users", "Users", "사용자 목록·프로필 바꾸기·사용자 구조 상세", ("사용자", "계정", "구조", "dmo", "users")),
+              # 관리자 프로필(2026-11-12) — Profile · 조직 기능 설정(Render 환경변수 대신) · 변경 기록. 화면은 admin_profiles_web
+              ("profiles", "/admin/profiles", "Profiles", "프로필·기능 권한", ("프로필", "권한", "profile", "profiles", "permission")),
+              ("features", "/admin/features", "Feature Settings", "조직 기능 켜기·끄기(환경변수 대신)",
+               ("기능", "스위치", "환경변수", "설정", "feature", "feature settings")),
+              ("changes", "/admin/changes", "Setup Audit Trail", "설정 변경 기록(누가·언제·무엇을)", ("변경", "기록", "이력", "audit", "setup audit trail")),
               ("reports", "/admin/reports", "Reports", "데이터셋 리포트", ("리포트", "보고서", "통계", "reports")),
               ("tickets", "/admin/tickets", "Support", "문의·개인정보 요청 처리", ("문의", "개인정보", "답변", "support")),
               ("setup", "/admin/setup", "Administration", "관리자 부여·차단·감사 로그", ("관리자", "차단", "감사", "권한", "administration")))
@@ -1355,8 +1374,13 @@ class Web:
         return _html_resp(self.privacy_html.replace("<!--nav-->", self._nav(request), 1), headers={"cache-control": "no-store"})
 
     async def download(self, request):
-        """PC 앱 설치. /help 와 같다 — 로그인 불필요, DB 를 건드리지 않는다. 플래그·UA 마다 달라서 그때그때 그린다."""
-        html = render_download(env("DOWNLOAD_PUBLIC", "") == "1", ua_os(request.headers.get("user-agent")))
+        """PC 앱 설치. /help 와 같다 — 로그인 불필요. 플래그(조직 기능 설정 download_public, 캐시)·UA 마다 달라서 그때그때 그린다.
+        설정을 읽지 못하면 직링크를 숨긴다(꺼짐 쪽)."""
+        try:
+            pub = await run_in_threadpool(features.feature_on, None, "download_public")
+        except Exception:
+            pub = False
+        html = render_download(pub, ua_os(request.headers.get("user-agent")))
         return _html_resp(html.replace("<!--nav-->", self._nav(request), 1), headers={"cache-control": "no-store"})
 
     def _nav(self, request) -> str:
@@ -1825,9 +1849,9 @@ class Web:
         st["origin_labels"] = {"text": structure_svg.ORIGIN_TEXT, "category": structure_svg.ORIGIN_CATEGORY}   # 출처 칩·그래프 범례 표시 정의(정본 하나 — 화면은 사본을 두지 않는다). /app 전용
         st["user"] = {"email": me["email"], "struct_names": flags["struct_names"], "desk_hidden": flags["desk_hidden"],   # /app 계정 메뉴용 — MCP state_get 에는 넣지 않는다
                       "display_name": home["display_name"], "nav": home["nav"]}   # PR B: 표시 이름(null = 이름 입력 화면) · nav = 항상 "new"(옛 탐색 삭제, 화면은 읽지 않는다)
-        st["switches"] = {"converse": db.job_switch_on("converse"),   # PR ②-b — 「대화」 버튼 표시(켜짐일 때만). /app 전용, MCP state_get 에는 넣지 않는다
-                          "trash": db.trash_on(),                     # 휴지통 PR-1 — 새 [삭제]·Setup 휴지통 표시(켜짐일 때만). 꺼짐 = 기존 버튼 그대로
-                          "webchat": switch_on("WEBCHAT_ENABLED")}     # 웹 「대화」(2026-11-04) — 켜짐일 때만 새 채팅 화면을 띄운다
+        st["switches"] = await run_in_threadpool(lambda: {"converse": db.job_switch_on("converse", uid),   # PR ②-b — 「대화」 버튼 표시(켜짐일 때만). /app 전용, MCP state_get 에는 넣지 않는다
+                          "trash": db.trash_on(uid),                  # 휴지통 PR-1 — 새 [삭제]·Setup 휴지통 표시(켜짐일 때만). 꺼짐 = 기존 버튼 그대로
+                          "webchat": features.feature_on(uid, "webchat")})   # 웹 「대화」(2026-11-04) — 켜짐일 때만 새 채팅 화면을 띄운다
         st["stack_session"] = await run_in_threadpool(db.stack_session_current, uid)   # ②-b 새로 고침 복원·두 탭 공유 — {id, expires_at} | null
         st["devices_status"] = devst   # ③-0.2 장치 상태 {state: none|recent|offline, last_seen_at, threshold_seconds} — 본인만, /app 전용(활동 부분과 독립)
         st["me"] = {"counts": home["counts"]}   # PR B 「나」 홈 개수(판단·기준·결정·사람·출처·요약/반응) — 본인만, /app 전용
@@ -2643,7 +2667,7 @@ class Web:
         op = request.path_params["op"]
         try:
             if op == "confirm":   # PR ②-b 확인 1번 — 스위치 → 본문 → 쓰기 관문 → 확정 트랜잭션(stack_service.confirm)
-                if not db.job_switch_on("converse"):
+                if not await run_in_threadpool(db.job_switch_on, "converse", uid):
                     raise db._job_off()
                 try:
                     body = await request.json()
@@ -3244,7 +3268,9 @@ class Web:
         if request.query_params:
             return self._admin_bad("사용자 목록을 열 수 없어요", "쿼리 키를 받지 않아요.", "/admin/users", "users")
         role = request.state.role
-        users, views = await run_in_threadpool(lambda: (admin_db.users(role), admin_db.userview(role)))
+        users, views, profs, upro = await run_in_threadpool(lambda: (admin_db.users(role), admin_db.userview(role),
+                                                                     admin_db.profiles(role), admin_db.user_profiles(role)))
+        import admin_profiles_web   # 프로필 열(2026-11-12) — 선택 + [바꾸기]
         trs = []
         for u in users:
             v = views.get(u["id"])
@@ -3255,7 +3281,8 @@ class Web:
             blk = (' <span class="tag blocked">차단</span>' if u["blocked_at"] else "") \
                 + (' <span class="tag deleted">삭제됨</span>' if u["status"] == "deleted" else "")   # PR B — 코드만(표시 이름·사람·요약/반응 0)
             trs.append(f'<tr><td class="email"><a href="{href}">{_esc(u["email"])}</a></td><td>{_esc(_kst(u["created"])[:10])}</td>'
-                       f'<td>{"관리자" if u["role"] == "admin" else "사용자"}{blk}</td><td>{"동의" if v["names"] else "—"}</td>'
+                       f'<td>{"관리자" if u["role"] == "admin" else "사용자"}{blk}</td>'
+                       f'<td>{admin_profiles_web.users_cell(profs, upro.get(u["id"]), self._opaque(u["id"]))}</td><td>{"동의" if v["names"] else "—"}</td>'
                        f'<td class="num">{_esc(resp["counts"]["objects"])}</td><td class="num">{_esc(resp["counts"]["relations"])}</td>'
                        f'<td class="num">{_esc(sum(1 for n in st["linked"] if n))}</td><td class="num">{_esc(resp["counts"]["fields"])}</td>'
                        f'<td>{_uv_std(resp["std"])}</td>'
@@ -3263,7 +3290,7 @@ class Web:
         body = (f'<h1>Users — 사용자 {len(trs)}명</h1><p class="note">오브젝트·필드 = 적용된 사용자 정의(보관 제외) · 관계 = 참조 필드 · '
                 f'연결 있음 = 정상 연결이 1개 이상인 관계 · 표준 = 설치 버전·표식 상태·표준 오브젝트별 상태 코드 · '
                 f'이름 공유 = 유효 선택 동의(현재 버전). 개수만, 이름 없음.</p>'
-                + _table(['<th>이메일</th><th>가입일</th><th>역할</th><th>이름 공유</th><th class="num">오브젝트</th><th class="num">관계</th>'
+                + _table(['<th>이메일</th><th>가입일</th><th>역할</th><th>프로필</th><th>이름 공유</th><th class="num">오브젝트</th><th class="num">관계</th>'
                           '<th class="num">연결 있음</th><th class="num">필드</th><th>표준</th><th></th>'], trs))
         return _admin_page("관리 — Users", body, cur="users")
 
@@ -3289,6 +3316,18 @@ class Web:
         resp, st = uv_build(v, onames, fnames)
         body = render_userview(u, self._opaque(u["id"]), v["names"], resp, st, v["tickets"])
         return _admin_page("관리 — Users", body, cur="users", crumbs=[("Users", "/admin/users"), ("사용자 상세", None)])
+
+    def _profile_routes(self):
+        """관리자 프로필·조직 기능 설정·변경 기록 화면(admin_profiles_web) — 핸들러는 (site, request) 함수다."""
+        import functools
+        import admin_profiles_web as ap
+        r = lambda path, fn, post=False: Route(path, functools.partial(fn, self), methods=["POST"] if post else ["GET"])   # noqa: E731
+        return [r("/admin/users/profile", ap.user_profile, True),
+                r("/admin/profiles", ap.profiles), r("/admin/profiles/new", ap.profile_new, True),
+                r("/admin/profiles/{pid}", ap.profile), r("/admin/profiles/{pid}/save", ap.profile_save, True),
+                r("/admin/profiles/{pid}/delete", ap.profile_delete, True),
+                r("/admin/features", ap.org_features), r("/admin/features/{key}", ap.org_feature_set, True),
+                r("/admin/changes", ap.changes)]
 
     def routes(self) -> list[Route]:
         u = _usage
@@ -3387,6 +3426,7 @@ class Web:
             Route("/admin/block", self.admin_block, methods=["POST"]),
             Route("/admin/unblock", self.admin_unblock, methods=["POST"]),
             Route("/admin/users", self.admin_users),
+            *self._profile_routes(),   # 관리자 프로필(2026-11-12) — /admin/users/profile POST 가 /admin/users/{oid} 보다 먼저
             Route("/admin/users/{oid}", self.admin_user),
             Route("/admin/schema", self.admin_schema),
             Route("/admin/schema/objects/{oid}", self.admin_schema_object),
