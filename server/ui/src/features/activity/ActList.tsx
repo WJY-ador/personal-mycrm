@@ -27,7 +27,7 @@ export function ActList({ S, qs, fold, setFold }: { S: AppState; qs: string; fol
   });
   const person = p.get("person"), source = p.get("source");
   const pa = person ? (S.people || []).find(x => x.id === person) : null, so = source ? (S.sources || []).find(x => x.id === source) : null;
-  const by = [person ? (pa ? `사람 「${pa.alias}」` : "사람 한 명") : "", source ? `출처 「${so ? so.name : "…"}」` : "", p.get("axis") ? "축 하나" : ""].filter(Boolean).join(" · ");
+  const by = [person ? (pa ? `사람 ${pa.alias}` : "사람 한 명") : "", source ? `출처 ${so ? so.name : "…"}` : "", p.get("axis") ? "축 하나" : ""].filter(Boolean).join(", ");
   function go(name: string, v: string) {
     const n = new URLSearchParams([...q].filter(([k]) => !["action", "dated"].includes(k)));
     for (const k of ["action", "dated"]) { const val = k === name ? v : p.get(k) || ""; if (val) n.set(k, val); }
@@ -49,7 +49,7 @@ export function ActList({ S, qs, fold, setFold }: { S: AppState; qs: string; fol
         <label>행동 <select name="action" value={p.get("action") || ""} onChange={e => go("action", e.target.value)}>{opt("", "전부")}
           {Object.entries(S.activity_ui?.actions || {}).map(([k, l]) => opt(k, l))}</select></label>
         <label>날짜 <select name="dated" value={p.get("dated") || ""} onChange={e => go("dated", e.target.value)}>{opt("", "전부")}{opt("yes", "날짜 있음")}{opt("no", "날짜 미확인")}</select></label>
-        {by ? <span className="hint">{by}로 거른 목록 · <a href="#_obj/activity">거르기 풀기</a></span> : null}
+        {by ? <span className="hint">{by}로 거른 목록, <a href="#_obj/activity">거르기 풀기</a></span> : null}
       </form>
       <div>{list.isError && !list.isFetchNextPageError && !rows ? <LoadFail err={apiErr(list.error)} what="활동 목록" />
         : !rows ? <p className="hint">{LOADING}</p>

@@ -1,9 +1,10 @@
 // 패널 — 머리글(지난 대화, 새 대화, 닫기) · 대화 정보 한 줄(읽기 전용) · 메시지 목록 또는 지난 대화 목록 · 상태 한 줄 · 입력 칸 하나(모델 고르기 옆).
-// 도구 허용 범위, 확인 규칙, 보관 기간은 서버가 정한다. 화면은 보여 주기만 한다(계획 결정 8). ⌘/Ctrl+Enter = 보내기 · Esc = 닫기.
+// 도구 허용 범위, 확인 규칙, 보관 기간은 서버가 정한다. 화면은 보여 주기만 한다(계획 결정 8). Enter = 보내기, Shift+Enter = 줄바꿈, Esc = 닫기.
 import { useEffect, useRef, type RefObject } from "react";
 import { Sprout } from "../../shared/Sprout";
 import { Approvals } from "./ApprovalCard";
 import { Composer } from "./Composer";
+import { ConnectGuide } from "./ConnectGuide";
 import { GrantWait } from "./GrantWait";
 import { History } from "./History";
 import { choiceKey, type WebchatStore } from "./store";
@@ -26,6 +27,8 @@ export function Panel({ s, inRef, dev = "" }: { s: WebchatStore; inRef: RefObjec
   // PC 상태는 아는 때만: 진행 중 대화 = SSE 의 pc, 새 대화 = 고른 것이 지금 목록(연결된 PC 만)에 있을 때. 지난 대화는 적지 않는다
   const pc = live ? (s.connected ? PC_ON : PC_OFF) : !s.sid && cur && s.choices().some(c => choiceKey(c) === choiceKey(cur)) ? PC_ON : "";
   const busy = s.running() || s.sending;
+  // J-F1: 새 대화인데 고를 AI가 하나도 없으면 한 줄 대신 연결 안내 3단계
+  const guide = !s.sid && !s.readOnly && !s.loading && s.capsLoaded && !s.grantNote && !s.choices().length;
   return (
     <aside className={css.panel} id="webchat" hidden={!s.open} aria-label={TITLE}
       onKeyDown={e => { if (e.key === "Escape") void s.toggle(false); }}>
@@ -43,7 +46,7 @@ export function Panel({ s, inRef, dev = "" }: { s: WebchatStore; inRef: RefObjec
           {s.readOnly && <p className={css.past} role="status">{PAST_NOTE}</p>}
           {s.trimmed && <p className={css.empty}>{TRIMMED}</p>}
           {s.turns.length ? s.turns.map(t => <TurnView key={t.id} t={t} />)
-            : s.readOnly ? <p className={css.empty}>{PAST_EMPTY}</p> : !s.loading && !s.grantNote && <p className={css.empty}>{EMPTY}</p>}
+            : s.readOnly ? <p className={css.empty}>{PAST_EMPTY}</p> : guide ? <ConnectGuide s={s} /> : !s.loading && !s.grantNote && <p className={css.empty}>{EMPTY}</p>}
           {s.grantNote && <GrantWait s={s} />}
           {live && <Approvals s={s} />}
         </>}

@@ -76,6 +76,27 @@ class ChatConfirmationGateTests(unittest.TestCase):
         for op, labels in webchat._WRITE_LABELS.items():
             with self.subTest(op=op):
                 self.assertEqual(len(set(labels.values())), len(labels))
+        # I R3(2026-11-11): every write card op is classified once — overwrite (current-state reader) or create only
+        self.assertEqual(set(webchat._WRITE_CURRENT) | webchat._WRITE_CREATE_ONLY, set(webchat.CHAT_WRITE_CARD_OPS))
+        self.assertFalse(set(webchat._WRITE_CURRENT) & webchat._WRITE_CREATE_ONLY)
+        self.assertEqual(webchat._WRITE_CREATE_ONLY, {"question_add", "record_add", "candidates_propose", "source_create"})
+
+    def test_unclassified_write_op_makes_no_card(self):
+        """I R3: a write op with no current-state reader is not treated as a create; it is refused (fail closed)."""
+        import webchat
+        with self.assertRaises(Exception) as error:
+            webchat._write_current(None, "synthetic-user", "synthetic_new_write_op", {})
+        self.assertEqual(error.exception.code, "APPROVAL-CLOSED")
+
+    def test_chat_routes_use_their_own_rate_buckets(self):
+        """I R4: launch-authorization and /api/chat/mcp count chat buckets, not the import request bucket."""
+        import inspect
+        import webchat
+        self.assertEqual(webchat.CHAT_RATE_LIMITS, {"chat_launch": 60, "chat_mcp": 60})
+        for name, bucket in (("launch_authorization", "chat_launch"), ("chat_mcp", "chat_mcp")):
+            src = inspect.getsource(getattr(webchat.Routes, name))
+            self.assertNotIn("imports._rate", src)
+            self.assertIn(f'_chat_rate, dev, "{bucket}"', src)
 
 
 if __name__ == "__main__":

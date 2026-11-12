@@ -40,7 +40,7 @@ export function DeskForm({ ctx, hidden, kind, setKind, ta }: Props) {
       </fieldset>
       <label htmlFor="desk-text" className="sr">문의 글</label>
       <textarea ref={ta} id="desk-text" className={css.text} name="text" rows={4} aria-describedby="desk-notice desk-count" value={text} onChange={e => setText(e.target.value)} />
-      <div className={css.row}><span id="desk-count" className={`count ${css.count}${over ? " " + css.over : ""}`} aria-live="polite">{`${n} / ${DESK_MAX} 바이트${over ? " — 너무 길어요" : ""}`}</span>
+      <div className={css.row}><span id="desk-count" className={`count ${css.count}${over ? " " + css.over : ""}`} aria-live="polite">{`${n} / ${DESK_MAX} 바이트${over ? ", 너무 길어요" : ""}`}</span>
         <button className="primary" type="submit" disabled={busy || over || !text.trim()}>보내기</button></div>
       <p id="desk-notice" className={css.note}>{DESK_NOTICE} <a href="/privacy">개인정보 처리방침</a></p>
       <p className={css.status} role="status">{status}</p><p role="alert" className={`blocked ${css.msg}`}>{error}</p>

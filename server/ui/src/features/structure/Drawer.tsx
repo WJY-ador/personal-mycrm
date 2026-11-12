@@ -47,7 +47,7 @@ export function Drawer({ ctx, S, id, open, gone }: Props) {
   return (
     <div ref={box}>
       {q.isError ? <PartFail err={apiErr(q.error)} what="이 항목" /> : null}
-      <div className="eyebrow">{d.label || "항목"} · 새 제안</div>
+      <div className="eyebrow">{d.label || "항목"}, 새 제안</div>
       <div className="labels" style={{ marginTop: ".4rem" }}>{cur.code ? <span className="chip code">{cur.code}</span> : null}<SelectChips it={cur} d={defById(S, d.id)} /></div>
       <h4>{cur.title || "(제목 없음)"}</h4>{cur.body ? <div className="pbody">{rich(cur.body)}</div> : null}
       {plain.length ? <dl className="pf">{plain.map(([k, v], i) => [<dt key={`t${i}`}>{k}</dt>, <dd key={`d${i}`}>{v}</dd>])}</dl> : null}

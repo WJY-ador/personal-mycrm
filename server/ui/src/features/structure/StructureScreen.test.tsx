@@ -41,7 +41,7 @@ test("서랍 = 새 항목 제안만 — 제안 값 · 연결할 대상(근거 �
   const el = await show("od_p", "n1", structState({ switches: { trash: true } }));
   const p = el.querySelector("#panel")!;
   expect(calls[0].url).toBe("/api/item?id=n1");
-  expect(p.querySelector(".eyebrow")!.textContent).toBe("기준 · 새 제안");
+  expect(p.querySelector(".eyebrow")!.textContent).toBe("기준, 새 제안");
   expect(p.querySelector("h4")!.textContent).toBe("새 기준 제안");
   expect(p.querySelector(".proposal .hint")!.textContent).toBe("연결한 AI 대화에서 새로 제안한 항목이에요. 적용하면 목록에 들어가요.");
   expect(text(p, ".plist li")).toContain("근거를 이용할 수 없어요.");
@@ -87,7 +87,7 @@ test("판단 문장 — 필터(개수) · 최신순 · 아직 안 정함 = 대�
   expect(text(el, ".asset-card .top")[1]).toContain("AI 문안");
   const pending = el.querySelectorAll(".asset-card")[1];
   expect(pending.getAttribute("role")).toBeNull();
-  expect(pending.querySelector("button")?.textContent).toBe("원문 보기 · 회고");
+  expect(pending.querySelector("button")?.textContent).toBe("원문 보기: 회고");
   const compare = [...pending.querySelectorAll("a, button")].find(control => control.textContent === "대조하기");
   expect(compare?.textContent).toBe("대조하기");
   expect(compare?.tagName).toBe("BUTTON");
@@ -102,7 +102,7 @@ test("판단 문장 — 필터(개수) · 최신순 · 아직 안 정함 = 대�
   const confirmed = done.querySelector(".asset-card")!;
   expect(confirmed.getAttribute("role")).toBeNull();
   const sourceAction = confirmed.querySelector("button");
-  expect(sourceAction?.textContent).toBe("원문 보기 · 도입 메모");
+  expect(sourceAction?.textContent).toBe("원문 보기: 도입 메모");
   expect(confirmed.querySelectorAll("button")).toHaveLength(1);
   serve(() => json(200, { id: "r1", title: "도입 메모", body: "입력 **담당**", revision: 1, author_kind: "self", meta: { created: "", source: null, question_id: null } }));
   await click(confirmed.querySelector("h3"));
@@ -146,8 +146,8 @@ test("서랍 다시 받기 실패 = 받아 둔 제안 그대로 + 못 읽음 안
   await flush();
   expect(calls.filter(c => c.url === "/api/item?id=n1").length).toBe(before + 1);
   expect(queryClient.getQueryState(["item", "n1"])?.status).toBe("error");
-  expect(p.querySelector(".eyebrow")!.textContent).toBe("기준 · 새 제안");
+  expect(p.querySelector(".eyebrow")!.textContent).toBe("기준, 새 제안");
   expect(p.querySelector("h4")!.textContent).toBe("새 기준 제안");
-  expect(p.querySelector(".partfail b")!.textContent).toBe("이 항목을 읽지 못했어요 · 나머지는 정상");
+  expect(p.querySelector(".partfail b")!.textContent).toBe("이 항목을 읽지 못했어요. 나머지는 정상이에요.");
   expect(p.querySelector(".partfail")!.textContent).toContain("서버에 연결하지 못했어요.");
 });

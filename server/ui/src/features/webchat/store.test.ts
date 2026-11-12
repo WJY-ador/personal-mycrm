@@ -3,8 +3,8 @@
 import { expect, test, vi } from "vitest";
 import { ApiFail } from "../../shared/api";
 import type { Capabilities, Es, Grant } from "./api";
-import { MODEL_KEY, WebchatStore, choiceKey, pastTurns, type Saved } from "./store";
-import { EMPTY, END, ERR, REPLACED, TEXT_MAX, TRIMMED, errText } from "./text";
+import { CAPS_REFRESH_GAP_MS, MODEL_KEY, WebchatStore, choiceKey, pastTurns, type Saved } from "./store";
+import { EMPTY, END, ERR, GRANT, REPLACED, TEXT_MAX, TRIMMED, errText } from "./text";
 
 class FakeEs implements Es {
   onmessage = null; onerror = null; closed = false;
@@ -99,7 +99,7 @@ test("legacy active 세션은 재생할 수 있지만 새 턴은 보낼 수 없�
 });
 
 test("초기 안내는 MyCRM 권한과 확인 규칙을 명시한다", () => {
-  expect(EMPTY).toContain("MyCRM의 기존 권한과 확인 규칙을 따릅니다");
+  expect(EMPTY).toContain("MyCRM의 기존 권한과 확인 규칙을 따라요");
 });
 
 test("새 세션 충돌과 선택 공급자 미지원은 자동 대체 없이 원인을 알린다", () => {
@@ -255,15 +255,22 @@ test("허용 요청 실패와 세션 생성 실패는 문구로 알리고 글을
   expect([s.sid, s.line, s.input]).toEqual(["", ERR["GRANT-EXPIRED"], "질문"]);
 });
 
-test("기존 세션의 턴 CONSENT_REQUIRED = 허용이 끝났다고 알리고 다시 요청하지 않는다 · 입력 보존", async () => {
+test("기존 세션의 턴 CONSENT_REQUIRED(허용 해제, J 이전 세션) = 옛 세션을 떼고 알림 · 입력 보존 · 그 자리에서 다시 묻지 않음 · 다음 보내기 = 새 대화를 허용 흐름으로", async () => {
   const { s } = mk();
   await s.toggle(true);
   s.input = "질문";
-  s.api.turn = vi.fn(async () => { throw new ApiFail({ code: "CONSENT_REQUIRED", msg: "" }); });
+  let first = true;
+  s.api.turn = vi.fn(async () => { if (first) { first = false; throw new ApiFail({ code: "CONSENT_REQUIRED", msg: "" }); } return { turn_id: "ct_2", status: "running", created: true }; });
   await s.send();
-  expect([s.line, s.bad, s.sid, s.input]).toEqual([ERR.CONSENT_REQUIRED, true, "cs_1", "질문"]);
+  expect([s.line, s.bad, s.sid, s.input]).toEqual([ERR.CONSENT_REQUIRED, true, "", "질문"]);
   expect(s.api.grant).not.toHaveBeenCalled();
+  expect(s.api.capabilities).toHaveBeenCalledTimes(2);   // 허용 표시 다시 읽기
   expect(ERR.CONSENT_REQUIRED).toContain("새 대화");
+  await s.send();
+  expect(s.api.grant).toHaveBeenCalledTimes(1);
+  expect(calls(s.api.create)[0][3]).toBe(calls(s.api.grant)[0][3]);
+  expect(calls(s.api.turn).map(c => c[0])).toEqual(["cs_1", "cs_2"]);
+  expect([s.sid, s.input]).toEqual(["cs_2", ""]);
 });
 
 test("보내기 — client_turn_id 를 싣고 성공하면 입력 비움 · 중지 · 오류 = 문구 · 세션 끝 = 빈 새 대화", async () => {
@@ -441,4 +448,117 @@ test("확인 카드 값 표현: 참거짓과 숫자는 서버 값 그대로 글�
   expect(el.textContent).toContain("3");
   expect(el.textContent).toContain("빈 값");
   act(() => root.unmount()); el.remove();
+});
+
+// ── 대화 하나로 J(2026-11-12) ──
+test("J JD1: 그 PC 의 그 공급자에 서 있는 허용이 있으면 허용 창(grant) 없이 바로 새 대화, 다른 모델도 같다", async () => {
+  const { s } = mk(false);
+  s.api.capabilities = vi.fn(async () => ({ ...caps(["is_1", [["claude", ["sonnet", "opus"]]]]), devices: [{ ...caps(["is_1", [["claude", ["sonnet", "opus"]]]]).devices[0], allowed_providers: ["claude"] }] }));
+  await s.toggle(true);
+  s.pick({ device: "is_1", provider: "claude", model: "opus" });
+  s.input = "첫 글";
+  await s.send();
+  expect(s.api.grant).not.toHaveBeenCalled();
+  expect(calls(s.api.create)[0].slice(0, 3)).toEqual(["is_1", "claude", "opus"]);
+  expect([s.sid, s.grantNote]).toEqual(["cs_2", ""]);
+  expect(s.api.turn).toHaveBeenCalledTimes(1);
+});
+
+test("J JD1: 허용 표시가 낡았으면(세션 생성 CONSENT_REQUIRED) 허용 흐름으로 간다, 그 밖의 오류는 허용을 묻지 않는다", async () => {
+  const { s } = mk(false);
+  s.api.capabilities = vi.fn(async () => ({ devices: [{ ...caps(["is_1", [["claude", ["sonnet"]]]]).devices[0], allowed_providers: ["claude"] }] }));
+  let first = true;
+  s.api.create = vi.fn(async (device_id: string, provider: string, model: string | null) => {
+    if (first) { first = false; throw new ApiFail({ code: "CONSENT_REQUIRED", msg: "" }); }
+    return { session_id: "cs_3", status: "active", device_id, connected: true, provider, model, binding_version: 2 };
+  });
+  await s.toggle(true);
+  s.input = "글";
+  await s.send();
+  expect(s.api.grant).toHaveBeenCalledTimes(1);
+  expect(s.api.create).toHaveBeenCalledTimes(2);
+  expect(calls(s.api.create)[1][3]).toBe(calls(s.api.grant)[0][3]);   // 허용받은 그 id 로 세션
+  expect([s.sid, s.allowed({ device: "is_1", provider: "claude", model: "sonnet" })]).toEqual(["cs_3", true]);   // 다시 허용 = 표시도 다시 선다
+
+  const o = mk(false);
+  o.s.api.capabilities = s.api.capabilities;
+  o.s.api.create = vi.fn(async () => { throw new ApiFail({ code: "TURN-BUSY", msg: "" }); });
+  await o.s.toggle(true);
+  o.s.input = "글";
+  await o.s.send();
+  expect(o.s.api.grant).not.toHaveBeenCalled();
+  expect(o.s.line).toBe(ERR["TURN-BUSY"]);
+});
+
+test("J-F2: PC 앱이 알린 끝난 이유를 나눠 말한다 — failed = 창을 못 띄움(다음 행동), locked = 잠김, declined = 허용 안 함, 옛 앱 = closed", async () => {
+  for (const [reason, prompt, note] of [["failed", "closed", "failed"], ["locked", "closed", "locked"], ["declined", "declined", "declined"], [null, "closed", "closed"]] as const) {
+    const { s } = mk(false);
+    s.api.grantStatus = vi.fn(async (request_id: string) => grantOf({ request_id, prompt, close_reason: reason }));
+    await s.toggle(true);
+    s.input = "글";
+    await s.send();
+    expect(s.grantNote).toBe(note);
+  }
+  expect(GRANT.failed).toContain("허용 창을 띄우지 못했어요");
+  expect(GRANT.failed).toContain("PC 앱을 다시 연 뒤");
+  expect(GRANT.failed).toContain("진단 로그");
+  expect(GRANT.declined).toContain("허용하지 않았어요");
+  expect(GRANT.failed).not.toContain("허용하지 않았");
+});
+
+test("J-F3: 허용 요청이 진행 중이면 보내기, Enter, 다시 요청이 같은 요청을 또 보내지 않는다", async () => {
+  const { s } = mk(false);
+  const gate = deferred<void>();
+  s.api.grant = vi.fn(async (device_id: string, provider: string, model: string | null, request_id: string) => { await gate.promise; return grantOf({ device_id, provider, model, request_id }); });
+  await s.toggle(true);
+  s.input = "글";
+  const a = s.send(), b = s.send();
+  void s.retryGrant();
+  expect(s.waiting()).toBe(true);
+  expect(s.canSend()).toBe(false);
+  expect(await s.requestGrant({ device: "is_1", provider: "claude", model: "sonnet" }, "again")).toBe(false);
+  gate.resolve();
+  await Promise.all([a, b]);
+  expect(s.api.grant).toHaveBeenCalledTimes(1);
+  expect(s.api.create).toHaveBeenCalledTimes(1);
+  expect(s.api.turn).toHaveBeenCalledTimes(1);
+  expect(s.waiting()).toBe(false);
+});
+
+test("J JD1: 같은 화면에서 첫 허용 뒤 새 대화, 다른 모델 = 허용 창을 다시 띄우지 않는다(서버 표시를 기다리지 않음)", async () => {
+  const { s } = mk(false);   // 처음엔 허용 없음(allowed_providers 없음)
+  await s.toggle(true);
+  s.input = "첫 글";
+  await s.send();
+  expect(s.api.grant).toHaveBeenCalledTimes(1);
+  s.newChat();
+  s.pick({ device: "is_1", provider: "claude", model: "opus" });
+  s.input = "둘째 글";
+  await s.send();
+  expect(s.api.grant).toHaveBeenCalledTimes(1);
+  expect(s.api.create).toHaveBeenCalledTimes(2);
+  expect(calls(s.api.create)[1].slice(0, 3)).toEqual(["is_1", "claude", "opus"]);
+});
+
+test("R-J3: 창으로 돌아오면 capabilities 다시 읽기, 열린 패널만, 2초 안의 중복(focus + visibilitychange)은 한 번, 진행 중이면 겹치지 않음", async () => {
+  const { s } = mk(false);
+  let t = 1000;
+  s.now = () => t;
+  s.refreshCapabilities();
+  expect(calls(s.api.capabilities).length).toBe(0);   // 닫힌 패널
+  await s.toggle(true);
+  expect(calls(s.api.capabilities).length).toBe(1);   // 열 때 한 번
+  s.refreshCapabilities(); s.refreshCapabilities();
+  expect(calls(s.api.capabilities).length).toBe(1);   // 방금 읽었다
+  t += CAPS_REFRESH_GAP_MS;
+  const d = deferred<Capabilities>();
+  (s.api.capabilities as ReturnType<typeof vi.fn>).mockImplementationOnce(() => d.promise);
+  s.refreshCapabilities(); s.refreshCapabilities();
+  t += CAPS_REFRESH_GAP_MS; s.refreshCapabilities();   // 앞 요청이 아직 진행 중
+  expect(calls(s.api.capabilities).length).toBe(2);
+  d.resolve(caps(["is_1", [["codex", ["gpt-x"]]]]));
+  await Promise.resolve(); await Promise.resolve();
+  expect(s.capabilities.devices[0].capabilities[0].provider).toBe("codex");
+  s.open = false; t += CAPS_REFRESH_GAP_MS; s.refreshCapabilities();
+  expect(calls(s.api.capabilities).length).toBe(2);
 });

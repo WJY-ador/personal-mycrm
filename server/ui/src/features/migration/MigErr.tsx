@@ -18,7 +18,7 @@ export function MigErr({ e, items }: { e: ApiError; items: PItem[] }) {
   const jump = (s: number) => (ev: React.MouseEvent) => { ev.preventDefault(); document.getElementById(`mig-i-${s}`)?.scrollIntoView?.({ block: "center" }); };
   switch (e.code) {
     case "PLAN-STALE": return box("확인한 뒤 서버 자료가 바뀌어 반영 결과가 달라졌어요. 아무것도 반영하지 않았어요.",
-      <><ul className={css.chg}>{(d.changed || []).map(c => <li key={c.seq}>{`${name(c.seq)} — ${MIG_ACT[c.sealed] || c.sealed} → ${MIG_ACT[c.now] || c.now}`}{c.reason ? <> · <Why r={c.reason} /></> : null}</li>)}</ul><p>{AGAIN}</p></>);
+      <><ul className={css.chg}>{(d.changed || []).map(c => <li key={c.seq}>{`${name(c.seq)}: ${MIG_ACT[c.sealed] || c.sealed} → ${MIG_ACT[c.now] || c.now}`}{c.reason ? <>, <Why r={c.reason} /></> : null}</li>)}</ul><p>{AGAIN}</p></>);
     case "PLAN-HASH-MISMATCH": return box("확인한 plan과 서버에 저장한 plan이 달라요. 아무것도 반영하지 않았어요.", <p>{AGAIN}</p>);
     case "RATE-LIMIT": return box(`오늘 남은 이관 한도보다 새로 넣을 행이 많아요${d.needed != null ? `(${d.needed}행)` : ""}. 아무것도 반영하지 않았어요.`,
       <p>{j.resume_at ? `${mdhm(String(j.resume_at))} 이후에` : "내일"} 다시 반영해 주세요.</p>);

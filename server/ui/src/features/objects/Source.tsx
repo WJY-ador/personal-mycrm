@@ -51,7 +51,7 @@ export function Source(p: P & { id: string }) {
   return (
     <>
       <div className="paper"><Crumbs xs={[HOME, ["#_obj/source", "출처"], ["", x.name]]} />{msg}
-        <div className="eyebrow">출처 · {SRC_KIND[x.kind] || x.kind}</div><h2 className="title">{x.name}</h2>
+        <div className="eyebrow">출처, {SRC_KIND[x.kind] || x.kind}</div><h2 className="title">{x.name}</h2>
         {x.location ? <p className="recmeta">{x.location}</p> : null}
         <div className={css.cols}>
           <section><h2 className="sh">내 글 <span className="speclabel">{totalRecs}</span></h2><Recs S={S} sid={x.id} /></section>

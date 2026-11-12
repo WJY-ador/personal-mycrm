@@ -11,7 +11,7 @@ function Body({ b }: { b: BodyState }) {
   if (!b) return <p className="hint">불러오는 중이에요…</p>;
   if ("error" in b) return <p className="ferr">{b.error}</p>;
   const p = b.payload;
-  if (!p) return <p className="hint">본문은 지웠어요(거절·반영·취소·만료 때 지워요).</p>;
+  if (!p) return <p className="hint">본문은 지웠어요(거절, 반영, 취소, 만료 때 지워요).</p>;
   const kv = (k: string, v: React.ReactNode, has: unknown) => (has === undefined || has === null || has === "" ? null : <><dt>{k}</dt><dd>{v}</dd></>);
   const raw = <details className="tech"><summary>받은 그대로(JSON)</summary><pre className={css.json}>{JSON.stringify(p, null, 2)}</pre></details>;
   if (p.unit_kind === "source") {
@@ -37,7 +37,7 @@ export function MigItem({ x, sealed, on, busy, open, body, onCheck, onBody }: Pr
   return (
     <li className={`${css.item}${x.needs_check && !x.checked ? " " + css.need : ""}`} id={`mig-i-${x.seq}`}>
       <div className={css.head}><span className="speclabel">#{x.seq}</span><code>{x.unit_kind}</code><b>{title}</b><ActChip a={x.action} /></div>
-      {x.reason ? <span className="meta">사유 · <Why r={x.reason} /></span> : null}
+      {x.reason ? <span className="meta">사유: <Why r={x.reason} /></span> : null}
       <div className="frow">{check}<button type="button" className="tertiary small" data-body={x.seq} aria-expanded={open} aria-controls={`mig-b-${x.seq}`} onClick={() => onBody(x)}>{open ? "본문 접기" : "본문 보기"}</button></div>
       {open ? <div className={css.body} id={`mig-b-${x.seq}`}><Body b={body} /></div> : null}
     </li>

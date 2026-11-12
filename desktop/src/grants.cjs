@@ -94,7 +94,7 @@ function deliveredNotice(scope, accountLabel, deviceLabel) {
   const parts = [clip(accountLabel, 80), clip(deviceLabel, 80)].filter(Boolean);
   return scope === 'migration'
     ? {title: '이관 토큰을 받았어요', body: parts[0] || '이 PC에 저장했어요'}
-    : {title: '연결됐어요', body: parts.join(' · ') || '이 PC를 연결했어요'};
+    : {title: '연결됐어요', body: parts.join(', ') || '이 PC를 연결했어요'};
 }
 function failedNotice(scope) {
   return scope === 'migration'

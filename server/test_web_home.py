@@ -328,7 +328,7 @@ def test_static_moved():
     objs = HERE / "ui" / "src" / "features" / "objects"
     otext, oapi = (objs / "text.ts").read_text(encoding="utf-8"), (objs / "objApi.ts").read_text(encoding="utf-8")
     assert '"/api/people"' in oapi and '"/api/reflections"' in oapi
-    assert re.search(r"REFL_HELP\s*=\s*\"출처를 접한 뒤 내가 한 생각만 적어요\. 다른 사람의 말·경험·생각을 옮기는 곳이 아니에요\.\"", otext)
+    assert re.search(r"REFL_HELP\s*=\s*\"출처를 접한 뒤 내가 한 생각만 적어요\. 다른 사람의 말, 경험, 생각을 옮기는 곳이 아니에요\.\"", otext)
     assert re.search(r"PERSON_HELP\s*=\s*\"별칭도 그 사람을 알아볼 수 있으면 개인정보예요\.\"", otext)
     assert "<ReviewNote review={c.review} />" in (HERE / "ui" / "src" / "features" / "sheet" / "RecordTab.tsx").read_text(encoding="utf-8"), "기록 화면 재검토 표시(shared/ReviewNote)"
     assert "ui-namedlg" not in html, "표시 이름 대화창 = 껍데기 자식(모든 역할 — 구간 표식과 무관)"

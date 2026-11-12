@@ -11,7 +11,7 @@ export function TrashRow({ x, busy, onAct }: Props) {
     <li className={css.row}>
       <div className={css.main}>
         <span className="chip">{x.object_label || TRASH_KIND[x.kind] || x.kind}</span> <b>{x.title || "(제목 없음)"}</b>
-        <p className="recmeta">{`${mdhm(x.trashed_at)} 삭제 · 복원 가능 기한 ${mdhm(x.purge_at)}`}</p>
+        <p className="recmeta">{`${mdhm(x.trashed_at)} 삭제, 복원 가능 기한 ${mdhm(x.purge_at)}`}</p>
       </div>
       <div className={`hacts ${css.acts}`} role="group" aria-label="휴지통 동작">
         <button className="primary" type="button" disabled={busy} onClick={() => onAct("restore", x)}>복원</button>

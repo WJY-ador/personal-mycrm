@@ -438,13 +438,13 @@ def _doc_page(title: str, toc_html: str, body_html: str, foot: str, extra_css: s
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>대시보드 — {title}</title>
+<title>대시보드 {title}</title>
 <script src="{asset_url("theme.js")}"></script>
 <style>{css}{_HELP_CSS}{extra_css}</style>
 </head>
 <body>
 <div class="wrap">
-  <header class="top"><div class="name"><a href="/">대시보드</a> <span>— {title}</span></div><div class="top-r">{THEME_TOGGLE}<!--nav--></div></header>
+  <header class="top"><div class="name"><a href="/">대시보드</a> <span>{title}</span></div><div class="top-r">{THEME_TOGGLE}<!--nav--></div></header>
 {toc}  <main>
 {body_html}
   </main>
@@ -467,7 +467,7 @@ def render_help(docs: dict) -> str:
         body_html.append(f'<section class="doc" id="{key}">{body}</section>')
         toc_html.append(_toc_block(key, toc, h1))
     return _doc_page("도움말", "".join(toc_html), chr(10).join(body_html),
-                     '대화에서 물어도 AI 가 이 문서를 읽고 답해요. · <a href="/privacy">개인정보 처리방침</a>')
+                     '대화에서 물어도 AI가 이 문서를 읽고 답해요. <a href="/privacy">개인정보 처리방침</a>')
 
 
 def render_privacy(md: str) -> str:
@@ -532,17 +532,17 @@ def render_download(public: bool, os_: str) -> str:
                     f'<div class="dl-btns">{btn("win", "Windows용 받기", pick)}</div></div>')
         return (f'<div class="{cls}" id="dl-mac"><h2>Mac {tag}</h2>'
                 f'<div class="dl-btns">{btn("mac-arm64", "Apple 칩용 받기", pick)}{btn("mac-x64", "Intel 칩용 받기", pick)}</div>'
-                '<p class="note">칩 확인: Apple 메뉴 &gt; 이 Mac에 관하여 — Apple M1 이상이면 Apple 칩, Intel 이면 Intel 칩이에요.</p></div>')
+                '<p class="note">칩 확인: Apple 메뉴 &gt; 이 Mac에 관하여. Apple M1 이상이면 Apple 칩, Intel이면 Intel 칩이에요.</p></div>')
 
     order = ("mac", "win") if os_ == "mac" else ("win", "mac")
     body = ('<section class="doc" id="download"><h1>PC 앱 설치</h1>'
-            '<p class="dl-lead">PC 앱을 설치하고 「연결 장치」에서 이 계정에 연결해요.</p>'
+            '<p class="dl-lead">PC 앱을 설치하고 연결 장치에서 이 계정에 연결해요.</p>'
             + "".join(section(n) for n in order)
-            + '<p class="dl-warn">베타 — 서명이 없어 첫 실행 때 OS 경고가 떠요. '
-            f'<a href="{RELEASES_LATEST}">설치 경고 안내·체크섬</a></p>'
+            + '<p class="dl-warn">베타 버전이라 서명이 없어 첫 실행 때 OS 경고가 떠요. '
+            f'<a href="{RELEASES_LATEST}">설치 경고 안내와 체크섬</a></p>'
             '<h2 id="download-after">설치한 뒤</h2><ol>'
             '<li>대시보드에 로그인해요.</li>'
-            '<li>「연결 장치」에서 새 장치를 연결하고 토큰을 받아요.</li>'
+            '<li>연결 장치에서 새 장치를 연결하고 토큰을 받아요.</li>'
             '<li>PC 앱에 토큰을 붙여 넣고 시작해요.</li></ol></section>')
     return _doc_page("PC 앱 설치", "", body, '<a href="/help">도움말</a> · <a href="/privacy">개인정보 처리방침</a>', _DOWNLOAD_CSS)
 
@@ -1342,13 +1342,13 @@ class Web:
     async def help(self, request):
         """도움말. 로그인 불필요. DB 를 건드리지 않는다 — 세션은 쿠키 서명만 본다(DEV 는 dev_user 가 있으면 세션으로 친다)."""
         if not self.help_html:
-            return _page("도움말을 찾지 못했어요", "<p>서버에 도움말 문서(guides/09-hosted-start.md · 10-words.md)가 없어요. 운영자에게 알려 주세요.</p>", 503)
+            return _page("도움말을 찾지 못했어요", "<p>서버에 도움말 문서가 없어요. 운영자에게 알려 주세요.</p>", 503)
         return _html_resp(self.help_html.replace("<!--nav-->", self._nav(request), 1), headers={"cache-control": "no-store"})
 
     async def privacy(self, request):
         """개인정보 처리방침. /help 와 같다 — 로그인 불필요, DB 를 건드리지 않는다."""
         if not self.privacy_html:
-            return _page("처리방침을 찾지 못했어요", "<p>서버에 처리방침 문서(guides/11-privacy.md)가 없어요. 운영자에게 알려 주세요.</p>", 503)
+            return _page("처리방침을 찾지 못했어요", "<p>서버에 처리방침 문서가 없어요. 운영자에게 알려 주세요.</p>", 503)
         return _html_resp(self.privacy_html.replace("<!--nav-->", self._nav(request), 1), headers={"cache-control": "no-store"})
 
     async def download(self, request):
@@ -1414,7 +1414,7 @@ class Web:
     async def _authkit_redirect(self, request):
         """AuthKit 로 보내는 302(+ crm_login 쿠키). fresh=1 이면 prompt=login. /login 과 /desktop/login 이 쓴다."""
         if not self.login_ready:
-            return _page("아직 로그인을 열지 않았어요", "<p>운영자가 로그인 설정(AUTHKIT_WEB_CLIENT_ID·CRM_SESSION_SECRET)을 마치면 열려요.</p>", 503)
+            return _page("아직 로그인을 열지 않았어요", "<p>운영자가 로그인 설정을 마치면 열려요.</p>", 503)
         verifier = _b64(secrets.token_bytes(48))
         state = _b64(secrets.token_bytes(24))
         challenge = _b64(hashlib.sha256(verifier.encode()).digest())
@@ -1457,7 +1457,7 @@ class Web:
             return self._loopback_error(request, "login_failed") or _page("로그인 서버가 토큰을 주지 않았어요", f"<p>{_esc(tok.get('error_description') or tok.get('error') or status)}</p>{again}", 502)
         verified = await self.verifier.verify_token(access)
         if verified is None:
-            return self._loopback_error(request, "login_failed") or _page("받은 토큰을 믿을 수 없어요", "<p>토큰의 발급자·대상이 이 서버와 맞지 않아요.</p>" + again, 502)
+            return self._loopback_error(request, "login_failed") or _page("받은 토큰을 믿을 수 없어요", "<p>토큰의 발급자나 대상이 이 서버와 맞지 않아요.</p>" + again, 502)
         try:
             uid = await run_in_threadpool(auth.user_id_for, verified)
         except Exception as e:   # ToolError·CrmError — 메시지만 보인다

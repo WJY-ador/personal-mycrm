@@ -43,9 +43,9 @@ test("목록 — 자료 종류 카드(출처 칩 = 서버 라벨 · 보호 · �
   const el = await show();
   await click(byText(el, "button", "목록")[0]);
   expect(text(el, ".sobj h3")).toEqual(["기준", "숙제"]);
-  expect(text(el, "#dmo-o1 .labels .chip")).toEqual(["표준", "표준 정의 보호", "표준 「기준」", "기준", "항목 2"]);
+  expect(text(el, "#dmo-o1 .labels .chip")).toEqual(["표준", "표준 정의 보호", "표준 기준", "기준", "항목 2"]);
   expect(el.querySelector("#dmo-o2 .labels .chip")!.className).toBe("chip o-tpl");
-  expect(text(el, "#dmo-o1 thead th")).toEqual(["필드", "key", "값", "구분", "보호"]);
+  expect(text(el, "#dmo-o1 thead th")).toEqual(["필드", "키", "값", "구분", "보호"]);
   expect(text(el, "#dmo-o1 tbody td")[2]).toBe("참조 → 검토할 판단 N:N");
   expect(el.querySelector("#dmo-r1")!.textContent).toContain("기준근거 → 검토할 판단");
   expect(el.querySelector("#dmo-core-candidate")!.textContent).toBe("검토할 판단");
@@ -75,21 +75,21 @@ test("이름 공유 — 껍데기 메뉴(사용자 구간)가 있을 때만 · �
 test("편입 미리보기 — 카드 · 보류(서버 state 그대로) → 머리 한 줄 + 다시 받기 · 편입 = 확인창 체크 뒤 confirmed_meaning·revision · 실패 = 그 카드 문구", async () => {
   const el = await show();
   const cards = el.querySelectorAll(".spvc");
-  expect(text(el, ".spvc h4")).toEqual(["표준 「기준」처음부터 표준", "표준 「축」아직 고르지 않음", "표준 「결정」보류"]);
+  expect(text(el, ".spvc h4")).toEqual(["표준 기준처음부터 표준", "표준 축아직 고르지 않음", "표준 결정보류"]);
   expect(cards[0].querySelector(".hint")!.textContent).toBe("이미 표준으로 쓰고 있어요.");
-  expect(cards[2].querySelector(".blocked")!.textContent).toBe("편입할 수 없어요 — 구조가 표준과 달라요. 대화로 정의를 표준 모양에 맞춘 뒤 다시 보세요.");
+  expect(cards[2].querySelector(".blocked")!.textContent).toBe("편입할 수 없어요. 구조가 표준과 달라요. 대화로 정의를 표준 모양에 맞춘 뒤 다시 보세요.");
   expect(cards[2].textContent).toContain("표준 필드 rules 가 없어요");
   expect((byText(cards[2] as Element, "button", "보류")[0] as HTMLButtonElement).disabled).toBe(true);
   await click(byText(cards[1] as Element, "button", "보류")[0]);
   expect(posts()).toEqual([{ url: "/api/std/choose", body: { std_key: "axes", state: "deferred" } }]);
-  expect(el.querySelector("#std-msg")!.textContent).toBe("표준 「축」 — 보류로 남겼어요. 다른 기능은 그대로예요.");
+  expect(el.querySelector("#std-msg")!.textContent).toBe("표준 축: 보류로 남겼어요. 다른 기능은 그대로예요.");
   expect(reload).toHaveBeenCalledTimes(1);
   // 편입 — 확인창: 체크 전엔 [편입하기] 꺼짐
   await click(byText(el, "button", "편입…")[0]);
   const dlg = el.querySelector("#std-dlg")!;
-  expect(dlg.querySelector("#std-dlg-title")!.textContent).toBe("표준 「축」으로 편입하기");
-  expect(dlg.querySelector(".stdok span")!.textContent).toBe("이 자료 종류를 표준 「축」과 같은 뜻으로 쓴다. 아래 잠금 영향을 확인했다.");
-  expect(text(dlg, "ul li")).toEqual(["자료 종류 삭제·보관", "표준 필드 빼기"]);
+  expect(dlg.querySelector("#std-dlg-title")!.textContent).toBe("표준 축으로 편입하기");
+  expect(dlg.querySelector(".stdok span")!.textContent).toBe("이 자료 종류를 표준 축과 같은 뜻으로 써요. 아래 잠금 영향을 확인했어요.");
+  expect(text(dlg, "ul li")).toEqual(["자료 종류 삭제, 보관", "표준 필드 빼기"]);
   const go = byText(dlg, "button", "편입하기")[0] as HTMLButtonElement;
   expect(go.disabled).toBe(true);
   await click(dlg.querySelector('input[type="checkbox"]'));
@@ -97,16 +97,16 @@ test("편입 미리보기 — 카드 · 보류(서버 state 그대로) → 머�
   POST = () => json(400, { code: "STANDARD-LOCKED", msg: "x" });
   await click(go);
   expect(posts().at(-1)).toEqual({ url: "/api/std/choose", body: { std_key: "axes", state: "incorporated", confirmed_meaning: true, expected_revision: 4 } });
-  expect(el.querySelectorAll(".spvc")[1].querySelector(".perror")!.textContent).toBe("이미 편입된 표준은 보류·거절로 바꿀 수 없어요.");
+  expect(el.querySelectorAll(".spvc")[1].querySelector(".perror")!.textContent).toBe("이미 편입된 표준은 보류나 거절로 바꿀 수 없어요.");
   POST = () => json(400, { code: "CONFLICT", msg: "x" });
   await click(byText(el.querySelectorAll(".spvc")[1] as Element, "button", "거절")[0]);
-  expect(el.querySelector("#std-msg")!.textContent).toBe("표준 「축」 — 다른 곳에서 먼저 바뀌었어요. 미리보기를 다시 불러왔어요 — 다시 확인해 주세요.");
+  expect(el.querySelector("#std-msg")!.textContent).toBe("표준 축: 다른 곳에서 먼저 바뀌었어요. 미리보기를 다시 불러왔어요. 다시 확인해 주세요.");
 });
 
 test("미리보기 못 읽음 · 구조 정의 없음", async () => {
   serve(() => json(500, { code: "X", msg: "m" }));
   let el = await show();
-  expect(el.querySelector("#std-pv .partfail b")!.textContent).toBe("편입 미리보기을 읽지 못했어요 · 나머지는 정상");
+  expect(el.querySelector("#std-pv .partfail b")!.textContent).toBe("편입 미리보기을 읽지 못했어요. 나머지는 정상이에요.");
   el = await show(structState({ structure: null }));
   expect(el.textContent).toBe("구조 정의를 읽지 못했어요. 새로 고침해도 그대로면 다시 로그인해 보세요.");
 });

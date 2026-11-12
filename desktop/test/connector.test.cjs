@@ -99,7 +99,7 @@ test('poll registers the installation, redeems a device grant, hands the token t
   const id=h.inst();assert.match(id,/^di_\d{24}$/);
   s.grant('device',id);h.next();assert.equal(await h.c.poll('timer'),'ok');
   assert.deepEqual(h.calls(),[{cmd:`connect --server ${s.base} --token-stdin`,stdin:DEVICE+'\n'}]);
-  assert.deepEqual(h.notices,[{title:'연결됐어요',body:'u1@example.com · Studio'}]);
+  assert.deepEqual(h.notices,[{title:'연결됐어요',body:'u1@example.com, Studio'}]);
   assert.equal(s.grants[0].state,'delivered');
   assert(s.requests.every(r=>r.desk==='1'&&r.cookie==='crm_session=sess-1'));
   assert.deepEqual(s.requests.find(r=>r.path.endsWith('/redeem')).body,{installation_id:id});

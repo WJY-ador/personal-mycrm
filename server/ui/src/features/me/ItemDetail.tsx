@@ -20,7 +20,7 @@ export function ItemDetail({ W, r, lens, trashOn }: { W: World; r: Extract<Row, 
   const spec: EditSpec = { key, done: "저장했어요.", errText: serverErrText,
     fields: [{ name: "title", label: "제목", multi: false, orig: x.title || "" }, { name: "body", label: "본문", multi: true, orig: x.body || "", optional: true }],
     save: d => meApi.itemEdit(x.id, x.revision, d.title.trim(), d.body) };
-  const meta = [mdhm(r.at), x.semantic_kind === "principle" && x.decision === "confirmed" ? "확정" : ""].filter(Boolean).join(" · ");
+  const meta = [mdhm(r.at), x.semantic_kind === "principle" && x.decision === "confirmed" ? "확정" : ""].filter(Boolean).join(", ");
   const code = x.code ? <><span className="chip code">{x.code}</span> </> : null;
   const can = x.revision > 0;
   return (

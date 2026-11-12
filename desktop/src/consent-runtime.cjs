@@ -1,6 +1,6 @@
 'use strict';
 
-const {createConsentApproval}=require('./consent-approval.cjs');
+const {createConsentApproval,sessionActive}=require('./consent-approval.cjs');
 const {loadOrCreateKeyPair}=require('./consent-key-store.cjs');
 const {encodeConsent,signConsent}=require('./consent-signature.cjs');
 
@@ -9,7 +9,7 @@ const REQUEST_ID=/^[A-Za-z0-9_-]{1,64}$/;
 const BEARER=/^Bearer [A-Za-z0-9._~+/-]{16,500}$/;
 const SIGNATURE=/^[A-Za-z0-9_-]{86}$/;
 // The only refusal reasons the bridge reports to the agent (and the agent to the server).
-// declined = the person said no; locked = screen lock/idle; failed = every other failure.
+// declined = the person said no; locked = the screen locked during the window; failed = every other failure.
 const REASONS=Object.freeze(['declined','locked','failed']);
 const OK=Object.freeze({ok:true});
 const FAIL=Object.freeze({ok:false,reason:'failed'});
@@ -18,12 +18,12 @@ const refusal=code=>Object.freeze({ok:false,reason:code==='DECLINED'?'declined':
 function createConsentRuntime(options={}){
  const {request,getInstallationId,safeStorage,keyFile,app,dialog,powerMonitor,trustedWindow,allowedUrl,focusWindow}=options;
  const platform=options.platform||process.platform;
- const lockSupported=(platform==='darwin'||platform==='win32')&&powerMonitor&&typeof powerMonitor.on==='function'
-  &&typeof powerMonitor.getSystemIdleState==='function';
  const now=typeof options.now==='function'?options.now:()=>Math.floor(Date.now()/1000);
  const loadKey=options.loadKey||loadOrCreateKeyPair;
- let pending=false,currentClaims=null,activeTask=null,lastAuthorization=null,epoch=0;
- const screenActive=()=>{try{return !!lockSupported&&powerMonitor.getSystemIdleState(1)==='active';}catch{return false;}};
+ // J JD2: nothing here revokes at app start or on a screen lock. A lock only cancels an approval in flight (cancel) and
+ // keeps a new consent window from opening (screenActive). The person releases an allow (JD3, permits.cjs).
+ let pending=false,currentClaims=null,activeTask=null,epoch=0;
+ const screenActive=()=>sessionActive(powerMonitor,platform);
  const approval=createConsentApproval({app,dialog,powerMonitor,safeStorage,trustedWindow,allowedUrl,now,loadKeyPair:loadKey,
   platform,
   challenge:async claims=>{
@@ -44,7 +44,6 @@ function createConsentRuntime(options={}){
   try{installation_id=await getInstallationId();}catch{return FAIL;}
   if(!current()||typeof installation_id!=='string'||!INSTALLATION.test(installation_id))return FAIL;
   const authorization=input.device_bearer;
-  lastAuthorization={installation_id,authorization};
   try{
    const pair=await loadKey({safeStorage,filePath:keyFile});
    if(!current())return FAIL;
@@ -92,30 +91,9 @@ function createConsentRuntime(options={}){
   catch{return FAIL;}
   finally{pending=false;if(activeTask===task)activeTask=null;currentClaims=null;}
  }
- async function invalidateOnLock(){
-  epoch++;currentClaims=null;
-  const task=activeTask;
-  const revoke=async auth=>{
-   if(!auth)return true;
-   const result=await post('/api/chat/consent/keys/revoke',{installation_id:auth.installation_id},auth.authorization);
-   return !!result&&Number.isSafeInteger(result.revoked)&&result.revoked>=0;
-  };
-  const initial=lastAuthorization;
-  let revoked=false;
-  try{revoked=await revoke(initial);}catch{revoked=false;}
-  if(task)try{await task;}catch{}
-  const auth=lastAuthorization;
-  if(!auth)return revoked||!initial;
-  // The approval flow may have been inside key activation when lock arrived.
-  // Revoke again after it settles so that such a late activation cannot survive.
-  if(task&& (auth===initial||!revoked)){
-   try{revoked=await revoke(auth);}catch{revoked=false;}
-  }
-  if(!revoked)return false;
-  lastAuthorization=null;
-  return true;
- }
- return Object.freeze({handle,invalidateOnLock,dispose:()=>approval.dispose()});
+ // Screen lock or sleep: the approval in flight (server calls, the open window) can no longer finish. No server call.
+ function cancel(){epoch++;currentClaims=null;}
+ return Object.freeze({handle,cancel,dispose:()=>approval.dispose()});
 }
 
 module.exports=Object.freeze({createConsentRuntime,REASONS});

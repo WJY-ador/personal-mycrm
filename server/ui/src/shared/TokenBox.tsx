@@ -15,10 +15,10 @@ export function TokenBox({ title, region, inputLabel, paste, copied, lost, onDon
     else pick("선택된 글자를 직접 복사하세요.");
   }
   return (
-    <div className={css.box} role="region" aria-label={region}><b>{title} — 지금 한 번만 보여요</b>
-      <p>{`${paste} 이 화면을 떠나면 다시 볼 수 없어요(${lost}). 대화·문서·메신저에 붙여 넣지 마세요.`}</p>
+    <div className={css.box} role="region" aria-label={region}><b>{title}, 지금 한 번만 보여요</b>
+      <p>{`${paste} 이 화면을 떠나면 다시 볼 수 없어요(${lost}). 대화, 문서, 메신저에 붙여 넣지 마세요.`}</p>
       <div className="frow"><input ref={ref} className={`finput ${css.tok}`} type="text" readOnly value={token} aria-label={inputLabel} autoComplete="off" spellCheck={false} />
-        <button type="button" className="secondary" onClick={copy}>복사</button><button type="button" className="tertiary" onClick={onDone}>붙여 넣었어요 · 지우기</button></div>
+        <button type="button" className="secondary" onClick={copy}>복사</button><button type="button" className="tertiary" onClick={onDone}>붙여 넣었어요, 지우기</button></div>
       <p className="fok" role="status" aria-atomic="true">{say}</p></div>
   );
 }

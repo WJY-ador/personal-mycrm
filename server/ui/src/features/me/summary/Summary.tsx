@@ -12,11 +12,11 @@ export function Summary({ W, slots, blocks, statsFail }: { W: World; slots: Slot
     <>
       {firstRecord && <section className={css.firstRecord} id="first-record-intro" aria-labelledby="first-record-title">
         <h2 id="first-record-title">첫 기록을 남겨 보세요</h2>
-        <p>ChatGPT·Claude에 MyCRM을 연결한 대화에서 기록을 남기고, 검토할 판단 후보를 여기서 확인할 수 있어요.</p>
+        <p>ChatGPT나 Claude에 MyCRM을 연결한 대화에서 기록을 남기고, 검토할 판단 후보를 여기서 확인할 수 있어요.</p>
         <ol aria-label="첫 기록을 남기는 순서">
           <li>AI 대화 연결</li><li>기록 남기기</li><li>후보 검토</li>
         </ol>
-        <p className={css.webChatNote}>웹의 「대화」는 본인 PC 연결과 로컬 에이전트 실행이 필요해요.</p>
+        <p className={css.webChatNote}>웹의 AI 대화는 본인 PC 연결과 로컬 에이전트 실행이 필요해요.</p>
         <a className={css.helpLink} href="/help">첫 기록 안내 보기</a>
       </section>}
       <div className={css.sum} id="me-summary">

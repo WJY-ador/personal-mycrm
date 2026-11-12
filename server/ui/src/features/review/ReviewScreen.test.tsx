@@ -57,8 +57,8 @@ test("한 장 — 질문·문장·칩·재검토 0 · 근거 원문(구절 문�
   expect(el.querySelector("h2")!.textContent).toBe("원문과 대조하기");
   expect(el.textContent).toContain("아직 안 정한 문장 2개");
   expect(el.querySelector("a.link")!.getAttribute("href")).toBe("#q/q1");
-  expect(el.querySelector("[data-candidate-id]")!.textContent).toContain("질문 · 도입 순서는?");
-  expect([...el.querySelectorAll(".labels > *")].map(x => x.textContent)).toEqual(["아직 안 정함", "AI가 쓴 문장", "AI 문안"]);
+  expect(el.querySelector("[data-candidate-id]")!.textContent).toContain("질문: 도입 순서는?");
+  expect([...el.querySelectorAll(".labels > *")].map(x => x.textContent)).toEqual(["AI가 쓴 문장"]);   // AI 표시 하나(디자인 2 C3)
   expect(el.querySelector(".recheck")).toBeNull();
   expect(["남기기", "고쳐서 남기기", "반영 안 함"].map(t => btn(t).disabled)).toEqual([true, true, true]);
   expect(el.textContent).toContain("원문을 불러오는 중이에요…");
@@ -66,14 +66,24 @@ test("한 장 — 질문·문장·칩·재검토 0 · 근거 원문(구절 문�
   await show(state([cand("c_1"), cand("c_2")]), "c_1");
   expect(["남기기", "고쳐서 남기기", "반영 안 함"].map(t => btn(t).disabled)).toEqual([false, false, false]);
   const src = el.querySelector("#rvsrc")!;
-  expect(src.querySelector("h3")!.textContent).toBe("근거 원문 · 도입 회고");
+  expect(src.querySelector("h3")!.textContent).toBe("근거 원문: 도입 회고");
   const ex = src.querySelector(":scope > .doc")!;
   expect([...ex.querySelectorAll("p")].map(p => [p.className, p.textContent])).toEqual([
     ["dim", "첫 문단이다."], ["", "고객은 입력 담당을 먼저 정했다. 그게 맞았다."], ["dim", "셋째 문단."]]);
   expect(ex.querySelector("mark")!.textContent).toBe("입력 담당을 먼저");
   expect(src.querySelector("details.fold summary")!.textContent).toBe("전체 원문 보기");
-  expect(src.querySelector("details.tech")!.textContent).toContain("출처 회고 메모 · 파일 · 쓸 당시 표기 「파일에서 가져옴」 · 근거 구절 9자");
+  expect(src.querySelector("details.tech")!.textContent).toContain("출처 회고 메모(파일), 쓸 당시 표기 파일에서 가져옴, 근거 구절 9자");
   expect(btn("이전 문장").disabled).toBe(true);
+});
+
+test("AI 표시는 하나(디자인 2 C3) — AI가 쓴 문장 = 배지 하나 + 점선 표시, 내 메모 = AI 표시 없음, 내 메모 + 승인 전 AI 문안 = AI 문안 하나 + 점선 표시", async () => {
+  const shown = () => ({ labels: [...el.querySelectorAll(".labels > *")].map(x => x.textContent), marked: el.querySelector("[data-candidate-id]")!.classList.length === 2 });
+  await show(state([cand("c_1")]), "c_1");
+  expect(shown()).toEqual({ labels: ["AI가 쓴 문장"], marked: true });
+  await show(state([cand("c_1", { origin: "memo", wording_by: "user", wording_approved: true })]), "c_1");
+  expect(shown()).toEqual({ labels: ["내가 쓴 메모"], marked: false });
+  await show(state([cand("c_1", { origin: "memo", wording_by: "ai", wording_approved: false })]), "c_1");
+  expect(shown()).toEqual({ labels: ["내가 쓴 메모", "AI 문안"], marked: true });
 });
 
 test("근거 구절이 원문에 없음·원문 못 받음 = 경고, 결정 잠김 · 문단 경계 = 전체 원문 + 버튼 켜짐 · 재검토 표시", async () => {
@@ -104,10 +114,10 @@ test("주소 바꿔 끼우기 — 빈 자리·옛 숫자 = 그 자리 판단 · 
   await show(state([]), "c_1");
   expect(el.textContent).toContain("아직 안 정한 문장이 없어요.이 질문의 미결 문장 검토가 끝났어요.새 글에서 판단을 뽑으면 여기에 떠요.");
   await show(state([cand("c_9", { question_id: null })]), "c_9", "r:r1");
-  expect(el.querySelector("[data-candidate-id]")!.textContent).toContain("질문 없음 · 내 글 「도입 회고」");
-  expect(el.querySelector("#decision-help")!.textContent).toBe("남기면 확정한 판단에 들어가요(질문 없음). 반영 안 함으로 둬도 판단 문장과 원문은 삭제되지 않아요. 원문은 바뀌지 않아요.");
+  expect(el.querySelector("[data-candidate-id]")!.textContent).toContain("질문 없음, 내 글: 도입 회고");
+  expect(el.querySelector("#decision-help")!.textContent).toBe("남기면 확정한 판단에 들어가고(질문 없음), 반영 안 함으로 둬도 판단 문장과 원문은 삭제되지 않아요.");
   await show(state([], { read: { candidates: { ok: false, error: { code: "OFFLINE", msg: "x" } } } }), "c_1");
-  expect(el.querySelector(".partfail")!.textContent).toContain("문장 목록을 읽지 못했어요 · 나머지는 정상서버에 연결하지 못했어요.");
+  expect(el.querySelector(".partfail")!.textContent).toContain("문장 목록을 읽지 못했어요. 나머지는 정상이에요.서버에 연결하지 못했어요.");
 });
 
 test("남기기 — 호출 하나(expected_revision) · 저장 중 잠금 · 새 상태 → 다음 판단 + 결과 한 줄(한 번) · 머리말로 초점", async () => {
@@ -143,7 +153,7 @@ test("고쳐서 남기기 · 충돌 = 서버 문구 + 고치던 문장 · 실패
   reload.mockImplementation(async () => { S = state([cand("c_1", { revision: 3 })]); return true; });
   await click(btn("고친 문장으로 남기기")); await redraw();
   expect(posts().at(-1)!.body).toEqual({ candidate_id: "c_1", action: "edit_confirm", expected_revision: 2, text: "고친 문장" });
-  expect(el.querySelector("#save-status")!.textContent).toBe("다른 곳에서 먼저 바뀌었어요(서버). 고치던 문장은 저장되지 않았어요: 「고친 문장」");
+  expect(el.querySelector("#save-status")!.textContent).toBe("다른 곳에서 먼저 바뀌었어요(서버). 고치던 문장은 저장되지 않았어요: 고친 문장");
   POST = () => json(400, { code: "CANDIDATE-REVIEW", msg: "근거가 바뀌었어요." });
   await click(btn("반영 안 함"));
   expect(el.querySelector("#save-error")!.textContent).toBe("근거가 바뀌었어요.");

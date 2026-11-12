@@ -38,7 +38,7 @@ function Body({ S, j }: { S: AppState; j: Rec }) {
   if (q.isError && !q.data) return <PartFail err={apiErr(q.error)} what="이 글" />;
   if (!q.data) return <div className="doc"><p className="dim">원문을 불러오는 중이에요…</p></div>;
   const r = q.data;
-  return <>{q.isError ? <PartFail err={apiErr(q.error)} what="이 글" /> : null}<div className="recmeta">{mdhm(r.meta.created)} · {srcLine(S.sources, j.source_id, r.meta.source)}</div><Doc title={r.title} body={r.body} qText={qText} /></>;
+  return <>{q.isError ? <PartFail err={apiErr(q.error)} what="이 글" /> : null}<div className="recmeta">{mdhm(r.meta.created)}, {srcLine(S.sources, j.source_id, r.meta.source)}</div><Doc title={r.title} body={r.body} qText={qText} /></>;
 }
 
 export function RecordTab({ S, tabId, bl, sel }: { S: AppState; tabId: string; bl: Set<string>; sel: string }) {
@@ -47,7 +47,7 @@ export function RecordTab({ S, tabId, bl, sel }: { S: AppState; tabId: string; b
   const all = readOk(S, "journal") ? S.journal || [] : [];
   const cnt = S.source_counts || { by_source: {}, unconfirmed: 0 }, by = cnt.by_source || {};
   const total = Object.values(by).reduce((a, n) => a + n, 0) + (cnt.unconfirmed || 0);
-  const opts: [string, string, number][] = [["all", "전부", total], ...(S.sources || []).map(x => [x.id, `${x.name} · ${SRC_KIND[x.kind] || x.kind}`, by[x.id] || 0] as [string, string, number]),
+  const opts: [string, string, number][] = [["all", "전부", total], ...(S.sources || []).map(x => [x.id, `${x.name}(${SRC_KIND[x.kind] || x.kind})`, by[x.id] || 0] as [string, string, number]),
     ["none", SRC_NONE, cnt.unconfirmed || 0]];
   const cur = opts.some(o => o[0] === src) ? src : "all";   // 없는 출처를 고른 상태면 「전부」로
   const has = (r: Rec) => !!(r.source_id && (S.sources || []).some(s => s.id === r.source_id));
@@ -62,7 +62,7 @@ export function RecordTab({ S, tabId, bl, sel }: { S: AppState; tabId: string; b
   else if (!j) body = <>{filt}<div className="empty">불러온 글 중에 이 출처에서 온 글이 없어요.</div></>;
   else {
     const cs = (S.candidates || []).filter(c => c.record_id === j.id), q = (S.questions || []).find(x => x.id === j.question_id);
-    body = <>{filt}<div className="eyebrow">내 글{q ? ` · ${q.text}` : ""}</div><h2 className="title">{j.broken ? "읽지 못한 글" : j.title}</h2>
+    body = <>{filt}<div className="eyebrow">내 글{q ? `, ${q.text}` : ""}</div><h2 className="title">{j.broken ? "읽지 못한 글" : j.title}</h2>
       <div className="labels"><SrcChip S={S} r={j} /><AxisChips S={S} rid={j.id} /></div>
       {bl.has("next") ? <NextLine S={S} /> : null}
       <div id="recbody"><Body key={j.id} S={S} j={j} /></div>

@@ -72,3 +72,24 @@ test('claim request posts the form to /desktop/claim with the desktop header and
  const q=new URLSearchParams(options.postData[0].bytes.toString());
  assert.deepEqual(Object.fromEntries(q),{code:CODE,verifier:'V'.repeat(43),state:STATE});
 });
+test('R-J5: a deep link raises a window at most once per 2 seconds; the first raise always passes',()=>{
+ assert.equal(h.FOCUS_GAP_MS,2000);
+ let t=50;const raise=h.focusLimiter(h.FOCUS_GAP_MS,()=>t);
+ assert.equal(raise(),true,'first');
+ t=1500;assert.equal(raise(),false,'inside 2 s');
+ t=2049;assert.equal(raise(),false,'a refused raise does not restart the window');
+ t=2050;assert.equal(raise(),true,'2 s after the last raise');
+ t=2051;assert.equal(raise(),false);
+ assert.equal(h.focusLimiter()(),true,'default clock');
+});
+test('R-J5: main.cjs raises for setup and login links only through the limiter; the link is still handled',()=>{
+ const main=require('node:fs').readFileSync(require('node:path').join(__dirname,'..','src','main.cjs'),'utf8');
+ const body=(name)=>main.slice(main.indexOf(`function ${name}(`),main.indexOf('\n}',main.indexOf(`function ${name}(`)));
+ assert.match(main,/const linkRaise=handoff\.focusLimiter\(\);/);
+ assert.match(body('raiseForLink'),/if\(!linkRaise\(\)\)return;showWindow\(\);app\.focus\(\{steal:true\}\);/);
+ for(const name of ['setupLink','deepLink']){
+  assert.doesNotMatch(body(name),/steal|show\(\)|showDashboard\(\)/,name+' does not raise by itself');
+ }
+ assert.match(body('setupLink'),/raiseForLink\(show\);[\s\S]*setup-step/);
+ assert.match(body('deepLink'),/raiseForLink\(showDashboard\);[\s\S]*handoff\.accept/);
+});

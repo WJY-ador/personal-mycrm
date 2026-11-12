@@ -8,7 +8,7 @@ const {encodeConsent,verifyConsent}=require('../src/consent-signature.cjs');
 
 const NOW=Math.floor(Date.now()/1000);
 function keyPair(){return crypto.generateKeyPairSync('ed25519');}
-function fixture({dialogResult=1,locked=false,requestOverride,onDialog}={}){
+function fixture({dialogResult=1,locked=false,requestOverride,onDialog,runtimeOptions={}}={}){
  const pair=keyPair(),calls=[],url='file:///mycrm/index.html';
  let keyLoads=0;
  const claims={user_id:'u_synthetic_1',device_id:'dev_synthetic_1',session_id:'request_test_1',provider:'claude',
@@ -35,7 +35,7 @@ function fixture({dialogResult=1,locked=false,requestOverride,onDialog}={}){
   keyFile:'/synthetic/key',loadKey:async()=>{keyLoads++;return pair;},app:{getPath:()=>'/synthetic'},dialog:{showMessageBox:async(_w,options)=>{
    assert.match(options.detail,/claude\/opus\+latest/);return onDialog?onDialog():{response:dialogResult};
   }},powerMonitor,trustedWindow:()=>win,allowedUrl:url,
-  focusWindow:async()=>true,now:()=>NOW});
+  focusWindow:async()=>true,now:()=>NOW,...runtimeOptions});
  return {runtime,pair,calls,claims,powerMonitor,setLocked(value){lockedState=value;},get keyLoads(){return keyLoads;}};
 }
 
@@ -50,45 +50,43 @@ test('supervised request bootstraps OS key, shows native approval, signs server 
  assert.equal(verifyConsent(f.claims,f.calls.at(-1).body.signature,f.pair.publicKey,{nowSeconds:NOW}).ok,true);
 });
 
-test('screen lock revokes the active server key, then the same protected key can be approved again',async()=>{
- let currentClaims;
- const f=fixture({requestOverride:async(path,body,_auth,_calls,claims,pair)=>{
-  if(path.endsWith('/keys/begin'))return {status:200,body:{key_id:'ck_synthetic_1',claims:{...claims,session_id:'ck_synthetic_1',provider:'mycrm-key',model:'bind'}}};
-  if(path.endsWith('/keys/activate'))return {status:200,body:{key_id:body.key_id,state:'active',rotated:true}};
-  if(path.endsWith('/keys/revoke'))return {status:200,body:{revoked:1}};
-  if(path.endsWith('/challenges/issue')){
-   currentClaims={...claims,session_id:body.request_id};return {status:200,body:{challenge_id:'cc_synthetic_1',claims:currentClaims}};
-  }
-  if(path.endsWith('/challenges/verify')){
-   const verified=verifyConsent(currentClaims,body.signature,pair.publicKey,{nowSeconds:NOW});
-   return verified.ok?{status:200,body:{state:'verified',grant_id:'cg_synthetic_1'}}:{status:409,body:{code:'CONSENT_REQUIRED'}};
-  }
-  return {status:404,body:null};
- }});
+test('JD2: a screen lock sends nothing to the server; while locked no window opens, after unlock approval works',async()=>{
+ const f=fixture();
  assert.deepEqual(await f.runtime.handle({request_id:'request_test_1',device_bearer:'Bearer synthetic-device-token'}),{ok:true});
- f.setLocked(true);f.powerMonitor.emit('lock-screen');
- assert.equal(await f.runtime.invalidateOnLock(),true);
- assert.deepEqual(f.calls.at(-1),{path:'/api/chat/consent/keys/revoke',body:{installation_id:'di_'+'a'.repeat(24)},authorization:'Bearer synthetic-device-token'});
+ const before=f.calls.length;
+ f.setLocked(true);f.powerMonitor.emit('lock-screen');f.runtime.cancel();
+ assert.equal(f.calls.length,before,'no keys/revoke on lock');
  assert.deepEqual(await f.runtime.handle({request_id:'request_test_2',device_bearer:'Bearer synthetic-device-token'}),{ok:false,reason:'failed'});
+ assert.equal(f.calls.length,before,'a locked screen opens no window and calls nothing');
  f.setLocked(false);f.powerMonitor.emit('unlock-screen');
- assert.deepEqual(await f.runtime.handle({request_id:'request_test_2',device_bearer:'Bearer synthetic-device-token'}),{ok:true});
- assert.equal(f.keyLoads,4,'each approval reloads the same OS-protected private key for registration and signing');
- assert.equal(f.calls.filter(x=>x.path.endsWith('/keys/activate')).length,2);
+ assert.deepEqual(await f.runtime.handle({request_id:'request_test_1',device_bearer:'Bearer synthetic-device-token'}),{ok:true});
+ assert.equal(f.calls.some(x=>x.path.endsWith('/keys/revoke')),false);
+ assert.equal(typeof f.runtime.invalidateOnLock,'undefined');
+ assert.equal(typeof f.runtime.revokeAtStart,'undefined');
+ assert.equal(typeof f.runtime.ensureStartRevoked,'undefined');
 });
 
-test('suspend during a pending native approval revokes the server key and cannot verify a late allow',async()=>{
+test('suspend during a pending native approval cancels it: a late allow cannot verify, nothing is revoked',async()=>{
  let resolveDialog;
  const f=fixture({onDialog:()=>new Promise(resolve=>{resolveDialog=resolve;})});
- const controller=new AbortController();
- const pending=f.runtime.handle({request_id:'request_test_1',device_bearer:'Bearer synthetic-device-token'},controller.signal);
+ const pending=f.runtime.handle({request_id:'request_test_1',device_bearer:'Bearer synthetic-device-token'});
  while(!resolveDialog)await new Promise(resolve=>setImmediate(resolve));
- f.setLocked(true);f.powerMonitor.emit('suspend');controller.abort();
- const revoke=f.runtime.invalidateOnLock();
+ f.powerMonitor.emit('suspend');f.runtime.cancel();
  resolveDialog({response:1});
- assert.deepEqual(await pending,{ok:false,reason:'failed'});
- assert.equal(await revoke,true);
+ assert.notEqual((await pending).ok,true);
  assert.equal(f.calls.some(x=>x.path.endsWith('/challenges/verify')),false);
- assert.equal(f.calls.at(-1).path,'/api/chat/consent/keys/revoke');
+ assert.equal(f.calls.some(x=>x.path.endsWith('/keys/revoke')),false);
+});
+
+test('J-F6: no input for a second (idle) is not a lock; locked and unknown still refuse',async()=>{
+ for(const [state,ok] of [['idle',true],['active',true],['locked',false],['unknown',false]]){
+  const f=fixture();f.powerMonitor.getSystemIdleState=()=>state;
+  const result=await f.runtime.handle({request_id:'request_test_1',device_bearer:'Bearer synthetic-device-token'});
+  assert.equal(result.ok,ok,state);
+ }
+ const unsupported=fixture({runtimeOptions:{platform:'linux'}});
+ assert.deepEqual(await unsupported.runtime.handle({request_id:'request_test_1',device_bearer:'Bearer synthetic-device-token'}),{ok:false,reason:'failed'});
+ assert.equal(unsupported.calls.length,0);
 });
 
 test('cancel, locked session, malformed notification, and server binding mismatch fail closed',async()=>{

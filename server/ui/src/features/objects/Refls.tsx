@@ -11,7 +11,7 @@ export function Refls(p: P) {
   return (
     <div className="paper sheet"><Crumbs xs={[HOME, ["", "읽고 든 생각"]]} />{msg}
       <div className="sechead"><h2 className="title" style={{ margin: 0 }}>읽고 든 생각 <span className="count">{rs.length}</span></h2><a className="btn primary" href="#_obj/reflection/new">읽고 든 생각 쓰기</a></div>
-      <p className="hint">{REFL_HELP} 「확인했어요」는 판단 확정이 아니에요.</p>
+      <p className="hint">{REFL_HELP} <b>확인했어요</b> 표시는 판단 확정이 아니에요.</p>
       {rs.length ? <ReflCards {...p} xs={rs} compact={false} /> : <div className="empty">아직 읽고 든 생각이 없어요.</div>}
     </div>
   );

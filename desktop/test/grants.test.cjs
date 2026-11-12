@@ -83,7 +83,7 @@ test('client info names the PC and OS (process.platform) only',()=>{
  assert.equal(g.clientInfo('a\nb','darwin').client_name,'a b');
 });
 test('notices name the account and device, never a token',()=>{
- assert.deepEqual(g.deliveredNotice('device','나','Studio'),{title:'연결됐어요',body:'나 · Studio'});
+ assert.deepEqual(g.deliveredNotice('device','나','Studio'),{title:'연결됐어요',body:'나, Studio'});
  assert.deepEqual(g.deliveredNotice('device','',''),{title:'연결됐어요',body:'이 PC를 연결했어요'});
  assert.equal(g.deliveredNotice('migration','나','Studio').title,'이관 토큰을 받았어요');
  assert.match(g.failedNotice('device').title,/연결하지 못했어요/);

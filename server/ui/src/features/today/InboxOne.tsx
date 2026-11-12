@@ -59,9 +59,9 @@ export function InboxOne({ ctx, id, say }: Props) {
         {typeof e.activity_ref === "string" && e.activity_ref ? <><dt>붙을 활동</dt><dd><a href={`#_obj/activity/${e.activity_ref}`}>활동 열기</a></dd></> : null}</dl>
       {g && typeof g === "object" ? <><h2 className="sh">AI 생성 정보</h2>
         <dl className="kv">{GEN_LABEL.filter(([k]) => g[k] != null && g[k] !== "").map(([k, l]) => <Fragment key={k}><dt>{l}</dt><dd><GenVal k={k} v={g[k]} /></dd></Fragment>)}</dl>
-        <p className="hint">도구·모델 정보는 연결 장치가 신고한 정보예요.</p></> : null}
+        <p className="hint">도구와 모델 정보는 연결 장치가 알려 준 정보예요.</p></> : null}
       <h2 className="sh">본문</h2>
-      {e.body != null ? <div className="doc"><p className="pre">{rich(e.body)}</p></div> : <div className="empty">대기 본문이 없어요. 승인·제외·만료 때 대기 본문을 지워요.</div>}
+      {e.body != null ? <div className="doc"><p className="pre">{rich(e.body)}</p></div> : <div className="empty">대기 본문이 없어요. 승인, 제외, 만료 때 대기 본문을 지워요.</div>}
       {e.target_record_id ? <p><a className="link" href={`#_me/journal/${e.target_record_id}`}>저장된 글 열기</a></p> : null}
       {e.state === "pending" ? <>
         <p className="fnote">{e.approve_notice || SELF_NOTE}</p>{e.approvable ? null : <p className="hint">{why}</p>}

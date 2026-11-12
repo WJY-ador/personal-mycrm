@@ -47,7 +47,7 @@ export function ItemCard({ S, it, d, on }: { S: AppState; it: Item; d: Def; on: 
   return (
     <article className={`asset-card${isNew ? " new" : ""}${on ? " on" : ""}`} {...press(() => { location.hash = `#${TAB}/${d.id}/${it.id}`; })}>
       <div className="top">{v.code ? <span className="chip code">{v.code}</span> : null}<SelectChips it={v} d={d} /><DecisionChip it={it} />
-        {it.promotion?.met ? <span className="chip promo-met" title="승격 조건 충족 — 남길지는 내가 정해요">승격</span> : null}
+        {it.promotion?.met ? <span className="chip promo-met" title="승격 조건 충족. 남길지는 내가 정해요">승격</span> : null}
         {p ? <span className="chip">근거 {linkCount(v, p.claim_field)}</span> : null}
         {p?.event_field ? <span className="chip">{eventLabel(S, d)} {linkCount(v, p.event_field)}</span> : null}
         {isNew ? <span className="chip flag">새 제안</span> : it.proposal ? <span className="chip flag">제안 있음</span> : null}</div>
@@ -76,7 +76,7 @@ export function AssetCard({ S, c, open }: { S: AppState; c: Cand; open: (id: str
       <h3>{c.text}</h3>
       <p className="summary"><mark>{rich(c.quote)}</mark></p>
       <div className="meta"><span>{md(c.created)}</span><button ref={recordAction} type="button" className={css.destination}
-        onClick={e => { e.stopPropagation(); showRecord(e.currentTarget); }}>원문 보기 · {title}</button></div>
+        onClick={e => { e.stopPropagation(); showRecord(e.currentTarget); }}>원문 보기: {title}</button></div>
       {pending
         ? <button type="button" className={css.destination} onClick={e => { e.stopPropagation(); location.hash = reviewHref(TAB, c); }}>대조하기</button>
         : null}

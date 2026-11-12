@@ -35,8 +35,8 @@ export function MigSealed({ pl, L, on, busy, err, open, bodies, onCheck, onBody,
   return (
     <>
       {head}{table}
-      <p className="hint">항목을 열어 본문을 확인하세요. 기준은 하나씩 체크해야 반영돼요 — 체크 안 한 기준은 반영하지 않아요. 중복 의심·충돌·거절 항목은 반영하지 않아요.</p>
-      <section className="sec"><h2 className="sh">항목 <span className="speclabel">{`${items.length}개${t.checks ? ` · 기준 체크 ${t.checks - t.unchecked} / ${t.checks}` : ""}`}</span></h2>
+      <p className="hint">항목을 열어 본문을 확인하세요. 기준은 하나씩 체크해야 반영돼요. 체크 안 한 기준은 반영하지 않아요. 중복 의심, 충돌, 거절 항목은 반영하지 않아요.</p>
+      <section className="sec"><h2 className="sh">항목 <span className="speclabel">{`${items.length}개${t.checks ? `, 기준 체크 ${t.checks - t.unchecked} / ${t.checks}` : ""}`}</span></h2>
         <ul className="rows">{items.map(x => <MigItem key={x.seq} x={x} sealed on={on} busy={busy} open={open.has(x.seq)} body={bodies[x.seq]} onCheck={onCheck} onBody={onBody} />)}</ul></section>
       {errBox}
       {on ? <>
@@ -46,8 +46,8 @@ export function MigSealed({ pl, L, on, busy, err, open, bodies, onCheck, onBody,
           <ul className={css.sum}>
             <li>새로 넣을 항목 <b>{t.insert}</b>개</li>
             <li>이미 있어 그대로 둘 항목 <b>{t.noop}</b>개</li>
-            <li>체크 안 한 기준 <b>{t.unchecked}</b>개 — 반영하지 않아요</li>
-            <li>중복 의심 <b>{t.warn}</b> · 충돌 <b>{t.conflict}</b> · 거절 <b>{t.reject}</b>개 — 반영하지 않아요</li>
+            <li>체크 안 한 기준 <b>{t.unchecked}</b>개는 반영하지 않아요</li>
+            <li>중복 의심 <b>{t.warn}</b>, 충돌 <b>{t.conflict}</b>, 거절 <b>{t.reject}</b>개는 반영하지 않아요</li>
             {L ? <li>오늘 남은 이관 한도 <b>{left(L)}</b>행</li> : null}</ul>
           <p className="hint">전부 반영하거나, 하나라도 실패하면 아무것도 반영하지 않아요. 반영한 뒤엔 이 화면에서 되돌릴 수 없어요.</p>
           <div className="frow"><button type="button" className="primary" onClick={go}>반영</button><button type="button" className="secondary" onClick={() => dlg.current?.close?.()}>닫기</button></div></div></dialog>

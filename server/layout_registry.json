@@ -1,6 +1,6 @@
 {
   "components": {
-    "heatmap": {"label": "13주 글·활동", "regions": ["summary"], "props": {}},
+    "heatmap": {"label": "13주 글과 활동", "regions": ["summary"], "props": {}},
     "kinds": {"label": "종류별 건수", "regions": ["summary"], "props": {}},
     "waiting": {"label": "기다리는 결정", "regions": ["summary"], "props": {}},
     "recent": {"label": "최근 변경", "regions": ["summary"], "props": {}}

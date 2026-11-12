@@ -18,7 +18,7 @@ export function CandDetail({ W, r, trashOn }: { W: World; r: Extract<Row, { k: "
       <Head kind={r.kind} title={x.text} meta={mdhm(r.at)} />
       {x.status === "pending" && <ReviewNote review={x.review} />}
       {editing("cand:" + x.id) ? <Editor /> : <Acts W={W} r={r} trashOn={trashOn} />}
-      <div className={css.quote}>근거 · <a href={`#_me/journal/${x.record_id}`}>{rec ? rec.title || "(제목 없음)" : "근거 글"}</a><br /><mark>{rich(x.quote)}</mark></div>
+      <div className={css.quote}>근거: <a href={`#_me/journal/${x.record_id}`}>{rec ? rec.title || "(제목 없음)" : "근거 글"}</a><br /><mark>{rich(x.quote)}</mark></div>
       <Conn W={W} kind="cand" id={x.id} />
     </>
   );

@@ -23,7 +23,7 @@ export function attachRows(raw: string, qText: (id: string) => string | null): [
     if (!m || !m[2].trim()) continue;
     const k = m[1].trim();
     let v = m[2].trim();
-    if (k === "질문") { const q = qText(v); v = q ? `「${q}」` : "연결된 질문을 찾을 수 없음"; }
+    if (k === "질문") { const q = qText(v); v = q ? q : "연결된 질문을 찾을 수 없음"; }
     rows.push([KEYS[k] || k, v]);
   }
   return rows;

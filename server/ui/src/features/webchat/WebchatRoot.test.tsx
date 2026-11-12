@@ -8,7 +8,7 @@ import { flush } from "../../test/fakeServer";
 import type { Approval } from "./api";
 import { WebchatStore } from "./store";
 import { WebchatRoot } from "./WebchatRoot";
-import { GRANT, HISTORY_NOTE, NO_MODEL, OP_NAME, PC_ON, PICK_SWITCH, TITLE, WAITING } from "./text";
+import { EMPTY, END, GRANT, GUIDE_OFFLINE, GUIDE_RECHECK, GUIDE_STEPS, GUIDE_TITLE, HISTORY_NOTE, MORE_MODELS, NO_MODEL, OP_NAME, PC_ON, PICK_SWITCH, TITLE, WAITING } from "./text";
 
 let el: HTMLDivElement, nav: HTMLSpanElement, root: Root;
 beforeEach(() => {
@@ -77,7 +77,7 @@ test("켜짐 = 입력 칸 하나 + 모델 고르기 · 시작 단계 없이 첫 
   const pick = aside().querySelector("[aria-haspopup=dialog]") as HTMLButtonElement;
   expect(pick.textContent).toContain("시험용 가짜 AI, 기본 모델");
   expect(aside().textContent).toContain("대화 기록은 서버에 30일 보관돼요.");
-  expect(aside().textContent).toContain("도구는 내 판단 대시보드(my-crm)만 써요.");
+  expect(aside().textContent).toContain("AI는 내 판단 대시보드의 도구만 써요.");
   expect(s.api.create).not.toHaveBeenCalled();
   await type("안녕");
   await send();
@@ -240,4 +240,105 @@ test("확인 카드: 모르는 op = op 이름 그대로 · 승인 목록 오류�
   s.api.approvals = vi.fn(async () => ({ approvals: [] }));
   await act(async () => { btn("목록 새로고침").click(); }); await flush();
   expect(el.querySelector("[aria-label='확인할 작업']")).toBeNull();
+});
+
+// ── 대화 하나로 J(2026-11-12) ──
+test("J-F1: 쓸 수 있는 AI가 없으면 한 줄 대신 연결 안내 3단계, 멈춘 단계 = 서버 setup, PC 앱에서 열기 = mycrm:// 딥링크, 다시 확인", async () => {
+  for (const [setup, states, links] of [
+    ["none", ["now", "todo", "todo"], ["/download", "mycrm://connection?step=connect"]],
+    ["offline", ["now", "done", "todo"], ["mycrm://connection?step=connect"]],
+    ["no_provider", ["done", "done", "now"], ["mycrm://connection?step=provider"]],
+  ] as const) {
+    const { s } = mk();
+    s.api.capabilities = vi.fn(async () => ({ devices: [], setup }));
+    await open(s);
+    const g = aside().querySelector(`section[data-setup="${setup}"]`) as HTMLElement;
+    expect(g).not.toBeNull();
+    expect(g.textContent).toContain(GUIDE_TITLE);
+    expect([...g.querySelectorAll("li")].map(li => li.getAttribute("data-state"))).toEqual(states);
+    expect([...g.querySelectorAll("li")].map(li => li.querySelector("h5")!.firstChild!.textContent!.trim())).toEqual(GUIDE_STEPS.map(x => x.title));
+    expect([...g.querySelectorAll("a")].map(a => a.getAttribute("href"))).toEqual(links);
+    if (setup === "offline") expect(g.textContent).toContain(GUIDE_OFFLINE);
+    expect(aside().textContent).not.toContain(EMPTY);
+    await act(async () => { btn(GUIDE_RECHECK, g).click(); }); await flush();
+    expect(s.api.capabilities).toHaveBeenCalledTimes(2);
+    act(() => root.unmount()); root = createRoot(el);
+  }
+  const { s } = mk();   // 고를 AI가 있으면 안내 없음
+  await open(s);
+  expect(aside().querySelector("section[data-setup]")).toBeNull();
+});
+
+test("J-F4: 입력 칸 Enter = 보내기, Shift+Enter = 보내지 않음(줄바꿈), 한글 조합 중 Enter = 보내지 않음", async () => {
+  const { s } = mk();
+  await open(s);
+  await type("엔터로 보내기");
+  const ta = aside().querySelector("textarea") as HTMLTextAreaElement;
+  const key = (init: KeyboardEventInit & { keyCode?: number }) => act(async () => { ta.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init })); });
+  await key({ key: "Enter", shiftKey: true });
+  await key({ key: "Enter", isComposing: true });
+  await flush();
+  expect(s.api.create).not.toHaveBeenCalled();
+  await key({ key: "Enter" });
+  await flush(); await flush();
+  expect(s.api.create).toHaveBeenCalledTimes(1);
+  expect(s.api.turn).toHaveBeenCalledTimes(1);
+});
+
+test("J-F5: 모델 목록 = 고른 것(✓ 표시, 굵게)과 포인터(옅은 바탕)가 다른 모양, 계열마다 최신만 위에, 나머지는 다른 모델 아래 접힘, 고른 것이 접힌 쪽이면 펼침", async () => {
+  const { s } = mk();
+  s.api.capabilities = vi.fn(async () => ({ devices: [{ device_id: "is_1", connected: true, agent_version: "1", capabilities_version: 2,
+    capabilities: [{ provider: "claude" as const, models: ["claude-opus-5", "claude-opus-5-5", "claude-haiku-5-5", "claude-haiku-4-5"] }] }] }));
+  await open(s);
+  await act(async () => { (aside().querySelector("[aria-haspopup=dialog]") as HTMLButtonElement).click(); }); await flush();
+  let pop = aside().querySelector("#webchat-models") as HTMLElement;
+  const top = [...pop.querySelectorAll(":scope > ul > li > button")].map(b => b.textContent);
+  expect(top).toEqual(["Claude, claude-opus-5-5", "Claude, claude-haiku-5-5"]);
+  const more = pop.querySelector("details") as HTMLDetailsElement;
+  expect(more.querySelector("summary")!.textContent).toBe(`${MORE_MODELS} 2개`);
+  expect(more.open).toBe(false);
+  expect([...pop.querySelectorAll("button[aria-pressed=true]")].map(b => b.textContent)).toEqual(["Claude, claude-opus-5-5"]);   // 기억 없으면 접히지 않은 첫 모델
+  await act(async () => { s.togglePicker(false); });
+  s.pick({ device: "is_1", provider: "claude", model: "claude-haiku-4-5" });
+  await act(async () => { (aside().querySelector("[aria-haspopup=dialog]") as HTMLButtonElement).click(); }); await flush();
+  pop = aside().querySelector("#webchat-models") as HTMLElement;
+  expect((pop.querySelector("details") as HTMLDetailsElement).open).toBe(true);
+  expect([...pop.querySelectorAll("button[aria-pressed=true]")].map(b => b.textContent)).toEqual(["Claude, claude-haiku-4-5"]);
+});
+
+test("R-J3: 창 focus, 탭이 다시 보이면 capabilities 다시 읽기, 연달아 오면 한 번, 숨김 상태와 닫힌 뒤는 읽지 않음", async () => {
+  const { s } = mk();
+  let t = 0;
+  s.now = () => t;
+  await open(s);
+  const n = () => (s.api.capabilities as ReturnType<typeof vi.fn>).mock.calls.length;
+  const base = n();
+  t = 5000;
+  await act(async () => { window.dispatchEvent(new Event("focus")); document.dispatchEvent(new Event("visibilitychange")); }); await flush();
+  expect(n()).toBe(base + 1);
+  t = 10000;
+  Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+  try {
+    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); }); await flush();
+    expect(n()).toBe(base + 1);
+  } finally { delete (document as { visibilityState?: string }).visibilityState; }
+  act(() => root.unmount());
+  root = createRoot(el);
+  s.open = true; t = 20000;   // 닫힌 패널 조건이 아니라 리스너를 뗐는지 본다
+  window.dispatchEvent(new Event("focus")); document.dispatchEvent(new Event("visibilitychange")); await flush();
+  expect(n()).toBe(base + 1);
+});
+
+test("R-J2: 허용 해제로 끝난 턴(끝 이벤트 code CONSENT_REQUIRED) = 해제 문구가 보이고 내부 code는 보이지 않음", async () => {
+  const { s, fire } = mk();
+  await open(s);
+  await type("안녕");
+  await send();
+  fire("turn", { turn_id: "ct_1", text: "안녕" });
+  fire("error", { turn_id: "ct_1", seq: 1, data: { code: "CONSENT_REQUIRED" } });
+  const turn = aside().querySelector("[data-turn=ct_1]") as HTMLElement;
+  expect(END.CONSENT_REQUIRED).toBe("이 PC의 대화 허용이 해제돼 답을 멈췄어요.");
+  expect(turn.textContent).toContain(END.CONSENT_REQUIRED);
+  expect(aside().textContent).not.toContain("CONSENT_REQUIRED");
+  expect(btn("중지")).toBeUndefined();
 });

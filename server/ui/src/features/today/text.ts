@@ -4,7 +4,7 @@ import type { Entry } from "./todayApi";
 
 export { LOADING } from "../../shared/words";
 export { ME_EMPTY } from "../../shared/words";
-export const SELF_NOTE = "승인하면 이 글을 내 글로 저장해요. 글에 다른 사람의 실명·연락처·발언·고객사 정보가 있으면 그대로 서버에 저장돼요 — 승인 전에 내용을 확인해 주세요.";
+export const SELF_NOTE = "승인하면 이 글을 내 글로 저장해요. 글에 다른 사람의 실명, 연락처, 발언, 고객사 정보가 있으면 그대로 서버에 저장돼요. 승인 전에 내용을 확인해 주세요.";
 export const INBOX_KIND: Record<string, string> = { self_text: "내 글", self_summary: "내 글 AI 요약" };
 export const INBOX_STATE: Record<string, string> = { pending: "대기", applied: "승인함", excluded: "제외함", expired: "만료", all: "전체" };
 export const GEN_LABEL: [keyof NonNullable<Entry["generation"]>, string][] = [["method", "만든 방법"], ["tool", "도구"], ["model", "모델"], ["input_scope", "입력 범위"], ["inputs", "입력 수"]];

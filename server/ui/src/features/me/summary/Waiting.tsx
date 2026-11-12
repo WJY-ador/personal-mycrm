@@ -14,7 +14,7 @@ export function Waiting({ W, statsFail }: BlockProps) {
   const tot = WAIT.reduce((t, [key]) => t + (w[key] || 0), 0);
   return (
     <Blk full title={TITLE} meta={String(tot)}>
-      {tot ? <div className={css.wband} role="img" aria-label={WAIT.map(([key, label]) => `${label} ${w[key] || 0}`).join(" · ")}>
+      {tot ? <div className={css.wband} role="img" aria-label={WAIT.map(([key, label]) => `${label} ${w[key] || 0}`).join(", ")}>
         {WAIT.map(([key, label, , c]) => (w[key] ? <span key={key} className={css[c]} style={{ flex: `${w[key]} 1 0` }} title={`${label} ${w[key]}`} /> : null))}
       </div> : <p className="hint">기다리는 결정이 없어요.</p>}
       <ul className={css.wlegend}>{WAIT.map(([key, label, href, c]) => (

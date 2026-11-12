@@ -352,7 +352,7 @@ def test_aggregate():
     # 날짜 미확인 — 기간과 무관: A5 A6(처음 수집 T-1) · A13(처음 수집 없음) = 3
     assert g["undated"]["n"] == 3, g["undated"]
     assert {x["observed_on"]: x["n"] for x in g["undated"]["observed"]} == {iso(1): 2, None: 1}, g["undated"]["observed"]
-    assert g["notice"] == "연결된 활동과 내 글을 정해진 계산 규칙으로 보여 줍니다. 활동량을 성격이나 능력으로 해석하지 않습니다. AI가 작성한 설명은 저장 승인 대기에 표시합니다."
+    assert g["notice"] == "연결된 활동과 내 글을 정해진 계산 규칙으로 보여 줘요. 활동량을 성격이나 능력으로 해석하지 않아요. AI가 작성한 설명은 저장 승인 대기에 표시해요."
     g7 = activity.me_aggregate(uid, "7d")   # A1 A2 A9 = 3
     assert g7["total"] == 3 and g7["from"] == iso(6) and [(x["action"], x["n"]) for x in g7["by_action"]] == [("like", 3)], g7
     g90 = activity.me_aggregate(uid, "90d")   # + A3 A4 A11 A12 = 7

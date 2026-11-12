@@ -39,13 +39,13 @@ test("장치 상태 — 없음 = 버튼 대신 안내(탭 줄·좁은 화면 한
   const n = await look(st(dev("none", null, leak)));
   expect([n.navText, n.hasA, n.note, n.sid, n.form, n.dnote]).toEqual([NODEV, false, NODEV, "", true, NODEV]);
   const r = await look(st({ ...sess, ...dev("recent", T, leak) }));
-  expect([r.navText, r.ctx, r.open, r.hidden, r.note, r.dnote]).toEqual(["대화", "최근 연결 · 임시 보관", true, false, "", ""]);
+  expect([r.navText, r.ctx, r.open, r.hidden, r.note, r.dnote]).toEqual(["대화", "최근 연결, 임시 보관", true, false, "", ""]);
   expect(r.q).toBe("PC 가 받기를 기다리고 있어요… PC 가 켜져 있어야 정리돼요.");
   const f = await look(st({ ...sess, ...dev("offline", T, leak) }));
-  expect([f.navText, f.ctx, f.form, f.dnote]).toEqual(["대화", `PC 오프라인 · 마지막 연결 ${mdhm(T)} · 임시 보관`, false, OFFLINE]);   // 오프라인 = 입력 칸 그대로 + 할 일 안내
+  expect([f.navText, f.ctx, f.form, f.dnote]).toEqual(["대화", `PC 오프라인, 마지막 연결 ${mdhm(T)}, 임시 보관`, false, OFFLINE]);   // 오프라인 = 입력 칸 그대로 + 할 일 안내
   expect(f.q).toBe(`PC를 기다리고 있어요(마지막 연결 ${mdhm(T)}). PC가 연결되면 이어서 정리해요.`);
   const f0 = await look(st({ ...sess, ...dev("offline", null) }));
-  expect([f0.ctx, f0.q.includes("마지막 연결")]).toEqual(["PC 오프라인 · 임시 보관", false]);
+  expect([f0.ctx, f0.q.includes("마지막 연결")]).toEqual(["PC 오프라인, 임시 보관", false]);
   for (const x of [await look(st(sess)), await look(st({ ...sess, ...dev("busy") }))])
     expect([x.navText, x.ctx, x.open, x.q, x.dnote]).toEqual(["대화", "임시 보관", true, "PC 가 받기를 기다리고 있어요… PC 가 켜져 있어야 정리돼요.", ""]);
   for (const d of [dev("none"), dev("recent"), dev("offline"), {}]) {
@@ -106,7 +106,7 @@ test("뺀 것 = 미리보기 excluded 그대로(연쇄 포함) · 이름 = 빼�
   expect([el.textContent!.includes("뺀 것 2"), el.textContent!.includes("바뀌는 것 1"), el.querySelectorAll("#chat-card button").length]).toEqual([true, true, 1]);
   await act(async () => btn("확정").click()); await flush();
   expect((s.api.confirm as ReturnType<typeof vi.fn>).mock.calls[0][1]).toMatchObject({ preview_id: "p2", preview_version: 2, preview_sha: "h2" });
-  expect([s.line, reload.mock.calls.length]).toEqual(["저장했어요 · 변경 1", 1]);
+  expect([s.line, reload.mock.calls.length]).toEqual(["저장했어요. 변경 1건", 1]);
   await act(async () => { s.reset(); s.want = "j2"; s.show({ ...p2 }, "j2", "r1"); });
   expect(outs().map(o => o[1])).toEqual(["앞서 뺀 변경", "앞서 뺀 변경"]);   // 새로 고침 뒤(본 변경 없음) = 이름 없이 같은 수
   await act(async () => { s.reset(); s.want = "j5"; s.show({ ...p2, excluded_changes: [{ cid: "c2", summary: "새 판단: 나" }, { cid: "c3", summary: "새 판단: 다" }] }, "j5", "r1"); });
@@ -122,7 +122,7 @@ test("장치 없음 + 확정 전 세션 화면 — 입력 칸 대신 안내 1줄
   await act(async () => { s.want = "j1"; s.show(pv({ blocked: [{ cid: null, code: "x", question: "누구?" }] }), "j1", "r1"); });
   expect([q<HTMLFormElement>("form").hidden, q("p[role=note]").textContent]).toEqual([true, NODEV]);
   expect([q<HTMLTextAreaElement>("textarea[data-uid]").readOnly, q<HTMLInputElement>("input[data-bq]").disabled]).toEqual([true, true]);
-  await act(async () => { s.reset(); s.line = "저장했어요 · 변경 1"; s.draw(); });
+  await act(async () => { s.reset(); s.line = "저장했어요. 변경 1건"; s.draw(); });
   await show(s, { ...S, stack_session: null });
   expect([nav.textContent, noteM.textContent]).toEqual([NODEV, NODEV]);
 });

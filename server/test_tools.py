@@ -531,7 +531,7 @@ async def test_web():
                 # 도움말: 로그인 없이 200, 표는 <table>, 10 으로의 링크는 #words, 세션 없으면 [로그인]
                 r = await h.get("/help")
                 assert r.status_code == 200 and r.headers.get("cache-control") == "no-store", r.status_code
-                for word in ("말 뜻", "기록", "도움말", "<table>", 'href="#words"', 'id="start"', 'id="words"', "--accent: #186A4B"):
+                for word in ("말 뜻", "기록", "도움말", "<table>", 'href="#words"', 'id="start"', 'id="words"', "--accent: #6F401B"):
                     assert word in r.text, word
                 assert 'href="/login"' in r.text and 'href="/app"' not in r.text and "|---|" not in r.text and "**" not in r.text
                 assert 'href="/privacy"' in r.text, "도움말 하단에 처리방침"
@@ -539,7 +539,7 @@ async def test_web():
                 r = await h.get("/privacy")
                 assert r.status_code == 200 and r.headers.get("cache-control") == "no-store", r.status_code
                 for word in ("개인정보 처리방침", 'id="privacy"', "<table>", "Render Services", "Supabase", "WorkOS", "싱가포르", "미국",
-                             "제28조의8", PRIVACY_HEAD, 'href="/help"', 'href="/login"', "--accent: #186A4B"):
+                             "제28조의8", PRIVACY_HEAD, 'href="/help"', 'href="/login"', "--accent: #6F401B"):
                     assert word in r.text, word
                 assert "{{CONTACT" not in r.text and "「개인정보 요청」" in r.text and 'href="/app"' not in r.text and "|---|" not in r.text and "**" not in r.text
                 real_contact, real_privacy = os.environ.get("CRM_CONTACT"), site.privacy_html
@@ -8431,7 +8431,7 @@ async def test_pr2a_jobs():
                         for kind in ("converse", "routine_ingest"):
                             r = await new(kind)
                             assert r.status_code == 409 and r.json()["code"] == "NO-DEVICE", (step, kind, r.text)
-                            assert r.json()["msg"] == "이 기능은 본인 PC에서 본인 Claude 구독으로 실행하며, PC 연결과 에이전트 실행이 필요합니다.", r.text
+                            assert r.json()["msg"] == "이 기능은 본인 PC에서 본인 Claude 구독으로 실행하며, PC 연결과 에이전트 실행이 필요해요.", r.text
                         assert _job_rows(U) == before, ("NO-DEVICE = 작업 행·임시 입력 0 생성", step)
                         if step == "none":   # 등록만 된(오프라인 — 아직 수신 0) 장치 = 접수(대기). 그 뒤 연결 해제 = 다시 0
                             gone = imports.device_connect(U, "합성 해제 장치")

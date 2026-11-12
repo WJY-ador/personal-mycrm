@@ -48,7 +48,7 @@ export class ChatStore {
   devText() {
     const d = this.dev();
     if (!d || d.state === "none") return "";
-    return d.state === "recent" ? "최근 연결" : ["PC 오프라인", this.seen(d)].filter(Boolean).join(" · ");
+    return d.state === "recent" ? "최근 연결" : ["PC 오프라인", this.seen(d)].filter(Boolean).join(", ");
   }
   // 받기를 기다리는 작업 — 오프라인이면 PC 를 기다린다고 알린다(할 일·만료는 서랍 안내 CHAT_OFFLINE). 보낸 글은 queued 로 남아 PC 가 오면 이어서 정리된다
   queuedLine() {
@@ -58,7 +58,7 @@ export class ChatStore {
   }
   curSid() { return this.sid || (this.S?.stack_session ? String(this.S.stack_session.id || "") : ""); }   // 이어 받을 세션(첫 그리기 땐 아직 sid 전)
   ctxText() {
-    return [this.devText(), this.sid ? `${this.kind === "verbatim" ? "원문으로 저장 · " : ""}임시 보관${this.exp ? ` · ${mdhm(this.exp)}까지` : ""}` : ""].filter(Boolean).join(" · ");
+    return [this.devText(), this.sid ? `${this.kind === "verbatim" ? "원문으로 저장, " : ""}임시 보관${this.exp ? `, ${mdhm(this.exp)}까지` : ""}` : ""].filter(Boolean).join(", ");
   }
   canConfirm() { return !!(this.preview && this.ready && !this.dirty && !this.busy && !openBlock(this.preview)); }
   canToggle() { return !!(this.preview && this.ready && !this.dirty && !this.busy); }
@@ -220,7 +220,7 @@ export class ChatStore {
     if (res.ok) {
       const n = included(p).length;
       this.reset();
-      this.line = `저장했어요 · 변경 ${n}`; this.bad = false;
+      this.line = `저장했어요. 변경 ${n}건`; this.bad = false;
       this.draw();
       await this.reload();   // 「나」 통계·목록 갱신(상태)
       return;
@@ -234,7 +234,7 @@ export class ChatStore {
     if (res.code === "CONFIRM-CONFLICT" || res.code === "JOB-DEFS") { this.setLine("정리한 뒤 대상이나 구조가 바뀌었어요. 다시 정리할게요.", true); void this.restack(); return; }
     if (res.code === "CONFIRM-REQUEST-MISMATCH") { this.reqFor = ""; this.setLine("확인 내용이 바뀌었어요. 다시 [확정]을 눌러 주세요.", true); return; }
     if (res.status === 410 || res.code === "JOB-GONE") { this.reset(); this.line = CHAT_DONE.expired; this.bad = true; this.draw(); return; }
-    if (res.code === "IMPORT-QUOTA") { this.setLine(`오늘 남길 수 있는 글 수를 넘었어요${this.kind === "verbatim" ? "(원문으로 저장 = 원문·정리 2편)" : ""}. 아무것도 저장하지 않았어요. 내일 다시 확정해 주세요.`, true); return; }
+    if (res.code === "IMPORT-QUOTA") { this.setLine(`오늘 남길 수 있는 글 수를 넘었어요${this.kind === "verbatim" ? "(원문으로 저장하면 원문과 정리 2편)" : ""}. 아무것도 저장하지 않았어요. 내일 다시 확정해 주세요.`, true); return; }
     if (res.code === "OFFLINE") { this.setLine("연결이 끊겼어요. 다시 [확정]을 누르면 같은 요청으로 다시 보내요(두 번 저장되지 않아요).", true); return; }
     this.setLine(errText(res), true);
   }

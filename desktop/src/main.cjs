@@ -14,9 +14,10 @@ const {Connector} = require('./connector.cjs');
 const {ConsentBridge}=require('./consent-bridge.cjs');
 const {createConsentRuntime}=require('./consent-runtime.cjs');
 const {createConsentLockGuard}=require('./consent-lock-guard.cjs');
+const {createPermits}=require('./permits.cjs');
 const {startChatSidecar}=require('./chat-sidecar.cjs');
 const {findCliCandidates,parseModelIds}=require('./cli-discovery.cjs');
-const {AutoRun,readPreferences,startConnection,startAutomatically,addChat,stopChatForLock,startProcesses:launchProcesses}=require('./autorun.cjs');
+const {AutoRun,readPreferences,startConnection,startAutomatically,restartChat,startProcesses:launchProcesses}=require('./autorun.cjs');
 const {createUpdater,inAppSupported,trustedSender,registerDashboardBridge,CHANNELS:UPDATE}=require('./updater.cjs');
 let win,dash,tray,supervisor,log,prefs={},binary,home,settingsFile,quitting=false,ready=false;
 let busy=false,trayLive=null,connector=null,pollTimer=null,consentBridge=null,consentRuntime=null,consentLock=null,autorun=null; const commands=new Set();
@@ -24,7 +25,7 @@ let busy=false,trayLive=null,connector=null,pollTimer=null,consentBridge=null,co
 let updater=null,installing=false;
 function stopProcesses(options){consentBridge?.abortPending();return supervisor.stopAll(options);}
 // Login handoff: one pending login (verifier never leaves memory) and a deep link that arrived before the window existed.
-let pendingLogin=null,queuedLink=handoff.findLink(process.argv);
+let pendingLogin=null,queuedLink=handoff.findLink(process.argv),queuedSetup=null;
 const PAGE=pathToFileURL(path.join(__dirname,'index.html')).href;
 // macOS delivers mycrm:// via open-url, also when the link itself launches the app — register before 'ready'.
 app.on('will-finish-launching',()=>app.on('open-url',(event,url)=>{event.preventDefault();deepLink(url);}));
@@ -70,6 +71,9 @@ function leave(url){if(externalHttps(url))shell.openExternal(url).catch(()=>{});
 // Order matters: a login start is taken over first; it is same-origin and would otherwise load in-app,
 // then redirect to AuthKit outside the allow list and start a browser login that never comes back.
 function guard(event,url){
+  // The web chat's connection guide inside this window links mycrm://connection?step=… (J-F1): open the connection window.
+  const step=handoff.parseSetupLink(url);
+  if(step){event.preventDefault();setupLink(step);return;}
   if(handoff.isLoginNav(url,HOSTED)){event.preventDefault();startLogin(handoff.wantsFresh(url));return;}
   if(inAppAllowed(url))return;event.preventDefault();leave(url);
 }
@@ -99,9 +103,22 @@ function startLogin(fresh=false){
   // HOSTED is the fixed production origin (or a loopback E2E server), so this is not routed through leave().
   shell.openExternal(handoff.loginUrl(HOSTED,pendingLogin.challenge,pendingLogin.state,fresh)).then(()=>notice('waiting'),()=>{pendingLogin=null;notice('failed');});
 }
+// mycrm://connection?step=<step> (J-F1): show the connection window at that step. Taken before the login callback parsing, so a
+// setup link never replaces the dashboard with a login notice and never touches the pending login.
+// R-J5: a deep link brings a window to the front at most once per 2 seconds (any web page can open mycrm://).
+const linkRaise=handoff.focusLimiter();
+function raiseForLink(showWindow){if(!linkRaise())return;showWindow();app.focus({steal:true});}
+function setupLink(step){
+  if(!win||win.isDestroyed())return;
+  raiseForLink(show);
+  const send=()=>{if(win&&!win.isDestroyed())win.webContents.send('setup-step',step);};
+  if(win.webContents.isLoading())win.webContents.once('did-finish-load',send);else send();
+}
 function deepLink(raw){
+  const step=handoff.parseSetupLink(raw);
+  if(step){if(!win||win.isDestroyed())queuedSetup=step;else setupLink(step);return;}
   if(!dash||dash.isDestroyed()){queuedLink=raw;return;}
-  showDashboard();app.focus({steal:true});
+  raiseForLink(showDashboard);
   const parsed=handoff.parseCallback(raw),result=handoff.accept(pendingLogin,parsed);
   if(result!=='ok'){
     if(result==='expired')pendingLogin=null;
@@ -126,18 +143,20 @@ function createDashboard(){
   dash=new BrowserWindow({width:1200,height:800,minWidth:720,minHeight:520,title:'MyCRM',backgroundColor:'#ffffff',webPreferences:{partition:'persist:dashboard',preload:path.join(__dirname,'dash-preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true}});
   const wc=dash.webContents;
   wc.session.setPermissionRequestHandler((_wc,_p,callback)=>callback(false));
-  wc.setWindowOpenHandler(({url})=>{if(handoff.isLoginNav(url,HOSTED))startLogin(handoff.wantsFresh(url));else if(inAppAllowed(url))wc.loadURL(url).catch(()=>{});else leave(url);return {action:'deny'};});
+  wc.setWindowOpenHandler(({url})=>{const step=handoff.parseSetupLink(url);if(step)setupLink(step);else if(handoff.isLoginNav(url,HOSTED))startLogin(handoff.wantsFresh(url));else if(inAppAllowed(url))wc.loadURL(url).catch(()=>{});else leave(url);return {action:'deny'};});
   wc.on('will-navigate',(e,url)=>guard(e,e.url||url));
   // Subframes (captcha, provider widgets) are not gated; only top-level navigation is.
   wc.on('will-redirect',(e,url,_inPlace,isMainFrame)=>{if(e.isMainFrame??isMainFrame)guard(e,e.url||url);});
   dash.on('close',event=>{if(!quitting&&!installing){event.preventDefault();dash.hide();}});
   dash.on('focus',()=>{connector?.poll('focus');autorun?.nudge('focus');});
+  // A setup link that launched the app is handled once the connection window exists (initialize); the dashboard loads.
+  if(queuedLink&&handoff.parseSetupLink(queuedLink)){queuedSetup=handoff.parseSetupLink(queuedLink);queuedLink=null;}
   if(queuedLink){const link=queuedLink;queuedLink=null;deepLink(link);}else dash.loadURL(DASHBOARD).catch(()=>{});
 }
 async function external(url){if(!safeExternal(url))throw new Error('url');await shell.openExternal(url);}
-function command(args,input) {
+function command(args,input,extraEnv={}) {
   return new Promise((resolve,reject)=> {
-    const env={...process.env,PYTHONNOUSERSITE:'1',PYTHONDONTWRITEBYTECODE:'1'};
+    const env={...process.env,PYTHONNOUSERSITE:'1',PYTHONDONTWRITEBYTECODE:'1',...extraEnv};
     delete env.MYCRM_JOBS_ALLOW_REAL_CLI;
     const child=spawn(binary,['--home',home,...args],{env,shell:false,windowsHide:true,stdio:['pipe','pipe','pipe']});
     commands.add(child);let done=false;const output=new OutputTail();
@@ -176,7 +195,7 @@ function request(method,url,body,extraHeaders={}){
   });
 }
 const CONSENT_PATHS=new Set(['/api/chat/consent/keys/begin','/api/chat/consent/keys/activate',
-  '/api/chat/consent/keys/revoke','/api/chat/consent/challenges/issue','/api/chat/consent/challenges/verify']);
+  '/api/chat/consent/challenges/issue','/api/chat/consent/challenges/verify']);
 function consentRequest(pathname,body,authorization){
   if(!CONSENT_PATHS.has(pathname)||typeof authorization!=='string')return Promise.resolve({status:0,body:null});
   const origin=new URL(HOSTED).origin;
@@ -184,14 +203,20 @@ function consentRequest(pathname,body,authorization){
     'Origin':origin,'Authorization':authorization,'Content-Type':'application/json',
   });
 }
+// J JD2: chat starts without a revoke first and keeps running through a screen lock; the person releases the allow.
 async function startChatAgent(){
   if(!consentBridge)throw new Error('bridge');
   await startChatSidecar(supervisor,consentBridge);
 }
 // One start for the button and the automatic start (autorun.cjs). The caller holds the app lock.
-const startDeps={get supervisor(){return supervisor;},get consentLock(){return consentLock;},prefs:()=>prefs,connection:()=>connection(),
+const startDeps={get supervisor(){return supervisor;},prefs:()=>prefs,connection:()=>connection(),
   ready:()=>ready,startChat:()=>startChatAgent()};
 function startProcesses(names){return launchProcesses(names,startDeps);}
+// After a CLI choice succeeded: the running chat picks the new AI service up only on a fresh start (autorun.cjs).
+async function chatAfterProviderChange(result){
+  if(result?.code===0)await restartChat(startDeps).catch(()=>log('chat','restart-failed'));
+  return result;
+}
 // The user's stop (window or tray). Recorded first so the automatic start cannot bring it back in this run.
 async function userStop(){autorun?.userStopped();await stopProcesses();}
 // Puts an issued token into the sidecar through stdin. A device token replaces the connection, so running processes
@@ -243,13 +268,11 @@ async function exclusively(fn) {
 const FAILURES={
   busy:'다른 작업이 진행 중이에요. 잠시 뒤 다시 시도해 주세요.',
   login:'로그인이 필요해요. 이 창의 [로그인]을 눌러 브라우저에서 로그인한 뒤 다시 시도해 주세요.',
-  revoked:'이 PC 연결이 해제됐어요 — 대화에서 다시 연결해 주세요.',
+  revoked:'이 PC 연결이 해제됐어요. 대화에서 다시 연결해 주세요.',
   limit:'연결된 PC가 이미 5대예요. 쓰지 않는 PC를 대화나 웹에서 해제한 뒤 다시 시도해 주세요.',
   name:'웹에서 표시 이름을 먼저 정한 뒤 다시 시도해 주세요.',
   failed:'이 PC를 자동으로 연결하지 못했어요. 잠시 뒤 다시 시도하거나 진단 로그를 확인해 주세요.',
-  'consent-lock-unsupported':'이 운영체제에서는 화면 잠금 상태를 확인할 수 없어 AI 대화를 사용할 수 없어요.',
-  'consent-lock-locked':'화면 잠금을 풀고 PC를 다시 시작해 주세요.',
-  'consent-lock-revoke-unconfirmed':'화면 잠금 뒤 PC 승인을 폐기했는지 확인하지 못해 대화를 막았어요. 연결을 확인한 뒤 다시 시도해 주세요.',
+  'permit-failed':'허용을 해제하지 못했어요. 로그인과 네트워크를 확인한 뒤 다시 시도하거나, 웹 대시보드의 연결 장치에서 해제해 주세요.',
   default:'작업을 완료하지 못했어요. 연결 상태와 진단 로그를 확인해 주세요.',
 };
 function register(name,fn) {
@@ -276,7 +299,10 @@ async function initialize(){
   settingsFile=path.join(userData,'desktop-preferences.json');prefs=preferences();home=agentHome();
   binary=app.isPackaged?path.join(process.resourcesPath,'agent',process.platform==='win32'?'mycrm-agent.exe':'mycrm-agent'):path.resolve(__dirname,'../../release/agent',process.platform==='win32'?'mycrm-agent.exe':'mycrm-agent');
   log=diagnosticLog(path.join(userData,'logs'));
-  ready=await compatibleBinary();supervisor=new Supervisor({binary,home,log,changed});
+  ready=await compatibleBinary();
+  // A chat child that exits takes its pending consent approvals with it. The bridge allows half-open sockets (the agent
+  // half-closes after its request), so the child's exit, not the socket's end, is what aborts a waiting approval.
+  supervisor=new Supervisor({binary,home,log,changed,exited:name=>{if(name==='chat')consentBridge?.abortPending();}});
   win=new BrowserWindow({width:660,height:790,minWidth:520,minHeight:600,title:'MyCRM 연결 장치',show:false,backgroundColor:'#f6f7f9',webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true}});
   win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
   win.webContents.on('will-navigate',e=>e.preventDefault());
@@ -300,18 +326,14 @@ async function initialize(){
       return target.isFocused()===true;
     },
   });
-  consentLock=createConsentLockGuard({powerMonitor,platform:process.platform,onLock:async()=>{
-    consentBridge?.abortPending();
-    const stopped=supervisor?stopChatForLock(supervisor,autorun):Promise.resolve();
-    const revoked=consentRuntime?.invalidateOnLock()||Promise.resolve(false);
-    const results=await Promise.allSettled([stopped,revoked]);
-    return results[0].status==='fulfilled'&&results[1].status==='fulfilled'&&results[1].value===true;
+  // J JD2: the allow stands through app restarts and screen locks (the person releases it, JD3). A lock or sleep only
+  // cancels the consent window in flight; the chat sidecar keeps running and nothing is revoked on the server.
+  consentLock=createConsentLockGuard({powerMonitor,platform:process.platform,onLock:()=>{
+    consentBridge?.abortPending();consentRuntime?.cancel();
   }});
   // Opening the app starts the connection device the way [연결 장치 시작] does, unless the user stopped it last time.
-  // While the consent lock is closed it starts without chat and adds chat on a later focus or timer tick.
   autorun=new AutoRun({wanted:()=>prefs.autoRun!==false,connected:()=>connection().connected,idle:()=>!busy&&!quitting,
-    start:()=>exclusively(()=>startAutomatically(startDeps)),chatReady:()=>consentLock?.canStart()===true,
-    addChat:()=>exclusively(()=>addChat(startDeps)),remember:value=>{prefs.autoRun=value;savePreferences();},log});
+    start:()=>exclusively(()=>startAutomatically(startDeps)),remember:value=>{prefs.autoRun=value;savePreferences();},log});
   register('status',()=>snapshot());
   // M4: the browser opens only from this button (or the dashboard's own login link), never from a failed request.
   register('login',()=>{startLogin();});
@@ -328,7 +350,7 @@ async function initialize(){
     if(result.canceled)return {canceled:true};
     const target=result.filePaths[0];
     if(!path.isAbsolute(target)||!fs.statSync(target).isFile())throw new Error('path');
-    const {code,detail}=await command(['configure-cli','--path',target]);return {code,detail};
+    const {code,detail}=await command(['configure-cli','--path',target]);return chatAfterProviderChange({code,detail});
   }));
   register('configure-codex',value=>exclusively(async()=>{
     if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('input');
@@ -341,7 +363,7 @@ async function initialize(){
     if(!path.isAbsolute(target)||!fs.statSync(target).isFile())throw new Error('path');
     const args=['configure-codex','--path',target];
     for(const model of models)args.push('--model',model);
-    const {code,detail}=await command(args);return {code,detail};
+    const {code,detail}=await command(args);return chatAfterProviderChange({code,detail});
   }));
   register('allow-cli',value=>exclusively(async()=>{
     if(typeof value!=='boolean')throw new Error('input');
@@ -369,6 +391,16 @@ async function initialize(){
     return {code,detail};
   }));
   // A disconnect made here is a release: automatic connection does not bring this PC back; a conversation does.
+  // First screen step 2 (J-F1): connect this PC with the app's login session, as the first sync does, without syncing.
+  register('auto-connect',()=>exclusively(async()=>{
+    if(!ready)throw new Error('not-connected');
+    await connector.autoConnect();log('connect','auto-from-setup');return snapshot();
+  }));
+  // AI 대화 허용 해제(J JD3): this PC's standing allows, released by the person (permits.cjs).
+  const permits=createPermits({request,hosted:HOSTED,installationId:()=>connector?.record?.installationId,
+    usable:()=>ready&&!quitting&&connection().connected,cancel:()=>{consentBridge?.abortPending();consentRuntime?.cancel();},log});
+  register('permits',()=>permits.state());
+  register('permit-revoke',provider=>exclusively(()=>permits.release(provider)));
   register('disconnect',()=>exclusively(async()=>{await stopProcesses();const {code,detail}=await command(['disconnect']);log('disconnect','completed',code);if(code===0)connector.released();return {code,detail};}));
   // Updates: updater.cjs is the only place that checks. The connection window and the dashboard draw its state.
   updater=createUpdater({inApp:inAppSupported({isPackaged:app.isPackaged,platform:process.platform,pkg:PACKAGE}),current:app.getVersion(),
@@ -397,6 +429,7 @@ async function initialize(){
   pollTimer=setInterval(()=>{connector.poll('timer');autorun.nudge('timer');},grants.POLL_MS);
   connector.poll('timer');
   await win.loadFile(path.join(__dirname,'index.html'));
+  if(queuedSetup){const step=queuedSetup;queuedSetup=null;setupLink(step);}
   const icon=nativeImage.createFromDataURL('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAIElEQVR42mNkYPj/n4ECwESJ5lEDRg0YNWDUgFEDBg0AADMSAh/0xSqxAAAAAElFTkSuQmCC');
   tray=new Tray(icon);tray.setToolTip('MyCRM');refreshTray();tray.on('double-click',showDashboard);tray.on('click',showDashboard);
   autorun.nudge('startup');

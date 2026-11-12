@@ -16,11 +16,11 @@ function render(processes){
  show(status);return element('process-detail').textContent;
 }
 test('each process has its own name: viewer, jobs and chat',()=>{
- assert.equal(render({viewer:{state:'running'},jobs:{state:'running'},chat:{state:'running'}}),'원문 뷰어: 실행 중 · 대화 정리: 실행 중 · AI 대화: 실행 중');
+ assert.equal(render({viewer:{state:'running'},jobs:{state:'running'},chat:{state:'running'}}),'원문 뷰어: 실행 중, 대화 정리: 실행 중, AI 대화: 실행 중');
 });
-test('viewer and jobs without chat (chat held by the consent lock)',()=>{
- assert.equal(render({viewer:{state:'running'},jobs:{state:'starting'}}),'원문 뷰어: 실행 중 · 대화 정리: 시작 중');
+test('viewer and jobs without chat',()=>{
+ assert.equal(render({viewer:{state:'running'},jobs:{state:'starting'}}),'원문 뷰어: 실행 중, 대화 정리: 시작 중');
 });
 test('an unknown process shows its own name, not the viewer',()=>{
- assert.equal(render({viewer:{state:'running'},other:{state:'failed'}}),'원문 뷰어: 실행 중 · other: 실행 실패');
+ assert.equal(render({viewer:{state:'running'},other:{state:'failed'}}),'원문 뷰어: 실행 중, other: 실행 실패');
 });

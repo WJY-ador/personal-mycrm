@@ -822,10 +822,6 @@ def cmd_serve_jobs(ctx: Ctx, a) -> int:
 def cmd_chat(ctx: Ctx, a) -> int:
     """웹 「대화」 상주. 장치 토큰(connect 로 넣은 것) → WebSocket → 턴 실행. 출력 = 코드만 담은 JSON 줄(본문·토큰·주소 없음).
     PR 1 은 --fake(FakeProvider)만 — 실 CLI(ClaudeProvider)는 PR 2. exit: 신호로 멈춤 0 · 설정·키 저장소 1 · 쓰는 법 2 · 인증 거절 3."""
-    import signal
-    import threading
-    from . import chat, chat_providers
-
     def log(rec: dict) -> None:
         keep = {k: v for k, v in rec.items() if k in ("event", "ok", "error", "status", "why", "end", "stopped")
                 and (v is None or isinstance(v, (bool, int)) or (isinstance(v, str) and re.match(r"^[A-Za-z0-9_.-]{1,40}$", v)))}
@@ -859,7 +855,29 @@ def cmd_chat(ctx: Ctx, a) -> int:
     if not token:
         log({"event": "start", "stopped": "auth"})
         return EXIT_HALT
+    # J-F7: one resident chat per home. A chat left by an earlier app run (its desktop died first) is ended here,
+    # by the lock holder's pid only (agent/chat_instance.py). The lock is released in the finally below.
+    from .chat_instance import ChatInstance, InstanceUnavailable
+    instance = ctx.chat_kw.get("instance") or ChatInstance(ctx.paths.locks)
+    try:
+        instance.claim()
+    except (InstanceUnavailable, OSError):
+        log({"event": "start", "stopped": "instance"})
+        return EXIT_ERR
+    if instance.reaped is not None:
+        log({"event": "start", "why": "reaped-previous"})
+    try:
+        return _run_chat(ctx, a, cfg, sid, server, log)
+    finally:
+        instance.release()
+
+
+def _run_chat(ctx: Ctx, a, cfg, sid, server, log) -> int:
+    import signal
+    import threading
+    from . import chat, chat_providers
     kw = dict(ctx.chat_kw)
+    kw.pop("instance", None)
     if a.consent_only:
         from .consent_bridge import request_approval
         bridge_socket = os.environ["MYCRM_CHAT_BRIDGE_SOCKET"]
@@ -899,8 +917,12 @@ def cmd_chat(ctx: Ctx, a) -> int:
                 except TypeError:
                     line = ctx.stdin.readline()
                 except Exception:
+                    stopping.set()   # the desktop end of the pipe is gone
                     return
                 if not line:
+                    # EOF: the desktop app closed the pipe without a stop record (it crashed, was killed or quit
+                    # abruptly). Stop like a stop record, so the CLI group ends and no chat is left behind (J-F7).
+                    stopping.set()
                     return
                 if len(line) > 1024:
                     continue
@@ -927,44 +949,48 @@ def cmd_chat(ctx: Ctx, a) -> int:
                 return None
 
         ref_store = kw.pop("ref_store", None) or chat_providers.CliSessionRefStore(ks, sid)
-        if not a.fake and not a.consent_only and claude_factory is None and CHAT_CLAUDE_PROVIDER_READY:
-            from .chat_launch_authority import LaunchAuthorizationClient
-            from .chat_claude import ClaudeProviderFactory, ClaudeProviderUnavailable
-            cli_path = (cfg.get("summary") or {}).get("cli_path")
+        live = not a.fake and not a.consent_only
+        summary = cfg.get("summary") or {}
+        if live and claude_factory is None and CHAT_CLAUDE_PROVIDER_READY:
+            cli_path = summary.get("cli_path")
             if not cli_path:
-                log({"event": "start", "stopped": "claude-cli"})
-                return EXIT_ERR
-            try:
-                auth_client = LaunchAuthorizationClient(server, token_now)
-                # The factory resolves and pins the CLI and asks it for models once per start.
-                claude_factory = ClaudeProviderFactory(auth_client, cli_path=cli_path, server_url=server,
-                    agent_home=ctx.paths.home, expected_device_id=sid)
-            except ClaudeProviderUnavailable as exc:
-                if str(exc) != "models-unavailable":
+                # J-F1: the person chose Codex only (or nothing yet). Advertise no Claude model and keep running, so
+                # the other AI service and the consent relay still work; the PC app's first screen asks for the CLI.
+                log({"event": "start", "why": "claude-not-configured"})
+            else:
+                from .chat_launch_authority import LaunchAuthorizationClient
+                from .chat_claude import ClaudeProviderFactory, ClaudeProviderUnavailable
+                try:
+                    auth_client = LaunchAuthorizationClient(server, token_now)
+                    # The factory resolves and pins the CLI and asks it for models once per start.
+                    claude_factory = ClaudeProviderFactory(auth_client, cli_path=cli_path, server_url=server,
+                        agent_home=ctx.paths.home, expected_device_id=sid)
+                except ClaudeProviderUnavailable as exc:
+                    if str(exc) != "models-unavailable":
+                        log({"event": "start", "stopped": "claude-runtime"})
+                        return EXIT_ERR
+                    # No model list from the CLI: advertise no Claude model, keep the agent running.
+                    claude_factory = None
+                    log({"event": "start", "claude": "models-unavailable"})
+                except Exception:
                     log({"event": "start", "stopped": "claude-runtime"})
                     return EXIT_ERR
-                # No model list from the CLI: advertise no Claude model, keep the agent running.
-                claude_factory = None
-                log({"event": "start", "claude": "models-unavailable"})
-            except Exception:
-                log({"event": "start", "stopped": "claude-runtime"})
-                return EXIT_ERR
-        if not a.fake and not a.consent_only and codex_factory is None and CHAT_CODEX_PROVIDER_READY:
-            from .chat_launch_authority import LaunchAuthorizationClient
-            from .chat_codex import CodexProviderFactory
-            summary = cfg.get("summary") or {}
+        if live and codex_factory is None and CHAT_CODEX_PROVIDER_READY:
             cli_path = summary.get("codex_cli_path")
             models = summary.get("codex_models")
             if not (isinstance(cli_path, str) and isinstance(models, list) and models):
-                log({"event": "start", "stopped": "codex-runtime"})
-                return EXIT_ERR
-            try:
-                auth_client = LaunchAuthorizationClient(server, token_now)
-                codex_factory = CodexProviderFactory(auth_client, cli_path=cli_path, server_url=server,
-                    agent_home=ctx.paths.home, expected_device_id=sid, models=tuple(models))
-            except Exception:
-                log({"event": "start", "stopped": "codex-runtime"})
-                return EXIT_ERR
+                # J-F1: Codex not chosen on this PC. Advertise no Codex model and keep running (see Claude above).
+                log({"event": "start", "why": "codex-not-configured"})
+            else:
+                from .chat_launch_authority import LaunchAuthorizationClient
+                from .chat_codex import CodexProviderFactory
+                try:
+                    auth_client = LaunchAuthorizationClient(server, token_now)
+                    codex_factory = CodexProviderFactory(auth_client, cli_path=cli_path, server_url=server,
+                        agent_home=ctx.paths.home, expected_device_id=sid, models=tuple(models))
+                except Exception:
+                    log({"event": "start", "stopped": "codex-runtime"})
+                    return EXIT_ERR
         agent = chat.ChatAgent(chat.ws_url(server), token_now, provider, ref_store=ref_store,
                                agent_version=AGENT_VERSION, stopping=stopping, log=log, consent_request=consent_request,
                                claude_factory=claude_factory, codex_factory=codex_factory, **kw)

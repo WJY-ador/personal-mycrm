@@ -32,10 +32,10 @@ export function Source({ S, c, j, fail, w }: Props) {
     const qText = (id: string) => (S.questions || []).find(q => q.id === id)?.text || null;
     const rec = (S.journal || []).find(r => r.id === c.record_id);
     const old = oldSrc(j.meta.source);
-    const line = srcText(S.sources, rec?.source_id ?? null) + (old ? ` · ${w.oldMark} 「${old}」` : "");
+    const line = srcText(S.sources, rec?.source_id ?? null) + (old ? `, ${w.oldMark} ${old}` : "");
     const full = <Doc title={j.title} body={j.body} quote={quote} qText={qText} />;
-    const tech = <details className="tech"><summary>기술 정보</summary>{`만든 시각 ${mdhm(j.meta.created)} · 출처 ${line} · 근거 구절 ${quote.length}자`}</details>;
-    const meta = head(`근거 원문 · ${j.title}`, md(j.meta.created));
+    const tech = <details className="tech"><summary>기술 정보</summary>{`만든 시각 ${mdhm(j.meta.created)}, 출처 ${line}, 근거 구절 ${quote.length}자`}</details>;
+    const meta = head(`근거 원문: ${j.title}`, md(j.meta.created));
     const d = splitDoc(j.body, j.title);
     const at = d.paras.findIndex(p => p.includes(quote));
     if (!quoteOk(j, c)) {

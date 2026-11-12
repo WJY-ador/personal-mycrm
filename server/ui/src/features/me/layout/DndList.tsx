@@ -70,7 +70,7 @@ export function DndList({ keys, horiz, label, onMove }: Props) {
       {order.map((k, i) => {
         const l = label(k);
         return (
-          <li key={k} tabIndex={0} data-lay-key={k} className={drag?.key === k ? css.dragging : undefined} aria-label={`${l.text} — ${i + 1}번째`} aria-describedby="lay-help"
+          <li key={k} tabIndex={0} data-lay-key={k} className={drag?.key === k ? css.dragging : undefined} aria-label={`${l.text}, ${i + 1}번째`} aria-describedby="lay-help"
             onPointerDown={e => down(e, k)} onPointerMove={moveTo} onPointerUp={() => drop(false)} onPointerCancel={() => drop(true)} onKeyDown={e => key(e, k, i)}>
             <span className={css.grip} aria-hidden="true">⠿</span><span className={css.label}>{l.node}</span>
             <span className={css.moves}>

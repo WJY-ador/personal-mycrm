@@ -26,7 +26,7 @@ export function MeList({ W, tab, rows, sel }: { W: World; tab: MeTab; rows: TabR
       {!rows.length ? <div className="empty">{ME_EMPTY}</div> : (
         <ul className="hrows">{shown.map(r => {
           const i = ax.findIndex(a => a.id === r.id), n = rowN(W, tab, r.id);
-          const meta = [tab === "custom" ? "" : r.meta, n === null ? "" : `${tab === "axis" ? "항목·글" : "연결"} ${n}`].filter(Boolean).join(" · ");
+          const meta = [tab === "custom" ? "" : r.meta, n === null ? "" : `${tab === "axis" ? "항목과 글" : "연결"} ${n}`].filter(Boolean).join(", ");
           return (
             <li key={r.id}><a href={`#_me/${tab}/${r.id}`} aria-current={sel?.id === r.id ? "true" : undefined} onClick={() => { backNav.fromList = true; backNav.y = window.scrollY; }}>
               <span className="ht">{i >= 0 && <i className={css.axdot} style={{ background: axColor(i) }} />}{r.code && <><span className={css.cd}>{r.code}</span> </>}{r.title}</span>

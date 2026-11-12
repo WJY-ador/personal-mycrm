@@ -13,7 +13,10 @@
                                                       뒤부터 DB 재생 → 실시간. 사용자당 활성 1(새 연결이 옛 연결을 닫음 — 옛 쪽에 event: replaced).
                                                       heartbeat 15초. 재생 상한 = 최근 REPLAY_TURNS 턴·REPLAY_BYTES(넘으면 맨 앞 event: trimmed)
   POST /api/chat/grants {device_id, provider, model|null, request_id} → pending grant(201 새로·200 같은 요청). 서명된 PC 승인 뒤 approved, 소비·공급자 실행은 차단
-  GET  /api/chat/grants/{request_id}               → {request_id, device_id, provider, model, state, prompt, expires_at, connected}(읽기 전용, 본인 것만)
+  GET  /api/chat/grants/{request_id}               → {request_id, device_id, provider, model, state, prompt, close_reason, expires_at, connected}(읽기 전용, 본인 것만)
+  GET  /api/chat/permits                            → {permits:[{device_id, installation_id, provider, created_at}]} 살아 있는 서 있는 허용(2026-11-12 J)
+  POST /api/chat/permits/revoke {device_id | installation_id, provider|null} → {revoked}(멱등, 장치 토큰 없음 — 권한을 줄이기만 한다)
+  GET  /api/chat/capabilities                       → {devices:[{…, allowed_providers}], setup: none|offline|no_provider|ready}
 웹 세션 + Origin + Authorization: Bearer 장치 토큰(2026-11-07, 엄격 JSON·4KB):
   POST /api/chat/consent/keys/{begin,activate,revoke} · POST /api/chat/consent/challenges/{issue,verify}
 장치(Authorization: Bearer 장치 토큰): WS /api/device/chat/ws
@@ -73,7 +76,8 @@ LAUNCH_AUTHORIZATION_TTL_SECONDS = 15
 CLIENT_TURN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 CLI_REF_RE = re.compile(r"^[A-Za-z0-9._:-]{1,200}$")
 PROVIDER_RE = re.compile(r"^[a-z0-9_-]{1,40}$")
-MODEL_RE = re.compile(r"^[A-Za-z0-9._:/+-]{1,120}$")
+# R-J1: ':'로 시작하는 이름은 받지 않는다 — ":default"(CONSENT_DEFAULT_MODEL)는 서버가 서명 claims 에만 넣는 내부 표지다(grant 요청, 세션 생성. PC 선택지는 _normalize_capabilities 가 그 모델만 뺀다)
+MODEL_RE = re.compile(r"^(?!:)[A-Za-z0-9._:/+-]{1,120}$")
 CLIENT_SESSION_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _CODE = re.compile(r"^[A-Z][A-Z0-9]*$")
 KINDS = ("delta", "tool_call", "tool_result", "done", "error")
@@ -111,6 +115,10 @@ CHAT_MCP_BODY_MAX = 96 * 1024
 # 모델 context 가 16 KiB 를 넘으면 턴을 거절한다(APPROVAL-OUTCOMES). 고정 문구(실측 1237 바이트) + 이 값 <= 16 KiB - 1 KiB 여유.
 # 시험(test_chat_injection)이 agent/chat_approval_context.py 의 실제 문구로 이 부등식을 대조한다. 최신 행부터 담고 넘치면 오래된 행을 뺀다
 APPROVAL_OUTCOMES_JSON_MAX = 13 * 1024
+# I 반영 R4(2026-11-11): 대화 경로의 요청 속도 버킷 — 접수(imports._rate, 장치 분당 10, 사용자 분당 30)와 나눈다. 5초 재인증(분당 12)과
+# 도구 호출이 접수 한도를 먹지 않고, 주입된 반복 호출이 같은 장치의 접수를 막지 못한다. 저장은 같은 import_counters 표(버킷 이름만 다름,
+# 매시 정리는 버킷과 무관). 버킷 → 장치 분당 상한. 사용자 합계 상한은 같은 버킷 안에서 장치 상한의 2배.
+CHAT_RATE_LIMITS = {"chat_launch": 60, "chat_mcp": 60}
 
 # F4: 확정된 write 카드가 다음 턴에 넘기는 생성 id — op별 (결과 키, id 접두어) 허용 목록. 값은 생성기 모양 정규식만 통과한다
 # (db.new_id = 접두어_urlsafe 11자, 오브젝트 = od_ hex 10자). 모델이 고른 slug, 글, 그 밖의 값은 넘기지 않는다.
@@ -167,6 +175,16 @@ def chat_mcp_enabled() -> bool:
     return route_enabled(enabled(), env("CHAT_MCP_ENABLED", "") == "1")
 
 
+def _chat_rate(dev, bucket):
+    """R4: 대화 요청 속도 — 별도 트랜잭션(뒤에서 실패해도 남는다). 장치 분당 CHAT_RATE_LIMITS[bucket], 사용자 합계는 그 2배.
+    접수 버킷(request)은 건드리지 않는다."""
+    lim = CHAT_RATE_LIMITS[bucket]
+    with tx() as c:
+        for key, n in ((dev["id"], lim), ("user", lim * 2)):
+            if imports._bump(c, dev["user_id"], key, "minute", bucket)["n"] > n:
+                raise CrmError("RATE-LIMIT", f"요청이 너무 잦아요(분당 {n}회).", "1분 뒤 다시 보내세요.")
+
+
 def _chat_mcp_scope(dev, authorization, session_id, turn_id):
     """Rebuild a one-call scope from current server rows after device auth.
 
@@ -196,44 +214,26 @@ def _chat_mcp_scope(dev, authorization, session_id, turn_id):
                 or device["token_expires_at"] <= _db_clock(c)
                 or not hmac.compare_digest(bytes(device["secret_hash"]), supplied_hash)):
             raise _consent_denied()
-        row = _one(c, "SELECT s.id AS session_id,s.user_id,s.device_id,s.provider,s.model,s.status,s.binding_version,s.created_at AS session_created_at,"
-                    "s.client_session_id AS grant_session_id,g.state AS grant_state,g.expires_at,g.consumed_at,"
-                    "ch.state AS challenge_state,ch.user_id AS challenge_user_id,ch.device_id AS challenge_device_id,"
-                    "ch.session_id AS challenge_session_id,ch.provider AS challenge_provider,ch.model AS challenge_model,"
-                    "ch.expires_at AS challenge_expires_at,k.state AS key_state,i.revoked_at AS installation_revoked_at,"
-                    "i.device_id AS installation_device_id "
-                    "FROM chat_sessions s JOIN chat_provider_grants g ON g.user_id=s.user_id AND g.request_id=s.client_session_id "
-                    "JOIN chat_consent_challenges ch ON ch.grant_id=g.id AND ch.user_id=g.user_id "
-                    "JOIN desktop_consent_keys k ON k.id=ch.key_id AND k.user_id=ch.user_id "
-                    "JOIN desktop_installations i ON i.user_id=ch.user_id AND i.id=ch.installation_id "
-                    "WHERE s.user_id=%s AND s.device_id=%s AND s.status='active' AND s.binding_version=2 "
-                    "AND s.provider IN ('claude','codex') AND g.state='consumed' AND g.consumed_at IS NOT NULL "
-                    "AND g.device_id=s.device_id AND g.provider=s.provider AND g.model IS NOT DISTINCT FROM s.model "
-                    "AND ch.session_id=g.request_id AND ch.device_id=s.device_id AND ch.provider=s.provider "
-                    "AND ch.model IS NOT DISTINCT FROM s.model AND ch.state='verified' AND k.state='active' "
-                    "AND i.device_id=s.device_id AND i.revoked_at IS NULL "
-                    "AND s.id=%s FOR NO KEY UPDATE OF s", (uid, stream_id, session_id))
+        # 대화 하나로 J(JD1): 세션 동의 = 그 세션이 묶인 (장치, 공급자) 서 있는 허용이 지금 살아 있는가. 그 세션의 grant 는 보지 않는다
+        row = _one(c, "SELECT id AS session_id,user_id,device_id,provider,model,status,binding_version,permit_id,"
+                      "created_at AS session_created_at,client_session_id AS grant_session_id FROM chat_sessions "
+                      "WHERE user_id=%s AND device_id=%s AND status='active' AND binding_version=2 "
+                      "AND provider IN ('claude','codex') AND permit_id IS NOT NULL AND client_session_id IS NOT NULL "
+                      "AND id=%s FOR NO KEY UPDATE", (uid, stream_id, session_id))
         turn = _one(c, "SELECT id FROM chat_turns WHERE id=%s AND session_id=%s AND status='running' FOR UPDATE",
                     (turn_id, session_id))
+        permit = _permit_live(c, uid, stream_id, row["provider"], row["permit_id"]) if row else None
         now = _db_clock(c)
-        challenge_expiry = datetime.fromtimestamp(row["challenge_expires_at"], timezone.utc) if row else None
         session_expires_at = row["session_created_at"] + timedelta(days=KEEP_DAYS) if row else None
-        if (not row or not turn or row["user_id"] != uid or row["device_id"] != stream_id
-                or row["grant_state"] != "consumed" or row["consumed_at"] is None
-                or row["consumed_at"] >= row["expires_at"] or challenge_expiry <= row["consumed_at"]
-                or session_expires_at <= now
-                or row["challenge_state"] != "verified" or row["challenge_user_id"] != uid
-                or row["challenge_device_id"] != stream_id or row["challenge_session_id"] != row["grant_session_id"]
-                or row["challenge_provider"] != row["provider"] or row["challenge_model"] != row["model"]
-                or row["key_state"] != "active"
-                or row["installation_revoked_at"] is not None or row["installation_device_id"] != stream_id):
+        if (not row or not turn or not permit or row["user_id"] != uid or row["device_id"] != stream_id
+                or session_expires_at <= now):
             raise _consent_denied()
     principal = AuthenticatedPrincipal(user_id=uid, device_id=stream_id)
     session = SessionBinding(user_id=uid, device_id=stream_id, session_id=row["session_id"],
                              provider=row["provider"], model=row["model"], status=row["status"],
                              grant_session_id=row["grant_session_id"])
     consent = ConsentBinding(user_id=uid, device_id=stream_id, session_id=row["grant_session_id"],
-                             provider=row["provider"], model=row["model"], consented_at=row["consumed_at"],
+                             provider=row["provider"], model=row["model"], consented_at=min(permit["created_at"], now),
                              expires_at=min(session_expires_at, device["token_expires_at"]), revoked_at=None)
     return principal, session, consent
 
@@ -317,33 +317,14 @@ def _chat_launch_authorization(dev, authorization, session_id, turn_id):
                         (session_id, uid, device_id))
         turn = _one(c, "SELECT * FROM chat_turns WHERE id=%s AND session_id=%s FOR UPDATE", (turn_id, session_id))
         if (not session or not turn or turn["status"] != "running"
-                or session["provider"] not in GRANT_PROVIDERS or not session["client_session_id"]):
+                or session["provider"] not in GRANT_PROVIDERS or not session["client_session_id"]
+                or not session.get("permit_id")):
             raise _consent_denied()
-        grant = _one(c, "SELECT * FROM chat_provider_grants WHERE user_id=%s AND request_id=%s FOR UPDATE",
-                     (uid, session["client_session_id"]))
-        challenge = _one(c, "SELECT * FROM chat_consent_challenges WHERE user_id=%s AND grant_id=%s "
-                         "AND state='verified' ORDER BY created_at DESC LIMIT 1 FOR UPDATE",
-                         (uid, grant["id"] if grant else ""))
-        key = _one(c, "SELECT * FROM desktop_consent_keys WHERE id=%s FOR UPDATE",
-                   (challenge["key_id"] if challenge else "",))
-        installation = _one(c, "SELECT * FROM desktop_installations WHERE user_id=%s AND id=%s FOR UPDATE",
-                            (uid, challenge["installation_id"] if challenge else ""))
+        # 대화 하나로 J(JD1): (장치, 공급자) 서 있는 허용 판정 하나(_permit_live). 해제되면 그 공급자의 모든 세션이 닫힌 실패다
+        permit = _permit_live(c, uid, device_id, session["provider"], session["permit_id"])
         now = _db_clock(c)
-        session_expires_at = session["created_at"] + timedelta(days=KEEP_DAYS) if session else None
-        challenge_expiry = datetime.fromtimestamp(challenge["expires_at"], timezone.utc) if challenge else None
-        if (not grant or (grant["user_id"], grant["device_id"], grant["provider"], grant["model"], grant["request_id"])
-                != (uid, device_id, session["provider"], session["model"], session["client_session_id"])
-                or grant["state"] != "consumed" or grant["consumed_at"] is None
-                or grant["consumed_at"] >= grant["expires_at"] or session_expires_at <= now
-                or not challenge or challenge["state"] != "verified"
-                or (challenge["user_id"], challenge["device_id"], challenge["session_id"],
-                    challenge["provider"], challenge["model"])
-                != (uid, device_id, session["client_session_id"], session["provider"], session["model"])
-                or challenge_expiry <= grant["consumed_at"]
-                or not key or key["state"] != "active" or key["user_id"] != uid
-                or key["installation_id"] != challenge["installation_id"] or key["device_id"] != device_id
-                or not installation or installation["revoked_at"] is not None
-                or installation["device_id"] != device_id):
+        session_expires_at = session["created_at"] + timedelta(days=KEEP_DAYS)
+        if not permit or session_expires_at <= now:
             raise _consent_denied()
         expires_at = min(now + timedelta(seconds=LAUNCH_AUTHORIZATION_TTL_SECONDS),
                          device["token_expires_at"], session_expires_at)
@@ -354,7 +335,8 @@ def _chat_launch_authorization(dev, authorization, session_id, turn_id):
         return {"authorized": True,
                 "binding": {"user_id": uid, "device_id": device_id, "session_id": session["id"],
                             "turn_id": turn["id"], "provider": session["provider"], "model": session["model"],
-                            "grant_id": grant["id"], "consent_challenge_id": challenge["id"],
+                            # 키 이름은 agent 계약 그대로 — 값 = 이 허용을 성립시킨 grant 와 challenge 의 id(세션 안에서 바뀌지 않는다)
+                            "grant_id": permit["grant_id"], "consent_challenge_id": permit["challenge_id"],
                             "expires_at": expires_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")},
                 "tools": tools}
 
@@ -396,6 +378,8 @@ def _normalize_capabilities(value):
             continue
         normalized, valid = [], True
         for model in models:
+            if isinstance(model, str) and model.startswith(":"):
+                continue   # R-J1: ':'로 시작하는 이름(:default 표지)은 그 모델 하나만 뺀다. 그 밖의 잘못된 값은 공급자 항목을 버린다(그대로)
             if model is None and None not in normalized:
                 normalized.append(None)
             elif isinstance(model, str) and MODEL_RE.fullmatch(model) and model not in normalized:
@@ -403,7 +387,7 @@ def _normalize_capabilities(value):
             else:
                 valid = False
                 break
-        if valid:
+        if valid and normalized:
             seen.add(provider)
             out.append({"provider": provider, "models": normalized})
     return out
@@ -463,15 +447,117 @@ def session_new(uid: str, device_id: str, provider: str, model, client_session_i
             raise CrmError("NOT-FOUND", "그 장치를 찾을 수 없어요.")
         if _one(c, "SELECT 1 FROM chat_turns t JOIN chat_sessions s ON s.id=t.session_id WHERE s.user_id=%s AND t.status='running'", (uid,)):
             raise CrmError("TURN-BUSY", "앞 답이 아직 끝나지 않았어요.", "끝나거나 중지한 뒤 새 대화를 시작하세요.")
+        permit_id = None
         if provider in GRANT_PROVIDERS:
-            # Session ID is also the one-time consent request ID. Consume and create in this
-            # transaction, before closing the current session, so any failure preserves it.
-            grant_consume(c, uid, device_id, provider, model, client_session_id)
+            # 대화 하나로 J(JD1): (장치, 공급자) 서 있는 허용이 살아 있으면 grant 없이 연다(모델이 달라도, 새 대화여도 다시 묻지 않는다).
+            # 없으면 지금처럼 그 request_id 의 서명 검증된 grant 를 같은 트랜잭션에서 1회 소비하고 허용을 세운다.
+            # 실패하면 무엇도 커밋되지 않는다 — 지금 세션은 닫히지 않는다.
+            permit = _permit_live(c, uid, device_id, provider)
+            if not permit:
+                grant_id = grant_consume(c, uid, device_id, provider, model, client_session_id)
+                permit = _permit_establish(c, uid, device_id, provider, grant_id)
+            permit_id = permit["id"]
         cur = _one(c, "SELECT * FROM chat_sessions WHERE user_id=%s AND status='active' FOR NO KEY UPDATE", (uid,))
         closed = [(cur["id"], e) for e in _close_session(c, cur["id"])] if cur else []
-        s = _one(c, "INSERT INTO chat_sessions (id,user_id,device_id,provider,model,client_session_id,binding_version) VALUES (%s,%s,%s,%s,%s,%s,2) RETURNING *",
-                 (_id("cs"), uid, device_id, provider, model, client_session_id))
+        s = _one(c, "INSERT INTO chat_sessions (id,user_id,device_id,provider,model,client_session_id,binding_version,permit_id) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,2,%s) RETURNING *",
+                 (_id("cs"), uid, device_id, provider, model, client_session_id, permit_id))
         return _session_out(s), closed, True
+
+
+# ── 서 있는 허용(대화 하나로 J, 2026-11-12 JD1~JD3) ─────────────────
+# (사용자, 장치, 공급자)마다 한 번. 성립 = 서명 검증된 grant 를 session_new 가 소비할 때(PC 동의 창 허용 + Ed25519 + 키 active, 지금과 같다).
+# 판정은 _permit_live 하나 — session_new, 세션 재확인(턴, 확인 카드), launch-authorization, /api/chat/mcp, capabilities 가 같이 쓴다.
+# 화면 잠금과 앱 재시작은 허용을 지우지 않는다(JD2, 원작자 위험 수용). 끝내는 길(JD3) = 사람이 하는 해제(permit_revoke: 웹, PC 앱),
+# 장치 해제와 웹 토큰 재발급(imports), 설치본 해제(token_grants.pc_forget), 키 폐기(_consent_revoke), 토큰 만료(판정 실패).
+def _permit_live(c, uid, device_id, provider, permit_id=None, lock=True):
+    """살아 있는 허용 행 | None. 호출자는 _user_lock 을 잡았다(lock=False 는 읽기 전용 표시용).
+    살아 있음 = 행이 있고(permit_id 를 주면 그 행이어야), 장치가 연결 중(해제, 토큰 폐기, 토큰 만료 아님),
+    행의 키가 같은 사용자, 설치본, 장치의 active 키, 설치본이 해제되지 않고 같은 장치에 묶임."""
+    if provider not in GRANT_PROVIDERS or not isinstance(device_id, str) or not device_id:
+        return None
+    f, nk = (" FOR UPDATE", " FOR NO KEY UPDATE") if lock else ("", "")
+    p = _one(c, "SELECT * FROM chat_provider_permits WHERE user_id=%s AND device_id=%s AND provider=%s" + f,
+             (uid, device_id, provider))
+    if not p or (permit_id is not None and p["id"] != permit_id):
+        return None
+    device = _one(c, "SELECT channel,revoked_at,token_revoked_at,token_expires_at FROM import_streams WHERE id=%s AND user_id=%s" + nk,
+                  (device_id, uid))
+    key = _one(c, "SELECT user_id,installation_id,device_id,state FROM desktop_consent_keys WHERE id=%s AND user_id=%s" + f,
+               (p["key_id"], uid))
+    inst = _one(c, "SELECT device_id,revoked_at FROM desktop_installations WHERE id=%s AND user_id=%s" + f,
+                (p["installation_id"], uid))
+    now = _db_clock(c)
+    if (not device or device["channel"] != "device" or device["revoked_at"] is not None
+            or device["token_revoked_at"] is not None or device["token_expires_at"] <= now
+            or not key or key["state"] != "active" or key["installation_id"] != p["installation_id"]
+            or key["device_id"] != device_id
+            or not inst or inst["revoked_at"] is not None or inst["device_id"] != device_id):
+        return None
+    return dict(p)
+
+
+def _permit_establish(c, uid, device_id, provider, grant_id):
+    """grant_consume 직후(같은 트랜잭션) 그 grant 의 verified challenge 로 허용을 세운다. 있던 (장치, 공급자) 행은 새 id 로 바꾼다 —
+    옛 행에 묶인 세션은 다시 살아나지 않는다."""
+    ch = _one(c, "SELECT id,key_id,installation_id FROM chat_consent_challenges WHERE user_id=%s AND grant_id=%s AND device_id=%s "
+                 "AND provider=%s AND state='verified' ORDER BY created_at DESC, id DESC LIMIT 1", (uid, grant_id, device_id, provider))
+    if not ch:
+        raise _consent_denied()
+    c.execute("DELETE FROM chat_provider_permits WHERE user_id=%s AND device_id=%s AND provider=%s", (uid, device_id, provider))
+    return dict(_one(c, "INSERT INTO chat_provider_permits (id,user_id,device_id,provider,installation_id,key_id,grant_id,challenge_id) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
+                     (_id("cp"), uid, device_id, provider, ch["installation_id"], ch["key_id"], grant_id, ch["id"])))
+
+
+def permits_live(uid) -> list:
+    """살아 있는 허용 목록(읽기). [{device_id, installation_id, provider, created_at}] — 해제 버튼과 capabilities 의 allowed_providers 가 쓴다."""
+    with tx() as c:
+        rows = _all(c, "SELECT * FROM chat_provider_permits WHERE user_id=%s ORDER BY created_at, id", (uid,))
+        out = []
+        for p in rows:
+            if _permit_live(c, uid, p["device_id"], p["provider"], p["id"], lock=False):
+                out.append({"device_id": p["device_id"], "installation_id": p["installation_id"], "provider": p["provider"],
+                            "created_at": _iso(p["created_at"])})
+        return out
+
+
+def permit_revoke(uid: str, device_id=None, installation_id=None, provider=None, *, closed=None) -> int:
+    """JD3 허용 해제 — 사람이 직접(웹 쿠키 + Origin. 권한을 줄이기만 하므로 장치 토큰을 요구하지 않는다). 장치(device_id) 또는
+    PC 설치본(installation_id) 하나와 공급자(claude, codex, None = 전부). 다른 사용자의 장치, 설치본 = NOT-FOUND. 멱등. 반환 = 지운 행 수.
+    R-J2(보안 검토 발견 1): 지운 (장치, 공급자)의 열린 세션을 같은 트랜잭션에서 닫는다(실행 중 턴 = failed CONSENT_REQUIRED).
+    closed 목록을 주면 닫은 것을 [{session_id, device_id, turn_ids, events}]로 채운다 — route 가 커밋 뒤 PC 에 turn.stop 을,
+    화면 SSE 에 끝 이벤트를 보낸다. 잠금 순서 = users → chat_sessions → chat_turns → 허용 행(다른 경로와 같다)."""
+    if (device_id is None) == (installation_id is None) or (provider is not None and provider not in GRANT_PROVIDERS):
+        raise CrmError("ARG-INVALID", "PC 하나와 AI 종류를 골라 주세요.")
+    with tx() as c:
+        _user_lock(c, uid)
+        if installation_id is not None:
+            _check_installation(installation_id)
+            if not _one(c, "SELECT 1 FROM desktop_installations WHERE user_id=%s AND id=%s", (uid, installation_id)):
+                raise CrmError("NOT-FOUND", "그 PC 를 찾을 수 없어요.")
+            col, val = "installation_id", installation_id
+        else:
+            if not isinstance(device_id, str) or not 1 <= len(device_id) <= 200 or not _one(
+                    c, "SELECT 1 FROM import_streams WHERE user_id=%s AND id=%s AND channel='device'", (uid, device_id)):
+                raise CrmError("NOT-FOUND", "그 장치를 찾을 수 없어요.")
+            col, val = "device_id", device_id
+        where, args = f"user_id=%s AND {col}=%s" + (" AND provider=%s" if provider else ""), (uid, val, provider) if provider else (uid, val)
+        # 세션, 실행 중 턴을 허용 행보다 먼저 잠근다(턴 만들기, launch-authorization, /api/chat/mcp 가 세션 → 턴 → 허용 순서로 잡는다)
+        pairs = {(p["device_id"], p["provider"]) for p in _all(c, f"SELECT device_id, provider FROM chat_provider_permits WHERE {where}", args)}
+        sessions = [s for s in _all(c, "SELECT id, device_id, provider FROM chat_sessions WHERE user_id=%s AND status='active' "
+                                       "ORDER BY id FOR NO KEY UPDATE", (uid,)) if (s["device_id"], s["provider"]) in pairs]
+        running = {s["id"]: [t["id"] for t in _all(c, "SELECT id FROM chat_turns WHERE session_id=%s AND status='running' ORDER BY id FOR UPDATE",
+                                                    (s["id"],))] for s in sessions}
+        gone = {(r["device_id"], r["provider"]) for r in _all(c, f"DELETE FROM chat_provider_permits WHERE {where} RETURNING device_id, provider", args)}
+        for s in sessions:
+            if (s["device_id"], s["provider"]) not in gone:
+                continue
+            turn_ids = running[s["id"]]
+            events = [e for e in _close_session(c, s["id"], "CONSENT_REQUIRED") if e]
+            if closed is not None:
+                closed.append({"session_id": s["id"], "device_id": s["device_id"], "turn_ids": turn_ids, "events": events})
+        return len(gone)
 
 
 # ── PC 명시 승인 grant(D7 기반, 2026-11-06) ─────────────────
@@ -553,8 +639,9 @@ def grant_status(uid: str, request_id: str) -> dict:
         prompt = "open"
     else:
         prompt = "closed"
+    # J-F2(2026-11-12): close_reason 을 그대로 내 화면이 실패(failed: PC 앱이 창을 못 띄움), 잠김(locked), 거절(declined)을 나눠 말한다
     return {"request_id": g["request_id"], "device_id": g["device_id"], "provider": g["provider"], "model": g["model"],
-            "state": state, "prompt": prompt, "expires_at": _iso(g["expires_at"])}
+            "state": state, "prompt": prompt, "close_reason": g.get("close_reason"), "expires_at": _iso(g["expires_at"])}
 
 
 def grant_approve(uid: str, request_id: str, proof):
@@ -611,7 +698,8 @@ def grant_consume(c, uid: str, device_id: str, provider: str, model, request_id:
                     "WHERE ch.grant_id=%s AND ch.user_id=%s AND ch.device_id=%s AND ch.session_id=%s "
                     "AND i.device_id=ch.device_id "
                     "AND ch.provider=%s AND ch.model IS NOT DISTINCT FROM %s AND ch.state='verified' "
-                    "FOR UPDATE OF ch, k, i", (g["id"], uid, device_id, request_id, provider, model))
+                    "FOR UPDATE OF ch, k, i", (g["id"], uid, device_id, request_id, provider,
+                                               model if model is not None else CONSENT_DEFAULT_MODEL))
     if not proof or proof["key_state"] != "active" or proof["installation_revoked_at"] is not None:
         raise CrmError("CONSENT_REQUIRED", "PC 허용 서명을 확인하지 못했어요.", "PC 에서 다시 허용하세요.")
     proof_now = int(_db_clock(c).timestamp())
@@ -666,6 +754,10 @@ from consent_signature import _load_public_key as _load_consent_key  # noqa: E40
 
 CONSENT_POP_TTL_SECONDS = 120
 CONSENT_CHALLENGE_TTL_SECONDS = 120
+# 대화 하나로 J(JD1, 2026-11-12 메인): 기본 모델(grant.model = null)도 허용을 세울 수 있다. 서명 claims 의 model 은 문자열이어야 하므로
+# null 을 이 표지로 서명한다(서버, PC 앱의 claims 문자 규칙 [A-Za-z0-9._:/+-] 안). 허용은 공급자 단위라 model 은 창에 보일 정보일 뿐이다.
+# 같은 글자의 실제 모델이 있어도 challenge 는 grant 행(grant_id, session_id = request_id)에 묶여 섞이지 않는다
+CONSENT_DEFAULT_MODEL = ":default"
 KEY_POP_PROVIDER = "mycrm-key"   # GRANT_PROVIDERS 와 겹치지 않는다 — 키 증명 서명을 grant 동의로 다시 쓸 수 없다
 INSTALLATION_RE = re.compile(r"^di_[0-9a-f]{24}$")
 KEY_ID_RE = re.compile(r"^ck_[0-9a-f]{24}$")
@@ -706,10 +798,10 @@ def _db_now(c) -> int:
 
 
 def _require_consumed_session_consent(c, uid, session):
-    """Fail closed unless the active provider session still has its full signed consent binding.
+    """Fail closed unless the session's standing (device, provider) permit is still live.
 
-    Caller holds the user and session locks. Device, grant, challenge, key, and
-    installation are locked here so key revocation (including PC-lock revoke)
+    Caller holds the user and session locks. Permit, device, key, and
+    installation are locked here (_permit_live) so permit revoke, key revoke,
     and turn creation serialize on the same user transaction.
     """
     if (session.get("binding_version") != 2 or session.get("provider") not in GRANT_PROVIDERS
@@ -718,37 +810,12 @@ def _require_consumed_session_consent(c, uid, session):
     user = _one(c, "SELECT status,blocked_at FROM users WHERE id=%s", (uid,))
     if not user or user["status"] != "active" or user["blocked_at"] is not None:
         raise _consent_denied()
-    device_id = session.get("device_id")
-    device = _one(c, "SELECT id,user_id,channel,token_expires_at,token_revoked_at,revoked_at "
-                  "FROM import_streams WHERE id=%s AND user_id=%s FOR NO KEY UPDATE", (device_id, uid))
-    grant = _one(c, "SELECT * FROM chat_provider_grants WHERE user_id=%s AND request_id=%s FOR UPDATE",
-                 (uid, session["client_session_id"]))
-    challenge = _one(c, "SELECT * FROM chat_consent_challenges WHERE user_id=%s AND grant_id=%s "
-                      "AND device_id=%s AND session_id=%s AND provider=%s AND model IS NOT DISTINCT FROM %s "
-                      "AND state='verified' ORDER BY created_at DESC LIMIT 1 FOR UPDATE",
-                      (uid, grant["id"] if grant else "", device_id, session["client_session_id"],
-                       session["provider"], session["model"]))
-    key = _one(c, "SELECT * FROM desktop_consent_keys WHERE id=%s AND user_id=%s FOR UPDATE",
-               (challenge["key_id"] if challenge else "", uid))
-    installation = _one(c, "SELECT * FROM desktop_installations WHERE id=%s AND user_id=%s FOR UPDATE",
-                        (challenge["installation_id"] if challenge else "", uid))
-    now = _db_clock(c)
-    session_expires_at = session["created_at"] + timedelta(days=KEEP_DAYS)
-    challenge_expires_at = (datetime.fromtimestamp(challenge["expires_at"], timezone.utc)
-                            if challenge else None)
-    if (not device or device["channel"] != "device" or device["revoked_at"] is not None
-            or device["token_revoked_at"] is not None or device["token_expires_at"] <= now
-            or not grant or (grant["user_id"], grant["device_id"], grant["provider"], grant["model"], grant["request_id"])
-            != (uid, device_id, session["provider"], session["model"], session["client_session_id"])
-            or grant["state"] != "consumed" or grant["consumed_at"] is None
-            or grant["consumed_at"] >= grant["expires_at"] or session_expires_at <= now
-            or not challenge or (challenge["user_id"], challenge["device_id"], challenge["session_id"],
-                                  challenge["provider"], challenge["model"])
-            != (uid, device_id, session["client_session_id"], session["provider"], session["model"])
-            or challenge_expires_at <= grant["consumed_at"]
-            or not key or key["state"] != "active" or key["installation_id"] != challenge["installation_id"]
-            or key["device_id"] != device_id or not installation or installation["revoked_at"] is not None
-            or installation["device_id"] != device_id):
+    # 대화 하나로 J(JD1): 그 세션의 grant 가 아니라 세션이 묶인 (장치, 공급자) 서 있는 허용이 살아 있는지 본다.
+    # 허용이 해제되면(행 없음, 다른 id) 그 공급자의 모든 세션이 여기서 닫힌 실패다. J 이전 세션(permit_id 없음)도 닫힌 실패다
+    if not session.get("permit_id"):
+        raise _consent_denied()
+    permit = _permit_live(c, uid, session.get("device_id"), session["provider"], session["permit_id"])
+    if not permit or session["created_at"] + timedelta(days=KEEP_DAYS) <= _db_clock(c):
         raise _consent_denied()
 
 
@@ -811,6 +878,10 @@ def consent_key_activate(uid: str, authorization: str, installation_id: str, key
                 c.execute("UPDATE desktop_consent_keys SET state='revoked', revoked_at=now() WHERE id=%s", (old["id"],))
             r = _one(c, "UPDATE desktop_consent_keys SET state='active', activated_at=now() WHERE id=%s AND state='pending' RETURNING id, state",
                      (k["id"],))
+            if old:
+                # 대화 하나로 J(JD1): 옛 키 서명(rotate)으로 이어짐이 증명된 회전 — 그 키에 선 허용을 새 키로 옮긴다.
+                # PC 앱은 동의 창마다 키를 회전하므로, 옮기지 않으면 다른 공급자 동의 한 번에 서 있는 허용이 죽는다
+                c.execute("UPDATE chat_provider_permits SET key_id=%s WHERE user_id=%s AND key_id=%s", (r["id"], uid, old["id"]))
             out = {"key_id": r["id"], "state": r["state"], "rotated": old is not None}
     if err:
         raise err
@@ -827,6 +898,8 @@ def consent_key_revoke(uid: str, installation_id: str) -> int:
 
 
 def _consent_revoke(c, uid, installation_id) -> int:
+    # 대화 하나로 J: 키 폐기 = 그 설치본(PC)의 서 있는 허용 전부를 함께 지운다(옛 PC 앱의 시작, 잠금 폐기도 닫힌 실패로 남는다)
+    c.execute("DELETE FROM chat_provider_permits WHERE user_id=%s AND installation_id=%s", (uid, installation_id))
     c.execute("UPDATE chat_consent_challenges SET state='revoked', settled_at=now() WHERE user_id=%s AND installation_id=%s AND state='issued'",
               (uid, installation_id))
     cur = c.execute("UPDATE desktop_consent_keys SET state='revoked', revoked_at=now() WHERE user_id=%s AND installation_id=%s "
@@ -860,7 +933,7 @@ def consent_challenge_issue(uid: str, authorization: str, installation_id: str, 
             raise _consent_denied()
         g = _one(c, "SELECT *, floor(extract(epoch from expires_at))::bigint AS exp_epoch "
                     "FROM chat_provider_grants WHERE user_id=%s AND request_id=%s FOR UPDATE", (uid, request_id))
-        if (not g or g["device_id"] != device_id or g["state"] != "pending" or g["model"] is None
+        if (not g or g["device_id"] != device_id or g["state"] != "pending"
                 or g.get("close_reason") is not None):   # F9: PC 가 닫은 grant 에는 새 서명 요청을 만들지 않는다
             raise CrmError("GRANT-INVALID", "이 PC 에 맞는 허용 요청이 없어요.")
         wall_now = _db_clock(c)
@@ -869,8 +942,9 @@ def consent_challenge_issue(uid: str, authorization: str, installation_id: str, 
         if g["expires_at"] <= wall_now or exp <= now:
             raise CrmError("GRANT-EXPIRED", "허용 요청 시간이 지났어요.", "다시 요청하세요.")
         nonce = secrets.token_urlsafe(32)
+        signed_model = g["model"] if g["model"] is not None else CONSENT_DEFAULT_MODEL
         claims = {"user_id": uid, "device_id": device_id, "session_id": g["request_id"], "provider": g["provider"],
-                  "model": g["model"], "nonce": nonce, "expires_at": exp}
+                  "model": signed_model, "nonce": nonce, "expires_at": exp}
         try:
             _encode_consent(claims)   # 서명 형식에 안 맞는 값(model 의 '/' 등)은 challenge 를 만들지 않는다
         except TypeError:
@@ -879,7 +953,7 @@ def consent_challenge_issue(uid: str, authorization: str, installation_id: str, 
                   (uid, g["id"]))
         ch = _one(c, "INSERT INTO chat_consent_challenges (id,user_id,device_id,installation_id,key_id,grant_id,session_id,provider,model,nonce,expires_at) "
                      "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
-                  (_id("cc"), uid, device_id, installation_id, key["id"], g["id"], g["request_id"], g["provider"], g["model"], nonce, exp))
+                  (_id("cc"), uid, device_id, installation_id, key["id"], g["id"], g["request_id"], g["provider"], signed_model, nonce, exp))
         return {"challenge_id": ch["id"], "claims": claims}
 
 
@@ -906,7 +980,7 @@ def consent_challenge_verify(uid: str, authorization: str, installation_id: str,
         now = _db_now(c)
         if (not key or key["state"] != "active" or key["installation_id"] != installation_id or not g or g["state"] != "pending"
                 or g.get("close_reason") is not None   # F9: PC 가 닫은 grant 는 서명이 맞아도 승인하지 않는다
-                or (g["user_id"], g["device_id"], g["provider"], g["model"], g["request_id"])
+                or (g["user_id"], g["device_id"], g["provider"], g["model"] if g["model"] is not None else CONSENT_DEFAULT_MODEL, g["request_id"])
                 != (uid, ch["device_id"], ch["provider"], ch["model"], ch["session_id"])):
             state, err = "revoked", _consent_denied()
         else:
@@ -999,11 +1073,171 @@ def _write_shown(op, norm) -> dict:
     return shown
 
 
-def _write_preview(op, norm) -> dict:
-    """F2: chat 전용 write 미리보기 — facade PREVIEWS, bind 와 무관. 서버가 정규화 params 로만 만든다(모델 문구 없음)."""
+# I 반영 R1~R3(2026-11-11): 덮어쓰기 write 카드는 대상의 "지금" 상태를 서버가 DB 에서 읽어 "바뀐 뒤"(F3 줄)와 함께 보인다.
+# 지금 상태는 미리보기 해시에 들어가고, 확정 때 같은 잠금(users 행, 대상 행 FOR UPDATE) 안에서 다시 읽어 다르면 APPROVAL-STALE.
+# 판별은 이름이 아니라 db 코드로 op마다 정했다(_WRITE_CURRENT 읽기 함수 표). 새로 만들기만 하는 op 은 _WRITE_CREATE_ONLY.
+# 두 표 어디에도 없는 write op 은 카드를 만들지 않는다(애매하면 덮어쓰기로 다룬다 — 읽기 함수가 생길 때까지 닫힘).
+# 값은 JSON 그대로(text, int, jsonb)만 — 시각 값을 넣지 않는다(jsonb 왕복 뒤 비교가 같아야 거짓 STALE 이 없다).
+# 모델에게 가는 응답(prepare 결과, 오류 문구)에는 지금 값을 넣지 않는다. 지금 값은 사람이 보는 카드(approvals_list)에만 있다.
+_NOW, _AFTER = "지금", "바뀐 뒤"
+_TARGET_MISSING = {"대상": "찾을 수 없어요"}
+_TARGET_TRASHED = {"대상": "휴지통에 있어요"}
+_WRITE_CREATE_ONLY = frozenset({"question_add", "record_add", "candidates_propose", "source_create"})
+
+
+def _cur_layout(c, uid, n):
+    """layout_set, layout_reset — page_layouts.layout 의 그 페이지(저장 없음이면 기본)와 version 을 덮는다(db.layout_set, layout_reset)."""
+    r = _one(c, "SELECT layout, version FROM page_layouts WHERE user_id=%s FOR UPDATE", (uid,))
+    full = db._layout_up(r["layout"] if r else None)
+    return {"화면": n.get("page"), "배치": full["pages"].get(n.get("page")), "배치 판": r["version"] if r else 0}
+
+
+def _cur_display_name(c, uid, n):
+    """display_name_set — users.display_name 을 덮는다(db.display_name_set UPDATE users)."""
+    r = _one(c, "SELECT display_name FROM users WHERE id=%s", (uid,))
+    return {"표시 이름": r["display_name"] if r else None}
+
+
+def _cur_profile(c, uid, n):
+    """profile_set — profile(user_id,key) upsert 로 value, status, source 를 덮는다(db.profile_set ON CONFLICT DO UPDATE). 행이 없으면 값 없음."""
+    r = _one(c, "SELECT value, status, source FROM profile WHERE user_id=%s AND key=%s FOR UPDATE", (uid, n.get("key")))
+    return {"프로필 항목": n.get("key"), "값": r["value"] if r else None, "상태": r["status"] if r else None,
+            "어디서 알았나": r["source"] if r else None}
+
+
+def _link_label(c, uid, kind, tid):
+    if kind == "item":
+        t = _one(c, "SELECT title FROM items WHERE user_id=%s AND id=%s", (uid, tid))
+        return f"항목 {tid}" + (f" ({t['title']})" if t else " (찾을 수 없음)")
+    if kind == "candidate":
+        t = _one(c, "SELECT text FROM candidates WHERE user_id=%s AND id=%s", (uid, tid))
+        return f"후보 {tid}" + (f" ({t['text']})" if t else " (찾을 수 없음)")
+    return f"{kind} {tid}"
+
+
+def _cur_record_attach(c, uid, n):
+    """record_attach — 값을 준 칸만 덮는다: attach_to, axes = item_links(source_record_id, field_key) 전부 지우고 다시 넣기,
+    use_at, unattached = records.notes 의 그 키(db.record_attach). 기록 제목(R2)과 바뀌는 칸의 지금 값."""
+    rec = _one(c, "SELECT title, notes, trashed_at FROM records WHERE user_id=%s AND id=%s AND deleted_at IS NULL FOR UPDATE",
+               (uid, n.get("record_id")))
+    if not rec:
+        return _TARGET_MISSING
+    if rec["trashed_at"] is not None:
+        return _TARGET_TRASHED
+    out = {"기록 제목": rec["title"]}
+    for key, label in (("attach_to", "붙일 곳"), ("axes", "축")):
+        if n.get(key) is not None:
+            links = _all(c, "SELECT target_item_id, target_candidate_id FROM item_links WHERE user_id=%s AND source_record_id=%s "
+                            "AND field_key=%s ORDER BY id", (uid, n["record_id"], key))
+            out[label] = [_link_label(c, uid, "item", ln["target_item_id"]) if ln["target_item_id"]
+                          else _link_label(c, uid, "candidate", ln["target_candidate_id"]) for ln in links]
+    notes = rec["notes"] or {}
+    for key, label in (("use_at", "쓸 때"), ("unattached", "붙이지 않음")):
+        if n.get(key) is not None:
+            out[label] = notes.get(key)
+    return out
+
+
+def _cur_record_title(c, uid, n):
+    """record_title_set — records.title 을 덮는다(db.record_title_set UPDATE records, 이력 한 줄)."""
+    r = _one(c, "SELECT title, revision, trashed_at FROM records WHERE user_id=%s AND id=%s AND deleted_at IS NULL FOR UPDATE",
+             (uid, n.get("record_id")))
+    if not r:
+        return _TARGET_MISSING
+    if r["trashed_at"] is not None:
+        return _TARGET_TRASHED
+    return {"기록 제목": r["title"], "기록 판": r["revision"]}
+
+
+def _cur_definition(c, uid, n):
+    """definition_propose — object_defs.draft_doc 을 덮는다(새 제안이 이전 제안을 덮는다). object_id 가 없어도 같은 key 의
+    미적용 행이 있으면 그 행의 제안을 덮는다(db.definition_propose). 그 행이 없으면 새로 만들기."""
+    if n.get("object_id"):
+        r = _one(c, "SELECT id, key, label, revision, draft_doc FROM object_defs WHERE user_id=%s AND id=%s FOR UPDATE",
+                 (uid, n["object_id"]))
+        if not r:
+            return _TARGET_MISSING
+    else:
+        try:
+            key = db.normalize_definition(json.loads(n.get("definition_json") or "{}"))["key"]
+        except Exception:
+            return None   # 정의가 틀리면 실행이 거절된다(만들 것도 덮을 것도 없음)
+        r = _one(c, "SELECT id, key, label, revision, draft_doc FROM object_defs WHERE user_id=%s AND key=%s FOR UPDATE", (uid, key))
+        if not r:
+            return None
+    return {"자료 종류 ID": r["id"], "key": r["key"], "이름": r["label"], "자료 종류 판": r["revision"], "대기 중 제안": r["draft_doc"]}
+
+
+def _cur_item(c, uid, n):
+    """item_propose(item_id 있음) — items.draft_doc 을 덮는다(그 항목의 대기 중 제안이 바뀐다, db.item_propose). item_id 없음 = 새로 만들기."""
+    if not n.get("item_id"):
+        return None
+    r = _one(c, "SELECT title, body, revision, draft_doc, trashed_at FROM items WHERE user_id=%s AND id=%s FOR UPDATE",
+             (uid, n["item_id"]))
+    if not r:
+        return _TARGET_MISSING
+    if r["trashed_at"] is not None:
+        return _TARGET_TRASHED
+    return {"제목": r["title"], "본문": r["body"], "항목 판": r["revision"], "대기 중 제안": r["draft_doc"]}
+
+
+def _cur_person(c, uid, n):
+    """person_save(person_id 있음) — people.alias 를 덮는다(db.person_save UPDATE people). person_id 없음 = 새로 만들기."""
+    if not n.get("person_id"):
+        return None
+    r = _one(c, "SELECT alias, revision, trashed_at FROM people WHERE user_id=%s AND id=%s AND purged_at IS NULL FOR UPDATE",
+             (uid, n["person_id"]))
+    if not r:
+        return _TARGET_MISSING
+    if r["trashed_at"] is not None:
+        return _TARGET_TRASHED
+    return {"별칭": r["alias"], "판": r["revision"]}
+
+
+def _cur_reflection(c, uid, n):
+    """source_reflection_save(reflection_id 있음) — source_reflections 의 source_id, kind, body 를 이력 없이 덮고 검토를 대기로 돌린다
+    (db.source_reflection_save UPDATE). reflection_id 없음 = 새로 만들기."""
+    if not n.get("reflection_id"):
+        return None
+    r = _one(c, "SELECT r.source_id, s.name AS source_name, r.kind, r.body, r.review, r.revision, r.trashed_at "
+                "FROM source_reflections r LEFT JOIN sources s ON s.user_id=r.user_id AND s.id=r.source_id "
+                "WHERE r.user_id=%s AND r.id=%s FOR UPDATE OF r", (uid, n["reflection_id"]))
+    if not r:
+        return _TARGET_MISSING
+    if r["trashed_at"] is not None:
+        return _TARGET_TRASHED
+    return {"출처 ID": r["source_id"], "출처 이름": r["source_name"], "종류": r["kind"], "본문": r["body"],
+            "검토": r["review"], "판": r["revision"]}
+
+
+_WRITE_CURRENT = {
+    "layout_set": _cur_layout, "layout_reset": _cur_layout, "display_name_set": _cur_display_name,
+    "profile_set": _cur_profile, "record_attach": _cur_record_attach, "record_title_set": _cur_record_title,
+    "definition_propose": _cur_definition, "item_propose": _cur_item, "person_save": _cur_person,
+    "source_reflection_save": _cur_reflection,
+}
+
+
+def _write_current(c, uid, op, norm):
+    """덮어쓰기 대상의 지금 상태(JSON 값) 또는 None(새로 만들기). 판별표에 없는 op 은 카드를 만들지 않는다."""
+    if op in _WRITE_CREATE_ONLY:
+        return None
+    reader = _WRITE_CURRENT.get(op)
+    if reader is None:
+        raise _approval_closed()
+    return reader(c, uid, norm)
+
+
+def _write_preview(op, norm, current=None) -> dict:
+    """F2: chat 전용 write 미리보기 — facade PREVIEWS, bind 와 무관. 서버가 정규화 params 와 DB 값으로만 만든다(모델 문구 없음).
+    R1: 덮어쓰기면 shown = {지금: 대상의 지금 상태, 바뀐 뒤: F3 줄}, 해시 = [op, norm, 지금]. 새로 만들기면 F3 줄 그대로, 해시 = [op, norm]."""
     import facade
-    return {"op": op, "shown": _write_shown(op, norm), "impact": {"tier": "write"}, "irreversible": False,
-            "hash": hashlib.sha256(facade._canon([op, norm])).hexdigest()}
+    after = _write_shown(op, norm)
+    if current is None:
+        return {"op": op, "shown": after, "impact": {"tier": "write"}, "irreversible": False,
+                "hash": hashlib.sha256(facade._canon([op, norm])).hexdigest()}
+    return {"op": op, "shown": {_NOW: current, _AFTER: after}, "impact": {"tier": "write"}, "irreversible": False,
+            "hash": hashlib.sha256(facade._canon([op, norm, current])).hexdigest()}
 
 
 def _write_spec(op):
@@ -1026,7 +1260,7 @@ def chat_write_prepare(uid, sid, tid, op, params):
         _approval_slot(c, uid, sid, tid)
         facade.validate(spec, params)
         norm = facade.normalize(op, params)
-        preview = _write_preview(op, norm)
+        preview = _write_preview(op, norm, _write_current(c, uid, op, norm))
         aid = _id("ca")
         c.execute("INSERT INTO chat_approvals (id,user_id,session_id,turn_id,op,params,preview,expires_at,kind) "
                   "VALUES (%s,%s,%s,%s,%s,%s,%s,clock_timestamp()+make_interval(secs => %s),'write')",
@@ -1142,6 +1376,7 @@ def approval_confirm(uid, sid, aid):
 
 def _confirm_write(c, uid, sid, session, op, params, previous):
     """F2: 저장한 params 를 다시 검증, 정규화해 해시와 shown 이 저장 때와 같아야 실행한다(다르면 APPROVAL-STALE).
+    R1: 덮어쓰기 대상의 지금 상태를 같은 트랜잭션(users 행 잠금 + 대상 행 FOR UPDATE)에서 다시 읽어 해시에 넣는다 — 카드 뒤 대상이 바뀌면 STALE.
     실행 = facade.dispatch("write", op, params, 서버가 만든 principal, None) — guard, 쿼터, 도구 검사는 직접 MCP 와 같다."""
     import facade
     from chat_mcp_gateway import _mint_trusted_principal
@@ -1153,7 +1388,7 @@ def _confirm_write(c, uid, sid, session, op, params, previous):
         norm = facade.normalize(op, params)
     except Exception:
         raise CrmError("APPROVAL-STALE", "대상이 바뀌어 다시 확인해야 해요.") from None
-    now_preview = _write_preview(op, norm)
+    now_preview = _write_preview(op, norm, _write_current(c, uid, op, norm))
     if (previous.get("irreversible") is not False or not isinstance(previous.get("hash"), str)
             or not hmac.compare_digest(previous["hash"], now_preview["hash"])
             or norm != params or previous != now_preview):
@@ -1443,6 +1678,16 @@ def purge() -> int:
                     "DELETE FROM chat_sessions s WHERE created_at < now() - make_interval(days => %s) "
                     "AND NOT EXISTS (SELECT 1 FROM chat_turns t WHERE t.session_id=s.id)"):
             n += c.execute(sql, (KEEP_DAYS,)).rowcount
+    # I 반영 R8(2026-11-11 원작자): PC 허용 기록도 30일. 참조 = challenge 가 key_id, grant_id 를 FK(ON DELETE CASCADE)로 가리킨다.
+    # 세션은 grant 를 client_session_id=request_id 로만 찾는다(FK 없음) — 지운 뒤 남은 세션의 동의 재확인은 CONSENT_REQUIRED 로 닫힌다(허용).
+    # 순서: challenge(생성 30일) → grant(생성 30일, 남은 challenge 는 CASCADE) → 키(폐기 또는 PoP 만료 뒤 30일만).
+    # 쓰고 있는 키(active)와 아직 PoP 기한 안의 pending 키는 지우지 않는다. 폐기, 만료 30일 뒤의 키를 가리키는 challenge 는 그보다 먼저 만든 것이다.
+    with tx() as c:
+        for sql in ("DELETE FROM chat_consent_challenges WHERE created_at < now() - make_interval(days => %s)",
+                    "DELETE FROM chat_provider_grants WHERE created_at < now() - make_interval(days => %s)",
+                    "DELETE FROM desktop_consent_keys WHERE (state='revoked' AND revoked_at < now() - make_interval(days => %s)) "
+                    "OR (state='pending' AND pop_expires_at < extract(epoch FROM now() - make_interval(days => %s)))"):
+            n += c.execute(sql, (KEEP_DAYS,) * sql.count("%s")).rowcount
     return n
 
 
@@ -1589,6 +1834,8 @@ class Routes:
             Route("/api/chat/sessions/{sid}/stream", u("web:chat_stream", self.stream)),
             Route("/api/chat/grants", u("web:chat_grant", self.grant), methods=["POST"]),
             Route("/api/chat/grants/{request_id}", u("web:chat_grant_status", self.grant_status)),
+            Route("/api/chat/permits", u("web:chat_permits", self.permits)),
+            Route("/api/chat/permits/revoke", u("web:chat_permit_revoke", self.permit_revoke), methods=["POST"]),
             Route("/api/chat/mcp", u("web:chat_mcp", self.chat_mcp), methods=["POST"]),
             Route(LAUNCH_AUTHORIZATION_PATH, u("web:chat_launch_authorization", self.launch_authorization), methods=["POST"]),
             Route("/api/chat/consent/keys/begin", u("web:chat_consent_key_begin", self.consent_key_begin), methods=["POST"]),
@@ -1668,13 +1915,23 @@ class Routes:
             return err
         try:
             ids = await run_in_threadpool(_active_devices_for_user, uid)
+            allowed = {}
+            for p in await run_in_threadpool(permits_live, uid):
+                allowed.setdefault(p["device_id"], []).append(p["provider"])
             devices = []
             for did in ids:
                 d = hub.dev(uid, did)
                 if d and d.v2:
+                    # J(JD1): allowed_providers = 이 PC 에 서 있는 허용이 있는 공급자 — 화면이 동의 창 단계를 건너뛸지 안다(낡을 수 있다:
+                    # 세션 생성이 CONSENT_REQUIRED 면 화면은 허용 흐름으로 간다). 허브의 capabilities 는 사본 없이 그대로 둔다(추가 필드만)
                     devices.append({"device_id": did, "connected": True, "agent_version": d.agent_version,
-                                    "capabilities_version": 2, "capabilities": d.capabilities})
-            return JSONResponse({"devices": devices}, headers={"cache-control": "no-store"})
+                                    "capabilities_version": 2, "capabilities": d.capabilities,
+                                    "allowed_providers": sorted(allowed.get(did, []))})
+            # J-F1: 연결 안내 패널이 멈춘 단계를 안다. none = 등록된 PC 없음, offline = PC 는 있으나 연결된 PC 앱 없음,
+            # no_provider = PC 앱은 연결됐으나 대화에 쓸 AI 를 알려 오지 않음, ready = 고를 모델이 있음
+            setup = ("none" if not ids else "ready" if devices
+                     else "no_provider" if any(hub.connected(uid, did) for did in ids) else "offline")
+            return JSONResponse({"devices": devices, "setup": setup}, headers={"cache-control": "no-store"})
         except CrmError as e:
             return _err(e)
 
@@ -1874,7 +2131,7 @@ class Routes:
         try:
             authorization = self._bearer(request)
             dev = await run_in_threadpool(self._auth, authorization)
-            await run_in_threadpool(imports._rate, dev)
+            await run_in_threadpool(_chat_rate, dev, "chat_mcp")   # R4: 접수 요청 버킷과 나눈 대화 버킷
             body = await self._chat_mcp_body(request)
             result = await run_in_threadpool(_chat_mcp_execute, dev, authorization, body)
             return JSONResponse({"result": result}, headers={"cache-control": "no-store"})
@@ -1916,7 +2173,7 @@ class Routes:
         try:
             authorization = self._bearer(request)
             dev = await run_in_threadpool(self._auth, authorization)
-            await run_in_threadpool(imports._rate, dev)
+            await run_in_threadpool(_chat_rate, dev, "chat_launch")   # R4: 접수 요청 버킷과 나눈 대화 버킷
             body = await self._launch_authorization_body(request)
             result = await run_in_threadpool(_chat_launch_authorization, dev, authorization,
                                              body["session_id"], body["turn_id"])
@@ -2045,6 +2302,37 @@ class Routes:
             return _err(e)
         out["connected"] = hub.connected(uid, out["device_id"])
         return JSONResponse(out, headers={"cache-control": "no-store"})
+
+    # ── 서 있는 허용 조회,해제(대화 하나로 J, JD3) — 웹 쿠키 세션 + POST Origin. 장치 토큰은 받지 않는다(권한을 줄이기만 한다).
+    # PC 앱은 대시보드 세션으로 같은 경로를 부른다(installation_id 로 자기 PC 를 가리킨다).
+    async def permits(self, request):
+        """GET /api/chat/permits → {permits: [{device_id, installation_id, provider, created_at}]}(살아 있는 것만)."""
+        uid, err = await self._gate(request)
+        if err:
+            return err
+        try:
+            out = await run_in_threadpool(permits_live, uid)
+        except CrmError as e:
+            return _err(e)
+        return JSONResponse({"permits": out}, headers={"cache-control": "no-store"})
+
+    async def permit_revoke(self, request):
+        """POST /api/chat/permits/revoke {device_id | installation_id, provider: claude|codex|null} → {revoked: 지운 수}(멱등).
+        R-J2: 커밋 뒤 닫힌 세션의 실행 중 턴마다 PC 에 turn.stop, 화면 SSE 에 끝 이벤트(중지 route 와 같은 꼴)."""
+        closed = []
+
+        def call(uid, _authz, b):
+            return {"revoked": permit_revoke(uid, b.get("device_id"), b.get("installation_id"), b["provider"], closed=closed)}
+        async def notify(uid, _authz, _body, _result):
+            for s in closed:
+                for ev in s["events"]:
+                    hub.publish_event(uid, s["session_id"], ev)
+                d = hub.dev(uid, s["device_id"])
+                for tid in s["turn_ids"]:
+                    if d:
+                        await d.send({"type": "turn.stop", "turn_id": tid})
+        return await self._consent_call(request, {"device_id": (200, False), "installation_id": (40, False), "provider": (40, True)},
+                                        call, optional=("device_id", "installation_id"), bearer=False, after=notify)
 
     async def consent_key_begin(self, request):
         """POST /api/chat/consent/keys/begin {installation_id, spki(base64url DER)} + Bearer → {key_id, claims}."""

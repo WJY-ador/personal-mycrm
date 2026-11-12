@@ -35,7 +35,7 @@ afterEach(() => { hideScreen(); vi.unstubAllGlobals(); });
 test("목록 — 줄(행동·날짜·출처·사람·축) · [더 보기] = 커서 · 거르기 = 주소로(사람·출처·축은 그대로)", async () => {
   const el = await show("#_obj/activity/list/person=p_p1&action=like", ["activity", "list", "person=p_p1&action=like"]);
   expect(calls[0].url).toBe("/api/activities?action=like&person=p_p1");
-  expect(el.textContent).toContain("사람 「사람-P1」로 거른 목록");
+  expect(el.textContent).toContain("사람 사람-P1로 거른 목록");
   expect(el.querySelector("details")).toBeNull();   // 거른 목록 = 현황 접힘 없음
   expect(text(el, "li.actrow .chip")).toEqual(["좋아요"]);
   await click(byText(el, "button", "더 보기")[0]);
@@ -79,7 +79,7 @@ test("활동 하나 — 사람·축 칩 · 메모 = 「나」 글 주소 · 판 
   const raw = [...el.querySelectorAll("a")].filter(a => a.href.includes("127.0.0.1"));
   expect(raw.map(a => [a.getAttribute("href"), a.rel, a.target])).toEqual([[`http://127.0.0.1:8790/raw/${RAW}`, "noopener noreferrer", "_blank"]]);
   expect(calls.every(c => !c.url.includes("127.0.0.1"))).toBe(true);
-  expect(el.textContent).toContain("원문을 보관한 PC에서 열 수 있습니다");
+  expect(el.textContent).toContain("원문을 보관한 PC에서 열 수 있어요");
   const set = vi.spyOn(Storage.prototype, "setItem");
   const inp = el.querySelector("#raw-port") as HTMLInputElement;
   const setV = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
@@ -96,7 +96,7 @@ test("휴대폰 = 원문 버튼 대신 안내(링크 0) · 원문 ID 없음 = �
   vi.stubGlobal("matchMedia", () => ({ matches: true }));
   const el = await show("#_obj/activity/a_a2", ["activity", "a_a2", ""]);
   expect([...el.querySelectorAll("a")].filter(a => a.href.includes("127.0.0.1"))).toEqual([]);
-  expect((byText(el, "button", "원문을 보관한 PC에서 열 수 있습니다")[0] as HTMLButtonElement).disabled).toBe(true);
+  expect((byText(el, "button", "원문을 보관한 PC에서 열 수 있어요")[0] as HTMLButtonElement).disabled).toBe(true);
 });
 
 test("[삭제] — 휴지통 켜짐일 때만 · 확인 → 휴지통으로 → 목록 머리에 결과 한 줄", async () => {

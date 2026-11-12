@@ -51,7 +51,7 @@ from agent.chat_codex import CodexProviderFactory  # noqa: E402
 
 
 EMAIL = "synthetic-freechat-e2e@example.invalid"
-CLAUDE_MODEL = "synthetic-claude-e2e"
+CLAUDE_MODEL = "claude-synthetic-e2e"   # agent 의 Claude 모델 이름 규칙(claude-…)에 맞춘다
 CODEX_MODEL = "synthetic-codex-e2e"
 INSTALLATION = "di_" + "e" * 24
 SESSION_REQUEST = "synthetic-e2e-session"
@@ -277,7 +277,8 @@ const runtime=createConsentRuntime({request:post,getInstallationId:async()=>INST
  console.log(ok?'APPROVED':'DENIED');
  if(!ok)process.exit(2);
  let line='';process.stdin.setEncoding('utf8');process.stdin.on('data',async chunk=>{line+=chunk;if(line.includes('LOCK')){
-  locked=true;powerMonitor.emit('lock-screen');const revoked=await runtime.invalidateOnLock();console.log(revoked?'LOCK_REVOKED':'LOCK_FAILED');process.exit(revoked?0:3);
+  // 대화 하나로 J(JD2): 잠금은 서버의 동의 키를 폐기하지 않는다 — 잠금 이벤트만 보내고 끝낸다(진행 중 동의 창 취소는 desktop 시험 몫)
+  locked=true;powerMonitor.emit('lock-screen');setTimeout(()=>{console.log('LOCKED');process.exit(0);},200);
  }});
 })();
 '''.replace("DESKTOP_RUNTIME", json.dumps(str(HERE.parent / "desktop/src/consent-runtime.cjs")))
@@ -467,12 +468,20 @@ class FreechatSyntheticE2ETests(unittest.TestCase):
                             node = node_holder[0]
                             self.assertIsNotNone(node)
                             node.stdin.write("LOCK\n"); node.stdin.flush()
-                            self.assertEqual(node.stdout.readline().strip(), "LOCK_REVOKED")
+                            self.assertEqual(node.stdout.readline().strip(), "LOCKED")
                             node.wait(timeout=5)
+                            # J(JD2): 잠금 뒤에도 키 active, 서 있는 허용 유지. 같은 공급자의 새 대화는 동의 창 없이 열린다(JD1)
                             with db.tx() as c:
-                                key_state = c.execute("SELECT state FROM desktop_consent_keys WHERE user_id=%s AND installation_id=%s",
-                                    (uid, INSTALLATION)).fetchone()["state"]
-                            self.assertEqual(key_state, "revoked")
+                                key_state = c.execute("SELECT state FROM desktop_consent_keys WHERE user_id=%s AND installation_id=%s AND state='active'",
+                                    (uid, INSTALLATION)).fetchone()
+                                permits = c.execute("SELECT count(*) AS n FROM chat_provider_permits WHERE user_id=%s AND device_id=%s AND provider=%s",
+                                    (uid, did, provider_name)).fetchone()["n"]
+                            self.assertIsNotNone(key_state)
+                            self.assertEqual(permits, 1)
+                            again = h.post("/api/chat/sessions", json={"operation": "new", "device_id": did, "provider": provider_name,
+                                "model": model, "client_session_id": SESSION_REQUEST + "-after-lock"})
+                            self.assertEqual(again.status_code, 201, again.text)
+                            self.assertEqual(len(approvals), 1, "a standing permit must not ask again after lock")
             finally:
                 stop.set()
                 if agent:

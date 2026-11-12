@@ -24,9 +24,9 @@ function Sheet({ S, tabId, q, open }: { S: AppState; tabId: string; q: Question;
         {wait.length ? <><div className="cards">{wait.map(c => <div className="card cand" key={c.id}><p className="sent">{c.text}</p>
           <div className="labels"><OriginBadge c={c} /><DecisionBadge status={c.status} /></div></div>)}</div>
           <div className="cta"><p className="hint">남기기 전까진 확정한 판단이 아니에요.</p>
-            <a className="btn primary" href={`#${tabId}/review/${q.id}/${wait[0].id}`}>원문과 대조하기 · {wait.length}개</a></div></>
+            <a className="btn primary" href={`#${tabId}/review/${q.id}/${wait[0].id}`}>원문과 대조하기({wait.length}개)</a></div></>
           : <div className="empty">{cs.length ? "정할 문장이 남아 있지 않아요." : "아직 이 질문에 뽑힌 문장이 없어요. 내 글에서 판단을 뽑으면 여기에 떠요."}</div>}</section>
-      {off.length ? <details className="fold"><summary>반영 안 함 문장 보기 · {off.length}개</summary><div className="cards">{off.map(c =>
+      {off.length ? <details className="fold"><summary>반영 안 함 문장 보기({off.length}개)</summary><div className="cards">{off.map(c =>
         <div className="card cand" key={c.id}><p className="sent">{c.text}</p><div className="labels"><OriginBadge c={c} /><DecisionBadge status={c.status} /></div>
           <EvLine S={S} c={c} open={open} /></div>)}</div></details> : null}
       {recs.length ? <section className="sec"><h3>연결된 글<span className="count">{recs.length}</span></h3>
@@ -50,7 +50,7 @@ export function QuestionTab({ S, tabId, bl, sel, open }: Props) {
   const wait = (qid: string) => (S.candidates || []).filter(c => c.question_id === qid && c.status === "pending").length;
   const body = !readOk(S, "questions") ? <PartFail err={fail(S, "questions")} what="질문 목록" />
     : !q ? <FirstRun S={S} />
-    : <><div className="eyebrow">질문 · {qNo(S, q.id)}</div><h2 className="title">{q.text}</h2>
+    : <><div className="eyebrow">질문 {qNo(S, q.id)}</div><h2 className="title">{q.text}</h2>
       {bl.has("next") ? <NextLine S={S} /> : null}
       {bl.has("sheet") || bl.has("candidates") ? <Sheet S={S} tabId={tabId} q={q} open={open} /> : null}
       {bl.has("journal") ? <Recent S={S} open={open} /> : null}</>;
@@ -59,7 +59,7 @@ export function QuestionTab({ S, tabId, bl, sel, open }: Props) {
       {qs.length ? <nav className="subtabs" aria-label="질문 고르기"><div className="wrap" style={{ padding: ".9rem 0 0" }}>{qs.map((x, i) => {
         const on = q?.id === x.id, w = wait(x.id);
         return <a key={x.id} href={`#${tabId}/${x.id}`} className={on ? "on" : ""} aria-current={on ? "true" : undefined} title={x.text}>
-          Q{i + 1} · {clip(x.text, 36)}{w ? <span className="n">{w}</span> : null}</a>;
+          Q{i + 1} {clip(x.text, 36)}{w ? <span className="n">{w}</span> : null}</a>;
       })}</div></nav> : null}
       <div className="paper sheet">{body}</div>
     </>

@@ -2,7 +2,7 @@
 import type { Cand } from "./state";
 
 export function OriginBadge({ c }: { c: Pick<Cand, "origin" | "edited_by_user"> }) {
-  return <span className={`badge ${c.origin === "ai" ? "b-ai" : "b-memo"}`}>{c.origin === "ai" ? "AI가 쓴 문장" : "내가 쓴 메모"}{c.edited_by_user ? " · 내가 고침" : ""}</span>;
+  return <span className={`badge ${c.origin === "ai" ? "b-ai" : "b-memo"}`}>{c.origin === "ai" ? "AI가 쓴 문장" : "내가 쓴 메모"}{c.edited_by_user ? ", 내가 고침" : ""}</span>;
 }
 
 export function DecisionBadge({ status }: { status: string }) {

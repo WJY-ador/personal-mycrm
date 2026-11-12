@@ -93,5 +93,7 @@ class ConsentBridgeTests(unittest.TestCase):
             with self.subTest(reply=reply):
                 self.assertEqual(self._reply(reply), (False, "failed"))
 
+
+
 if __name__ == "__main__":
     unittest.main()

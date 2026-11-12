@@ -46,8 +46,13 @@ def request_approval(socket_path: str, token: str, request_id: str, device_beare
             or not isinstance(device_bearer, str) or not _BEARER.fullmatch(device_bearer)
             or not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0):
         return _FAILED
-    payload = json.dumps({"version": 1, "token": token, "request_id": request_id,
-                          "device_bearer": device_bearer}, separators=(",", ":")).encode("utf-8") + b"\n"
+    return _exchange(socket_path, {"version": 1, "token": token, "request_id": request_id,
+                                   "device_bearer": device_bearer}, timeout)
+
+
+def _exchange(socket_path: str, message: dict, timeout: float) -> "tuple[bool, str | None]":
+    """One request line, one reply line, parsed by _parse_reply. Any transport or format error fails closed."""
+    payload = json.dumps(message, separators=(",", ":")).encode("utf-8") + b"\n"
     if len(payload) > MAX_LINE:
         return _FAILED
     client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

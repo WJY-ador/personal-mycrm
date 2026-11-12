@@ -676,6 +676,117 @@ class CliTest(unittest.TestCase):
             worker.join(1)
             server.close()
 
+    def test_desktop_control_eof_stops_normal_chat_and_its_provider_child(self):
+        """J-F7: the desktop app died without a stop record (its end of the pipe closed). EOF stops chat like a stop."""
+        class ClosingInput:
+            def __init__(self):
+                self.closed = threading.Event()
+            def readline(self):
+                self.closed.wait(5)
+                return ""
+            def close(self):
+                self.closed.set()
+
+        class StopAwareProvider:
+            name = "fake"
+            def __init__(self):
+                self.started = threading.Event()
+                self.stopped = threading.Event()
+                self.proc = None
+            def start_turn(self, text, cli_session_ref=None):
+                import subprocess
+                self.proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                             stderr=subprocess.DEVNULL)
+                self.started.set()
+                self.proc.wait(timeout=5)
+                yield "error", {"code": "STOPPED"}
+            def stop(self):
+                if self.proc is not None and self.proc.poll() is None:
+                    self.proc.terminate()
+                    self.proc.wait(timeout=2)
+                self.stopped.set()
+
+        provider, control = StopAwareProvider(), ClosingInput()
+        def handler(c):
+            c.recv()
+            c.send({"type": "turn.start", "session_id": "cs_1", "turn_id": "ct_eof",
+                    "text": "synthetic", "provider": "fake", "model": None, "binding_version": 2})
+            c.recv()
+
+        server = FakeWsServer(handler)
+        self.addCleanup(server.close)
+        helpers.connected_config(self.th, f"http://127.0.0.1:{server.port}")
+        ks = helpers.keystore_with_secrets()
+        result = {}
+        def run():
+            with patch.dict(os.environ, {"MYCRM_DESKTOP_CONTROL": "1"}):
+                result["value"] = helpers.run_cli(["--home", self.th.home, "chat"],
+                    ks_factory=lambda svc: ks, stdin=control, chat_kw={"provider": provider, **FAST})
+        worker = threading.Thread(target=run, daemon=True)
+        worker.start()
+        try:
+            self.assertTrue(provider.started.wait(3))
+            control.close()
+            worker.join(3)
+            self.assertFalse(worker.is_alive(), "EOF on the desktop control pipe should end chat promptly")
+            self.assertTrue(provider.stopped.is_set())
+            self.assertIsNotNone(provider.proc.poll(), "EOF must terminate the provider child")
+            self.assertEqual(result["value"][0], 0)
+        finally:
+            control.close()
+            worker.join(1)
+            server.close()
+
+    def test_chat_refuses_to_start_when_the_previous_chat_cannot_be_ended(self):
+        from agent.chat_instance import InstanceUnavailable
+
+        class Stuck:
+            reaped = None
+            released = False
+            def claim(self):
+                raise InstanceUnavailable("unconfirmed")
+            def release(self):
+                self.released = True
+
+        helpers.connected_config(self.th, "http://127.0.0.1:9")
+        ks = helpers.keystore_with_secrets()
+        code, out = helpers.run_cli(["--home", self.th.home, "chat", "--fake"], ks_factory=lambda svc: ks,
+                                    chat_kw={"instance": Stuck(), **FAST})
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(out.strip()), {"event": "start", "stopped": "instance"})
+
+    def test_unconfigured_provider_is_skipped_not_fatal_when_its_gate_is_on(self):
+        """J-F1: Claude or Codex is enough. With a provider gate on but its CLI not chosen, chat keeps running and
+        advertises no model for it (it used to exit, so a Codex-only PC had no chat at all)."""
+        from agent import cli
+        hello = {}
+        got = threading.Event()
+
+        def h(c):
+            hello.update(c.recv())
+            got.set()
+            c.recv()
+
+        srv = FakeWsServer(h)
+        self.addCleanup(srv.close)
+        helpers.connected_config(self.th, f"http://127.0.0.1:{srv.port}")
+        stopping = threading.Event()
+        threading.Thread(target=lambda: (got.wait(5), stopping.set()), daemon=True).start()
+        ks = helpers.keystore_with_secrets()
+        env = {"MYCRM_CHAT_BRIDGE_SOCKET": "/private/tmp/never.sock", "MYCRM_CHAT_BRIDGE_TOKEN": "A" * 43}
+        with patch.object(cli, "CHAT_CLAUDE_PROVIDER_READY", True), patch.object(cli, "CHAT_CODEX_PROVIDER_READY", True), \
+                patch.dict(os.environ, env):
+            code, out = helpers.run_cli(["--home", self.th.home, "chat"], ks_factory=lambda svc: ks,
+                                        chat_kw={"stopping": stopping, **FAST})
+        self.assertEqual(code, 0, out)
+        lines = [json.loads(x) for x in out.strip().splitlines()]
+        self.assertIn({"event": "start", "why": "claude-not-configured"}, lines)
+        self.assertIn({"event": "start", "why": "codex-not-configured"}, lines)
+        self.assertEqual(hello.get("type"), "hello")
+        self.assertNotIn("claude", [c.get("provider") for c in hello.get("capabilities", [])])
+        self.assertNotIn("codex", [c.get("provider") for c in hello.get("capabilities", [])])
+
 
 if __name__ == "__main__":
     unittest.main()

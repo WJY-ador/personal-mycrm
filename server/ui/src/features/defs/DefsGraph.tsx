@@ -19,7 +19,7 @@ export function DefsGraph({ S, jump }: { S: AppState; jump: (id: string) => void
   return (
     <section className="sec" id="dgraph" aria-label="구조 그래프">
       <div className="dlegend">{originCategories(S).map(k => <span key={k}><i className={`o-${k}`} />{originChip(S, k)[1]}</span>)}
-        <span>점선 고리 = 표준 정의 보호</span><span>선 = 관계(화살표 없음) · 세 갈래 = 여러(N) · 두 줄 = 하나(1) · 참조를 가진 쪽이 N</span></div>
+        <span>점선 고리 = 표준 정의 보호</span><span>선 = 관계(화살표 없음), 세 갈래 = 여러(N), 두 줄 = 하나(1), 참조를 가진 쪽이 N</span></div>
       {el ? <div className="dmo" onClick={click}>{el}</div> : <div className="empty">그래프를 읽지 못했어요. 목록으로 보세요. {FIXHINT}</div>}
       <p className="hint" style={{ margin: ".6rem 0 0" }}>원을 누르면 목록의 그 자료 종류로, 선을 누르면 그 관계로 가요.</p></section>
   );
