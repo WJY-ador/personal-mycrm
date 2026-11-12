@@ -53,7 +53,8 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 import db
 import imports
 from db import CrmError, tx, _one, _all, _user_lock
-from envnames import env, switch_on
+from envnames import env
+import features   # 판정 정본(2026-11-12) — 조직 설정 + 프로필 권한 + env 비상 끄기
 
 # ── 한도(초기값, 상수 — 구현계획 §2 「한도」). imports.LIMITS·POLL_LIMITS 버킷과 분리(대화는 jobs 큐를 쓰지 않는다) ──
 ACTIVE_SESSIONS_PER_USER = 1        # DB 부분 UNIQUE(ux_chat_sessions_active)가 강제
@@ -165,14 +166,15 @@ def _off() -> CrmError:
     return CrmError("SWITCH-OFF", "대화 기능이 지금 꺼져 있어요.", "운영자가 켤 때까지 기다리세요.")
 
 
-def enabled() -> bool:
-    return switch_on("WEBCHAT_ENABLED")
+def enabled(uid=None) -> bool:
+    """웹 대화 켜짐 — uid 없으면 조직 설정만(사용자 확인 전 첫 관문), 있으면 그 사용자 프로필까지."""
+    return features.feature_on(uid, "webchat")
 
 
-def chat_mcp_enabled() -> bool:
-    """Gateway route on = ATOMIC_DISPATCH_READY + CRM_WEBCHAT_ENABLED + CRM_CHAT_MCP_ENABLED."""
+def chat_mcp_enabled(uid=None) -> bool:
+    """Gateway route on = ATOMIC_DISPATCH_READY + webchat + chat_mcp(features — 조직 설정·프로필 권한·env 비상 끄기)."""
     from chat_mcp_gateway import route_enabled
-    return route_enabled(enabled(), env("CHAT_MCP_ENABLED", "") == "1")
+    return route_enabled(enabled(uid), features.feature_on(uid, "chat_mcp"))
 
 
 def _chat_rate(dev, bucket):
@@ -1336,7 +1338,7 @@ def approval_confirm(uid, sid, aid):
     """Execute exactly the stored action, after current consent and preview revalidation."""
     import facade
     from chat_mcp_gateway import _mint_trusted_principal
-    if not chat_mcp_enabled():
+    if not chat_mcp_enabled(uid):
         raise _off()
     with db.tx_scope() as c:
         session = _approval_session(c, uid, sid)
@@ -1853,6 +1855,8 @@ class Routes:
         uid = await self.site.uid_of(request)
         if uid is None:
             return None, _err(CrmError("UNAUTHORIZED", "로그인이 필요해요."))
+        if not await run_in_threadpool(enabled, uid):   # 프로필 권한(2026-11-12) — 조직은 켜졌는데 이 사용자 프로필에 없으면 같은 SWITCH-OFF
+            return None, _err(_off())
         if post and not self.site.same_origin(request):
             return None, _err(CrmError("ORIGIN", "다른 사이트에서 온 요청이에요."))
         return uid, None
@@ -2058,7 +2062,7 @@ class Routes:
                 for sse_id, event, data in items:
                     yield _sse(sse_id, event, data)
                 until = asyncio.get_running_loop().time() + SSE_MAX_SECONDS
-                while enabled() and asyncio.get_running_loop().time() < until:
+                while enabled(uid) and asyncio.get_running_loop().time() < until:
                     try:
                         item = await asyncio.wait_for(sub.q.get(), HEARTBEAT_SECONDS)
                     except asyncio.TimeoutError:
@@ -2131,6 +2135,8 @@ class Routes:
         try:
             authorization = self._bearer(request)
             dev = await run_in_threadpool(self._auth, authorization)
+            if not await run_in_threadpool(chat_mcp_enabled, dev["user_id"]):   # 장치 소유자 프로필까지
+                raise _off()
             await run_in_threadpool(_chat_rate, dev, "chat_mcp")   # R4: 접수 요청 버킷과 나눈 대화 버킷
             body = await self._chat_mcp_body(request)
             result = await run_in_threadpool(_chat_mcp_execute, dev, authorization, body)
@@ -2173,6 +2179,8 @@ class Routes:
         try:
             authorization = self._bearer(request)
             dev = await run_in_threadpool(self._auth, authorization)
+            if not await run_in_threadpool(enabled, dev["user_id"]):   # 장치 소유자 프로필까지
+                raise _off()
             await run_in_threadpool(_chat_rate, dev, "chat_launch")   # R4: 접수 요청 버킷과 나눈 대화 버킷
             body = await self._launch_authorization_body(request)
             result = await run_in_threadpool(_chat_launch_authorization, dev, authorization,
@@ -2392,6 +2400,9 @@ class Routes:
             except CrmError as e:
                 code = e.code
                 return await self._deny(ws, e)
+            if not await run_in_threadpool(enabled, dev["user_id"]):   # 장치 소유자 프로필까지
+                code = "SWITCH-OFF"
+                return await self._deny(ws, _off())
             await ws.accept()
             code = "OK"
             d = _Dev(ws, dev)
@@ -2410,7 +2421,7 @@ class Routes:
         while not d.closed:
             await asyncio.sleep(PING_SECONDS)
             close = None
-            if not enabled():
+            if not await run_in_threadpool(enabled, d.dev["user_id"]):
                 close = 1013
             else:
                 try:
@@ -2443,7 +2454,7 @@ class Routes:
             if len(raw.encode("utf-8")) > WS_MESSAGE_MAX:
                 await d.ws.close(code=1009)
                 return
-            if not enabled():
+            if not enabled(dev["user_id"]):
                 await d.ws.close(code=1013)
                 return
             try:

@@ -118,6 +118,12 @@ import auth  # noqa: E402
 import contract  # noqa: E402
 import db  # noqa: E402
 import envnames  # noqa: E402
+import features  # noqa: E402
+
+# 조직 기능 설정 첫 시드(2026-11-12)는 test_admin_profiles.py 가 본다. 이 파일은 lifespan 을 여러 번 돌리는데 시드하면(그때 env 스위치는
+# 비어 있다) 뒤 시험들의 env 스위치("1")가 조직 꺼짐에 막힌다 — 조직 설정 행이 없을 때만 env 가 판정한다. 여기선 부른 횟수만 센다
+SEED_CALLS = []
+features.seed_org_from_env = lambda: SEED_CALLS.append(1) or []
 import imports  # noqa: E402
 import main  # noqa: E402
 import stack_service  # noqa: E402
@@ -242,9 +248,11 @@ def cleanup():
 
 
 def _set_role(uid, role):
-    """β2: 관리자 = users.role. 시험이 관리자 여부를 바꾸는 한 곳(감사 없이 직접)."""
+    """β2: 관리자 = users.role. 시험이 관리자 여부를 바꾸는 한 곳(감사 없이 직접).
+    2026-11-12: 진실 = 프로필(system_admin), role 은 거울 — 둘을 같이 쓴다."""
     with db.tx() as c:
-        c.execute("UPDATE users SET role=%s WHERE id=%s", (role, uid))
+        c.execute("UPDATE users SET role=%s, profile_id=%s WHERE id=%s", (role, "system_admin" if role == "admin" else None, uid))
+    features.clear_cache()
 
 
 def val(res):
@@ -428,6 +436,7 @@ async def test_http():
         purged.append(1)
         raise RuntimeError("파기 실패 주입")
     db.tickets_purge = boom_purge
+    seeded = len(SEED_CALLS)
     # DEV 폴백이 쓰이면 other 의 빈 상태가 나온다 → 토큰 경로가 tester 로 가는지 구분된다
     os.environ["CRM_DEV_USER"] = "other@example.com"
     hdr = {"content-type": "application/json", "accept": "application/json, text/event-stream"}
@@ -438,6 +447,7 @@ async def test_http():
                 r = await h.get("/health")
                 assert r.status_code == 200 and r.json() == {"ok": True, "db": True}, r.text
                 assert purged == [1], "lifespan 이 시작 때 파기를 한 번 부른다(실패해도 기동)"
+                assert len(SEED_CALLS) == seeded + 1, "lifespan 이 시작 때 조직 기능 설정 시드를 한 번 부른다"
                 prm = (await h.get("/.well-known/oauth-protected-resource/mcp")).json()
                 assert prm["resource"] == RESOURCE and prm["authorization_servers"] == [FAKE_ISSUER], prm
                 assert prm["scopes_supported"] == ["openid", "email"], prm
@@ -2582,7 +2592,7 @@ async def test_beta2():
     with db.tx() as c:   # 시험 밖 관리자(이전 실행·bootstrap)는 잠깐 내린다 — LAST-ADMIN·동시 회수는 전역 관리자 수를 본다
         others = [r["id"] for r in c.execute("SELECT id FROM users WHERE role='admin' AND NOT (email = ANY(%s))",
                                              (list(TEST_EMAILS),)).fetchall()]
-        c.execute("UPDATE users SET role='user' WHERE id = ANY(%s)", (others,))
+        c.execute("UPDATE users SET role='user', profile_id=NULL WHERE id = ANY(%s)", (others,))
     _set_role(A, "admin")
     real = (site.dev, site.dev_user, site.client_id, site.token_post, db.session_user)
     site.dev, site.dev_user, site.client_id = False, "", "client_test"
@@ -2727,7 +2737,7 @@ async def test_beta2():
         expect("FORBIDDEN", db.admin_act, C, "role", C, "admin")   # 실행자 재조회 — 비관리자는 트랜잭션 안에서도 거절
         # 동시 회수 2건(A→B, B→A) → 관리자 0명이 되지 않는다
         for i in range(5):
-            _sql("UPDATE users SET role='admin' WHERE id = ANY(%s)", ([A, B],))
+            _sql("UPDATE users SET role='admin', profile_id='system_admin' WHERE id = ANY(%s)", ([A, B],))
             bar, out = threading.Barrier(2), {}
 
             def go(actor, target):
@@ -2742,7 +2752,8 @@ async def test_beta2():
             with db.tx() as c:
                 n = c.execute("SELECT count(*) AS n FROM users WHERE role='admin'").fetchone()["n"]
             assert n == 1 and sorted(map(str, out.values())) == ["FORBIDDEN", "{'changed': True}"], (i, n, out)
-        _sql("UPDATE users SET role = CASE WHEN id=%s THEN 'admin' ELSE 'user' END WHERE id = ANY(%s)", (A, [A, B]))
+        _sql("UPDATE users SET role = CASE WHEN id=%s THEN 'admin' ELSE 'user' END, profile_id = CASE WHEN id=%s THEN 'system_admin' END "
+             "WHERE id = ANY(%s)", (A, A, [A, B]))
         time.sleep(1.1)   # 동시 회수에서 A 가 회수됐으면 web_revoked_before 가 방금 — 같은 초에 만든 쿠키는 무효(닫는 쪽)
 
         # ── 차단·해제·웹 끊기 (웹 + MCP) ──
@@ -2833,7 +2844,7 @@ async def test_beta2():
     finally:
         site.dev, site.dev_user, site.client_id, site.token_post, db.session_user = real
         site.dev, site.dev_user = True, TESTER
-        _sql("UPDATE users SET role='admin' WHERE id = ANY(%s)", (others,))
+        _sql("UPDATE users SET role='admin', profile_id='system_admin' WHERE id = ANY(%s)", (others,))
     print("OK — β2 /admin 404·재인증 없음(ra 없이 화면·POST·/admin/reauth→/admin·콜백→/app·옛 ra 무시·정적 0)·쿠키 v2·끊기·차단/해제(웹·MCP)·부여/회수·LAST-ADMIN·동시 회수·CLI·/app 창·CSP·이스케이프·감사 파기 통과")
 
 
@@ -2907,7 +2918,9 @@ async def test_beta2_bootstrap():
 ADB = {"admin": "adb-admin@example.com", "user": "adb-user@example.com"}
 ADMIN_GETS = ("/admin", "/admin/setup", "/admin/reauth", "/api/state", "/api/feedback", "/admin/schema", "/admin/reports", "/admin/tickets",
               "/admin/users", "/admin/find", "/admin/find?q=%EA%B8%B0%EC%A4%80", "/admin/schema/objects/std-principle",
-              "/admin/schema/templates/author-1", "/admin/schema/templates/author-1/objects/tpl-homework")   # PR A 새 GET(Quick Find·Object Manager 상세)
+              "/admin/schema/templates/author-1", "/admin/schema/templates/author-1/objects/tpl-homework",   # PR A 새 GET(Quick Find·Object Manager 상세)
+              "/admin/profiles", "/admin/profiles/standard_user", "/admin/profiles/standard_user?edit=1", "/admin/features",
+              "/admin/changes")   # 관리자 프로필(2026-11-12)
 # P4: 리포트는 프리셋 전부 + 데이터셋별 차원 하나씩, 스키마는 사용자 트리(?u=)까지 — 동적 URL 이라 admin_report_urls() 가 만든다
 ADB_ALLOWED_DB = {"CrmError"}   # /admin·관리자 문의 핸들러 구간에서 허용하는 db.<이름> — 예외만, 조회 함수 없음(처리방침 동의 표시는 뺐다)
 ADB_BODY_COLS = re.compile(r"\b(title|body|data|doc|draft_doc|history|provenance_history|prev_state|quote|value)\b", re.I)
@@ -3240,7 +3253,8 @@ async def test_optional_consent():
             c.commit()
             db.init_schema(c)
             assert c.execute("SELECT count(*) AS n FROM usage_daily").fetchone()["n"] == 2, "표식이 있으면 지우지 않는다"
-            assert [r["key"] for r in c.execute("SELECT key FROM schema_marks").fetchall()] == [db.USAGE_RESET_MARK]
+            assert [r["key"] for r in c.execute("SELECT key FROM schema_marks").fetchall()
+                    if not r["key"].startswith("perm_seed:")] == [db.USAGE_RESET_MARK]   # perm_seed:* = 관리자 프로필 권한 시드 표식(2026-11-12)
             c.execute("DELETE FROM schema_marks")   # 표식 없는 옛 DB
             c.commit()
             db.init_schema(c)
@@ -4358,7 +4372,8 @@ def test_r2_contract():
         assert not hasattr(db, name), name
     for f in sorted(HERE.glob("*.py")) + [HERE / "render.yaml"]:
         if f.name not in ("test_tools.py", "test_web_home.py"):   # 시험 파일 = 단언 문자열 자신(app.html FEATURE-OFF 0 은 test_web_home.py A5)
-            assert not re.search(r"CRM_FEATURE_|FEATURE_(STANDARD|SOURCES)|FEATURE-OFF|feature_on|standard_on|sources_on",
+            # feature_on 은 2026-11-12 관리자 프로필 판정(features.py)이 다시 쓰는 이름 — 옛 플래그 함수는 위 hasattr(contract, …)가 본다
+            assert not re.search(r"CRM_FEATURE_|FEATURE_(STANDARD|SOURCES)|FEATURE-OFF|contract\.feature_on|standard_on|sources_on",
                                  f.read_text(encoding="utf-8")), f.name
     # ── 예제 동결 ──
     names = sorted(p.name for p in contract.EXAMPLES_DIR.glob("*.json"))
@@ -5900,7 +5915,8 @@ async def test_prA_setup():
             assert "ARG-INVALID" in r.text, path
         # ── 메뉴 · breadcrumb · 좁은 화면 ──
         labels = [m[2] for m in web.ADMIN_MENU]
-        assert labels == ["Setup Home", "Object Manager", "Users", "Reports", "Support", "Administration"], labels
+        assert labels == ["Setup Home", "Object Manager", "Users", "Profiles", "Feature Settings", "Setup Audit Trail", "Reports", "Support",
+                          "Administration"], labels   # 관리자 프로필(2026-11-12) — Profiles·Feature Settings·Setup Audit Trail
         for key, href, label, _, _ in web.ADMIN_MENU:
             t = clean(await req("GET", href), href)
             nav = t[t.index('<nav class="side"'):t.index("</nav>", t.index('<nav class="side"'))]
@@ -6079,7 +6095,7 @@ async def test_prA_setup():
         clean(await req("GET", "/admin/find?" + urlencode({"q": "가" * 100})), "100")
         assert "찾은 항목이 없어요" in clean(await req("GET", "/admin/find?q=" + quote("없는말xyz")), "none")
         t = clean(await req("GET", "/admin/find"), "/admin/find")
-        assert "운영 메뉴 6" in t
+        assert "운영 메뉴 9" in t
         saved = web._FIND_INDEX
         web._FIND_INDEX = many
         try:
@@ -6341,6 +6357,7 @@ async def test_prb_gate():
             q = val(await c.call_tool("question_add", {"text": "이제 된다"}))
             assert q["id"].startswith("q_")
             me = val(await c.call_tool("me_get", {}))
+            assert set(me.pop("access")) == {"profile", "features"}, "관리자 프로필(2026-11-12) — 내 프로필 이름·켜진 기능(읽기만)"
             assert me == db.me_home(N) and me["display_name"] == "이름 PRBNAME" and set(me["counts"]) == {
                 "claims", "principles", "decisions", "people", "sources", "reflections"}
             st = val(await c.call_tool("state_get", {}))

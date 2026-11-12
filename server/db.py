@@ -526,6 +526,8 @@ def _init_schema(c):
         _migrate_migration_path(c)   # 이관 경로(2026-11-02) — records.date_kind · 가안 X(plan reverted·via · 항목 created · 접수 reverted). 새 표 3개는 schema.sql
         _init_tmp(c)   # PR ②-a 임시 보관 — schema.sql 의 jobs 뒤(FK 대상). 위치는 current_schema() 로 정한다
         _migrate_classify_roles(c)
+        import features   # 관리자 프로필(2026-11-12) — 기본 프로필·권한 시드·users.profile_id·role 거울. 표는 schema.sql
+        features.migrate(c)
         _backfill_template_slots(c)   # 매번 돈다 — 시드가 적용 뒤 표시 전에 끊긴 경우도 여기서 채운다
         # 처리방침 v2 전환 — v2 시행 전에 모은 이용 기록(usage_daily)을 1회 전부 지운다. 표식이 있으면 건너뛴다.
         if _one(c, "INSERT INTO schema_marks (key) VALUES (%s) ON CONFLICT (key) DO NOTHING RETURNING key", (USAGE_RESET_MARK,)):
@@ -3100,7 +3102,7 @@ def item_decide(uid, item_id, expected_revision, proposal_id, action, history_id
     모든 변경은 이력 한 줄 + revision+1. 같은 결정 반복은 no-op. confirm 은 승격 조건을 거절 사유로 쓰지 않고 결과에 사실로 싣는다."""
     if action not in ITEM_ACTIONS:
         raise CrmError("ARG-INVALID", f"action 은 {', '.join(ITEM_ACTIONS)} 중 하나예요.")
-    if action in ITEM_RETIRED and trash_on():   # 휴지통 켜짐 — 잠그기 전에 거절(데이터·revision 불변)
+    if action in ITEM_RETIRED and trash_on(uid):   # 휴지통 켜짐 — 잠그기 전에 거절(데이터·revision 불변)
         raise CrmError("ACTION-RETIRED", "기준을 남기지 않기·되돌리기는 이제 없어요. 남기지 않을 기준은 삭제해 휴지통으로 옮겨요.",
                        "trash_move(kind=item) 로 삭제하세요(휴지통에서 168시간 안에 복원할 수 있어요). 남기려면 confirm.")
     promotion = None
@@ -3463,7 +3465,9 @@ def admin_bootstrap(ids, conn=None):
             c.execute("SELECT pg_advisory_xact_lock(%s)", (ADMIN_LOCK,))
             if _one(c, "SELECT 1 AS x FROM admin_audit WHERE action IN ('bootstrap','recover') LIMIT 1"):
                 return None
-            n = c.execute("UPDATE users SET role='admin' WHERE id = ANY(%s) AND role <> 'admin'", (ids,)).rowcount
+            import features   # 관리자 = 시스템 관리자 프로필(2026-11-12). role 거울은 features 가 같이 맞춘다
+            n = sum(features.assign_in(c, None, r["id"], features.SYSTEM_ADMIN)["changed"]
+                    for r in _all(c, "SELECT id FROM users WHERE id = ANY(%s) AND role <> 'admin' ORDER BY id", (ids,)))
             _audit(c, "bootstrap", None, None, {"listed": len(ids), "promoted": n})
             return n
     if conn is not None:
@@ -3480,7 +3484,9 @@ def admin_recover(email):
         t = _one(c, "SELECT id,role,blocked_at FROM users WHERE email=%s FOR UPDATE", (email,))
         if not t:
             raise CrmError("NOT-FOUND", "그 이메일의 계정이 없어요.", "그 사람이 먼저 한 번 로그인해야 계정이 생겨요.")
-        c.execute("UPDATE users SET role='admin', blocked_at=NULL WHERE id=%s", (t["id"],))
+        import features   # 관리자 = 시스템 관리자 프로필(2026-11-12) — role 거울은 features 가 맞춘다
+        features.assign_in(c, None, t["id"], features.SYSTEM_ADMIN)
+        c.execute("UPDATE users SET blocked_at=NULL WHERE id=%s", (t["id"],))
         _audit(c, "recover", None, t["id"], {"from": t["role"], "to": "admin", "unblocked": t["blocked_at"] is not None})
         return {"id": t["id"], "email": email}
 
@@ -3511,14 +3517,16 @@ def admin_act(actor_id, op, target_id, role=None):
         if op == "role" and role == "admin":
             if t["role"] == "admin":
                 return {"changed": False}
-            c.execute("UPDATE users SET role='admin' WHERE id=%s", (tid,))
+            import features   # 관리자 부여 = 시스템 관리자 프로필 지정(2026-11-12). 변경 기록(setup_changes)도 남는다
+            features.assign_in(c, actor_id, tid, features.SYSTEM_ADMIN)
             _audit(c, "role_grant", actor_id, tid, {"from": t["role"], "to": "admin"})
         elif op == "role":
             if t["role"] != "admin":
                 return {"changed": False}
             if _one(c, "SELECT count(*) AS n FROM users WHERE role='admin'")["n"] <= 1:
                 raise CrmError("LAST-ADMIN", "마지막 관리자는 회수할 수 없어요.", "다른 사람에게 먼저 관리자를 부여하세요.")
-            c.execute("UPDATE users SET role='user', web_revoked_before=now() WHERE id=%s", (tid,))
+            import features   # 관리자 회수 = 표준 사용자 프로필 지정(웹 세션 끊기 포함, 2026-11-12)
+            features.assign_in(c, actor_id, tid, features.STANDARD_USER)
             _audit(c, "role_revoke", actor_id, tid, {"from": "admin", "to": "user"})
         elif op == "signout":
             c.execute("UPDATE users SET web_revoked_before=now() WHERE id=%s", (tid,))
@@ -4205,7 +4213,7 @@ def person_save(uid, alias, person_id="", expected_revision=None):
 def person_delete(uid, person_id, expected_revision):
     """스위치 켜짐 = 휴지통 이동(연결이 있어도 — 연결 상대는 그대로, PERSON-IN-USE 없음). 꺼짐 = 기존 즉시 삭제(연결 있으면 거절) 그대로."""
     rev = _rev_arg(expected_revision)
-    if trash_on():
+    if trash_on(uid):
         return {**_trash_do(uid, "person", person_id, "move", rev, gate=False), "deleted": True, "trashed": True}
     with tx() as c:
         _user_lock(c, uid)
@@ -4383,7 +4391,7 @@ def source_reflection_review(uid, reflection_id, expected_revision, reviewed):
 def source_reflection_delete(uid, reflection_id, expected_revision):
     """스위치 켜짐 = 휴지통 이동. 꺼짐 = 기존 즉시 삭제 그대로."""
     rev = _rev_arg(expected_revision)
-    if trash_on():
+    if trash_on(uid):
         return {**_trash_do(uid, "reflection", reflection_id, "move", rev, gate=False), "deleted": True, "trashed": True}
     with tx() as c:
         _user_lock(c, uid)
@@ -4416,9 +4424,9 @@ _TNOW = "COALESCE(%(now)s::timestamptz, now())"
 _TNOW_CHECK = "COALESCE(%(now)s::timestamptz, clock_timestamp())"
 
 
-def trash_on() -> bool:
-    import envnames
-    return envnames.switch_on("TRASH_ENABLED")
+def trash_on(uid=None) -> bool:
+    import features   # 판정 정본(2026-11-12 관리자 프로필) — 조직 설정 + 프로필 권한 + env 비상 끄기. uid 없으면 조직 설정만
+    return features.feature_on(uid, "trash")
 
 
 def _trash_off():
@@ -4515,7 +4523,7 @@ def _iso_v(v):
 def _trash_do(uid, kind, tid, op, expected_revision=None, gate=True):
     """이동·복원·영구 삭제 요청 한 건 — 한 트랜잭션(users 행 → 대상 행 잠금 → 상태 검사 → 전이). gate=False = 스위치 검사 생략
     (기존 사람·생각 삭제 경로가 스위치 켜짐을 이미 본 뒤 부른다)."""
-    if gate and not trash_on():
+    if gate and not trash_on(uid):
         raise _trash_off()
     t = _trash_kind(kind)
     with tx() as c:
@@ -4604,7 +4612,7 @@ def trash_list(uid, kind="", cursor="", limit=PAGE_DEFAULT):
     """휴지통 목록(최근 이동 순, 본인 것·복원 기한 전만). 반환 {items:[{kind,id,title,trashed_at,purge_at,revision,restore_state,
     object_label?·reflection_kind?·occurred_on?}], next_cursor, hours}. title = 글 제목·항목 제목·별칭·생각 첫 줄·활동 행동 이름.
     본문은 trash_get 에서만. purge_at = 화면 「복원 가능 기한」."""
-    if not trash_on():
+    if not trash_on(uid):
         raise _trash_off()
     if kind:
         _trash_kind(kind)
@@ -4649,7 +4657,7 @@ _TRASH_GET_SQL = {
 
 def trash_get(uid, kind, target_id):
     """휴지통 전용 상세 — 휴지통 대상의 본문을 돌려주는 유일한 경로. 본인 것·복원 기한 전만(지나면 TRASH-EXPIRED, 휴지통 아님 = NOT-FOUND)."""
-    if not trash_on():
+    if not trash_on(uid):
         raise _trash_off()
     t = _trash_kind(kind)
     a = {"now": TRASH_CLOCK, "uid": uid, "id": str(target_id or "")}
@@ -4900,10 +4908,10 @@ def _tmp_delete_user(c, uid):
         c.execute(f"DELETE FROM {t} WHERE user_id=%s", (uid,))
 
 
-def job_switch_on(kind):
-    import envnames
+def job_switch_on(kind, uid=None, c=None):
+    import features   # 판정 정본 — 기능 키 = env 이름 소문자에서 _ENABLED 를 뺀 것(features.BY_ENV). c = 열린 트랜잭션 안이면 그 연결
     name = JOB_SWITCH[kind]
-    return name is not None and envnames.switch_on(name)
+    return name is not None and features.feature_on(uid, features.BY_ENV[name].key, c)
 
 
 def _job_off():
@@ -5024,7 +5032,7 @@ def job_create(uid, kind, text, session_id=None, input_kind=None, restack=None):
         raise CrmError("ARG-INVALID", f"kind 는 {', '.join(JOB_KINDS)} 중 하나예요.")
     if input_kind is not None and (kind != "converse" or input_kind not in STACK_INPUT_KINDS):
         raise CrmError("ARG-INVALID", f"input_kind 는 converse 작업에서만 {', '.join(STACK_INPUT_KINDS)} 중 하나예요.")
-    if not job_switch_on(kind):
+    if not job_switch_on(kind, uid):
         raise _job_off()
     if restack is not None and kind != "converse":
         raise CrmError("ARG-INVALID", "재정리(restack)는 converse 작업만이에요.")
@@ -5151,7 +5159,7 @@ _ASSIGN = ("UPDATE jobs SET status='leased', device_id=%s, lease_generation=leas
 def job_assign(dev):
     """장치 폴 1회 — 켜진 종류의 queued 하나를 원자 할당(사용자 행 잠금으로 직렬화). 같은 세션에 leased·running 이 있으면 그 세션은 건너뛴다
     (같은 스레드 동시 resume 금지). 없으면 None. 반환 = 장치 응답 모양."""
-    kinds = [k for k in JOB_KINDS if job_switch_on(k)]
+    kinds = [k for k in JOB_KINDS if job_switch_on(k, dev["user_id"])]
     if not kinds:
         return None
     uid = dev["user_id"]
@@ -5272,7 +5280,7 @@ def job_result(dev, job_id, body):
             raise _job_lease()
         if body["input_version"] != j["input_version"]:
             raise CrmError("JOB-VERSION", "입력 버전이 맞지 않아요.", "그 결과는 버리세요.")
-        if not job_switch_on(j["kind"]):
+        if not job_switch_on(j["kind"], dev["user_id"], c):
             raise _job_off()
         c.execute(f"INSERT INTO {res} (job_id,user_id,result_version,summary_text,changes,blocked,text_map,model_meta) "
                   "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
@@ -5359,7 +5367,7 @@ def _job_result_stack(dev, jid, body):
                 return {"duplicate": True}
         if j["status"] != "running" or not _lease_ok(j, dev, body["lease_generation"]):
             raise _job_lease()
-        if not job_switch_on(j["kind"]):
+        if not job_switch_on(j["kind"], dev["user_id"], c):
             raise _job_off()
         if j["kind"] != "converse" or sess is None:
             raise ss.bad("envelope", "kind")

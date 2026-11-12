@@ -2,7 +2,7 @@
 
 실행: DATABASE_URL=postgresql://localhost/crm_test_download python3 server/test_download.py
 가드: server/.env 를 읽지 않는다(운영 DB 폴백 사고 방지) — DATABASE_URL 을 명시해야 하고, 호스트는 로컬, DB 이름은 crm_test 로 시작해야 한다.
-DB 는 쓰지 않는다(라우트가 DB 를 건드리지 않는다) — 가드는 main 을 들여올 때 엉뚱한 DB 에 붙지 않게 하는 것.
+라우트는 조직 기능 설정(download_public, 2026-11-12)만 읽는다 — 시작 때 init_schema 로 표를 깐다. 시드는 하지 않아(행 없음) env 가 그대로 판정한다.
 
 A. 플래그 CRM_DOWNLOAD_PUBLIC 꺼짐(없음·"0"·"true") → 「준비 중」·직링크 0·Release 링크 0.
 B. 켜짐("1") → 직링크 3개(고정 이름)·releases/latest 링크 1개·경고 절차 본문 없음·설치 뒤 3단계.
@@ -198,6 +198,8 @@ async def test_tokens(h):
 
 async def run():
     saved = os.environ.get(FLAG)
+    import db
+    db.init_schema()   # 조직 기능 설정 표(행 없음 = env == "1" 이 판정)
     try:
         test_static()
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url=PUBLIC) as h:
