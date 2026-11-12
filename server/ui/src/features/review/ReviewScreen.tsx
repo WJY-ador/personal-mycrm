@@ -38,6 +38,8 @@ export function ReviewScreen({ ctx }: ScreenProps) {
   const S = ctx.state!, [tabId = "", qid = "", key = "", back = "#", backText = ""] = ctx.args || [];
   const [say, setSay] = useState<Say>({ text: "", pin: null });
   const [lockS, setLockS] = useState<AppState | null>(null);   // 저장 중 = 잠근 때의 상태 — 새 상태가 오면 저절로 풀린다
+  // 이 화면에 있는 동안만 머리글의 막대, 범례, 질문 줄을 숨긴다(Review.module.css 의 body.review-screen, 디자인 2 C3). 끝, 빈, 못 읽음 상태도 같다
+  useEffect(() => { document.body.classList.add("review-screen"); return () => document.body.classList.remove("review-screen"); }, []);
   const mark = useDirtyCards(ctx);
   const after = useRef<{ qid: string; nextId: string } | null>(null), flash = useRef<string | null>(null), title = useRef<HTMLHeadingElement>(null);
 
