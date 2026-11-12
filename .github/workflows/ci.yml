@@ -291,6 +291,19 @@ jobs:
           PY
           python server/test_export_forms.py
 
+      # 질문에 내 기록으로 답하기(2026-11-12) — answer_get 결정적 검색·원문 구간만·적격 재료·수집 글 분리·gaps 고정 문구·이스케이프·카탈로그(합성 PG).
+      # 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
+      - name: "④-u 답하기 시험 (test_answer_get.py)"
+        env:
+          DATABASE_URL: postgresql://postgres:crm@localhost:5432/crm_test_answer
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:crm@localhost:5432/crm", autocommit=True) as c:
+              c.execute("CREATE DATABASE crm_test_answer")
+          PY
+          python server/test_answer_get.py
+
       # 웹 「대화」 전송 골격(2026-11-04 PR 1) — 실제 uvicorn(스레드) + 장치 WS + SSE · 세션·턴 멱등·TURN-BUSY·재개·WS 인증·한도·스위치·30일 삭제(합성 PG).
       # 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
       - name: "④-o 웹 대화 시험 (test_webchat.py)"
