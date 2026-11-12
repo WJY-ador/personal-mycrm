@@ -2,7 +2,7 @@
 (예외: 끝 절 「휴지통 PR-1」 의 활동 원천 전이·물리 정리 — db.trash_* 와 main 정리 회차가 부른다).
 
 정본: r3 T3(집계 규칙·화면 배치·MCP 읽기). 웹(#_me·#_obj/activity·사람·출처·축 상세)과 MCP 읽기 도구가 같은 함수를 쓴다.
-사람 HMAC·원 URL·PC 경로는 내보내지 않는다. 사람은 id·별칭만, 원문은 raw_id(불투명)만.
+사람 HMAC·원 URL·PC 경로는 내보내지 않는다(수집 글의 원 URL 은 활동이 아니라 collected_posts 항목 필드 — imports.py). 사람은 id·별칭만, 원문은 raw_id(불투명)만.
 
 집계 대상 = 현재 판(import_entries.is_current_applied) · state=active · deleted_at IS NULL · 휴지통 아님 · occurred_on 이 기간 안.
 휴지통(PR-1): 휴지통 원천의 판은 목록·상세·집계·문맥 전부에서 빠진다. 휴지통 사람·축·기록은 연결만 빠지고 활동은 남는다.

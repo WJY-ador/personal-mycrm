@@ -299,6 +299,7 @@ CREATE TABLE IF NOT EXISTS items (
   created_at          timestamptz NOT NULL DEFAULT now(),
   updated_at          timestamptz NOT NULL DEFAULT now(),
   -- board 이전(2026-10-20) — records 와 같은 뜻. 옛 DB 는 init_schema 가 더한다(옛 행 received_at NULL·ingest_kind legacy)
+  -- ingest_kind inbox = 연결 장치 수집 글 항목(2026-11-12, collected_posts — 승인 대기 없이 바로, 일반 제안 한도에 세지 않는다)
   received_at         timestamptz DEFAULT now(),
   source_created_at   timestamptz,
   source_date         date,
@@ -326,7 +327,7 @@ CREATE TABLE IF NOT EXISTS items (
 CREATE INDEX IF NOT EXISTS ix_items_user_obj ON items (user_id, object_id, updated_at DESC) WHERE archived_at IS NULL;
 
 -- ── board 이전 · 연결 장치(2026-10-20, 구현계획 notes/2026-10-20_board-마이그-구현계획.md · r3 T1) ─────────────
--- 원문은 PC, 서버엔 구조화 데이터만. 활동 = 코어(사용자 정의 오브젝트 아님). 계정 삭제는 db.DELETE_TABLES 순서(관계 → 접수 대응표 → 업무 자료 → 입력원).
+-- 원문은 PC, 서버엔 구조화 데이터만(수집 글은 원 URL·제목 줄·AI 요약까지 — 사용자 오브젝트 collected_posts 의 항목, 원문 본문은 PC). 활동 = 코어(사용자 정의 오브젝트 아님). 계정 삭제는 db.DELETE_TABLES 순서(관계 → 접수 대응표 → 업무 자료 → 입력원).
 -- 활동·접수 대응표가 참조하는 테이블보다 먼저 만든다(item_links 가 activities 를 가리킨다).
 
 -- 입력원 = 연결 장치(토큰) 또는 board 이전(병행 기간). 장치당 현재 토큰 하나 — 옛 토큰은 감사(admin_audit)에만.
@@ -468,7 +469,7 @@ CREATE TABLE IF NOT EXISTS import_entries (
   source_revision      text NOT NULL,               -- 불투명 개정 ID
   previous_entry_id    text,                        -- 같은 원본·종류의 직전 접수 행. 최초 = NULL
   kind                 text NOT NULL CHECK (kind IN ('self_text','self_summary','activity',
-                                                     'migration_object','migration_item','migration_record')),
+                                                     'migration_object','migration_item','migration_record','collected_post')),   -- collected_post = 수집 글(2026-11-12). 옛 DB 는 db._WIDEN_CHECKS 가 넓힌다
   request_sha256       bytea NOT NULL CHECK (octet_length(request_sha256) = 32),
   projection_sha256    bytea NOT NULL CHECK (octet_length(projection_sha256) = 32),
   state                text NOT NULL CHECK (state IN ('pending','applied','noop','excluded','expired','deleted','reverted')),   -- deleted = 대상 영구 삭제(휴지통) 뒤 표식 — target 없음. reverted = MCP migration_revert 가 되돌린 이관 접수(최신·현재 표시 없음, 영구 삭제 뒤에도 reverted). 옛 DB 는 _migrate_trash 가 넓힌다
@@ -490,6 +491,9 @@ CREATE TABLE IF NOT EXISTS import_entries (
   manifest_sha256      bytea,
   transform_version    text NOT NULL,
   execution            text CHECK (execution IS NULL OR execution IN ('attended','unattended')),
+  -- 수집 글(2026-11-12): PC 원본 식별자(불투명 난수, 경로·URL 에서 유도하지 않음) — raw_id ↔ 항목(target_item_id) 대응. collected_post 행만.
+  -- 옛 DB 는 db._migrate_collected 가 열·CHECK·부분 인덱스 ix_import_raw 를 더한다
+  raw_id               text,
   PRIMARY KEY (user_id, id),
   UNIQUE (user_id, stream_id, original_id, kind, id),
   FOREIGN KEY (user_id, stream_id) REFERENCES import_streams(user_id, id),

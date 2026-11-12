@@ -1994,6 +1994,1001 @@
     "field": "activity_ref",
     "rule": "unknown_field"
    }
+  },
+  {
+   "name": "collected_minimal_valid",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending"
+   },
+   "expect": "valid"
+  },
+  {
+   "name": "collected_full_valid",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending",
+    "post_url": "https://www.linkedin.com/posts/synthetic-activity-123?utm=x&a=1",
+    "author_display": "합성 작성자",
+    "posted_on": "2026-11-10",
+    "axes": [
+     "i_axis01"
+    ],
+    "ai": {
+     "grade": "signal",
+     "summary": "합성 요약",
+     "as_is": "지금",
+     "to_be": "바뀔 모습",
+     "ops": "운영 메모",
+     "points": [
+      "점 하나",
+      "점 둘"
+     ]
+    }
+   },
+   "expect": "valid"
+  },
+  {
+   "name": "collected_posted_on_null_valid",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending",
+    "posted_on": null
+   },
+   "expect": "valid"
+  },
+  {
+   "name": "collected_ai_empty_valid",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending",
+    "ai": {}
+   },
+   "expect": "valid"
+  },
+  {
+   "name": "collected_removed_valid",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "removed"
+   },
+   "expect": "valid"
+  },
+  {
+   "name": "collected_missing_title",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "state": "pending"
+   },
+   "expect": {
+    "field": "title",
+    "rule": "required"
+   }
+  },
+  {
+   "name": "collected_missing_raw_id",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending"
+   },
+   "expect": {
+    "field": "raw_id",
+    "rule": "required"
+   }
+  },
+  {
+   "name": "collected_bad_raw_id",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "F6F6F6F6F6F6F6F6F6F6F6F6F6F6F6F6F6F6F6F6F6F6F6F6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending"
+   },
+   "expect": {
+    "field": "raw_id",
+    "rule": "format"
+   }
+  },
+  {
+   "name": "collected_bad_channel",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "facebook",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending"
+   },
+   "expect": {
+    "field": "channel",
+    "rule": "enum"
+   }
+  },
+  {
+   "name": "collected_collected_on_null",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": null,
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending"
+   },
+   "expect": {
+    "field": "collected_on",
+    "rule": "date_required"
+   }
+  },
+  {
+   "name": "collected_bad_state",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "expired"
+   },
+   "expect": {
+    "field": "state",
+    "rule": "enum"
+   }
+  },
+  {
+   "name": "collected_title_newline",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "첫 줄\n둘째 줄",
+    "state": "pending"
+   },
+   "expect": {
+    "field": "title",
+    "rule": "single_line"
+   }
+  },
+  {
+   "name": "collected_title_too_long",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가",
+    "state": "pending"
+   },
+   "expect": {
+    "field": "title",
+    "rule": "too_long"
+   }
+  },
+  {
+   "name": "collected_title_url",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "링크 https://example.com/x 참고",
+    "state": "pending"
+   },
+   "expect": {
+    "field": "title",
+    "rule": "url_not_allowed"
+   }
+  },
+  {
+   "name": "collected_title_email",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "연락 someone@example.com",
+    "state": "pending"
+   },
+   "expect": {
+    "field": "title",
+    "rule": "email_not_allowed"
+   }
+  },
+  {
+   "name": "collected_author_path",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending",
+    "author_display": "~/Documents 작성자"
+   },
+   "expect": {
+    "field": "author_display",
+    "rule": "path_not_allowed"
+   }
+  },
+  {
+   "name": "collected_author_url",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending",
+    "author_display": "www.example.com 작성자"
+   },
+   "expect": {
+    "field": "author_display",
+    "rule": "url_not_allowed"
+   }
+  },
+  {
+   "name": "collected_post_url_http",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending",
+    "post_url": "http://example.com/post/1"
+   },
+   "expect": {
+    "field": "post_url",
+    "rule": "https_required"
+   }
+  },
+  {
+   "name": "collected_post_url_bare",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending",
+    "post_url": "https://"
+   },
+   "expect": {
+    "field": "post_url",
+    "rule": "https_required"
+   }
+  },
+  {
+   "name": "collected_post_url_space",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending",
+    "post_url": "https://example.com/a b"
+   },
+   "expect": {
+    "field": "post_url",
+    "rule": "single_line"
+   }
+  },
+  {
+   "name": "collected_post_url_too_long",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending",
+    "post_url": "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   },
+   "expect": {
+    "field": "post_url",
+    "rule": "too_long"
+   }
+  },
+  {
+   "name": "collected_post_url_email",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending",
+    "post_url": "https://example.com/share?to=someone@example.com"
+   },
+   "expect": {
+    "field": "post_url",
+    "rule": "email_not_allowed"
+   }
+  },
+  {
+   "name": "collected_post_url_not_string",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending",
+    "post_url": 5
+   },
+   "expect": {
+    "field": "post_url",
+    "rule": "string_required"
+   }
+  },
+  {
+   "name": "collected_ai_url_in_summary",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending",
+    "ai": {
+     "summary": "요약 https://example.com/x"
+    }
+   },
+   "expect": {
+    "field": "ai.summary",
+    "rule": "url_not_allowed"
+   }
+  },
+  {
+   "name": "collected_ai_unknown_key",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending",
+    "ai": {
+     "body": "원문"
+    }
+   },
+   "expect": {
+    "field": "ai.body",
+    "rule": "unknown_field"
+   }
+  },
+  {
+   "name": "collected_ai_not_object",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending",
+    "ai": "요약"
+   },
+   "expect": {
+    "field": "ai",
+    "rule": "object_required"
+   }
+  },
+  {
+   "name": "collected_ai_bad_grade",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending",
+    "ai": {
+     "grade": "great"
+    }
+   },
+   "expect": {
+    "field": "ai.grade",
+    "rule": "enum"
+   }
+  },
+  {
+   "name": "collected_ai_summary_too_long",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending",
+    "ai": {
+     "summary": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가"
+    }
+   },
+   "expect": {
+    "field": "ai.summary",
+    "rule": "too_long"
+   }
+  },
+  {
+   "name": "collected_ai_ops_too_long",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending",
+    "ai": {
+     "ops": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가"
+    }
+   },
+   "expect": {
+    "field": "ai.ops",
+    "rule": "too_long"
+   }
+  },
+  {
+   "name": "collected_ai_points_too_many",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending",
+    "ai": {
+     "points": [
+      "점",
+      "점",
+      "점",
+      "점",
+      "점",
+      "점",
+      "점",
+      "점",
+      "점",
+      "점",
+      "점",
+      "점",
+      "점"
+     ]
+    }
+   },
+   "expect": {
+    "field": "ai.points",
+    "rule": "list_max_12"
+   }
+  },
+  {
+   "name": "collected_ai_point_too_long",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending",
+    "ai": {
+     "points": [
+      "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가"
+     ]
+    }
+   },
+   "expect": {
+    "field": "ai.points[0]",
+    "rule": "too_long"
+   }
+  },
+  {
+   "name": "collected_ai_point_empty",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending",
+    "ai": {
+     "points": [
+      " "
+     ]
+    }
+   },
+   "expect": {
+    "field": "ai.points[0]",
+    "rule": "empty"
+   }
+  },
+  {
+   "name": "collected_body_not_allowed",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending",
+    "body": "원문 본문"
+   },
+   "expect": {
+    "field": "body",
+    "rule": "unknown_field"
+   }
+  },
+  {
+   "name": "collected_axes_duplicate",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending",
+    "axes": [
+     "i_axis01",
+     "i_axis01"
+    ]
+   },
+   "expect": {
+    "field": "axes",
+    "rule": "duplicate"
+   }
+  },
+  {
+   "name": "collected_bad_posted_on",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "collected-post/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending",
+    "posted_on": "2026/11/10"
+   },
+   "expect": {
+    "field": "posted_on",
+    "rule": "date_required"
+   }
+  },
+  {
+   "name": "collected_transform_kind_mismatch",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "kind": "collected_post",
+    "execution": "unattended",
+    "transform_version": "board-likes/1",
+    "policy_revision": 1,
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "channel": "linkedin",
+    "collected_on": "2026-11-12",
+    "title": "합성 수집 글 첫 줄",
+    "state": "pending"
+   },
+   "expect": {
+    "field": "transform_version",
+    "rule": "kind_mismatch"
+   }
+  },
+  {
+   "name": "activity_feed_save_valid",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "execution": "unattended",
+    "policy_revision": 1,
+    "kind": "activity",
+    "transform_version": "board-feed/1",
+    "action": "save",
+    "state": "active",
+    "occurred_on": null,
+    "observed_on": "2026-11-12",
+    "provider": "kakao",
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6"
+   },
+   "expect": "valid"
+  },
+  {
+   "name": "activity_mail_like_not_in_transform",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "execution": "unattended",
+    "policy_revision": 1,
+    "kind": "activity",
+    "transform_version": "board-mail/1",
+    "action": "like",
+    "state": "active",
+    "occurred_on": null,
+    "observed_on": null,
+    "provider": "mail",
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6"
+   },
+   "expect": {
+    "field": "action",
+    "rule": "not_in_transform"
+   }
+  },
+  {
+   "name": "activity_reactions_mail_provider",
+   "request": {
+    "contract": "canon-inbox/1",
+    "schema_revision": 2,
+    "source_instance_id": "is_a1a1a1a1a1a1a1a1a1a1a1a1",
+    "original_id": "o_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "revision": "v_d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "previous_revision": null,
+    "execution": "unattended",
+    "policy_revision": 1,
+    "kind": "activity",
+    "transform_version": "board-reactions/1",
+    "action": "comment",
+    "state": "active",
+    "occurred_on": "2026-11-11",
+    "observed_on": null,
+    "provider": "mail",
+    "raw_id": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6"
+   },
+   "expect": {
+    "field": "provider",
+    "rule": "not_in_transform"
+   }
   }
  ],
  "raw_cases": [
