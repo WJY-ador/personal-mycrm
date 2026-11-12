@@ -1,25 +1,28 @@
 /* 전역 토큰(옛 app.html <style> 의 :root 값 그대로) — 색·글꼴·축 색·구조 그래프(DMO). 화면 CSS(global.css·CSS Modules)는 var(--…) 로만 쓴다. */
 /* 「보드」 — 로컬 보드(checkpoint_board)·360·지도 칸반 구조를 옮긴 넓은 화면. 주색(--accent)은 조작·확정에만.
-   형광펜(--mark)은 근거 구절과 그 인용에만. 상태색: 내 판단 --mine · 아직 안 정함 --warn · AI --ai · 메모 --memo. */
+   형광펜(--mark)은 근거 구절과 그 인용에만. 상태색: 내 판단 --mine · 아직 안 정함 --warn · AI --ai · 메모 --memo.
+   색 = 디자인 2 가안 나(한 색 깊게, 고동). 색상 하나를 밝기 단계로 쓰고 실패(--fail)만 빨강, 형광펜(--mark)만 노랑이다.
+   AI 계열(--ai, --ai-bg, --cand-bg, --cand-line)은 무채색이다. AI 후보와 확정 판단은 색이 아니라 모양(점선)과 낱말로 가른다. */
 :root {
   color-scheme: light;
-  --paper: #F7F8F6; --card: #FFFFFF; --ink: #1F2937; --muted: #6B7280; --soft: #6B7280; --line: #E3E5E1;
-  --accent: #186A4B; --on-accent: #FFFFFF; --accent-soft: #EAF3EE;
-  --warn: #B05C2A; --warn-bg: #FAF6F0;
-  --ai: #5B4FB5; --ai-bg: #F1EFFA; --cand-bg: #FBFBFD; --cand-line: #D9D6EE;
-  --memo: #6B7280; --memo-bg: #F3F4F6; --mine: #186A4B; --mine-bg: #EAF3EE; --fail: #B42318; --fail-bg: #FEF3F2;
-  --mark: #FFE98A; --mark-ink: #1F2937; --shadow: none; --paper-border: 1px solid var(--line);
+  --paper: #F6F2EC; --card: #FFFDF9; --ink: #2B2118; --muted: #66584B; --soft: #66584B; --line: #E5DCD0;
+  --accent: #6F401B; --on-accent: #FFFDF9; --accent-soft: #F2E7DA;
+  --warn: #8F5E2E; --warn-bg: #F8EFE3;
+  --ai: #66584B; --ai-bg: #F1EAE1; --cand-bg: #FCF8F2; --cand-line: #D6C7B4;
+  --memo: #66584B; --memo-bg: #F1EAE1; --mine: #6F401B; --mine-bg: #F2E7DA; --fail: #B42318; --fail-bg: #FDF0ED;
+  --mark: #FFE98A; --mark-ink: #2B2118; --shadow: none; --paper-border: 1px solid var(--line);
   --serif: "Noto Sans KR", -apple-system, "Apple SD Gothic Neo", sans-serif;
+  --prose: "Noto Serif KR", "AppleMyungjo", "Batang", serif;   /* 사람이 쓴 글(판단 문장, 근거 원문) 전용 명조. --serif 는 이름과 달리 고딕이라 그대로 둔다 */
   --mono: ui-monospace, Menlo, "Apple SD Gothic Neo", monospace;
 }
 /* 어두운 화면 — <html data-theme="dark"> 일 때. 붙이는 쪽은 /assets/theme.js 하나: 헤더 ☀/☾ 토글로 고른 값이 있으면 그것, 없으면 OS 다크 설정.
    CSS 는 OS 설정을 직접 보지 않는다(판정은 theme.js 한 곳). */
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --paper: #15181A; --card: #1E2224; --ink: #E7EAE6; --muted: #A3AAA6; --soft: #8E9591; --line: #2E3335;
-  --accent: #4FB08A; --on-accent: #0F1412; --accent-soft: #1C2E26; --warn: #D99A6C; --warn-bg: #2B241D;
-  --ai: #A79BE8; --ai-bg: #272437; --cand-bg: #202029; --cand-line: #3B3850; --memo: #A3AAA6; --memo-bg: #262A2C;
-  --mine: #4FB08A; --mine-bg: #1C2E26; --fail: #F08A7E; --fail-bg: #33201E; --mark: #6E5A1A; --mark-ink: #E7EAE6;
+  --paper: #16120E; --card: #1F1A15; --ink: #EDE5DA; --muted: #B2A493; --soft: #998B7B; --line: #372E25;
+  --accent: #D7A66E; --on-accent: #16120E; --accent-soft: #33271B; --warn: #B38E69; --warn-bg: #2A2119;
+  --ai: #A99B8A; --ai-bg: #27211B; --cand-bg: #1C1712; --cand-line: #4A3E31; --memo: #B2A493; --memo-bg: #27211B;
+  --mine: #D7A66E; --mine-bg: #33271B; --fail: #F08A7E; --fail-bg: #33201E; --mark: #6E5A1A; --mark-ink: #EDE5DA;
 }
 /* DMO 토큰 = structure_svg.tokens_css(dark_attr=True, dark_media=False) 그대로 — 앱 테마(data-theme, theme.js 가 정한다)를 따른다. 시험이 같은 문자열을 본다 */
 :root{--dmo-ink:#2B2824;--dmo-muted:#6B635A;--dmo-line:#4A443E;--dmo-core-bg:#F6E3EA;--dmo-core-line:#A3406B;--dmo-standard-bg:#DCEBE3;--dmo-standard-line:#186A4B;--dmo-template-bg:#FBEBD8;--dmo-template-line:#B5651D;--dmo-custom-bg:#ECEAE6;--dmo-custom-line:#6B635A}:root[data-theme="dark"]{--dmo-ink:#E7EAE6;--dmo-muted:#A3AAA6;--dmo-line:#BFC6C2;--dmo-core-bg:#3A2230;--dmo-core-line:#E08AB0;--dmo-standard-bg:#1C2E26;--dmo-standard-line:#4FB08A;--dmo-template-bg:#33281C;--dmo-template-line:#E0A262;--dmo-custom-bg:#2A2D2E;--dmo-custom-line:#A3AAA6}
@@ -29,9 +32,10 @@
 :root[data-theme="dark"] { --ax1: #3987e5; --ax2: #d95926; --ax3: #199e70; --ax4: #c98500; --ax5: #d55181; --ax6: #008300; --ax7: #9085e9; --ax8: #e66767; }
 /* 단계 토큰 — 간격 --sp-* · 글자 크기 --fs-* · 반경 --r-*. 밝음·어둠 공통(색이 아니라 어두운 화면 블록에서 다시 정하지 않는다).
    값 = 2026-11-10 조사(server/ui/src CSS)에서 가장 많이 쓰던 값. 옛 값은 가까운 단계로 옮겼다(폭: 글자 1px · 간격 2px · 반경 2px 안).
-   기준 1rem = 16px(html 기본). 본문 글자(body 14px)는 global.css 그대로. */
+   기준 1rem = 16px(html 기본). 본문 글자(body 14px)는 global.css 그대로.
+   큰 단 --sp-10(32px), --sp-11(48px)은 구역 사이 간격이다(디자인 2 C1). 묶음 안은 --sp-9 이하를 쓴다. */
 :root {
-  --sp-1: .2rem; --sp-2: .3rem; --sp-3: .4rem; --sp-4: .5rem; --sp-5: .6rem; --sp-6: .8rem; --sp-7: 1rem; --sp-8: 1.2rem; --sp-9: 1.4rem;
+  --sp-1: .2rem; --sp-2: .3rem; --sp-3: .4rem; --sp-4: .5rem; --sp-5: .6rem; --sp-6: .8rem; --sp-7: 1rem; --sp-8: 1.2rem; --sp-9: 1.4rem; --sp-10: 2rem; --sp-11: 3rem;
   --fs-1: .7rem; --fs-2: .8rem; --fs-3: .9rem; --fs-4: 1rem; --fs-5: 1.25rem; --fs-6: 1.35rem; --fs-7: 1.6rem;
   --r-1: 2px; --r-2: 4px; --r-3: 6px; --r-4: 8px; --r-5: 10px; --r-6: 12px; --r-pill: 999px;
 }

@@ -3,16 +3,16 @@
    어두운 값 = 정본의 :root[data-theme="dark"] 값. 이 창은 OS 다크 설정을 따른다(prefers-color-scheme). */
 :root {
   color-scheme: light dark;
-  --paper: #F7F8F6;
-  --card: #FFFFFF;
-  --ink: #1F2937;
-  --muted: #6B7280;
-  --line: #E3E5E1;
-  --accent: #186A4B;
-  --on-accent: #FFFFFF;
-  --accent-soft: #EAF3EE;
-  --memo: #6B7280;
-  --memo-bg: #F3F4F6;
+  --paper: #F6F2EC;
+  --card: #FFFDF9;
+  --ink: #2B2118;
+  --muted: #66584B;
+  --line: #E5DCD0;
+  --accent: #6F401B;
+  --on-accent: #FFFDF9;
+  --accent-soft: #F2E7DA;
+  --memo: #66584B;
+  --memo-bg: #F1EAE1;
   --serif: "Noto Sans KR", -apple-system, "Apple SD Gothic Neo", sans-serif;
   --sp-1: .2rem;
   --sp-2: .3rem;
@@ -23,6 +23,8 @@
   --sp-7: 1rem;
   --sp-8: 1.2rem;
   --sp-9: 1.4rem;
+  --sp-10: 2rem;
+  --sp-11: 3rem;
   --fs-1: .7rem;
   --fs-2: .8rem;
   --fs-3: .9rem;
@@ -40,15 +42,15 @@
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --paper: #15181A;
-    --card: #1E2224;
-    --ink: #E7EAE6;
-    --muted: #A3AAA6;
-    --line: #2E3335;
-    --accent: #4FB08A;
-    --on-accent: #0F1412;
-    --accent-soft: #1C2E26;
-    --memo: #A3AAA6;
-    --memo-bg: #262A2C;
+    --paper: #16120E;
+    --card: #1F1A15;
+    --ink: #EDE5DA;
+    --muted: #B2A493;
+    --line: #372E25;
+    --accent: #D7A66E;
+    --on-accent: #16120E;
+    --accent-soft: #33271B;
+    --memo: #B2A493;
+    --memo-bg: #27211B;
   }
 }

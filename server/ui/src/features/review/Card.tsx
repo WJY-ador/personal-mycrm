@@ -7,7 +7,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiErr } from "../../shared/api";
 import { fetchJournal, journalKey } from "../../shared/journal";
-import { AiWording, DecisionBadge, OriginBadge } from "../../shared/CandChips";
+import { AiWording, OriginBadge } from "../../shared/CandChips";
 import { ReviewNote } from "../../shared/ReviewNote";
 import type { AppState, Cand } from "../../shared/state";
 import { quoteOk, Source } from "./Source";
@@ -21,12 +21,13 @@ type Props = {
   onDirty?: (dirty: boolean) => void;
 };
 
-// 칩 — AI 문안(사용자가 아직 승인하지 않은 AI 문안, 옛 서버엔 키 없음) · 쓴 쪽(옛 origin·aiWordingChip 그대로)
+// 쓴 쪽 표시 — 이 화면의 판단은 모두 아직 안 정한 것이라 결정 배지를 두지 않는다(머리의 "아직 안 정한 문장 N개"가 말한다).
+// AI 표시는 하나만(디자인 2 C3): 쓴 쪽이 AI면 그 배지, 아니면 승인 전 AI 문안 칩(옛 서버엔 키 없음). aiMark = 그 표시가 있는지(점선 세로줄도 이때만)
+const aiMark = (c: Cand) => c.origin === "ai" || (c.wording_approved === false && c.wording_by === "ai");
 function Labels({ c }: { c: Cand }) {
   return (
-    <div className="labels"><DecisionBadge status="pending" />
-      <OriginBadge c={c} />
-      <AiWording c={c} /></div>
+    <div className="labels"><OriginBadge c={c} />
+      {c.origin === "ai" ? null : <AiWording c={c} />}</div>
   );
 }
 
@@ -55,17 +56,18 @@ export function Card({ S, c, head, qText, byRec, w, prev, next, locked, status, 
     const sent = text;   // 저장을 누른 때의 문장 — edit_confirm 이 성공하면 이것이 새 기준(실패·충돌·다른 결정이면 기준 그대로, 고친 문장은 보호된다)
     onDecide(action, t, () => { if (action === "edit_confirm") setBaseline(b => ({ ...b, text: sent, acked: b.acked + 1 })); }, baseline.revision);
   };
-  const dest = byRec ? `남기면 ${w.mine}에 들어가요(${NO_QUESTION}).` : `남기면 이 질문의 ${w.mine}에 들어가요.`;
+  // 결정 영역 설명은 한 문장(디자인 2 C3) — 남기면 어디로 가는지 + 반영 안 함이 지우지 않는다는 것
+  const dest = byRec ? `남기면 ${w.mine}에 들어가고(${NO_QUESTION}), ${w.keepNote}` : `남기면 이 질문의 ${w.mine}에 들어가고, ${w.keepNote}`;
   return (
     <div className={css.review}>{head}
-      <section className={css.card} data-candidate-id={c.id} aria-labelledby="candidate-title">
+      <section className={aiMark(c) ? `${css.card} ${css.ai}` : css.card} data-candidate-id={c.id} aria-labelledby="candidate-title">
         <p className={css.q}>{byRec ? "" : "질문: "}{qText}</p><h3 id="candidate-title" className="sr">{w.cardTitle}</h3><p className={css.sent}>{c.text}</p>
         <Labels c={c} /><ReviewNote review={c.review} />
       </section>
       <Source S={S} c={c} j={q.data} fail={q.isError ? apiErr(q.error) : null} w={w} />
       <section className={css.act} aria-labelledby="decision-title" aria-busy={locked}>
         <h3 id="decision-title">남길지 정하기</h3>
-        <p id="decision-help" className={css.dest}>{`${dest} ${w.keepNote}`}</p>
+        <p id="decision-help" className={css.dest}>{dest}</p>
         <div className={`acts ${css.decide}`} id="rvacts" role="group" aria-label={w.group} aria-describedby="decision-help">
           <button className="secondary" type="button" disabled={off} onClick={() => decide("confirm")}>{w.confirm}</button>
           <button className="secondary" type="button" ref={eb} aria-expanded={open} aria-controls="rvedit" disabled={off} onClick={() => setOpen(!open)}>고쳐서 남기기</button>

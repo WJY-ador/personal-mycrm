@@ -58,7 +58,7 @@ test("한 장 — 질문·문장·칩·재검토 0 · 근거 원문(구절 문�
   expect(el.textContent).toContain("아직 안 정한 문장 2개");
   expect(el.querySelector("a.link")!.getAttribute("href")).toBe("#q/q1");
   expect(el.querySelector("[data-candidate-id]")!.textContent).toContain("질문: 도입 순서는?");
-  expect([...el.querySelectorAll(".labels > *")].map(x => x.textContent)).toEqual(["아직 안 정함", "AI가 쓴 문장", "AI 문안"]);
+  expect([...el.querySelectorAll(".labels > *")].map(x => x.textContent)).toEqual(["AI가 쓴 문장"]);   // AI 표시 하나(디자인 2 C3)
   expect(el.querySelector(".recheck")).toBeNull();
   expect(["남기기", "고쳐서 남기기", "반영 안 함"].map(t => btn(t).disabled)).toEqual([true, true, true]);
   expect(el.textContent).toContain("원문을 불러오는 중이에요…");
@@ -74,6 +74,16 @@ test("한 장 — 질문·문장·칩·재검토 0 · 근거 원문(구절 문�
   expect(src.querySelector("details.fold summary")!.textContent).toBe("전체 원문 보기");
   expect(src.querySelector("details.tech")!.textContent).toContain("출처 회고 메모(파일), 쓸 당시 표기 파일에서 가져옴, 근거 구절 9자");
   expect(btn("이전 문장").disabled).toBe(true);
+});
+
+test("AI 표시는 하나(디자인 2 C3) — AI가 쓴 문장 = 배지 하나 + 점선 표시, 내 메모 = AI 표시 없음, 내 메모 + 승인 전 AI 문안 = AI 문안 하나 + 점선 표시", async () => {
+  const shown = () => ({ labels: [...el.querySelectorAll(".labels > *")].map(x => x.textContent), marked: el.querySelector("[data-candidate-id]")!.classList.length === 2 });
+  await show(state([cand("c_1")]), "c_1");
+  expect(shown()).toEqual({ labels: ["AI가 쓴 문장"], marked: true });
+  await show(state([cand("c_1", { origin: "memo", wording_by: "user", wording_approved: true })]), "c_1");
+  expect(shown()).toEqual({ labels: ["내가 쓴 메모"], marked: false });
+  await show(state([cand("c_1", { origin: "memo", wording_by: "ai", wording_approved: false })]), "c_1");
+  expect(shown()).toEqual({ labels: ["내가 쓴 메모", "AI 문안"], marked: true });
 });
 
 test("근거 구절이 원문에 없음·원문 못 받음 = 경고, 결정 잠김 · 문단 경계 = 전체 원문 + 버튼 켜짐 · 재검토 표시", async () => {
@@ -105,7 +115,7 @@ test("주소 바꿔 끼우기 — 빈 자리·옛 숫자 = 그 자리 판단 · 
   expect(el.textContent).toContain("아직 안 정한 문장이 없어요.이 질문의 미결 문장 검토가 끝났어요.새 글에서 판단을 뽑으면 여기에 떠요.");
   await show(state([cand("c_9", { question_id: null })]), "c_9", "r:r1");
   expect(el.querySelector("[data-candidate-id]")!.textContent).toContain("질문 없음, 내 글: 도입 회고");
-  expect(el.querySelector("#decision-help")!.textContent).toBe("남기면 확정한 판단에 들어가요(질문 없음). 반영 안 함으로 둬도 판단 문장과 원문은 삭제되지 않아요.");
+  expect(el.querySelector("#decision-help")!.textContent).toBe("남기면 확정한 판단에 들어가고(질문 없음), 반영 안 함으로 둬도 판단 문장과 원문은 삭제되지 않아요.");
   await show(state([], { read: { candidates: { ok: false, error: { code: "OFFLINE", msg: "x" } } } }), "c_1");
   expect(el.querySelector(".partfail")!.textContent).toContain("문장 목록을 읽지 못했어요. 나머지는 정상이에요.서버에 연결하지 못했어요.");
 });
