@@ -537,8 +537,10 @@ class CliTest(unittest.TestCase):
         self.th = helpers.TempHome()
         self.addCleanup(self.th.cleanup)
 
-    def test_ready_false_normal_chat_connects_without_provider_and_forwards_consent(self):
-        self.assertFalse(__import__("agent.cli", fromlist=["CHAT_CLAUDE_PROVIDER_READY"]).CHAT_CLAUDE_PROVIDER_READY)
+    def test_ready_true_without_claude_cli_connects_without_provider_and_forwards_consent(self):
+        # 2026-11-12 K: gate on. With no Claude CLI chosen (no summary.cli_path) chat still connects, advertises nothing
+        # and relays consent (J-F1).
+        self.assertTrue(__import__("agent.cli", fromlist=["CHAT_CLAUDE_PROVIDER_READY"]).CHAT_CLAUDE_PROVIDER_READY)
         got = {"hello": None}
         consented = threading.Event()
         stopping = threading.Event()
@@ -563,6 +565,7 @@ class CliTest(unittest.TestCase):
                                         chat_kw={"stopping": stopping, "codex_factory": object(), **FAST})
         self.assertEqual(code, 0)
         self.assertEqual(got["hello"]["providers"], [])
+        self.assertIn({"event": "start", "why": "claude-not-configured"}, [json.loads(x) for x in out.strip().splitlines()])
         self.assertEqual(bridge_calls, [(env["MYCRM_CHAT_BRIDGE_SOCKET"], env["MYCRM_CHAT_BRIDGE_TOKEN"],
                                          "request_synthetic", "Bearer " + helpers.TOKEN)])
         self.assertNotIn(env["MYCRM_CHAT_BRIDGE_TOKEN"], out)
@@ -654,7 +657,9 @@ class CliTest(unittest.TestCase):
         self.addCleanup(server.close)
         helpers.connected_config(self.th, f"http://127.0.0.1:{server.port}")
         ks = helpers.keystore_with_secrets()
-        env = patch.dict(os.environ, {"MYCRM_DESKTOP_CONTROL": "1"})
+        # Gate on (2026-11-12 K): normal chat needs the desktop bridge env, as the desktop app gives it.
+        env = patch.dict(os.environ, {"MYCRM_DESKTOP_CONTROL": "1", "MYCRM_CHAT_BRIDGE_SOCKET": "/synthetic/chat.sock",
+                                      "MYCRM_CHAT_BRIDGE_TOKEN": "synthetic-desktop-bridge-token"})
         result = {}
         def run():
             with env:
@@ -720,7 +725,9 @@ class CliTest(unittest.TestCase):
         ks = helpers.keystore_with_secrets()
         result = {}
         def run():
-            with patch.dict(os.environ, {"MYCRM_DESKTOP_CONTROL": "1"}):
+            # Gate on (2026-11-12 K): normal chat needs the desktop bridge env, as the desktop app gives it.
+            with patch.dict(os.environ, {"MYCRM_DESKTOP_CONTROL": "1", "MYCRM_CHAT_BRIDGE_SOCKET": "/synthetic/chat.sock",
+                                         "MYCRM_CHAT_BRIDGE_TOKEN": "synthetic-desktop-bridge-token"}):
                 result["value"] = helpers.run_cli(["--home", self.th.home, "chat"],
                     ks_factory=lambda svc: ks, stdin=control, chat_kw={"provider": provider, **FAST})
         worker = threading.Thread(target=run, daemon=True)

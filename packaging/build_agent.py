@@ -130,6 +130,6 @@ def build(output, version):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=ROOT / "release" / "agent")
-    parser.add_argument("--app-version", default="0.1.3")
+    parser.add_argument("--app-version", default="0.1.4")
     args = parser.parse_args()
     build(args.output, args.app_version)

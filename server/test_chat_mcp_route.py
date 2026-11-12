@@ -29,13 +29,14 @@ class ChatMcpRouteTests(unittest.TestCase):
     session_id = "cs_" + "a" * 24
     turn_id = "ct_" + "b" * 24
 
-    def test_route_remains_off_even_with_both_switches_until_review(self):
+    def test_route_on_only_with_both_switches(self):
+        # 2026-11-12 K: ATOMIC_DISPATCH_READY on. Both switches are still required.
         with patch("webchat.enabled", return_value=True), patch("webchat.env", return_value=""):
             self.assertFalse(webchat.chat_mcp_enabled())
         with patch("webchat.enabled", return_value=False), patch("webchat.env", return_value="1"):
             self.assertFalse(webchat.chat_mcp_enabled())
         with patch("webchat.enabled", return_value=True), patch("webchat.env", return_value="1"):
-            self.assertFalse(webchat.chat_mcp_enabled())
+            self.assertTrue(webchat.chat_mcp_enabled())
 
     def test_body_rejects_duplicates_unknown_identity_and_purge(self):
         cases = (
