@@ -7,7 +7,7 @@ import tempfile
 import threading
 import unittest
 
-from agent.consent_bridge import request_approval, request_revoke
+from agent.consent_bridge import request_approval
 
 
 class ConsentBridgeTests(unittest.TestCase):
@@ -93,26 +93,6 @@ class ConsentBridgeTests(unittest.TestCase):
             with self.subTest(reply=reply):
                 self.assertEqual(self._reply(reply), (False, "failed"))
 
-    def test_revoke_sends_only_the_device_token_and_needs_exact_ok(self):
-        with tempfile.TemporaryDirectory(prefix="mycrm-consent-bridge-") as root:
-            path = os.path.join(root, "c.sock")
-            seen = self._start_server(path, b'{"ok":true}\n')
-            self.assertIs(request_revoke(path, "A" * 43, "Bearer synthetic-device-token", timeout=2), True)
-            self.assertEqual(seen, {"version": 1, "token": "A" * 43, "kind": "revoke",
-                                    "device_bearer": "Bearer synthetic-device-token"})
-        for reply in (b'{"ok":false}\n', b'{"ok":false,"reason":"failed"}\n', b'{"ok":true,"extra":1}\n', b'not json\n', b''):
-            with self.subTest(reply=reply):
-                with tempfile.TemporaryDirectory(prefix="mycrm-consent-bridge-") as root:
-                    path = os.path.join(root, "c.sock")
-                    self._start_server(path, reply)
-                    self.assertIs(request_revoke(path, "A" * 43, "Bearer synthetic-device-token", timeout=2), False)
-
-    def test_revoke_invalid_values_fail_closed(self):
-        self.assertIs(request_revoke("relative.sock", "A" * 43, "Bearer synthetic-device-token"), False)
-        self.assertIs(request_revoke("/no/such/socket", "A" * 42, "Bearer synthetic-device-token"), False)
-        self.assertIs(request_revoke("/no/such/socket", "A" * 43, "synthetic-device-token"), False)
-        self.assertIs(request_revoke("/no/such/socket", "A" * 43, "Bearer synthetic-device-token", timeout=True), False)
-        self.assertIs(request_revoke("/no/such/socket", "A" * 43, "Bearer synthetic-device-token", timeout=1), False)
 
 
 if __name__ == "__main__":

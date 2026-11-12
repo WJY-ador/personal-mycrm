@@ -6,3 +6,6 @@
 .pol summary { cursor: pointer; font-size: var(--fs-2); color: var(--accent); font-weight: 600; }
 .pol :global(.fform) { margin-top: var(--sp-4); }
 .pol input[type="checkbox"] { accent-color: var(--accent); margin: 0; }
+/* 대화 하나로 J(JD3): 이 PC 의 AI 대화 허용과 해제 버튼 */
+.permits { border-top: 1px solid var(--line); padding-top: var(--sp-3); margin-bottom: var(--sp-3); }
+.permits :global(.hint) { margin: 0 0 var(--sp-2); }

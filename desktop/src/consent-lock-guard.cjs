@@ -1,56 +1,27 @@
 'use strict';
 
-// Electron exposes lock/unlock notifications on macOS and Windows. Linux does not
-// expose equivalent lock-screen events, so provider-capable chat stays unavailable.
+// Screen lock for the consent window only (J JD2). A lock or sleep cancels the approval in flight (onLock) and the
+// runtime will not open a new consent window while the screen is locked (consent-approval sessionActive). The lock no
+// longer stops the chat sidecar, holds its start or revokes anything on the server: a standing allow survives a lock.
+// Electron exposes lock notifications on macOS and Windows. Elsewhere no consent window opens (fail closed).
 const SUPPORTED_PLATFORMS=new Set(['darwin','win32']);
 
 function createConsentLockGuard({powerMonitor,platform=process.platform,onLock}={}){
  const supported=SUPPORTED_PLATFORMS.has(platform)&&!!powerMonitor
   &&typeof powerMonitor.on==='function'&&typeof powerMonitor.removeListener==='function'
-  &&typeof powerMonitor.getSystemIdleState==='function'&&typeof onLock==='function';
- let disposed=false,locked=true,lockObserved=false,revokeReady=true;
- let pending=Promise.resolve(),invalidationFlight=null;
- function state(){try{return powerMonitor.getSystemIdleState(1);}catch{return 'unknown';}}
- if(supported)locked=state()!=='active';
- function invalidate(){
-  if(invalidationFlight)return invalidationFlight;
-  revokeReady=false;
-  let task;
-  try{task=Promise.resolve(onLock()).then(value=>{revokeReady=value===true;return revokeReady;},()=>false);}
-  catch{task=Promise.resolve(false);}
-  invalidationFlight=task.finally(()=>{if(invalidationFlight===wrapped)invalidationFlight=null;});
-  const wrapped=invalidationFlight;
-  pending=wrapped;
-  return wrapped;
- }
+  &&typeof onLock==='function';
+ let disposed=false;
  function enterLock(){
-  if(disposed||!supported||lockObserved)return;
-  locked=true;lockObserved=true;invalidate();
- }
- function leaveLock(){
-  if(disposed||!supported||state()!=='active')return;
-  locked=false;lockObserved=false;
-  if(!revokeReady)invalidate();
+  if(disposed)return;
+  try{onLock();}catch{}
  }
  if(supported){
   powerMonitor.on('lock-screen',enterLock);
   powerMonitor.on('suspend',enterLock);
-  powerMonitor.on('unlock-screen',leaveLock);
-  powerMonitor.on('resume',leaveLock);
  }
- function canStart(){
-  return status()==='ready';
- }
- function status(){
-  if(disposed||!supported)return 'unsupported';
-  if(!revokeReady)return 'revoke-unconfirmed';
-  if(!lockObserved){locked=state()!=='active';}
-  return !locked&&state()==='active'?'ready':'locked';
- }
- return Object.freeze({supported,canStart,status,whenSettled:()=>pending,
+ return Object.freeze({supported,
   dispose(){if(disposed)return;disposed=true;if(supported){
    powerMonitor.removeListener('lock-screen',enterLock);powerMonitor.removeListener('suspend',enterLock);
-   powerMonitor.removeListener('unlock-screen',leaveLock);powerMonitor.removeListener('resume',leaveLock);
   }}});
 }
 

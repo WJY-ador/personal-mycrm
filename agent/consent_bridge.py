@@ -50,22 +50,6 @@ def request_approval(socket_path: str, token: str, request_id: str, device_beare
                                    "device_bearer": device_bearer}, timeout)
 
 
-def request_revoke(socket_path: str, token: str, device_bearer: str, *, timeout: float = 30) -> bool:
-    """Hand this PC's device token to desktop main so it revokes the installation's server consent key.
-
-    Desktop main runs `chat-consent-revoke` at app start and on screen lock. Main owns the session cookie and the
-    installation id; the agent owns the device token. True only for an exact {"ok": true} reply, which main sends
-    after the server answered keys/revoke. Everything else is False.
-    """
-    if (not isinstance(socket_path, str) or not os.path.isabs(socket_path)
-            or not isinstance(token, str) or not _TOKEN.fullmatch(token)
-            or not isinstance(device_bearer, str) or not _BEARER.fullmatch(device_bearer)
-            or not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0):
-        return False
-    return _exchange(socket_path, {"version": 1, "token": token, "kind": "revoke",
-                                   "device_bearer": device_bearer}, timeout) == (True, None)
-
-
 def _exchange(socket_path: str, message: dict, timeout: float) -> "tuple[bool, str | None]":
     """One request line, one reply line, parsed by _parse_reply. Any transport or format error fails closed."""
     payload = json.dumps(message, separators=(",", ":")).encode("utf-8") + b"\n"

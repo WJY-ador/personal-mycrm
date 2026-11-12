@@ -1113,6 +1113,28 @@ CREATE TABLE IF NOT EXISTS chat_consent_challenges (
 );
 CREATE INDEX IF NOT EXISTS ix_chat_consent_challenges_grant ON chat_consent_challenges (user_id, grant_id, state);
 
+-- 대화 하나로 J(2026-11-12, JD1~JD3): 서 있는 허용 — (사용자, 장치, 공급자)마다 한 번. 첫 세션이 서명 검증된 grant 를 소비할 때 만든다.
+-- 그 뒤 같은 공급자의 새 대화와 다른 모델 대화는 PC 에 다시 묻지 않는다. 살아 있음 = key_id 키 active + 설치본 해제 안 됨 + 장치 토큰 유효.
+-- 키 회전(activate 가 옛 키를 갈 때)은 key_id 를 새 키로 옮긴다. 기록은 해제(웹, PC 앱), 장치 해제, 웹 토큰 재발급, keys/revoke 때 지운다.
+-- 30일 정리 대상이 아니다(쓰는 동안 남는다). grant_id, challenge_id 는 성립 근거의 식별자일 뿐 FK 가 없다 — 그 행들은 30일 정리로 사라진다.
+-- key_id, installation_id 도 FK 가 없다(없는 키 = 판정 실패). 계정 삭제 = db.DELETE_TABLES.
+CREATE TABLE IF NOT EXISTS chat_provider_permits (
+  id               text PRIMARY KEY CHECK (id ~ '^cp_[0-9a-f]{24}$'),
+  user_id          text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  device_id        text NOT NULL CHECK (char_length(device_id) BETWEEN 1 AND 200),
+  provider         text NOT NULL CHECK (provider IN ('claude','codex')),
+  installation_id  text NOT NULL CHECK (installation_id ~ '^di_[0-9a-f]{24}$'),
+  key_id           text NOT NULL CHECK (key_id ~ '^ck_[0-9a-f]{24}$'),
+  grant_id         text NOT NULL CHECK (grant_id ~ '^cg_[0-9a-f]{24}$'),
+  challenge_id     text NOT NULL CHECK (challenge_id ~ '^cc_[0-9a-f]{24}$'),
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (user_id, device_id, provider)
+);
+CREATE INDEX IF NOT EXISTS ix_chat_provider_permits_inst ON chat_provider_permits (user_id, installation_id);
+CREATE INDEX IF NOT EXISTS ix_chat_provider_permits_key ON chat_provider_permits (key_id);
+-- 세션이 묶인 허용. NULL(J 이전 세션) = 재확인에서 닫힌 실패
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS permit_id text;
+
 -- 사용자별 저장 데이터 변경 revision — 주기 polling의 가벼운 확인용.
 -- 고정 대상 표: /api/state 및 그 UI 보조 GET이 읽는 지속 자료. last_used_at은 heartbeat라 전용 예외로 뺀다.
 -- generated·recent/offline 임계값·lease 만료처럼 시계 경과만으로 바뀌는 표시는 DB 변경이 없으므로 revision 대상이 아니다.

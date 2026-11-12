@@ -108,6 +108,10 @@
       "required": false
     },
     {
+      "path": "agent/chat_instance.py",
+      "required": false
+    },
+    {
       "path": "agent/chat_launch_authority.py",
       "required": false
     },

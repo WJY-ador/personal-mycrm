@@ -8,6 +8,7 @@
   "agent/chat_approval_context.py",
   "agent/chat_claude.py",
   "agent/chat_codex.py",
+  "agent/chat_instance.py",
   "agent/chat_launch_authority.py",
   "agent/chat_mcp_bridge.py",
   "agent/chat_process_supervisor.py",

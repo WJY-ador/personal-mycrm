@@ -33,6 +33,24 @@
 .grant > span[role="status"] { font-size: var(--fs-2); }
 .grantEnd { margin: 0; font-size: var(--fs-2); color: var(--ink); }
 .grantFor { margin: 0; font-size: var(--fs-1); color: var(--muted); }
+/* 연결 안내(J-F1) — 쓸 수 있는 AI가 없을 때 3단계. 지금 할 단계만 강조한다 */
+.guide { border: 1px solid var(--line); border-radius: var(--r-5); padding: var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-5); }
+.guide h4 { margin: 0; font-size: var(--fs-3); }
+.guide > p { margin: 0; font-size: var(--fs-2); color: var(--muted); line-height: 1.5; }
+.guide ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-4); counter-reset: step; }
+.step { display: grid; grid-template-columns: 1.9rem 1fr; gap: var(--sp-2) var(--sp-4); align-items: start; padding: var(--sp-4); border-radius: var(--r-4); }
+.step::before { counter-increment: step; content: counter(step); grid-row: span 3; width: 1.9rem; height: 1.9rem; border-radius: 50%; display: grid; place-items: center;
+  font-size: var(--fs-1); font-weight: 700; border: 1px solid var(--line); color: var(--muted); }
+.step h5 { margin: 0; font-size: var(--fs-2); }
+.step p { margin: 0; font-size: var(--fs-1); line-height: 1.5; color: var(--muted); }
+.stepState { font-size: var(--fs-1); color: var(--muted); }
+.step[data-state="now"] { background: var(--paper); border: 1px solid var(--accent); }
+.step[data-state="now"]::before { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.step[data-state="now"] .stepState { color: var(--accent); font-weight: 600; }
+.step[data-state="done"]::before { content: "✓"; color: var(--accent); }
+.step[data-state="done"] h5 { color: var(--muted); }
+.stepActs { display: flex; flex-wrap: wrap; gap: var(--sp-3); margin-top: var(--sp-2); }
+.stepActs a { text-decoration: none; }
 /* 확인 카드 */
 .approvals { border: 1px solid var(--cand-line); background: var(--cand-bg); border-radius: var(--r-5); padding: var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-5); }
 .approvals h4 { margin: 0; font-size: var(--fs-2); color: var(--muted); font-weight: 600; }
@@ -85,9 +103,17 @@
 .pop ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
 .pop h5 { margin: var(--sp-3) var(--sp-3) var(--sp-2); font-size: var(--fs-1); color: var(--muted); font-weight: 600; }
 .pop section:first-child h5 { margin-top: var(--sp-1); }
-.pickItem { display: block; width: 100%; text-align: left; padding: var(--sp-3) var(--sp-4); border: 0; border-radius: var(--r-3); background: transparent; color: var(--ink); font: inherit; font-size: var(--fs-2); cursor: pointer; }
-.pickItem:hover { background: var(--paper); }
-.pickItem[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+/* J-F5: 고른 것 = 표시 기호와 굵기(바탕색 없음), 포인터와 키보드 초점 = 옅은 바탕. 둘이 같은 모양이면 두 개를 고른 것처럼 보인다 */
+.pickItem { display: flex; align-items: baseline; justify-content: flex-start; gap: var(--sp-2); width: 100%; min-height: 0; white-space: normal; text-align: left; padding: var(--sp-3) var(--sp-4) var(--sp-3) var(--sp-2); border: 0; border-radius: var(--r-3);
+  background: transparent; color: var(--ink); font: inherit; font-size: var(--fs-2); cursor: pointer; }
+.pickItem:hover, .pickItem:focus-visible { background: var(--paper); color: var(--ink); border-color: transparent; }
+.pickItem:focus-visible { outline: 2px solid var(--mark); outline-offset: -2px; }
+.pickItem[aria-pressed="true"] { font-weight: 700; }
+.pickItem::before { content: ""; flex: 0 0 1.1em; text-align: center; color: var(--accent); font-weight: 700; }
+.pickItem[aria-pressed="true"]::before { content: "✓"; }
+.more { margin-top: var(--sp-2); border-top: 1px solid var(--line); padding-top: var(--sp-2); }
+.more summary { cursor: pointer; padding: var(--sp-2) var(--sp-4); font-size: var(--fs-1); color: var(--muted); border-radius: var(--r-3); }
+.more summary:hover { background: var(--paper); }
 .noModel { margin: 0; padding: var(--sp-3); font-size: var(--fs-2); color: var(--ink); line-height: 1.5; }
 .confirm { padding: var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-4); }
 .confirm p { margin: 0; font-size: var(--fs-2); line-height: 1.5; }

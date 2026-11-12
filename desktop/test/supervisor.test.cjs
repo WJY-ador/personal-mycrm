@@ -72,3 +72,10 @@ test('unexpected crashes have bounded recovery and app shutdown prevents new chi
  for(let i=0;i<4;i++){calls.at(-1).child.emit('close',null,'SIGABRT');await delay(8);}
  assert.equal(calls.length,4);await s.stopAll({closing:true});assert.throws(()=>s.start('viewer',['serve']),/closing/);
 });
+test('exited(name) runs on every child exit, crash or stop, before a restart, and a throwing hook changes nothing',async()=>{
+ const exits=[];const {s,calls}=setup({exited:name=>{exits.push(name);throw new Error('hook');}});
+ s.start('chat',['chat']);calls[0].child.emit('close',null,'SIGSEGV');
+ assert.deepEqual(exits,['chat']);assert.equal(s.snapshot().chat.state,'retry-wait');
+ await delay(20);assert.equal(calls.length,2);
+ await s.stop('chat');assert.deepEqual(exits,['chat','chat']);assert.equal(s.snapshot().chat.state,'stopped');
+});

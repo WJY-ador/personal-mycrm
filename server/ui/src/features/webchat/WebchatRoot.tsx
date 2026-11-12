@@ -16,6 +16,13 @@ export function WebchatRoot({ ctx, store = webchat }: ScreenProps & { store?: We
   useEffect(() => { document.body.classList.toggle("webchat-open", on && s.open); }, [on, s.open]);
   useEffect(() => () => { document.body.classList.remove("webchat-open"); s.close(); }, [s]);
   useEffect(() => { if (s.open) inRef.current?.focus(); }, [s.open]);
+  useEffect(() => {   // R-J3: 창 focus, 탭이 다시 보일 때 capabilities 다시 읽기(묶기, 열린 패널 조건은 store)
+    if (!on) return;
+    const back = () => { if (document.visibilityState !== "hidden") s.refreshCapabilities(); };
+    window.addEventListener("focus", back);
+    document.addEventListener("visibilitychange", back);
+    return () => { window.removeEventListener("focus", back); document.removeEventListener("visibilitychange", back); };
+  }, [on, s]);
   if (!on) return null;
   const nav = document.getElementById("ui-chatnav");
   const btn = <a href="#" className={`tab ${css.btn}${s.open ? ` ${css.on} on` : ""}`} role="button" aria-pressed={s.open} aria-controls="webchat"

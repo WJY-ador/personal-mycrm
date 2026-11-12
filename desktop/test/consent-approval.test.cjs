@@ -80,24 +80,33 @@ test('native approval explains the AI access in plain Korean without exposing in
   const result=await f.api.approve(f.event,{...CLAIMS});
   assert.equal(result.ok,true);
   const {options}=f.calls.dialog[0];
-  assert.equal(options.title,'MyCRM AI 대화 시작');
-  assert.equal(options.message,'이 PC에서 Claude claude-sonnet-5-5 대화를 시작할까요?');
+  assert.equal(options.title,'MyCRM AI 대화 허용');
+  assert.equal(options.message,'이 PC에서 Claude 대화를 허용할까요?');
+  assert.match(options.detail,/^한 번 허용하면 다른 모델, 새 대화, 화면 잠금 해제, 앱 재시작 뒤에도 다시 묻지 않아요\./);
+  assert.match(options.detail,/그만 쓰려면 연결 장치 창이나 웹의 연결 장치에서 허용을 해제하세요\.$/);
+  assert.doesNotMatch(options.title+options.message+options.detail,/[「」·]/);
   assert.deepEqual(options.buttons,['취소','허용']);
   assert.equal(options.cancelId,0);assert.equal(options.defaultId,0);
   assert.match(options.detail,/대화에 필요한 MyCRM 기록을 조회/);
   assert.match(options.detail,/요청에 따라 기존 MyCRM 규칙으로 기록을 변경/);
   assert.match(options.detail,/대화 내용은 선택한 모델로 전송돼요/);
   assert.match(options.detail,/이 PC의 Claude CLI 기록에도 남을 수 있어요/);
-  assert.match(options.detail,/요청 모델: claude-sonnet-5-5/);
+  assert.match(options.detail,/이번에 고른 모델: claude-sonnet-5-5 \(허용은 모델과 상관없이 Claude 전체에 적용돼요\)/);
   assert.match(options.detail,/요청 만료 시각: 2027년 1월 15일 17:05 \(한국 시각\)/);
   assert.doesNotMatch(options.detail,/user_id|device_id|session_id|expires_at|synthetic|1800000300|nonce|token|private.?key/i);
 });
 
-test('provider display labels are friendly while model binding remains visible',async t=>{
+test('provider display labels are friendly; the model line shows this chat\'s pick and the server default as 기본 모델',async t=>{
   const codex={...CLAIMS,provider:'codex',model:'gpt-5-codex'};
   const g=await fixture(t,{challenge:async()=>({...codex})});
   assert.equal((await g.api.approve(g.event,codex)).ok,true);
-  assert.equal(g.calls.dialog[0].options.message,'이 PC에서 Codex gpt-5-codex 대화를 시작할까요?');
+  assert.equal(g.calls.dialog[0].options.message,'이 PC에서 Codex 대화를 허용할까요?');
+  assert.match(g.calls.dialog[0].options.detail,/이번에 고른 모델: gpt-5-codex \(허용은 모델과 상관없이 Codex 전체에 적용돼요\)/);
+  const d={...CLAIMS,model:':default'};
+  const h=await fixture(t,{challenge:async()=>({...d})});
+  assert.equal((await h.api.approve(h.event,d)).ok,true);
+  assert.match(h.calls.dialog[0].options.detail,/이번에 고른 모델: 기본 모델 /);
+  assert.doesNotMatch(h.calls.dialog[0].options.detail,/:default/);
 });
 
 test('success only after explicit affirmative in the native dialog showing exact claims',async t=>{
@@ -108,7 +117,7 @@ test('success only after explicit affirmative in the native dialog showing exact
   assert.equal(f.calls.dialog[0].parent,f.win);
   const {options}=f.calls.dialog[0];
   assert.equal(options.cancelId,0);assert.equal(options.defaultId,0);assert.equal(options.buttons[1],'허용');
-  assert.ok(options.message.includes('Claude claude-sonnet-5-5'));
+  assert.ok(options.message.includes('Claude'));assert.ok(options.detail.includes('이번에 고른 모델: claude-sonnet-5-5'));
   assert.ok(options.detail.includes('2027년 1월 15일 17:05 (한국 시각)'));
   assert.ok(options.detail.includes('(한국 시각)'));
   assert.deepEqual(f.calls.idle,[1,1,1]); // before dialog, after dialog, before signing
@@ -170,8 +179,14 @@ test('abort while the dialog is open stays CANCELED even when the person pressed
   assertNoSignature(await f.api.approve(f.event,{...CLAIMS},{signal:controller.signal}),'CANCELED');
 });
 
-test('idle state other than exactly active before the dialog fails closed without a dialog',async t=>{
-  for(const state of ['idle','locked','unknown','Active','',undefined]){
+test('J-F6: idle (no input for a second) is not a lock; the window opens and signs',async t=>{
+  const f=await fixture(t,{idle:['idle','idle','idle']});
+  const result=await f.api.approve(f.event,{...CLAIMS});
+  assert.equal(result.ok,true);assert.equal(f.calls.dialog.length,1);
+});
+
+test('a lock state other than active or idle before the dialog fails closed without a dialog',async t=>{
+  for(const state of ['locked','unknown','Active','',undefined]){
     const f=await fixture(t,{idle:[state]});
     assertNoSignature(await f.api.approve(f.event,{...CLAIMS}),'IDLE');
     assert.equal(f.calls.dialog.length,0);
@@ -272,7 +287,7 @@ test('mutating the request during the dialog does not change what is signed',asy
   const result=await f.api.approve(f.event,request);
   assert.equal(result.ok,true);
   assert.deepEqual({...result.claims},{...CLAIMS});
-  assert.ok(f.calls.dialog[0].options.message.includes(CLAIMS.model));
+  assert.ok(f.calls.dialog[0].options.detail.includes('이번에 고른 모델: '+CLAIMS.model));
   assert.doesNotMatch(f.calls.dialog[0].options.detail,/user_synthetic_1|user_id|device_id|session_id/);
 });
 

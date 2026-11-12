@@ -110,3 +110,31 @@ test("다시 받기 실패 = 받아 둔 장치 카드 그대로 + 못 읽음 안
   expect(alert(cold)).toContain("연결 장치를 불러오지 못했어요");
   expect(cold.querySelector("article h3")).toBeNull();
 });
+
+// ── 대화 하나로 J(2026-11-12, JD2, JD3) ──
+test("J: AI 대화 허용이 선 PC = 허용 안내(잠금, 재시작에도 다시 묻지 않음) + 공급자마다 해제 버튼, 확인 뒤 POST /api/chat/permits/revoke, 웹 대화가 꺼지면 줄 없음", async () => {
+  const PERMITS = { permits: [{ device_id: "d1", installation_id: "di_" + "0".repeat(24), provider: "claude", created_at: "2026-11-12T01:00:00+00:00" },
+    { device_id: "d1", installation_id: "di_" + "0".repeat(24), provider: "codex", created_at: "2026-11-12T02:00:00+00:00" }] };
+  serve((url, m) => (m === "POST" ? json(200, { revoked: 1 }) : url.startsWith("/api/chat/permits") ? json(200, PERMITS) : json(200, LIST)));
+  const el = await showScreen("devices", "#_setup/devices", [], { ...S, switches: { webchat: true } });
+  await flush(); await flush();
+  const box = el.querySelector("[data-permits]") as HTMLElement;
+  expect(box.textContent).toContain("이 PC에서 Claude, Codex 대화를 허용했어요");
+  expect(box.textContent).toContain("화면을 잠그거나 PC 앱을 다시 켜도 다시 묻지 않아요");
+  expect(byText(el, "button", "이 PC의 Claude 대화 허용 해제").length).toBe(1);
+  expect(byText(el, "button", "이 PC의 Codex 대화 허용 해제").length).toBe(1);
+  expect(el.querySelectorAll("[data-permits]").length).toBe(1);   // 해제한 장치(d2)엔 없음
+  confirm.mockReturnValueOnce(false);
+  await click(byText(el, "button", "이 PC의 Claude 대화 허용 해제")[0]);
+  expect(posts()).toEqual([]);
+  await click(byText(el, "button", "이 PC의 Claude 대화 허용 해제")[0]);
+  expect(confirm.mock.calls.at(-1)![0]).toContain("다음에 쓸 때 PC 앱에서 다시 허용해야 해요");
+  expect(posts()).toEqual([{ url: "/api/chat/permits/revoke", method: "POST", body: { device_id: "d1", provider: "claude" } }]);
+  expect(text(el, "p.fok")[0]).toBe("AI 대화 허용을 해제했어요. 다음에 쓸 때 PC 앱에서 다시 허용해요.");
+  hideScreen();
+  calls.length = 0;
+  const off = await show();   // switches.webchat 없음 = 허용을 읽지 않는다
+  await flush();
+  expect(off.querySelector("[data-permits]")).toBeNull();
+  expect(calls.some(c => c.url.startsWith("/api/chat/permits"))).toBe(false);
+});

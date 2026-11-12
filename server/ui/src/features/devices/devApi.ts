@@ -14,6 +14,9 @@ export type Choices = {
 };
 export type Devices = { devices: Device[]; active: number; max: number; switches: { imports: boolean }; choices: Choices };
 type Tok = { token: string };
+// 대화 하나로 J(JD3): PC 의 서 있는 AI 대화 허용 — 조회 GET /api/chat/permits(살아 있는 것만), 해제 POST /api/chat/permits/revoke.
+// 웹 대화 스위치가 꺼져 있으면 서버가 503 이라 화면은 허용 줄을 보이지 않는다
+export type Permit = { device_id: string; installation_id: string; provider: string; created_at: string };
 
 const enc = encodeURIComponent;
 export const devApi = {
@@ -22,4 +25,6 @@ export const devApi = {
   reissue: (id: string) => postJSON<Tok>(`/api/devices/${enc(id)}/reissue`, {}),
   revoke: (id: string) => postJSON(`/api/devices/${enc(id)}/revoke`, {}),
   policy: (id: string, policy: Policy, expected_revision: number) => postJSON(`/api/devices/${enc(id)}/policy`, { policy, expected_revision }),
+  permits: () => getJSON<{ permits: Permit[] }>("/api/chat/permits"),
+  revokePermit: (device_id: string, provider: string) => postJSON<{ revoked: number }>("/api/chat/permits/revoke", { device_id, provider }),
 };

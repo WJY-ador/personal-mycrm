@@ -2,13 +2,17 @@
 import { getJSON, postJSON } from "../../shared/api";
 
 export type Capability = { provider: "claude" | "codex" | "fake"; models: Array<string | null> };
-export type DeviceCapability = { device_id: string; connected: boolean; agent_version: string; capabilities_version: number; capabilities: Capability[] };
-export type Capabilities = { devices: DeviceCapability[] };
+// allowed_providers = 이 PC 에 서 있는 허용이 있는 공급자(대화 하나로 J, JD1) — 있으면 PC 허용 창 단계를 건너뛴다(낡을 수 있어 세션 생성이 CONSENT_REQUIRED 면 허용 흐름으로)
+export type DeviceCapability = { device_id: string; connected: boolean; agent_version: string; capabilities_version: number; capabilities: Capability[]; allowed_providers?: string[] };
+// setup = 연결 안내가 멈춘 단계(J-F1): none PC 없음, offline PC 앱 꺼짐, no_provider PC 앱은 켜졌으나 쓸 AI 없음, ready 고를 모델 있음
+export type Setup = "none" | "offline" | "no_provider" | "ready";
+export type Capabilities = { devices: DeviceCapability[]; setup?: Setup };
 export type Session = { session_id: string; status: string; device_id: string; connected?: boolean; provider: string | null; model: string | null; binding_version: number; created_at?: string; last_at?: string };
 export type SessionList = { sessions: Session[] };
 // PC 허용(grant) — POST 로 요청, GET 으로 상태를 읽는다(세션이 아직 없어 SSE 대신 1~2초 간격 조회). prompt = PC 동의 창: none 아직, open 떠 있음, done 서명됨, closed 승인 없이 끝남, declined PC 앱이 허용하지 않음을 알림
 export type GrantState = "pending" | "approved" | "consumed" | "expired";
-export type Grant = { request_id: string; device_id: string; provider: string; model: string | null; state: GrantState; prompt: "none" | "open" | "done" | "closed" | "declined"; expires_at: string; connected?: boolean; created?: boolean };
+// close_reason = PC 앱이 알린 끝난 이유(J-F2): failed 허용 창을 못 띄움, locked 화면 잠김, declined 허용하지 않음. 0.1.3 이하 앱은 알리지 않는다(null)
+export type Grant = { request_id: string; device_id: string; provider: string; model: string | null; state: GrantState; prompt: "none" | "open" | "done" | "closed" | "declined"; close_reason?: "failed" | "locked" | "declined" | null; expires_at: string; connected?: boolean; created?: boolean };
 export type Message = { id: string; turn_id: string; role: "user" | "assistant"; body: string; created_at: string; turn_status: string };
 export type TurnRes = { turn_id: string; status: string; created: boolean };
 export type Approval = { id: string; turn_id: string; op: string; params: unknown; shown: unknown; impact: unknown; irreversible: boolean; status: "pending" | "confirmed" | "cancelled"; created_at: string; expires_at: string; finished_at: string | null; result: Record<string, unknown> | null };

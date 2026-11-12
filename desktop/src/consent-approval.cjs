@@ -44,11 +44,14 @@ function trustedSender(event,win,allowedUrl){
   }catch{return false;}
 }
 
-// Exactly 'active'. A missing API, a throw, 'idle', 'locked', 'unknown' or anything else fails closed.
+// The screen is not locked: 'active' or 'idle'. 'idle' only means no input for the threshold (1 second), which is the
+// normal state while a person reads the chat or waits for the window (J-F6: it used to count as locked).
+// 'locked', 'unknown', a missing API, a throw or an unsupported platform fail closed.
 function sessionActive(powerMonitor,platform=process.platform){
   try{
     if(!LOCK_EVENT_PLATFORMS.has(platform)||!powerMonitor||typeof powerMonitor.getSystemIdleState!=='function')return false;
-    return powerMonitor.getSystemIdleState(1)==='active';
+    const state=powerMonitor.getSystemIdleState(1);
+    return state==='active'||state==='idle';
   }catch{return false;}
 }
 
@@ -89,19 +92,27 @@ function providerLabel(provider){
   return 'AI 서비스';
 }
 
+// The server signs a request without a chosen model as ':default' (webchat CONSENT_DEFAULT_MODEL).
+const DEFAULT_MODEL=':default';
+function modelLabel(model){return model===DEFAULT_MODEL?'기본 모델':model;}
+
+// J JD1, JD2: one allow covers this PC and this AI service (any model, any new chat) and stands through screen unlocks
+// and app restarts until the person releases it. The window says that scope; the model line is only this chat's pick.
 function dialogOptions(c){
   const name=providerLabel(c.provider);
   return {
     type:'question',buttons:['취소','허용'],defaultId:CANCEL,cancelId:CANCEL,noLink:true,
-    title:'MyCRM AI 대화 시작',message:`이 PC에서 ${name} ${c.model} 대화를 시작할까요?`,
+    title:'MyCRM AI 대화 허용',message:`이 PC에서 ${name} 대화를 허용할까요?`,
     detail:[
+      '한 번 허용하면 다른 모델, 새 대화, 화면 잠금 해제, 앱 재시작 뒤에도 다시 묻지 않아요.',
       'AI는 대화에 필요한 MyCRM 기록을 조회해요.',
       '요청에 따라 기존 MyCRM 규칙으로 기록을 변경할 수 있어요.',
       '변경은 MyCRM의 기존 권한과 규칙을 따라요.',
       '대화 내용은 선택한 모델로 전송돼요.',
       `이 PC의 ${name} CLI 기록에도 남을 수 있어요.`,'',
-      `요청 모델: ${c.model}`,
-      `요청 만료 시각: ${kst(c.expires_at)}`,
+      `이번에 고른 모델: ${modelLabel(c.model)} (허용은 모델과 상관없이 ${name} 전체에 적용돼요)`,
+      `요청 만료 시각: ${kst(c.expires_at)}`,'',
+      '그만 쓰려면 연결 장치 창이나 웹의 연결 장치에서 허용을 해제하세요.',
     ].join('\n'),
   };
 }
