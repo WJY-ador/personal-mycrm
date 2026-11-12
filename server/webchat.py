@@ -111,6 +111,10 @@ CHAT_MCP_BODY_MAX = 96 * 1024
 # 모델 context 가 16 KiB 를 넘으면 턴을 거절한다(APPROVAL-OUTCOMES). 고정 문구(실측 1237 바이트) + 이 값 <= 16 KiB - 1 KiB 여유.
 # 시험(test_chat_injection)이 agent/chat_approval_context.py 의 실제 문구로 이 부등식을 대조한다. 최신 행부터 담고 넘치면 오래된 행을 뺀다
 APPROVAL_OUTCOMES_JSON_MAX = 13 * 1024
+# I 반영 R4(2026-11-11): 대화 경로의 요청 속도 버킷 — 접수(imports._rate, 장치 분당 10, 사용자 분당 30)와 나눈다. 5초 재인증(분당 12)과
+# 도구 호출이 접수 한도를 먹지 않고, 주입된 반복 호출이 같은 장치의 접수를 막지 못한다. 저장은 같은 import_counters 표(버킷 이름만 다름,
+# 매시 정리는 버킷과 무관). 버킷 → 장치 분당 상한. 사용자 합계 상한은 같은 버킷 안에서 장치 상한의 2배.
+CHAT_RATE_LIMITS = {"chat_launch": 60, "chat_mcp": 60}
 
 # F4: 확정된 write 카드가 다음 턴에 넘기는 생성 id — op별 (결과 키, id 접두어) 허용 목록. 값은 생성기 모양 정규식만 통과한다
 # (db.new_id = 접두어_urlsafe 11자, 오브젝트 = od_ hex 10자). 모델이 고른 slug, 글, 그 밖의 값은 넘기지 않는다.
@@ -165,6 +169,16 @@ def chat_mcp_enabled() -> bool:
     """Hard-off until independent review clears atomic tool lifecycle and provider isolation."""
     from chat_mcp_gateway import route_enabled
     return route_enabled(enabled(), env("CHAT_MCP_ENABLED", "") == "1")
+
+
+def _chat_rate(dev, bucket):
+    """R4: 대화 요청 속도 — 별도 트랜잭션(뒤에서 실패해도 남는다). 장치 분당 CHAT_RATE_LIMITS[bucket], 사용자 합계는 그 2배.
+    접수 버킷(request)은 건드리지 않는다."""
+    lim = CHAT_RATE_LIMITS[bucket]
+    with tx() as c:
+        for key, n in ((dev["id"], lim), ("user", lim * 2)):
+            if imports._bump(c, dev["user_id"], key, "minute", bucket)["n"] > n:
+                raise CrmError("RATE-LIMIT", f"요청이 너무 잦아요(분당 {n}회).", "1분 뒤 다시 보내세요.")
 
 
 def _chat_mcp_scope(dev, authorization, session_id, turn_id):
@@ -999,11 +1013,171 @@ def _write_shown(op, norm) -> dict:
     return shown
 
 
-def _write_preview(op, norm) -> dict:
-    """F2: chat 전용 write 미리보기 — facade PREVIEWS, bind 와 무관. 서버가 정규화 params 로만 만든다(모델 문구 없음)."""
+# I 반영 R1~R3(2026-11-11): 덮어쓰기 write 카드는 대상의 "지금" 상태를 서버가 DB 에서 읽어 "바뀐 뒤"(F3 줄)와 함께 보인다.
+# 지금 상태는 미리보기 해시에 들어가고, 확정 때 같은 잠금(users 행, 대상 행 FOR UPDATE) 안에서 다시 읽어 다르면 APPROVAL-STALE.
+# 판별은 이름이 아니라 db 코드로 op마다 정했다(_WRITE_CURRENT 읽기 함수 표). 새로 만들기만 하는 op 은 _WRITE_CREATE_ONLY.
+# 두 표 어디에도 없는 write op 은 카드를 만들지 않는다(애매하면 덮어쓰기로 다룬다 — 읽기 함수가 생길 때까지 닫힘).
+# 값은 JSON 그대로(text, int, jsonb)만 — 시각 값을 넣지 않는다(jsonb 왕복 뒤 비교가 같아야 거짓 STALE 이 없다).
+# 모델에게 가는 응답(prepare 결과, 오류 문구)에는 지금 값을 넣지 않는다. 지금 값은 사람이 보는 카드(approvals_list)에만 있다.
+_NOW, _AFTER = "지금", "바뀐 뒤"
+_TARGET_MISSING = {"대상": "찾을 수 없어요"}
+_TARGET_TRASHED = {"대상": "휴지통에 있어요"}
+_WRITE_CREATE_ONLY = frozenset({"question_add", "record_add", "candidates_propose", "source_create"})
+
+
+def _cur_layout(c, uid, n):
+    """layout_set, layout_reset — page_layouts.layout 의 그 페이지(저장 없음이면 기본)와 version 을 덮는다(db.layout_set, layout_reset)."""
+    r = _one(c, "SELECT layout, version FROM page_layouts WHERE user_id=%s FOR UPDATE", (uid,))
+    full = db._layout_up(r["layout"] if r else None)
+    return {"화면": n.get("page"), "배치": full["pages"].get(n.get("page")), "배치 판": r["version"] if r else 0}
+
+
+def _cur_display_name(c, uid, n):
+    """display_name_set — users.display_name 을 덮는다(db.display_name_set UPDATE users)."""
+    r = _one(c, "SELECT display_name FROM users WHERE id=%s", (uid,))
+    return {"표시 이름": r["display_name"] if r else None}
+
+
+def _cur_profile(c, uid, n):
+    """profile_set — profile(user_id,key) upsert 로 value, status, source 를 덮는다(db.profile_set ON CONFLICT DO UPDATE). 행이 없으면 값 없음."""
+    r = _one(c, "SELECT value, status, source FROM profile WHERE user_id=%s AND key=%s FOR UPDATE", (uid, n.get("key")))
+    return {"프로필 항목": n.get("key"), "값": r["value"] if r else None, "상태": r["status"] if r else None,
+            "어디서 알았나": r["source"] if r else None}
+
+
+def _link_label(c, uid, kind, tid):
+    if kind == "item":
+        t = _one(c, "SELECT title FROM items WHERE user_id=%s AND id=%s", (uid, tid))
+        return f"항목 {tid}" + (f" ({t['title']})" if t else " (찾을 수 없음)")
+    if kind == "candidate":
+        t = _one(c, "SELECT text FROM candidates WHERE user_id=%s AND id=%s", (uid, tid))
+        return f"후보 {tid}" + (f" ({t['text']})" if t else " (찾을 수 없음)")
+    return f"{kind} {tid}"
+
+
+def _cur_record_attach(c, uid, n):
+    """record_attach — 값을 준 칸만 덮는다: attach_to, axes = item_links(source_record_id, field_key) 전부 지우고 다시 넣기,
+    use_at, unattached = records.notes 의 그 키(db.record_attach). 기록 제목(R2)과 바뀌는 칸의 지금 값."""
+    rec = _one(c, "SELECT title, notes, trashed_at FROM records WHERE user_id=%s AND id=%s AND deleted_at IS NULL FOR UPDATE",
+               (uid, n.get("record_id")))
+    if not rec:
+        return _TARGET_MISSING
+    if rec["trashed_at"] is not None:
+        return _TARGET_TRASHED
+    out = {"기록 제목": rec["title"]}
+    for key, label in (("attach_to", "붙일 곳"), ("axes", "축")):
+        if n.get(key) is not None:
+            links = _all(c, "SELECT target_item_id, target_candidate_id FROM item_links WHERE user_id=%s AND source_record_id=%s "
+                            "AND field_key=%s ORDER BY id", (uid, n["record_id"], key))
+            out[label] = [_link_label(c, uid, "item", ln["target_item_id"]) if ln["target_item_id"]
+                          else _link_label(c, uid, "candidate", ln["target_candidate_id"]) for ln in links]
+    notes = rec["notes"] or {}
+    for key, label in (("use_at", "쓸 때"), ("unattached", "붙이지 않음")):
+        if n.get(key) is not None:
+            out[label] = notes.get(key)
+    return out
+
+
+def _cur_record_title(c, uid, n):
+    """record_title_set — records.title 을 덮는다(db.record_title_set UPDATE records, 이력 한 줄)."""
+    r = _one(c, "SELECT title, revision, trashed_at FROM records WHERE user_id=%s AND id=%s AND deleted_at IS NULL FOR UPDATE",
+             (uid, n.get("record_id")))
+    if not r:
+        return _TARGET_MISSING
+    if r["trashed_at"] is not None:
+        return _TARGET_TRASHED
+    return {"기록 제목": r["title"], "기록 판": r["revision"]}
+
+
+def _cur_definition(c, uid, n):
+    """definition_propose — object_defs.draft_doc 을 덮는다(새 제안이 이전 제안을 덮는다). object_id 가 없어도 같은 key 의
+    미적용 행이 있으면 그 행의 제안을 덮는다(db.definition_propose). 그 행이 없으면 새로 만들기."""
+    if n.get("object_id"):
+        r = _one(c, "SELECT id, key, label, revision, draft_doc FROM object_defs WHERE user_id=%s AND id=%s FOR UPDATE",
+                 (uid, n["object_id"]))
+        if not r:
+            return _TARGET_MISSING
+    else:
+        try:
+            key = db.normalize_definition(json.loads(n.get("definition_json") or "{}"))["key"]
+        except Exception:
+            return None   # 정의가 틀리면 실행이 거절된다(만들 것도 덮을 것도 없음)
+        r = _one(c, "SELECT id, key, label, revision, draft_doc FROM object_defs WHERE user_id=%s AND key=%s FOR UPDATE", (uid, key))
+        if not r:
+            return None
+    return {"자료 종류 ID": r["id"], "key": r["key"], "이름": r["label"], "자료 종류 판": r["revision"], "대기 중 제안": r["draft_doc"]}
+
+
+def _cur_item(c, uid, n):
+    """item_propose(item_id 있음) — items.draft_doc 을 덮는다(그 항목의 대기 중 제안이 바뀐다, db.item_propose). item_id 없음 = 새로 만들기."""
+    if not n.get("item_id"):
+        return None
+    r = _one(c, "SELECT title, body, revision, draft_doc, trashed_at FROM items WHERE user_id=%s AND id=%s FOR UPDATE",
+             (uid, n["item_id"]))
+    if not r:
+        return _TARGET_MISSING
+    if r["trashed_at"] is not None:
+        return _TARGET_TRASHED
+    return {"제목": r["title"], "본문": r["body"], "항목 판": r["revision"], "대기 중 제안": r["draft_doc"]}
+
+
+def _cur_person(c, uid, n):
+    """person_save(person_id 있음) — people.alias 를 덮는다(db.person_save UPDATE people). person_id 없음 = 새로 만들기."""
+    if not n.get("person_id"):
+        return None
+    r = _one(c, "SELECT alias, revision, trashed_at FROM people WHERE user_id=%s AND id=%s AND purged_at IS NULL FOR UPDATE",
+             (uid, n["person_id"]))
+    if not r:
+        return _TARGET_MISSING
+    if r["trashed_at"] is not None:
+        return _TARGET_TRASHED
+    return {"별칭": r["alias"], "판": r["revision"]}
+
+
+def _cur_reflection(c, uid, n):
+    """source_reflection_save(reflection_id 있음) — source_reflections 의 source_id, kind, body 를 이력 없이 덮고 검토를 대기로 돌린다
+    (db.source_reflection_save UPDATE). reflection_id 없음 = 새로 만들기."""
+    if not n.get("reflection_id"):
+        return None
+    r = _one(c, "SELECT r.source_id, s.name AS source_name, r.kind, r.body, r.review, r.revision, r.trashed_at "
+                "FROM source_reflections r LEFT JOIN sources s ON s.user_id=r.user_id AND s.id=r.source_id "
+                "WHERE r.user_id=%s AND r.id=%s FOR UPDATE OF r", (uid, n["reflection_id"]))
+    if not r:
+        return _TARGET_MISSING
+    if r["trashed_at"] is not None:
+        return _TARGET_TRASHED
+    return {"출처 ID": r["source_id"], "출처 이름": r["source_name"], "종류": r["kind"], "본문": r["body"],
+            "검토": r["review"], "판": r["revision"]}
+
+
+_WRITE_CURRENT = {
+    "layout_set": _cur_layout, "layout_reset": _cur_layout, "display_name_set": _cur_display_name,
+    "profile_set": _cur_profile, "record_attach": _cur_record_attach, "record_title_set": _cur_record_title,
+    "definition_propose": _cur_definition, "item_propose": _cur_item, "person_save": _cur_person,
+    "source_reflection_save": _cur_reflection,
+}
+
+
+def _write_current(c, uid, op, norm):
+    """덮어쓰기 대상의 지금 상태(JSON 값) 또는 None(새로 만들기). 판별표에 없는 op 은 카드를 만들지 않는다."""
+    if op in _WRITE_CREATE_ONLY:
+        return None
+    reader = _WRITE_CURRENT.get(op)
+    if reader is None:
+        raise _approval_closed()
+    return reader(c, uid, norm)
+
+
+def _write_preview(op, norm, current=None) -> dict:
+    """F2: chat 전용 write 미리보기 — facade PREVIEWS, bind 와 무관. 서버가 정규화 params 와 DB 값으로만 만든다(모델 문구 없음).
+    R1: 덮어쓰기면 shown = {지금: 대상의 지금 상태, 바뀐 뒤: F3 줄}, 해시 = [op, norm, 지금]. 새로 만들기면 F3 줄 그대로, 해시 = [op, norm]."""
     import facade
-    return {"op": op, "shown": _write_shown(op, norm), "impact": {"tier": "write"}, "irreversible": False,
-            "hash": hashlib.sha256(facade._canon([op, norm])).hexdigest()}
+    after = _write_shown(op, norm)
+    if current is None:
+        return {"op": op, "shown": after, "impact": {"tier": "write"}, "irreversible": False,
+                "hash": hashlib.sha256(facade._canon([op, norm])).hexdigest()}
+    return {"op": op, "shown": {_NOW: current, _AFTER: after}, "impact": {"tier": "write"}, "irreversible": False,
+            "hash": hashlib.sha256(facade._canon([op, norm, current])).hexdigest()}
 
 
 def _write_spec(op):
@@ -1026,7 +1200,7 @@ def chat_write_prepare(uid, sid, tid, op, params):
         _approval_slot(c, uid, sid, tid)
         facade.validate(spec, params)
         norm = facade.normalize(op, params)
-        preview = _write_preview(op, norm)
+        preview = _write_preview(op, norm, _write_current(c, uid, op, norm))
         aid = _id("ca")
         c.execute("INSERT INTO chat_approvals (id,user_id,session_id,turn_id,op,params,preview,expires_at,kind) "
                   "VALUES (%s,%s,%s,%s,%s,%s,%s,clock_timestamp()+make_interval(secs => %s),'write')",
@@ -1142,6 +1316,7 @@ def approval_confirm(uid, sid, aid):
 
 def _confirm_write(c, uid, sid, session, op, params, previous):
     """F2: 저장한 params 를 다시 검증, 정규화해 해시와 shown 이 저장 때와 같아야 실행한다(다르면 APPROVAL-STALE).
+    R1: 덮어쓰기 대상의 지금 상태를 같은 트랜잭션(users 행 잠금 + 대상 행 FOR UPDATE)에서 다시 읽어 해시에 넣는다 — 카드 뒤 대상이 바뀌면 STALE.
     실행 = facade.dispatch("write", op, params, 서버가 만든 principal, None) — guard, 쿼터, 도구 검사는 직접 MCP 와 같다."""
     import facade
     from chat_mcp_gateway import _mint_trusted_principal
@@ -1153,7 +1328,7 @@ def _confirm_write(c, uid, sid, session, op, params, previous):
         norm = facade.normalize(op, params)
     except Exception:
         raise CrmError("APPROVAL-STALE", "대상이 바뀌어 다시 확인해야 해요.") from None
-    now_preview = _write_preview(op, norm)
+    now_preview = _write_preview(op, norm, _write_current(c, uid, op, norm))
     if (previous.get("irreversible") is not False or not isinstance(previous.get("hash"), str)
             or not hmac.compare_digest(previous["hash"], now_preview["hash"])
             or norm != params or previous != now_preview):
@@ -1443,6 +1618,16 @@ def purge() -> int:
                     "DELETE FROM chat_sessions s WHERE created_at < now() - make_interval(days => %s) "
                     "AND NOT EXISTS (SELECT 1 FROM chat_turns t WHERE t.session_id=s.id)"):
             n += c.execute(sql, (KEEP_DAYS,)).rowcount
+    # I 반영 R8(2026-11-11 원작자): PC 허용 기록도 30일. 참조 = challenge 가 key_id, grant_id 를 FK(ON DELETE CASCADE)로 가리킨다.
+    # 세션은 grant 를 client_session_id=request_id 로만 찾는다(FK 없음) — 지운 뒤 남은 세션의 동의 재확인은 CONSENT_REQUIRED 로 닫힌다(허용).
+    # 순서: challenge(생성 30일) → grant(생성 30일, 남은 challenge 는 CASCADE) → 키(폐기 또는 PoP 만료 뒤 30일만).
+    # 쓰고 있는 키(active)와 아직 PoP 기한 안의 pending 키는 지우지 않는다. 폐기, 만료 30일 뒤의 키를 가리키는 challenge 는 그보다 먼저 만든 것이다.
+    with tx() as c:
+        for sql in ("DELETE FROM chat_consent_challenges WHERE created_at < now() - make_interval(days => %s)",
+                    "DELETE FROM chat_provider_grants WHERE created_at < now() - make_interval(days => %s)",
+                    "DELETE FROM desktop_consent_keys WHERE (state='revoked' AND revoked_at < now() - make_interval(days => %s)) "
+                    "OR (state='pending' AND pop_expires_at < extract(epoch FROM now() - make_interval(days => %s)))"):
+            n += c.execute(sql, (KEEP_DAYS,) * sql.count("%s")).rowcount
     return n
 
 
@@ -1874,7 +2059,7 @@ class Routes:
         try:
             authorization = self._bearer(request)
             dev = await run_in_threadpool(self._auth, authorization)
-            await run_in_threadpool(imports._rate, dev)
+            await run_in_threadpool(_chat_rate, dev, "chat_mcp")   # R4: 접수 요청 버킷과 나눈 대화 버킷
             body = await self._chat_mcp_body(request)
             result = await run_in_threadpool(_chat_mcp_execute, dev, authorization, body)
             return JSONResponse({"result": result}, headers={"cache-control": "no-store"})
@@ -1916,7 +2101,7 @@ class Routes:
         try:
             authorization = self._bearer(request)
             dev = await run_in_threadpool(self._auth, authorization)
-            await run_in_threadpool(imports._rate, dev)
+            await run_in_threadpool(_chat_rate, dev, "chat_launch")   # R4: 접수 요청 버킷과 나눈 대화 버킷
             body = await self._launch_authorization_body(request)
             result = await run_in_threadpool(_chat_launch_authorization, dev, authorization,
                                              body["session_id"], body["turn_id"])

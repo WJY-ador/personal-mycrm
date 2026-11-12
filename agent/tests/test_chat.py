@@ -568,6 +568,35 @@ class CliTest(unittest.TestCase):
         self.assertNotIn(env["MYCRM_CHAT_BRIDGE_TOKEN"], out)
         self.assertNotIn(helpers.TOKEN, out)
 
+    def test_consent_revoke_hands_stored_device_token_to_bridge_and_maps_exit_codes(self):
+        env = {"MYCRM_CHAT_BRIDGE_SOCKET": "/synthetic/chat.sock",
+               "MYCRM_CHAT_BRIDGE_TOKEN": "synthetic-desktop-bridge-token"}
+        calls = []
+        replies = []
+        def request_revoke(socket_path, bridge_token, authorization):
+            calls.append((socket_path, bridge_token, authorization))
+            return replies.pop(0)
+        # No bridge capability in env: failure, nothing sent.
+        with patch("agent.consent_bridge.request_revoke", request_revoke):
+            code, out = helpers.run_cli(["--home", self.th.home, "chat-consent-revoke"])
+        self.assertEqual((code, out, calls), (1, "", []))
+        with patch.dict(os.environ, env), patch("agent.consent_bridge.request_revoke", request_revoke):
+            # Not connected: nothing to revoke from this PC.
+            code, out = helpers.run_cli(["--home", self.th.home, "chat-consent-revoke"])
+            self.assertEqual((code, out, calls), (3, "", []))
+            helpers.connected_config(self.th, "http://127.0.0.1:9")
+            # Connected but no device token: nothing to revoke.
+            code, out = helpers.run_cli(["--home", self.th.home, "chat-consent-revoke"],
+                                        ks_factory=lambda svc: helpers.MemoryKeyStore())
+            self.assertEqual((code, out, calls), (3, "", []))
+            ks = helpers.keystore_with_secrets()
+            replies[:] = [True, False]
+            code, out = helpers.run_cli(["--home", self.th.home, "chat-consent-revoke"], ks_factory=lambda svc: ks)
+            self.assertEqual((code, out), (0, ""))
+            code, out = helpers.run_cli(["--home", self.th.home, "chat-consent-revoke"], ks_factory=lambda svc: ks)
+            self.assertEqual((code, out), (1, ""))
+        self.assertEqual(calls, [(env["MYCRM_CHAT_BRIDGE_SOCKET"], env["MYCRM_CHAT_BRIDGE_TOKEN"], "Bearer " + helpers.TOKEN)] * 2)
+
     def test_consent_only_requires_bridge_and_fake_still_requires_device_token(self):
         code, out = helpers.run_cli(["--home", self.th.home, "chat", "--consent-only"])
         self.assertEqual(code, 1)

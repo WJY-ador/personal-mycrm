@@ -1364,7 +1364,7 @@ def test_consent_routes(srv, ua, ub, tok_a, dev_a):
             with patch("webchat.PROVIDER_LAUNCH_READY", False):
                 launch_off = asyncio.run(route.launch_authorization(McpRequest(launch_req_body)))
             assert launch_off.status_code == 503, launch_off.body
-            with patch("webchat.PROVIDER_LAUNCH_READY", True), patch("imports._rate", return_value=None):
+            with patch("webchat.PROVIDER_LAUNCH_READY", True), patch("webchat._chat_rate", return_value=None):
                 launch_ok = asyncio.run(route.launch_authorization(McpRequest(launch_req_body)))
                 assert launch_ok.status_code == 200, launch_ok.body
                 launch_value = json.loads(launch_ok.body)
@@ -1469,7 +1469,7 @@ def test_consent_routes(srv, ua, ub, tok_a, dev_a):
                             "tool": "read", "op": "state_get", "params": {}}
             with patch("chat_mcp_gateway.ATOMIC_DISPATCH_READY", True), \
                  patch.dict(os.environ, {"CRM_CHAT_MCP_ENABLED": "1", "CRM_WEBCHAT_ENABLED": "1", "CRM_TRASH_ENABLED": "1"}), \
-                 patch("imports._rate", return_value=None):
+                 patch("webchat._chat_rate", return_value=None):
                 read_response = asyncio.run(route.chat_mcp(McpRequest(gateway_body)))
                 assert read_response.status_code == 200, read_response.body
                 assert gateway_bearer not in read_response.body.decode()

@@ -8,7 +8,7 @@ const {encodeConsent,verifyConsent}=require('../src/consent-signature.cjs');
 
 const NOW=Math.floor(Date.now()/1000);
 function keyPair(){return crypto.generateKeyPairSync('ed25519');}
-function fixture({dialogResult=1,locked=false,requestOverride,onDialog}={}){
+function fixture({dialogResult=1,locked=false,requestOverride,onDialog,runtimeOptions={}}={}){
  const pair=keyPair(),calls=[],url='file:///mycrm/index.html';
  let keyLoads=0;
  const claims={user_id:'u_synthetic_1',device_id:'dev_synthetic_1',session_id:'request_test_1',provider:'claude',
@@ -35,7 +35,7 @@ function fixture({dialogResult=1,locked=false,requestOverride,onDialog}={}){
   keyFile:'/synthetic/key',loadKey:async()=>{keyLoads++;return pair;},app:{getPath:()=>'/synthetic'},dialog:{showMessageBox:async(_w,options)=>{
    assert.match(options.detail,/claude\/opus\+latest/);return onDialog?onDialog():{response:dialogResult};
   }},powerMonitor,trustedWindow:()=>win,allowedUrl:url,
-  focusWindow:async()=>true,now:()=>NOW});
+  focusWindow:async()=>true,now:()=>NOW,...runtimeOptions});
  return {runtime,pair,calls,claims,powerMonitor,setLocked(value){lockedState=value;},get keyLoads(){return keyLoads;}};
 }
 
@@ -168,4 +168,177 @@ test('a second request while one is pending is failed, never declined',async()=>
  assert.deepEqual(await f.runtime.handle(req),{ok:false,reason:'failed'});
  resolveDialog({response:0});
  assert.deepEqual(await first,{ok:false,reason:'declined'});
+});
+
+// R5: stored-token revoke. The fake agent stands in for `chat-consent-revoke`: it hands the device token back over
+// the bridge (revokeWith) and exits 0 on an ok reply, 1 otherwise, or 3 when the PC has no device token.
+const INSTALL='di_'+'a'.repeat(24);
+function storedFixture({agent='token',installation=INSTALL,...rest}={}){
+ const holder={runs:0};
+ const f=fixture({...rest,runtimeOptions:{
+  getRevokeInstallationId:async()=>installation,
+  runRevokeAgent:async()=>{
+   holder.runs++;
+   const mode=Array.isArray(agent)?agent[Math.min(holder.runs,agent.length)-1]:agent;
+   if(mode==='none')return 3;
+   if(mode==='fail')return 1;
+   if(mode==='crash')throw new Error('agent-unavailable');
+   const reply=await holder.runtime.revokeWith({device_bearer:'Bearer synthetic-stored-token'});
+   return reply.ok===true?0:1;
+  },
+ }});
+ holder.runtime=f.runtime;
+ return Object.assign(f,{holder});
+}
+
+test('R5: a new runtime revokes on lock through the stored device token, without an approval in this run',async()=>{
+ const f=storedFixture();
+ assert.equal(await f.runtime.invalidateOnLock(),true);
+ assert.equal(f.holder.runs,1);
+ assert.deepEqual(f.calls,[{path:'/api/chat/consent/keys/revoke',body:{installation_id:INSTALL},authorization:'Bearer synthetic-stored-token'}]);
+});
+
+test('R5: app start sends one revoke, a second call reuses it, and an approval still follows',async()=>{
+ const f=storedFixture();
+ const first=f.runtime.revokeAtStart(),second=f.runtime.revokeAtStart();
+ assert.equal(first,second);
+ assert.equal(await first,'revoked');
+ assert.equal(f.holder.runs,1);
+ assert.deepEqual(f.calls.map(x=>x.path),['/api/chat/consent/keys/revoke']);
+ assert.deepEqual(await f.runtime.handle({request_id:'request_test_1',device_bearer:'Bearer synthetic-device-token'}),{ok:true});
+ assert.equal(f.calls.filter(x=>x.path.endsWith('/keys/revoke')).length,1);
+});
+
+test('R5: an approval waits for the start revoke, so the revoke cannot land after the new key',async()=>{
+ let release;
+ const gate=new Promise(resolve=>{release=resolve;});
+ const f=storedFixture({requestOverride:async(path,body,auth,calls,claims,pair)=>{
+  if(path.endsWith('/keys/revoke')){await gate;return {status:200,body:{revoked:1}};}
+  if(path.endsWith('/keys/begin'))return {status:200,body:{key_id:'ck_synthetic_1',claims:{...claims,session_id:'ck_synthetic_1',provider:'mycrm-key',model:'bind'}}};
+  if(path.endsWith('/keys/activate'))return {status:200,body:{key_id:body.key_id,state:'active',rotated:true}};
+  if(path.endsWith('/challenges/issue'))return {status:200,body:{challenge_id:'cc_synthetic_1',claims}};
+  if(path.endsWith('/challenges/verify'))return {status:200,body:{state:'verified',grant_id:'cg_synthetic_1'}};
+  return {status:404,body:null};
+ }});
+ const start=f.runtime.revokeAtStart();
+ const approval=f.runtime.handle({request_id:'request_test_1',device_bearer:'Bearer synthetic-device-token'});
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(f.calls.map(x=>x.path),['/api/chat/consent/keys/revoke']);
+ release();
+ assert.equal(await start,'revoked');
+ assert.deepEqual(await approval,{ok:true});
+ assert.equal(f.calls[1].path,'/api/chat/consent/keys/begin');
+});
+
+test('R5: a failed start revoke resolves failed, never rejects, and the approval still runs',async()=>{
+ for(const [label,options] of [
+  ['server refuses',{requestOverride:async(path,body,auth,calls,claims)=>path.endsWith('/keys/revoke')?{status:503,body:{code:'X'}}
+   :path.endsWith('/keys/begin')?{status:200,body:{key_id:'ck_synthetic_1',claims:{...claims,session_id:'ck_synthetic_1',provider:'mycrm-key',model:'bind'}}}
+   :path.endsWith('/keys/activate')?{status:200,body:{key_id:body.key_id,state:'active',rotated:true}}
+   :path.endsWith('/challenges/issue')?{status:200,body:{challenge_id:'cc_synthetic_1',claims}}
+   :{status:200,body:{state:'verified',grant_id:'cg_synthetic_1'}}}],
+  ['agent unavailable',{agent:'crash'}],
+  ['bad installation id',{installation:'not-an-id'}],
+ ]){
+  const f=storedFixture(options);
+  assert.equal(await f.runtime.revokeAtStart(),'failed',label);
+  assert.deepEqual(await f.runtime.handle({request_id:'request_test_1',device_bearer:'Bearer synthetic-device-token'}),{ok:true},label);
+ }
+});
+
+test('R5: no device token or no installation id means nothing to revoke; a failed stored revoke keeps the lock closed',async()=>{
+ const none=storedFixture({agent:'none'});
+ assert.equal(await none.runtime.invalidateOnLock(),true);
+ assert.equal(none.calls.length,0);
+ const unregistered=storedFixture({installation:null});
+ assert.equal(await unregistered.runtime.invalidateOnLock(),true);
+ assert.equal(unregistered.holder.runs,0);
+ const failed=storedFixture({requestOverride:async()=>({status:401,body:{code:'NO-SESSION'}})});
+ assert.equal(await failed.runtime.invalidateOnLock(),false);
+ const crashed=storedFixture({agent:'crash'});
+ assert.equal(await crashed.runtime.invalidateOnLock(),false);
+ // Older wiring without the stored path fails closed instead of the old silent true.
+ assert.equal(await fixture().runtime.invalidateOnLock(),false);
+});
+
+test('R5: revokeWith answers only while a stored revoke waits for it',async()=>{
+ const f=storedFixture();
+ assert.deepEqual(await f.runtime.revokeWith({device_bearer:'Bearer synthetic-stored-token'}),{ok:false,reason:'failed'});
+ assert.equal(f.calls.length,0);
+});
+
+test('R5: an approval in this run still revokes with its own token on lock, not the stored path',async()=>{
+ const f=storedFixture();
+ assert.deepEqual(await f.runtime.handle({request_id:'request_test_1',device_bearer:'Bearer synthetic-device-token'}),{ok:true});
+ assert.equal(await f.runtime.invalidateOnLock(),true);
+ assert.equal(f.holder.runs,0);
+ assert.deepEqual(f.calls.at(-1),{path:'/api/chat/consent/keys/revoke',body:{installation_id:INSTALL},authorization:'Bearer synthetic-device-token'});
+});
+
+const APPROVE={request_id:'request_test_1',device_bearer:'Bearer synthetic-device-token'};
+// Server answers keys/revoke from a list per call (true = {revoked:1}, false = 503); other paths as the default fixture.
+function revokeSequence(answers){
+ let n=0;
+ return async(path,body,auth,calls,claims,pair)=>{
+  if(path.endsWith('/keys/revoke'))return answers[Math.min(n++,answers.length-1)]?{status:200,body:{revoked:1}}:{status:503,body:{code:'X'}};
+  if(path.endsWith('/keys/begin'))return {status:200,body:{key_id:'ck_synthetic_1',claims:{...claims,session_id:'ck_synthetic_1',provider:'mycrm-key',model:'bind'}}};
+  if(path.endsWith('/keys/activate'))return {status:200,body:{key_id:body.key_id,state:'active',rotated:true}};
+  if(path.endsWith('/challenges/issue'))return {status:200,body:{challenge_id:'cc_synthetic_1',claims}};
+  if(path.endsWith('/challenges/verify'))return {status:200,body:{state:'verified',grant_id:'cg_synthetic_1'}};
+  return {status:404,body:null};
+ };
+}
+
+test('R5 rule 1: a failed lock revoke counts as done after a confirmed revoke with no approval since',async()=>{
+ const revoked=storedFixture({requestOverride:revokeSequence([true,false])});
+ assert.equal(await revoked.runtime.revokeAtStart(),'revoked');
+ assert.equal(await revoked.runtime.invalidateOnLock(),true);
+ assert.equal(revoked.holder.runs,2);
+ const none=storedFixture({agent:['none','fail']});
+ assert.equal(await none.runtime.revokeAtStart(),'none');
+ assert.equal(await none.runtime.invalidateOnLock(),true);
+});
+
+test('R5 rule 1: without a confirmed revoke, or after an approval attempt, a failed lock revoke stays closed',async()=>{
+ const neverConfirmed=storedFixture({agent:'fail'});
+ assert.equal(await neverConfirmed.runtime.revokeAtStart(),'failed');
+ assert.equal(await neverConfirmed.runtime.invalidateOnLock(),false);
+ // start confirmed, then an approval (lastAuthorization), then the lock revoke fails: fail-closed
+ const approved=storedFixture({requestOverride:revokeSequence([true,false])});
+ assert.equal(await approved.runtime.revokeAtStart(),'revoked');
+ assert.deepEqual(await approved.runtime.handle(APPROVE),{ok:true});
+ assert.equal(await approved.runtime.invalidateOnLock(),false);
+ // an approval attempt that never reached the server still clears the confirmation
+ const sequence=revokeSequence([true,false]);
+ const attempted=storedFixture({requestOverride:async(path,...rest)=>path.endsWith('/keys/begin')?{status:500,body:null}
+  :sequence(path,...rest)});
+ assert.equal(await attempted.runtime.revokeAtStart(),'revoked');
+ assert.deepEqual(await attempted.runtime.handle(APPROVE),{ok:false,reason:'failed'});
+ assert.equal(await attempted.runtime.invalidateOnLock(),false);
+});
+
+test('R5 rule 1: a lock revoke confirmed with the approval token counts for the next lock',async()=>{
+ const f=storedFixture({requestOverride:revokeSequence([true,true,false])});
+ assert.equal(await f.runtime.revokeAtStart(),'revoked');
+ assert.deepEqual(await f.runtime.handle(APPROVE),{ok:true});
+ assert.equal(await f.runtime.invalidateOnLock(),true);   // bound revoke with the approval token, confirmed
+ assert.equal(await f.runtime.invalidateOnLock(),true);   // stored revoke fails; nothing was attempted since
+});
+
+test('R5 rule 2: the chat sidecar gate retries an unconfirmed start revoke once per start and stops asking once confirmed',async()=>{
+ const f=storedFixture({agent:['fail','fail','token']});
+ assert.equal(await f.runtime.revokeAtStart(),'failed');
+ assert.equal(await f.runtime.ensureStartRevoked(),false);
+ assert.equal(f.holder.runs,2);
+ assert.equal(await f.runtime.ensureStartRevoked(),true);
+ assert.equal(f.holder.runs,3);
+ assert.equal(await f.runtime.ensureStartRevoked(),true);
+ assert.equal(f.holder.runs,3);
+ const confirmed=storedFixture({agent:'none'});
+ confirmed.runtime.revokeAtStart();
+ assert.equal(await confirmed.runtime.ensureStartRevoked(),true);   // waits for the start revoke, no second run
+ assert.equal(confirmed.holder.runs,1);
+ const noStart=storedFixture();
+ assert.equal(await noStart.runtime.ensureStartRevoked(),true);
+ assert.equal(noStart.holder.runs,1);
 });

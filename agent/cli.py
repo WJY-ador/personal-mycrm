@@ -105,6 +105,8 @@ def _parser() -> argparse.ArgumentParser:
     ch.add_argument("--fake", action="store_true", help="모델 대신 정해진 가짜 대본으로 답한다(시험·측정용)")
     ch.add_argument("--consent-only", action="store_true", help="데스크톱 native 동의 요청만 중계한다(모델 실행 없음)")
 
+    sub.add_parser("chat-consent-revoke", help=argparse.SUPPRESS)
+
     bridge = sub.add_parser("chat-mcp-bridge", help=argparse.SUPPRESS)
     bridge.add_argument("--agent-home", required=True)
     bridge.add_argument("--session-id", required=True)
@@ -976,6 +978,31 @@ def cmd_chat(ctx: Ctx, a) -> int:
     return EXIT_HALT if why == "auth" else EXIT_OK
 
 
+def cmd_chat_consent_revoke(ctx: Ctx, a) -> int:
+    """Desktop main 이 앱 시작과 화면 잠금 때 한 번 부른다(내부 명령). 이 PC 장치 토큰을 사설 bridge 로 main 에 넘기고,
+    main 이 세션 쿠키와 저장된 설치본 id 로 서버 동의 키를 폐기한다. bridge 값은 env 로만 받는다. 출력 없음.
+    exit: 0 = main 이 서버 폐기를 확인 · 3 = 이 PC 에 장치 토큰이 없다(폐기할 것이 없다) · 1 = 그 밖의 실패."""
+    bridge_socket = os.environ.get("MYCRM_CHAT_BRIDGE_SOCKET")
+    bridge_token = os.environ.get("MYCRM_CHAT_BRIDGE_TOKEN")
+    if not (bridge_socket and bridge_token):
+        return EXIT_ERR
+    try:
+        cfg = _config.load(ctx.paths)
+    except _config.ConfigError:
+        return EXIT_ERR
+    sid, server = cfg.get("source_instance_id"), cfg.get("server_url")
+    if not sid or not server:
+        return EXIT_HALT
+    try:
+        token = ctx.keystore(cfg).get(_config.token_account(sid))
+    except keystore.KeyStoreError:
+        return EXIT_ERR
+    if not token:
+        return EXIT_HALT
+    from .consent_bridge import request_revoke
+    return EXIT_OK if request_revoke(bridge_socket, bridge_token, "Bearer " + token) else EXIT_ERR
+
+
 def cmd_chat_mcp_bridge(ctx: Ctx, a) -> int:
     """Internal stdio MCP bridge entry used by the supervised agent sidecar."""
     argv = ["--agent-home", a.agent_home, "--session-id", a.session_id, "--turn-id", a.turn_id,
@@ -1053,7 +1080,7 @@ COMMANDS = {"connect": cmd_connect, "validate": cmd_validate, "run-once": cmd_ru
             "schedule": cmd_schedule, "serve": cmd_serve, "disconnect": cmd_disconnect,
             "configure-cli": cmd_configure_cli, "configure-codex": cmd_configure_codex,
             "migrate": cmd_migrate, "chat": cmd_chat,
-            "chat-mcp-bridge": cmd_chat_mcp_bridge}
+            "chat-consent-revoke": cmd_chat_consent_revoke, "chat-mcp-bridge": cmd_chat_mcp_bridge}
 
 
 def _utf8_stdio():

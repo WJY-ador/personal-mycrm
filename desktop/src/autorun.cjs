@@ -49,10 +49,12 @@ async function stopChatForLock(supervisor, autorun) {
 }
 
 // Fixed failure kinds for the log; any other error is 'error' (its text could carry sidecar or server content).
-const KINDS = new Set(['not-connected', 'cli', 'busy', 'closing', 'consent-lock-unsupported', 'consent-lock-locked', 'consent-lock-revoke-unconfirmed']);
+const KINDS = new Set(['not-connected', 'cli', 'busy', 'closing', 'consent-lock-unsupported', 'consent-lock-locked', 'consent-lock-revoke-unconfirmed',
+  'consent-start-revoke-unconfirmed']);
 // Held: the start may pass a moment later without anything changing in the app (screen in use, app lock released).
 // A held start is tried again on the next timer or window focus and does not count as an attempt.
-const HELD = new Set(['busy', 'consent-lock-locked', 'consent-lock-revoke-unconfirmed']);
+const HELD = new Set(['busy', 'consent-lock-locked', 'consent-lock-revoke-unconfirmed',
+  'consent-start-revoke-unconfirmed']);
 const MAX_ATTEMPTS = 3;
 const kindOf = e => (KINDS.has(e?.message) ? e.message : 'error');
 
