@@ -26,6 +26,7 @@ os.environ["CRM_SESSION_SECRET"] = "synthetic-injection-only-secret"
 
 import db  # noqa: E402
 import facade  # noqa: E402
+import imports  # noqa: E402
 import main  # noqa: E402,F401  installs the real facade catalog and guarded operations
 import webchat  # noqa: E402
 from chat_mcp import _PINNED_TIERS, AuthenticatedPrincipal, ConsentBinding, SessionBinding  # noqa: E402
@@ -151,6 +152,7 @@ class ChatInjectionTests(unittest.TestCase):
             "person_save": {"alias": "주입된 사람"},
             "source_create": {"kind": "url", "name": "주입 출처", "location": "https://example.invalid/x"},
             "source_reflection_save": {"source_id": self.source["id"], "kind": "reaction", "body": "주입된 생각"},
+            "collected_post_decide": {"item_id": "i_AAAAAAAAAAA", "state": "dropped"},
         }
 
     def finish_turn_and_get_outcomes(self):
@@ -179,7 +181,8 @@ class ChatInjectionTests(unittest.TestCase):
         self.assertEqual(set(cards), set(params))
         listed = {a["op"]: a for a in webchat.approvals_list(self.uid, self.sid)}
         # R1: with these params these ops overwrite an existing target, so the card nests {지금, 바뀐 뒤}; the rest create (flat)
-        overwriting = {"layout_set", "layout_reset", "display_name_set", "profile_set", "record_attach", "record_title_set"}
+        overwriting = {"layout_set", "layout_reset", "display_name_set", "profile_set", "record_attach", "record_title_set",
+                       "collected_post_decide"}
         for op, row in cards.items():
             with self.subTest(op=op):
                 self.assertEqual(row["kind"], "write")
@@ -468,6 +471,14 @@ class ChatInjectionTests(unittest.TestCase):
         person = db.person_save(uid, "처음 별칭")
         reflection = db.source_reflection_save(uid, self.source["id"], "reaction", "처음 생각")
         db.profile_set(uid, "purpose", "처음 목적", "confirmed")
+        cdef = {"key": "collected_posts", "label": "수집 글", "semantic_kind": "collection", "policy": {},
+                "fields": [{"key": "channel", "label": "채널", "value_type": "text", "required": True},
+                           {"key": "collected_on", "label": "수집일", "value_type": "date", "required": True}]}
+        cprop = db.definition_propose(uid, None, 0, cdef)
+        db.definition_apply(uid, cprop["object_id"], cprop["proposal_id"], 0)
+        cpost = db.item_propose(uid, cprop["object_id"], 1, None, 0, None, "수집 제목 줄", "", {"channel": "web", "collected_on": "2026-11-12"}, [])
+        db.item_decide(uid, cpost["item_id"], 0, cpost["proposal_id"], "apply")
+        cid = cpost["item_id"]
         me = lambda: db.layout_get(uid)
         rev = lambda: db.record_get(uid, rid)["revision"]
         page = lambda: me()["layout"]["pages"]["me"]
@@ -509,6 +520,8 @@ class ChatInjectionTests(unittest.TestCase):
              lambda: db.source_reflection_save(uid, self.source["id"], "reaction", "사람 생각", reflection["id"],
                                                db.source_reflection_get(uid, reflection["id"])["revision"]),
              "본문", "처음 생각", "본문", "카드 생각"),
+            ("collected_post_decide", "collected_post_decide", lambda: {"item_id": cid, "state": "kept"},
+             lambda: imports.collected_decide(uid, cid, "dropped"), "판별", "인박스", "판별", "보관"),
         ]
 
     def test_overwrite_cards_show_current_state_and_go_stale_when_it_changes(self):
@@ -716,7 +729,7 @@ class ChatInjectionTests(unittest.TestCase):
         block = re.search(r"export const OP_NAME: Record<string, string> = \{(.*?)\};", text_ts, re.S)
         self.assertIsNotNone(block)
         ui_ops = set(re.findall(r"(?:^|[\s,{])([a-z_]+):\s*\"", block.group(1)))
-        self.assertEqual(len(webchat.CHAT_CARD_OPS), 35)
+        self.assertEqual(len(webchat.CHAT_CARD_OPS), 36)
         self.assertEqual(ui_ops, set(webchat.CHAT_CARD_OPS))
         self.assertEqual(agent_ops, set(webchat.CHAT_CARD_OPS))
 

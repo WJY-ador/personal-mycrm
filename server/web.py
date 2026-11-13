@@ -2297,6 +2297,27 @@ class Web:
         iid = request.path_params["iid"]
         return await self._core_write(request, "inbox_exclude", {}, lambda uid, b: imports.inbox_exclude(uid, iid))
 
+    # ── 수집 인박스 (2026-11-13 오늘 탭) — 읽기 = 세션 → imports.collected_list · 쓰기 = _core_write → imports.collected_decide·collected_drop.
+    # 판별 정본은 서버(state pending → kept|dropped, 되돌리기 = pending). 대화 collected_post_decide 와 같은 함수(via 만 다르다).
+    async def api_collected(self, request):
+        """GET ?state=pending|kept — 수집 인박스(pending)·보관함(kept). {ready, posts, counts: {pending, kept}}."""
+        state = request.query_params.get("state", "pending")
+        return await self._core_read(request, lambda uid: imports.collected_list(uid, state))
+
+    async def api_collected_decide(self, request):
+        """POST /api/collected/{id}/decide {state: kept|dropped|pending, expected_revision} — 판별 하나(항목 revision +1)."""
+        iid = request.path_params["iid"]
+        return await self._core_write(request, "collected_decide", {"state": ((str,), True), "expected_revision": ((int,), True)},
+                                      lambda uid, b: imports.collected_decide(uid, iid, b["state"], b["expected_revision"], via="web"))
+
+    async def api_collected_drop(self, request):
+        """POST /api/collected/drop {ids: [항목 id…] 최대 200, state: "dropped"} — 묶음 버림. {dropped, skipped}."""
+        def call(uid, b):
+            if b["state"] != "dropped":
+                raise db.CrmError("ARG-INVALID", "묶음 판별은 state dropped 만 받아요.")
+            return imports.collected_drop(uid, b["ids"], via="web")
+        return await self._core_write(request, "collected_drop", {"ids": ((list,), True), "state": ((str,), True)}, call)
+
     # ── 이관 경로 (2026-11-02, notes/2026-11-02_이관경로-구현계획.md K1·가안 1) ──
     # 토큰 경로 /api/migration/plans… = Bearer 이관 토큰(mig_…)만 — 웹 쿠키·MCP·연결 장치 토큰(imp_…)은 받지 않는다(uid_of 를 부르지 않는다).
     # 웹 세션 경로 /api/migration-tokens…·/api/migrations… = 쿠키 세션만(Authorization 은 보지 않는다). 확인·체크·반영·토큰 발급은 여기서만.
@@ -3398,6 +3419,9 @@ class Web:
             Route("/api/inbox/{iid}", u("web:inbox_get", self.api_inbox_one)),
             Route("/api/inbox/{iid}/approve", u("web:inbox_approve", self.api_inbox_approve), methods=["POST"]),
             Route("/api/inbox/{iid}/exclude", u("web:inbox_exclude", self.api_inbox_exclude), methods=["POST"]),
+            Route("/api/collected", u("web:collected", self.api_collected)),
+            Route("/api/collected/drop", u("web:collected_drop", self.api_collected_drop), methods=["POST"]),   # {iid} 보다 먼저
+            Route("/api/collected/{iid}/decide", u("web:collected_decide", self.api_collected_decide), methods=["POST"]),
             Route("/api/me/aggregate", u("web:me_aggregate", self.api_me_aggregate)),
             Route("/api/me/layout", u("web:me_layout", self.api_me_layout), methods=["GET", "PUT", "DELETE"]),   # PR ①-b 쓰기 예외(이 라우트만)
             Route("/api/me/stats", u("web:me_stats", self.api_me_stats)),   # PR ①-b — 읽기만

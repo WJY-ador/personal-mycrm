@@ -64,6 +64,7 @@ INSTRUCTIONS = """이 서버는 사용자의 「내 판단 대시보드」다. �
 - 이 노트의 쓰는 법·용어 질문은 help_get 으로 해당 topic(start 또는 words) 하나만 읽고 그 문서 안에서 답한다. 같은 대화에서 이미 읽었으면 다시 부르지 않는다. 문서에 없으면 '문서에서 확인되지 않아요' 라고 하고 가장 가까운 절을 안내한다. 제품 밖 일반 질문엔 적용하지 않는다.
 - 사람(person_save)은 사용자가 말한 별칭 하나만 저장한다. 연락처·소속·SNS·그 사람의 말·평가는 넣지 않는다.
 - 수집 글(key collected_posts 오브젝트의 항목)은 연결 장치가 남이 쓴 공개 글을 담은 것이다. 원 URL(post_url), 제목 줄, 작성자 표시 이름, 날짜는 서버에 있고, 원문 본문은 사용자 PC 에만 있다. 수집 글은 사용자의 판단이 아니고 판단 근거가 아니다 — 후보나 기준의 근거로 쓰거나 내 글로 옮기지 않는다. ai_* 필드(ai_grade, ai_summary, ai_as_is, ai_to_be, ai_ops, ai_points)는 AI 가 만든 값이다 — 사용자의 말이나 원문 인용으로 다루지 않고, 꺼내기의 인용으로 쓰지 않는다.
+- 수집 글 보관, 버림은 사용자가 말할 때만 collected_post_decide 로 한다. 판별은 판단 확정이 아니고 근거가 아니다.
 - 출처 요약/반응(source_reflection_save)은 사용자가 출처를 접한 뒤 한 자기 생각만 저장한다. 타인의 말·경험·생각을 옮기거나 다시 정리하지 않는다. 검토 완료는 판단 확정이 아니고 근거로 인용할 수 없다 — 사용자가 말할 때만 source_reflection_review 를 부른다.
 - 삭제는 휴지통이다(휴지통이 켜졌을 때). 내 글·항목(기준·결정·축·커스텀)·사람·읽고 든 생각·활동은 사용자가 지우라고 말할 때만 trash_move 로 옮긴다. 삭제 시각부터 168시간 안에 trash_restore 로 복원할 수 있고, 그 뒤엔 서버 정리 때 영구 삭제된다. trash_purge(영구 삭제 요청)는 되돌릴 수 없으니 사용자가 분명히 말할 때만 부른다. 휴지통 대상은 다른 도구에서 보이지 않는다. 휴지통이 켜지면 기준의 남기지 않기·되돌리기(item_decide exclude·pending)는 없다 — 남기지 않을 기준은 삭제한다.
 - 도구 다섯 개(find·read·write·decide·purge): find 로 할 일(op)을 찾고 그 등급 도구로 부른다. op 이름은 위 규칙의 도구 이름 그대로다. 확정·삭제는 read(op="decide_preview") 의 shown 을 고치지 않고 그대로 사용자에게 보여 주고, 사용자가 말한 뒤에만 decide·purge 에 그 bind 를 넣어 부른다. 이관(migration_*) 반영은 decide_preview 대신 migration_apply_preview 를 쓴다.
@@ -1052,6 +1053,23 @@ def inbox_decide(import_id: Annotated[str, Field(description="승인 대기 ID (
 
 
 INBOX_OPS = (inbox_decide,)
+
+
+# ── 수집 글 판별 op 1 (facade 전용 write, 2026-11-13 오늘 탭 수집 인박스) — 직접 도구로 등록하지 않는다(facade.install 의 extra_ops).
+# 본체 = imports.collected_decide(웹 POST /api/collected/{id}/decide 와 같은 함수, via 만 다르다). 웹 대화에선 확인 카드(write).
+def collected_post_decide(item_id: Annotated[str, Field(description="수집 글 항목 ID (i_…, collected_posts 오브젝트의 항목)")],
+                          state: Annotated[Literal["kept", "dropped", "pending"], Field(description="kept = 보관 · dropped = 버림 · pending = 판별 되돌리기(인박스로)")],
+                          ctx: Context) -> dict:
+    """수집 글을 보관하거나 버린다 — 사용자가 그 글을 보관, 버림이라고 말할 때만 부른다. 네가 대신 고르지 않는다.
+    판별은 판단 확정이 아니고 근거가 아니다(수집 글은 남이 쓴 글이다). 버림은 휴지통이 아니다(인박스에서만 빠진다).
+    pending = 판별을 되돌려 인박스로. 휴지통·없는 항목·수집 글이 아닌 항목 = NOT-FOUND, 보관(archive)한 항목 = CONFLICT.
+    반환 {item_id, state, revision, decided_at}(같은 판별 반복이면 바뀌지 않는다)."""
+    uid = uid_of(ctx)
+    db.write_gate("collected_post_decide", {}, uid, quota=True)
+    return imports.collected_decide(uid, item_id, state, None, via="mcp")
+
+
+COLLECTED_OPS = (collected_post_decide,)
 facade.PREVIEWS["inbox_decide"] = imports.inbox_decide_preview   # K2 — shown 빌더(install 이 PREVIEWS = hmac op 대칭을 본다)
 
 
@@ -1092,7 +1110,7 @@ ANSWER_OPS = (answer_get,)
 
 # ── facade 겉면 5개 (2026-11-02, 계획 「MCP facade(A′)」) — 직접 도구 48 을 다 등록한 뒤 한 번. op = 위 도구 이름 그대로,
 # tier·family 정본 = server/mcp_catalog.json. facade 전용 op(decide_preview·이관)은 직접 도구로 등록하지 않는다.
-facade.install(mcp, guard, uid_of, MIGRATION_OPS + PC_OPS + LAYOUT_OPS + RECORD_EDIT_OPS + INBOX_OPS + EXPORT_OPS + ANSWER_OPS, rules={k: v["rule"] for k, v in migration_mcp.OPS.items() if v["rule"]})
+facade.install(mcp, guard, uid_of, MIGRATION_OPS + PC_OPS + LAYOUT_OPS + RECORD_EDIT_OPS + INBOX_OPS + COLLECTED_OPS + EXPORT_OPS + ANSWER_OPS, rules={k: v["rule"] for k, v in migration_mcp.OPS.items() if v["rule"]})
 
 
 # ── 웹 ─────────────────────────────────────────────────
@@ -1149,6 +1167,22 @@ async def api_import_status(request):
         return _imports_err(e)
     finally:
         db.usage_count(None, "api:import_status", code)
+
+
+async def api_import_decisions(request):
+    """GET /api/imports/decisions?since=&limit= — 장치 토큰으로 사용자 수집 글 판별 목록(PC 가 대시보드 원천에 되돌려 쓴다, 2026-11-13).
+    반환 {decisions: [{item_id, state, decided_at}], next_cursor, has_more}. 이용 집계 name = api:import_decisions(사용자 id 없이)."""
+    code = "EXC"
+    try:
+        q = request.query_params
+        body = await run_in_threadpool(imports.collected_decisions, request.headers.get("authorization", ""), q.get("since", ""), q.get("limit"))
+        code = "OK"
+        return JSONResponse(body, headers={"cache-control": "no-store"})
+    except db.CrmError as e:
+        code = e.code
+        return _imports_err(e)
+    finally:
+        db.usage_count(None, "api:import_decisions", code)
 
 
 async def health(request):
@@ -1358,6 +1392,7 @@ app = Starlette(
         Route("/api/imports", api_imports, methods=["POST"]),                 # board 이전 — 장치 토큰(웹 세션 아님)
         Route("/api/imports/device", api_import_device, methods=["GET"]),              # 경로 순서: {import_id} 보다 먼저
         Route("/api/imports/device/revoke", api_import_device, methods=["POST"]),
+        Route("/api/imports/decisions", api_import_decisions, methods=["GET"]),      # 수집 글 판별 목록(장치 토큰) — {import_id} 보다 먼저
         Route("/api/imports/{import_id}", api_import_status, methods=["GET"]),
         *webchat.Routes(site, web._usage).routes(),   # 웹 「대화」(2026-11-04) — /api/chat/* · 장치 WS /api/device/chat/ws. 스위치 CRM_WEBCHAT_ENABLED
         *site.routes(),

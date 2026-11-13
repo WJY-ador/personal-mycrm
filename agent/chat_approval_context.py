@@ -19,7 +19,7 @@ _APPROVABLE_OPS = frozenset({
     "token_revoke", "trash_purge",
     "layout_set", "layout_reset", "display_name_set", "question_add", "profile_set",
     "record_add", "record_attach", "record_title_set", "candidates_propose", "definition_propose",
-    "item_propose", "person_save", "source_create", "source_reflection_save",
+    "item_propose", "person_save", "source_create", "source_reflection_save", "collected_post_decide",
 })
 # Only a confirmed write card may carry `created` ({key: id}, at most 2 keys). Values must match the
 # server generators listed in server/webchat.py _CREATED_ID_RE: db.new_id = prefix_ + 11 urlsafe chars,

@@ -59,7 +59,12 @@ SESSION_WRAP_PATH_MASK = "‹경로›"
 # 장치가 덮는 필드 키(DEVICE_FIELDS)만 쓴다. 사용자가 지웠거나 꼴이 다른 필드는 건너뛰고, 필수 둘(COLLECTED_REQUIRED)이 없으면 OBJECT-MISSING.
 COLLECTED_OBJECT_KEY = "collected_posts"
 COLLECTED_CHANNELS = ("linkedin", "reddit", "kakao", "threads", "blog", "web")
-COLLECTED_STATES = ("pending", "kept", "removed")          # removed = 서버가 그 항목을 휴지통으로 보낸다(S7)
+COLLECTED_STATES = ("pending", "kept", "dropped", "removed")   # removed = 서버가 그 항목을 휴지통으로 보낸다(S7). dropped = 버림(휴지통 아님, 2026-11-13)
+COLLECTED_DECIDE_STATES = ("pending", "kept", "dropped")       # 사용자 판별(웹·대화). pending = 판별 되돌리기(인박스로)
+COLLECTED_LOCK_STATES = ("kept", "dropped")                    # 사용자가 이 둘로 판별한 항목 = 장치 개정이 덮지 않는다(noop)
+COLLECTED_BULK_MAX = 200     # 웹 묶음 버림 한 번에
+COLLECTED_LIST_MAX = 1000    # 웹 인박스·보관함 한 번에(수집일 최근 먼저)
+DECISIONS_PAGE_MAX = 200     # 장치 판별 목록 한 쪽
 COLLECTED_GRADES = ("signal", "news", "noise")
 COLLECTED_AI_TEXT = {"summary": 500, "as_is": 1000, "to_be": 1000, "ops": 1000}
 COLLECTED_AI_POINTS, COLLECTED_AI_POINT_CP = 12, 300
@@ -1058,6 +1063,9 @@ def _apply_collected(c, dev, req, latest, current, req_sha, proj_sha, nbytes):
     if latest:
         c.execute("UPDATE import_entries SET is_latest_received=false WHERE user_id=%s AND id=%s", (uid, latest["id"]))
     item_id = current["target_item_id"] if current else None
+    if item_id and _user_locked(_cs_row(c, uid, item_id)):   # 사용자가 판별(보관·버림)한 항목 — 장치 개정(removed 포함)이 덮지 않는다
+        c.execute("UPDATE import_entries SET is_current_applied=false WHERE user_id=%s AND id=%s", (uid, current["id"]))
+        return _insert_entry(c, dev, req, latest, req_sha, proj_sha, "noop", True, item_id=item_id), False
     if req["state"] == "removed":
         if not item_id:
             return _insert_entry(c, dev, req, latest, req_sha, proj_sha, "excluded", False), False
@@ -1067,14 +1075,162 @@ def _apply_collected(c, dev, req, latest, current, req_sha, proj_sha, nbytes):
     if current:
         c.execute("UPDATE import_entries SET is_current_applied=false WHERE user_id=%s AND id=%s", (uid, current["id"]))
         archived = _one(c, "SELECT archived_at IS NOT NULL AS a FROM items WHERE user_id=%s AND id=%s", (uid, item_id))["a"]
-        if bytes(current["projection_sha256"]) == proj_sha or archived:   # 같은 내용 · 사용자가 보관한 항목 = 쓰지 않는다
+        if bytes(current["projection_sha256"]) == proj_sha or archived:   # 같은 내용 · 사용자가 보관(archive)한 항목 = 쓰지 않는다
+            if not archived:   # 같은 내용 재전송도 장치 state 는 적는다(판별 표가 생기기 전에 올라온 항목을 채운다)
+                _cs_device(c, uid, item_id, req["state"])
             return _insert_entry(c, dev, req, latest, req_sha, proj_sha, "noop", True, item_id=item_id), False
     od, byk = _collected_target(c, uid)
     values = _collected_values(req, byk)
     axes_links = _collected_axes(c, uid, req, byk)
     with db.device_ingest_mode():
         item_id = _collected_write(c, uid, od, req, values, axes_links, item_id)
+    _cs_device(c, uid, item_id, req["state"])
     return _insert_entry(c, dev, req, latest, req_sha, proj_sha, "applied", True, item_id=item_id), False
+
+
+# ── 수집 글 판별 (2026-11-13 오늘 탭 수집 인박스, notes 명세 2절) ─────────────────────
+# state 정본 = collected_states 표(행 없음 = pending). 장치가 보낸 state 는 decided_by device, 사용자 판별(웹·대화)은 decided_by user.
+# 사용자가 kept·dropped 로 판별한 항목은 장치 개정이 덮지 않는다(_apply_collected noop). 사용자 pending(되돌리기)은 다시 장치 state 를 따른다.
+# 사용자 판별 = 항목 이력 한 줄(action collected_decide) + revision +1 + 표 갱신(seq 새 번호). 판별은 판단 확정이 아니고 근거가 아니다.
+# 장치 판별 목록(collected_decisions)은 사용자 판별만, 그 장치가 올린 항목만 seq 순으로 준다 — PC 가 대시보드 원천 파일에 되돌려 쓴다.
+
+def _cs_row(c, uid, item_id):
+    return _one(c, "SELECT state, decided_by, decided_at, seq FROM collected_states WHERE user_id=%s AND item_id=%s", (uid, item_id))
+
+
+def _user_locked(cs) -> bool:
+    return bool(cs) and cs["decided_by"] == "user" and cs["state"] in COLLECTED_LOCK_STATES
+
+
+def _cs_device(c, uid, item_id, state):
+    """장치가 보낸 state 를 적는다(removed 는 휴지통 경로라 여기 오지 않는다). 같은 장치 state 면 그대로 둔다(decided_at 유지)."""
+    c.execute("INSERT INTO collected_states (user_id,item_id,state,decided_by,decided_at) VALUES (%s,%s,%s,'device',now()) "
+              "ON CONFLICT (user_id,item_id) DO UPDATE SET state=EXCLUDED.state, decided_by='device', decided_at=now(), seq=NULL "
+              "WHERE collected_states.state <> EXCLUDED.state OR collected_states.decided_by <> 'device'", (uid, item_id, state))
+
+
+def _collected_obj(c, uid):
+    return _one(c, "SELECT id FROM object_defs WHERE user_id=%s AND key=%s AND revision > 0 AND archived_at IS NULL",
+                (uid, COLLECTED_OBJECT_KEY))
+
+
+def _decide_in(c, uid, item_id, state, expected_revision, via):
+    """판별 하나(사용자 잠금 안) → (결과, 바뀌었나). 남의·없는·휴지통·수집 글 아닌 항목 = NOT-FOUND, 보관(archive)한 항목 = CONFLICT."""
+    od = _collected_obj(c, uid)
+    r = od and _one(c, f"SELECT {db._ITEM_COLS},trashed_at FROM items WHERE user_id=%s AND id=%s AND object_id=%s AND revision > 0 "
+                       "FOR UPDATE", (uid, str(item_id or ""), od["id"]))
+    if not r or r.pop("trashed_at") is not None:
+        raise _nf("그 수집 글")
+    if r["archived_at"] is not None:
+        raise CrmError("CONFLICT", "보관(archive)한 항목이라 판별할 수 없어요.", "항목을 복원한 뒤 다시 하세요.")
+    if expected_revision is not None and r["revision"] != expected_revision:
+        raise db._conflict(f"지금 revision {r['revision']}")
+    cs = _cs_row(c, uid, r["id"])
+    cur = cs["state"] if cs else "pending"
+    if cur == state and (state == "pending" or cs["decided_by"] == "user"):   # 같은 판별 반복 = no-op(이력·revision 그대로)
+        return {"item_id": r["id"], "state": state, "revision": r["revision"], "decided_at": _j(cs["decided_at"]) if cs else None}, False
+    snap = db._item_state(r, db._links_by_item(c, uid, [r["id"]]).get(r["id"], []))
+    c.execute("INSERT INTO item_history (user_id,item_id,action,prev_revision,prev_state,event_meta) VALUES (%s,%s,'collected_decide',%s,%s,%s)",
+              (uid, r["id"], r["revision"], Jsonb(snap), Jsonb({"state": state, "prev": cur, "decided_by": "user", "via": via})))
+    c.execute("UPDATE items SET revision=revision+1, updated_at=now() WHERE user_id=%s AND id=%s", (uid, r["id"]))
+    d = _one(c, "INSERT INTO collected_states (user_id,item_id,state,decided_by,decided_at,seq) "
+                "VALUES (%s,%s,%s,'user',now(),nextval('collected_state_seq')) ON CONFLICT (user_id,item_id) DO UPDATE SET "
+                "state=EXCLUDED.state, decided_by='user', decided_at=EXCLUDED.decided_at, seq=EXCLUDED.seq RETURNING decided_at",
+             (uid, r["id"], state))
+    return {"item_id": r["id"], "state": state, "revision": r["revision"] + 1, "decided_at": _j(d["decided_at"])}, True
+
+
+def collected_decide(uid: str, item_id: str, state: str, expected_revision=None, via: str = "web") -> dict:
+    """수집 글 판별 하나 — 웹 POST /api/collected/{id}/decide(expected_revision 필수) · 대화 collected_post_decide(via mcp).
+    state ∈ pending|kept|dropped. 반환 {item_id, state, revision, decided_at}(같은 판별 반복이면 revision 그대로)."""
+    if state not in COLLECTED_DECIDE_STATES:
+        raise CrmError("ARG-INVALID", f"state 는 {', '.join(COLLECTED_DECIDE_STATES)} 중 하나예요.")
+    if expected_revision is not None and (not _is_int(expected_revision) or expected_revision < 0):
+        raise CrmError("ARG-INVALID", "expected_revision 은 0 이상 정수예요.")
+    with tx() as c:
+        db._user_lock(c, uid)
+        return _decide_in(c, uid, item_id, state, expected_revision, via)[0]
+
+
+def collected_drop(uid: str, ids, via: str = "web") -> dict:
+    """묶음 버림(웹 「전부 버림」) — ids 최대 COLLECTED_BULK_MAX, 한 트랜잭션. 판별할 수 없거나 이미 버린 글은 skipped.
+    반환 {dropped: [id…], skipped: [id…]}(보낸 순서, 중복 id 는 한 번)."""
+    if not isinstance(ids, list) or not ids or len(ids) > COLLECTED_BULK_MAX or \
+            any(not isinstance(x, str) or not _ITEM_ID_RE.match(x) for x in ids):
+        raise CrmError("ARG-INVALID", f"ids 는 항목 id(i_…) 1~{COLLECTED_BULK_MAX}개 목록이에요.")
+    dropped, skipped = [], []
+    with tx() as c:
+        db._user_lock(c, uid)
+        for iid in dict.fromkeys(ids):
+            try:
+                with c.transaction():
+                    changed = _decide_in(c, uid, iid, "dropped", None, via)[1]
+            except CrmError:
+                changed = False
+            (dropped if changed else skipped).append(iid)
+    return {"dropped": dropped, "skipped": skipped}
+
+
+def _str_or_none(v):
+    return v if isinstance(v, str) and v else None
+
+
+def _post_out(r, axes):
+    d = r["data"] or {}
+    g = lambda k: _str_or_none(d.get(k))   # noqa: E731 — 사용자가 필드 꼴을 바꿨으면(글자 아님) 비운다
+    pts = d.get("ai_points")
+    pts = [x for x in pts if isinstance(x, str) and x] if isinstance(pts, list) else [pts] if _str_or_none(pts) else None
+    url = g("post_url")
+    return {"id": r["id"], "revision": r["revision"], "title": r["title"], "channel": g("channel"), "author_display": g("author_display"),
+            "post_url": url if url and url.startswith("https://") else None, "posted_on": g("posted_on"), "collected_on": g("collected_on"),
+            "axes": axes, "ai": {"grade": g("ai_grade"), "summary": g("ai_summary"), "as_is": g("ai_as_is"), "to_be": g("ai_to_be"),
+                                 "ops": g("ai_ops"), "points": pts},
+            "state": r["state"], "decided_by": r["decided_by"], "decided_at": _j(r["decided_at"])}
+
+
+def collected_list(uid: str, state: str = "pending") -> dict:
+    """웹 수집 인박스(pending)·보관함(kept) — {ready, posts: [글…](수집일 최근 먼저, 같으면 id), counts: {pending, kept}}.
+    ready = 담을 오브젝트(collected_posts)가 있다. 휴지통·보관(archive)한 항목은 빼고, 판별 표에 행이 없으면 pending."""
+    if state not in ("pending", "kept"):
+        raise CrmError("ARG-INVALID", "state 는 pending, kept 중 하나예요.")
+    with tx() as c:
+        od = _collected_obj(c, uid)
+        if not od:
+            return {"ready": False, "posts": [], "counts": {"pending": 0, "kept": 0}}
+        base = ("FROM items i LEFT JOIN collected_states s ON s.user_id=i.user_id AND s.item_id=i.id WHERE i.user_id=%s AND i.object_id=%s "
+                "AND i.revision > 0 AND i.archived_at IS NULL AND i.trashed_at IS NULL")
+        n = {r["st"]: r["n"] for r in _all(c, f"SELECT COALESCE(s.state,'pending') AS st, count(*) AS n {base} GROUP BY 1", (uid, od["id"]))}
+        rows = _all(c, f"SELECT i.id,i.revision,i.title,i.data,COALESCE(s.state,'pending') AS state,s.decided_by,s.decided_at {base} "
+                       "AND COALESCE(s.state,'pending')=%s ORDER BY i.data->>'collected_on' DESC NULLS LAST, i.id LIMIT %s",
+                    (uid, od["id"], state, COLLECTED_LIST_MAX))
+        ax = {}
+        for a in _all(c, "SELECT l.source_item_id AS sid, t.id, t.title FROM item_links l JOIN items t ON t.user_id=l.user_id "
+                         "AND t.id=l.target_item_id WHERE l.user_id=%s AND l.field_key=%s AND l.source_item_id = ANY(%s) "
+                         "AND t.trashed_at IS NULL ORDER BY l.id", (uid, COLLECTED_AXES_FIELD, [r["id"] for r in rows])):
+            ax.setdefault(a["sid"], []).append({"id": a["id"], "title": a["title"]})
+    return {"ready": True, "posts": [_post_out(r, ax.get(r["id"], [])) for r in rows],
+            "counts": {"pending": n.get("pending", 0), "kept": n.get("kept", 0)}}
+
+
+def collected_decisions(authorization: str, since: str = "", limit=None) -> dict:
+    """GET /api/imports/decisions — 장치 토큰으로 사용자 판별 목록(PC 되돌려 쓰기용). 이 장치가 올린 적 있는 항목만, 휴지통 항목 제외,
+    seq 오름차순. 반환 {decisions: [{item_id, state, decided_at}], next_cursor(불투명 문자열), has_more}. since 생략 = 처음부터."""
+    dev = authenticate(authorization)
+    _rate(dev)
+    since = str(since or "")
+    if since and (not since.isdigit() or len(since) > 18):
+        raise CrmError("ARG-INVALID", "since 는 이전 응답의 next_cursor 그대로예요.")
+    lim = DECISIONS_PAGE_MAX if limit in (None, "") else int(limit) if str(limit).isdigit() else 0
+    if not 1 <= lim <= DECISIONS_PAGE_MAX:
+        raise CrmError("ARG-INVALID", f"limit 은 1~{DECISIONS_PAGE_MAX} 이에요.")
+    with tx() as c:
+        rows = _all(c, "SELECT s.item_id, s.state, s.decided_at, s.seq FROM collected_states s JOIN items i ON i.user_id=s.user_id "
+                       "AND i.id=s.item_id WHERE s.user_id=%s AND s.decided_by='user' AND s.seq > %s AND i.trashed_at IS NULL "
+                       "AND EXISTS (SELECT 1 FROM import_entries e WHERE e.user_id=s.user_id AND e.stream_id=%s AND e.target_item_id=s.item_id) "
+                       "ORDER BY s.seq LIMIT %s", (dev["user_id"], int(since or 0), dev["id"], lim + 1))
+    more, rows = len(rows) > lim, rows[:lim]
+    return {"decisions": [{"item_id": r["item_id"], "state": r["state"], "decided_at": _j(r["decided_at"])} for r in rows],
+            "next_cursor": str(rows[-1]["seq"]) if rows else since, "has_more": more}
 
 
 def _receive_self(c, dev, req, latest, current, req_sha, proj_sha):

@@ -1,0 +1,25 @@
+{
+ "list": {
+  "ready": true,
+  "posts": [
+   {
+    "id": "i_sample1",
+    "revision": 1,
+    "title": "견본 수집 글 첫 줄",
+    "channel": "linkedin",
+    "author_display": "견본 작성자",
+    "post_url": "https://www.linkedin.com/posts/sample-1",
+    "posted_on": "2026-11-10",
+    "collected_on": "2026-11-12",
+    "axes": [{"id": "i_axis1", "title": "견본 축"}],
+    "ai": {"grade": "signal", "summary": "견본 AI 요약", "as_is": "견본 지금", "to_be": "견본 다음", "ops": null, "points": ["견본 요점"]},
+    "state": "pending",
+    "decided_by": null,
+    "decided_at": null
+   }
+  ],
+  "counts": {"pending": 1, "kept": 0}
+ },
+ "decided": {"item_id": "i_sample1", "state": "kept", "revision": 2, "decided_at": "2026-11-13T10:00:00.000000+09:00"},
+ "dropped": {"dropped": ["i_sample1"], "skipped": []}
+}

@@ -156,6 +156,7 @@ _WRITE_LABELS = {
     "source_create": {"kind": "종류", "name": "이름", "location": "위치"},
     "source_reflection_save": {"source_id": "출처 ID", "kind": "종류", "body": "본문", "reflection_id": "읽고 든 생각 ID",
                                "expected_revision": "판"},
+    "collected_post_decide": {"item_id": "수집 글 ID", "state": "판별"},
 }
 
 
@@ -1082,7 +1083,9 @@ def _write_shown(op, norm) -> dict:
 
 
 # 보안 검토 2(2026-11-12): record_add 카드의 출처 값은 영어 코드 대신 사람 말로 보인다. 표에 없는 값은 그대로.
+_COLLECTED_STATE_LABELS = {"kept": "보관", "dropped": "버림", "pending": "인박스로 되돌림"}
 _WRITE_VALUES = {
+    "collected_post_decide": {"state": _COLLECTED_STATE_LABELS},
     "record_add": {
         "decision_owner": {"self": "판단 근거로 쓰는 내 정리(결정은 내가 했어요)"},
         "text_process": {"structured": "AI가 정리한 글", "verbatim": "내가 쓴 글 그대로"},
@@ -1166,6 +1169,20 @@ def _cur_record_title(c, uid, n):
     return {"기록 제목": r["title"], "기록 판": r["revision"]}
 
 
+def _cur_collected(c, uid, n):
+    """collected_post_decide — collected_states 의 그 항목 state 를 덮는다(imports.collected_decide, 항목 이력 한 줄·revision +1).
+    행이 없으면 인박스(pending). 수집 글이 아닌 항목·없는 항목 = 대상 없음."""
+    r = _one(c, "SELECT i.title, i.revision, i.trashed_at, s.state FROM items i JOIN object_defs o ON o.user_id=i.user_id AND o.id=i.object_id "
+                "LEFT JOIN collected_states s ON s.user_id=i.user_id AND s.item_id=i.id "
+                "WHERE i.user_id=%s AND i.id=%s AND o.key='collected_posts' AND i.revision > 0 FOR UPDATE OF i", (uid, n.get("item_id")))
+    if not r:
+        return _TARGET_MISSING
+    if r["trashed_at"] is not None:
+        return _TARGET_TRASHED
+    state = r["state"] or "pending"
+    return {"제목 줄": r["title"], "판별": "인박스" if state == "pending" else _COLLECTED_STATE_LABELS[state], "항목 판": r["revision"]}
+
+
 def _cur_definition(c, uid, n):
     """definition_propose — object_defs.draft_doc 을 덮는다(새 제안이 이전 제안을 덮는다). object_id 가 없어도 같은 key 의
     미적용 행이 있으면 그 행의 제안을 덮는다(db.definition_propose). 그 행이 없으면 새로 만들기."""
@@ -1231,7 +1248,7 @@ _WRITE_CURRENT = {
     "layout_set": _cur_layout, "layout_reset": _cur_layout, "display_name_set": _cur_display_name,
     "profile_set": _cur_profile, "record_attach": _cur_record_attach, "record_title_set": _cur_record_title,
     "definition_propose": _cur_definition, "item_propose": _cur_item, "person_save": _cur_person,
-    "source_reflection_save": _cur_reflection,
+    "source_reflection_save": _cur_reflection, "collected_post_decide": _cur_collected,
 }
 
 

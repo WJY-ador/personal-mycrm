@@ -169,8 +169,10 @@ async def test_catalog():
         "record_edit": ("record", "decide", "hmac"), "record_title_set": ("record", "write", None)}
     # 승인 대기 확정(2026-11-04) = facade 전용 1(저장 승인 대기 family, D hmac)
     assert (facade.OPS["inbox_decide"].family, facade.OPS["inbox_decide"].tier, facade.OPS["inbox_decide"].bind) == ("inbox", "decide", "hmac")
+    # 수집 글 판별(2026-11-13) = facade 전용 1(저장 승인 대기 family, W — 웹 대화에선 확인 카드)
+    assert (facade.OPS["collected_post_decide"].family, facade.OPS["collected_post_decide"].tier, facade.OPS["collected_post_decide"].bind) == ("inbox", "write", None)
     assert {o for o, x in facade.OPS.items() if not x.direct} == {"decide_preview"} | (mig - {"migration_receipt_get"}) | pc | LAYOUT_OPS | EDIT_OPS \
-        | {"inbox_decide", "export_get", "answer_get"}
+        | {"inbox_decide", "collected_post_decide", "export_get", "answer_get"}
     # 겉면 enum = tier 분할(겹침·빠짐 없음)
     enums = {t: tools[t].input_schema["properties"]["op"]["enum"] for t in facade.TIERS}
     allops = [o for t in facade.TIERS for o in enums[t]]
