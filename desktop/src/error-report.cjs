@@ -1,28 +1,25 @@
 'use strict';
 // Automatic error report from the app (spec 2026-11-13 §1.4): a failure the person sees becomes a Case for the operator.
-// Body: {source:'desktop', stage, code, http_status?, exit_code?, app_version, os: mac|win|linux, occurred_at}.
-// Stage and code come from fixed lists and patterns only — never an error's text, a path, URL, token or record content.
-// The server bundles the same (user, source, stage, code) per KST day and counts; the app only spaces repeats.
-// One send, no retry, a failed report is never reported. Without a session (401) the report is dropped.
-// No Electron here: request() and the clock are injected.
-const {ERROR_REPORT_PATH} = require('./desktop-contract.cjs');
+// Contract (desktop-contract.cjs): POST /desktop/error-reports with the login session, body
+// {source: app|agent, stage, code, app_version, os: mac|win|other, occurred_at, count}. Stage comes from the fixed list
+// below; a code that does not match CODE becomes 'unknown' — never an error's text, a path, URL, token or record content.
+// The server bundles the same (user, source, stage, code) per KST day; the app only spaces repeats in one run.
+// A network failure or 5xx is sent once more; a failed report is never reported. No Electron here.
+const {ERROR_REPORT_PATH, CODE, STAGE} = require('./desktop-contract.cjs');
 
 const STAGES = Object.freeze(['sync/run-once', 'sync/connect', 'connect/auto', 'update/error', 'ai/status', 'ai/connect',
-  'agent/chat', 'agent/viewer', 'agent/jobs', 'app/command']);
-const CODE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/;
+  'agent/chat', 'agent/viewer', 'agent/jobs', 'app/start']);
 const REPEAT_MS = 10 * 60 * 1000;   // the same stage and code is sent at most once per 10 minutes from this app run
 
-function osKind(platform) { return platform === 'darwin' ? 'mac' : platform === 'win32' ? 'win' : 'linux'; }
-const smallInt = v => Number.isInteger(v) && v >= -255 && v <= 999;
+function osKind(platform) { return platform === 'darwin' ? 'mac' : platform === 'win32' ? 'win' : 'other'; }
 
-// The report body, or null when the stage or code is not one of the fixed forms (then nothing is sent).
-function buildReport(stage, code, {status, exit} = {}, {version, platform, now}) {
-  if (!STAGES.includes(stage) || typeof code !== 'string' || !CODE.test(code)) return null;
-  const body = {source: 'desktop', stage, code, app_version: String(version || ''), os: osKind(platform),
-    occurred_at: new Date(now()).toISOString().replace(/\.\d{3}Z$/, 'Z')};
-  if (smallInt(status)) body.http_status = status;
-  if (smallInt(exit)) body.exit_code = exit;
-  return body;
+// The report body, or null when the stage is not one of the fixed stages (then nothing is sent).
+// source 'agent' is for what the agent could not report itself (its device token was refused).
+function buildReport(stage, code, {source = 'app'} = {}, {version, platform, now}) {
+  if (!STAGES.includes(stage) || !STAGE.test(stage) || !['app', 'agent'].includes(source)) return null;
+  return {source, stage, code: typeof code === 'string' && CODE.test(code) ? code : 'unknown',
+    app_version: String(version || ''), os: osKind(platform),
+    occurred_at: new Date(now()).toISOString().replace(/\.\d{3}Z$/, 'Z'), count: 1};
 }
 
 // deps: request(method, url, body, headers) -> {status}   main: net.request with the dashboard session
@@ -33,15 +30,18 @@ function createReporter({request, hosted, version, platform = process.platform, 
   async function report(stage, code, extra = {}) {
     const body = buildReport(stage, code, extra, {version, platform, now});
     if (!body) { log('report', 'invalid'); return false; }
-    const key = stage + '|' + code, t = now();
+    const key = body.source + '|' + stage + '|' + body.code, t = now();
     if (last.has(key) && t - last.get(key) < repeatMs) return false;
     last.set(key, t);
-    try {
-      const res = await request('POST', url, body, {'Origin': origin, 'Content-Type': 'application/json'});
-      const ok = !!res && res.status >= 200 && res.status < 300;
-      log('report', ok ? 'sent' : 'dropped', res?.status);
-      return ok;
-    } catch { log('report', 'dropped'); return false; }
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let res = null;
+      try { res = await request('POST', url, body, {'Origin': origin, 'Content-Type': 'application/json'}); } catch {}
+      const status = res?.status || 0;
+      if (status >= 200 && status < 300) { log('report', res.body?.accepted === false ? 'not-accepted' : 'sent', status); return true; }
+      if (status >= 400 && status < 500) { log('report', 'refused', status); return false; }
+    }
+    log('report', 'dropped');
+    return false;
   }
   return Object.freeze({report});
 }

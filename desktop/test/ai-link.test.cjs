@@ -1,96 +1,118 @@
 'use strict';
-// AI connection in the app (spec 2026-11-13 §1.3) and the "이 PC" line (§1.1), with a fake sidecar run().
+// AI connection in the app (spec 2026-11-13 §1.3, contract ai:get) and the "이 PC" line (§1.1, contract pc:get),
+// with a fake sidecar run().
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
-const {createAiLink,parseStates,STATES,CONNECT_TIMEOUT_MS}=require('../src/ai-link.cjs');
+const {createAiLink,parseLinks,STATES,CONNECT_TIMEOUT_MS}=require('../src/ai-link.cjs');
 const {createPcState,parseLast}=require('../src/pc-state.cjs');
 
-test('only provider names and state words survive the sidecar line',()=>{
-  assert.deepEqual(parseStates('{"ai":{"claude":"ready","codex":"missing"}}'),{claude:'ready',codex:'missing'});
-  assert.deepEqual(parseStates('{"ai":{"claude":"ready","email":"x@example.invalid","codex":"weird"}}'),{claude:'ready'});
-  for(const line of ['','not json','{"ai":[]}','{"ai":{"claude":"logged in"}}',null])assert.equal(parseStates(line),null);
-  assert.deepEqual([...STATES],['ready','signed-out','missing','off','unsupported','error']);
+const line=links=>({code:0,last:JSON.stringify({ai:links})});
+const L=(state,code=null)=>({state,code});
+
+test('only provider names, state words and well-formed codes survive the sidecar line',()=>{
+  assert.deepEqual(parseLinks('{"ai":{"claude":{"state":"linked","code":null},"codex":{"state":"missing","code":"untrusted-cli"}}}'),
+    {claude:L('linked'),codex:L('missing','untrusted-cli')});
+  assert.deepEqual(parseLinks('{"ai":{"claude":{"state":"signed_out","code":"/Users/x","email":"x@example.invalid"},"codex":{"state":"weird"}}}'),
+    {claude:L('signed_out')});
+  for(const raw of ['','not json','{"ai":[]}','{"ai":{"claude":"linked"}}',null])assert.equal(parseLinks(raw),null);
+  assert.deepEqual([...STATES],['linked','signed_out','off','missing']);
 });
 
 function link(answers){
-  const runs=[],reports=[],logs=[];let restarts=0,changes=0,clock=0;
+  const runs=[],reports=[],logs=[],crossed=[];let notices=0,changes=0,clock=0;
   const ai=createAiLink({run:async(args,{timeoutMs})=>{runs.push([args,timeoutMs]);const a=answers.shift();if(a instanceof Error)throw a;return a;},
-    restartChat:async()=>{restarts++;},report:(...a)=>reports.push(a),log:(...a)=>logs.push(a),changed:()=>{changes++;},now:()=>clock});
-  return {ai,runs,reports,logs,restarts:()=>restarts,changes:()=>changes,tick:ms=>{clock+=ms;}};
+    notifyChat:()=>{notices++;},linkedChanged:(p,v)=>crossed.push([p,v]),report:(...a)=>reports.push(a),log:(...a)=>logs.push(a),
+    changed:()=>{changes++;},now:()=>clock});
+  const states=()=>Object.fromEntries(ai.view().providers.map(p=>[p.provider,p.state]));
+  return {ai,runs,reports,logs,crossed,states,notices:()=>notices,changes:()=>changes,tick:ms=>{clock+=ms;}};
 }
 
-test('refresh reads ai-status; a failed sidecar marks every provider as error and is reported',async()=>{
-  const h=link([{code:0,last:'{"ai":{"claude":"signed-out","codex":"missing"}}'},new Error('agent-unavailable')]);
-  assert.deepEqual((await h.ai.refresh()).providers,{claude:'signed-out',codex:'missing'});
+test('ai:get shape: checking before the first check, then the sidecar states with their codes',async()=>{
+  const h=link([line({claude:L('signed_out','unsupported-auth'),codex:L('missing')})]);
+  assert.deepEqual(h.ai.view(),{providers:[{provider:'claude',state:'checking',code:null},{provider:'codex',state:'checking',code:null}]});
+  await h.ai.refresh();
+  assert.deepEqual(h.ai.view(),{providers:[{provider:'claude',state:'signed_out',code:'unsupported-auth'},{provider:'codex',state:'missing',code:null}]});
   assert.deepEqual(h.runs[0][0],['ai-status']);
-  assert.deepEqual((await h.ai.refresh(60000)).providers,{claude:'signed-out',codex:'missing'},'a young check is reused');
-  assert.equal(h.runs.length,1);
-  h.tick(60000);
-  assert.deepEqual((await h.ai.refresh(60000)).providers,{claude:'error',codex:'error'});
+  assert.equal(h.notices(),0,'the first check after start tells chat nothing (it checked at its own start)');
+});
+
+test('refresh reuses a young check; a failed sidecar is reported and shows missing with a code',async()=>{
+  const h=link([line({claude:L('linked'),codex:L('off')}),new Error('agent-unavailable')]);
+  await h.ai.refresh();
+  await h.ai.refresh(60000);assert.equal(h.runs.length,1,'reused');
+  h.tick(60000);await h.ai.refresh(60000);
+  assert.deepEqual(h.ai.view().providers,[{provider:'claude',state:'missing',code:'status-unavailable'},{provider:'codex',state:'off',code:'status-unavailable'}]);
   assert.deepEqual(h.reports,[['ai/status','unavailable']]);
+  assert.equal(h.notices(),0,'a failed check tells chat nothing');
 });
 
-test('connect runs the provider login through the sidecar, then restarts chat when ready',async()=>{
-  const h=link([{code:0,last:'{"ai":{"claude":"ready"}}'}]);
-  const view=await h.ai.connect('claude');
-  assert.deepEqual(h.runs,[[['ai-connect','--provider','claude'],CONNECT_TIMEOUT_MS]]);
-  assert.equal(view.providers.claude,'ready');assert.equal(view.connecting,null);
-  assert.equal(h.restarts(),1);assert.deepEqual(h.reports,[]);
+test('a login or logout made outside the app is told to chat and to main (jobs) when it crosses linked',async()=>{
+  const h=link([line({claude:L('signed_out'),codex:L('missing')}),line({claude:L('linked'),codex:L('missing')}),
+    line({claude:L('linked'),codex:L('missing')}),line({claude:L('signed_out'),codex:L('missing')})]);
+  await h.ai.refresh();await h.ai.refresh();
+  assert.equal(h.notices(),1);assert.deepEqual(h.crossed,[['claude',true]]);
+  await h.ai.refresh();assert.equal(h.notices(),1,'no change');
+  await h.ai.refresh();assert.equal(h.notices(),2);assert.deepEqual(h.crossed,[['claude',true],['claude',false]]);
 });
 
-test('connect: one login at a time, unknown providers refused, a failed login reported and chat untouched',async()=>{
+test('connect shows linking, runs the provider login through the sidecar, then tells chat',async()=>{
   let release;const pending=new Promise(r=>{release=r;});
   const h=link([pending]);
-  const first=h.ai.connect('claude');
-  assert.equal(h.ai.view().connecting,'claude');
-  await assert.rejects(h.ai.connect('codex'),/busy/);
+  const done=h.ai.connect('claude');
+  assert.deepEqual(h.ai.view().providers[0],{provider:'claude',state:'linking',code:null});
+  await assert.rejects(h.ai.connect('codex'),/busy/,'one login at a time');
   await assert.rejects(h.ai.connect('gemini'),/input/);
-  release({code:0,last:'{"ai":{"claude":"error"}}'});
-  assert.equal((await first).providers.claude,'error');
-  assert.equal(h.restarts(),0);assert.deepEqual(h.reports,[['ai/connect','error']]);
+  release(line({claude:L('linked')}));await done;
+  assert.deepEqual(h.runs[0],[['ai-connect','--provider','claude'],CONNECT_TIMEOUT_MS]);
+  assert.equal(h.states().claude,'linked');
+  assert.equal(h.notices(),1);assert.deepEqual(h.crossed,[['claude',true]]);assert.deepEqual(h.reports,[]);
+});
+
+test('a login that did not finish is reported with its code; a failed sidecar too',async()=>{
+  const h=link([line({claude:L('signed_out','login-unfinished')})]);
+  await h.ai.connect('claude');
+  assert.deepEqual(h.reports,[['ai/connect','login-unfinished']]);
   const g=link([{code:1,last:'설정 오류: /Users/someone'}]);
-  assert.equal((await g.ai.connect('claude')).providers.claude,'error');
+  await g.ai.connect('claude');
+  assert.deepEqual(g.ai.view().providers[0],{provider:'claude',state:'missing',code:'connect-unavailable'});
   assert.deepEqual(g.reports,[['ai/connect','unavailable']]);
 });
 
-test('disconnect sets the local mark and restarts chat; signed-out stays signed-out (no login started)',async()=>{
-  const h=link([{code:0,last:'{"ai":{"claude":"off"}}'},{code:0,last:'{"ai":{"claude":"signed-out"}}'}]);
-  assert.equal((await h.ai.disconnect('claude')).providers.claude,'off');
-  assert.deepEqual(h.runs[0][0],['ai-disconnect','--provider','claude']);
-  assert.equal(h.restarts(),1);
-  assert.equal((await h.ai.connect('claude')).providers.claude,'signed-out');
-  assert.equal(h.restarts(),1,'not ready: no restart');
+test('disconnect sets the local mark and tells chat; a failed sidecar changes nothing',async()=>{
+  const h=link([line({claude:L('linked'),codex:L('missing')}),line({claude:L('off')}),new Error('x')]);
+  await h.ai.refresh();
+  await h.ai.disconnect('claude');
+  assert.deepEqual(h.runs[1][0],['ai-disconnect','--provider','claude']);
+  assert.equal(h.states().claude,'off');assert.equal(h.notices(),1);
+  assert.deepEqual(h.crossed,[['claude',true],['claude',false]]);
+  await h.ai.disconnect('codex');
+  assert.equal(h.states().codex,'missing');assert.deepEqual(h.reports,[['ai/connect','disconnect-unavailable']]);
 });
 
-test('a login or logout made outside the app restarts chat once the check sees it cross ready',async()=>{
-  const h=link([{code:0,last:'{"ai":{"claude":"signed-out","codex":"missing"}}'},
-    {code:0,last:'{"ai":{"claude":"ready","codex":"missing"}}'},{code:0,last:'{"ai":{"claude":"ready","codex":"missing"}}'},
-    {code:0,last:'{"ai":{"claude":"signed-out","codex":"missing"}}'},new Error('agent-unavailable')]);
-  await h.ai.refresh();assert.equal(h.restarts(),0,'the first check after start restarts nothing');
-  await h.ai.refresh();assert.equal(h.restarts(),1,'signed-out -> ready');
-  await h.ai.refresh();assert.equal(h.restarts(),1,'no change');
-  await h.ai.refresh();assert.equal(h.restarts(),2,'ready -> signed-out');
-  await h.ai.refresh();assert.equal(h.restarts(),2,'a failed check changes nothing in chat');
+test('a chat notice that throws is logged, not thrown',async()=>{
+  const ai=createAiLink({run:async()=>line({claude:L('linked')}),notifyChat:()=>{throw new Error('closed');},log:()=>{},changed:()=>{}});
+  await ai.connect('claude');
+  assert.equal(ai.linked('claude'),true);
 });
 
-test('a chat restart that fails is logged, not thrown',async()=>{
-  const ai=createAiLink({run:async()=>({code:0,last:'{"ai":{"claude":"ready"}}'}),restartChat:async()=>{throw new Error('busy');},
-    log:()=>{},changed:()=>{}});
-  assert.equal((await ai.connect('claude')).providers.claude,'ready');
-});
-
-test('the "이 PC" line keeps the last sync (time, kind, code) across a restart and drops anything else',()=>{
-  let saved=null,changes=0;const store={load:()=>saved,save:r=>{saved=JSON.stringify(r);}};
-  const pc=createPcState({store,connected:()=>true,syncing:()=>false,version:'0.1.7',now:()=>Date.parse('2026-11-13T00:00:00Z'),changed:()=>{changes++;}});
-  assert.deepEqual(pc.view(),{version:'0.1.7',connected:true,blocked:null,syncing:false,lastSync:null});
+test('pc:get shape: state from the live values and the last sync kept across a restart',()=>{
+  let saved=null,changes=0,live={signedIn:true,deviceId:'is_'+'a'.repeat(24),syncing:false,login:false,stopped:false,blocked:false};
+  const store={load:()=>saved,save:r=>{saved=JSON.stringify(r);}};
+  const pc=createPcState({store,live:()=>live,version:'0.1.7',now:()=>Date.parse('2026-11-13T00:00:00.123Z'),changed:()=>{changes++;}});
+  assert.deepEqual(pc.view(),{signed_in:true,device_id:'is_'+'a'.repeat(24),state:'ok',last_sync_at:null,last_result:null,last_code:null,app_version:'0.1.7'});
   pc.record({kind:'rejected',code:'halt-policy',detail:'/Users/someone'});
-  assert.deepEqual(pc.view().lastSync,{at:'2026-11-13T00:00:00.000Z',kind:'rejected',code:'halt-policy'});
+  assert.deepEqual(pc.view(),{signed_in:true,device_id:'is_'+'a'.repeat(24),state:'failed',last_sync_at:'2026-11-13T00:00:00Z',
+    last_result:'failed',last_code:'halt-policy',app_version:'0.1.7'});
   assert.equal(changes,1);assert.ok(!saved.includes('someone'));
-  let why='name';
-  const again=createPcState({store,connected:()=>false,syncing:()=>true,blocked:()=>why,version:'0.1.7'});
-  assert.deepEqual(again.view(),{version:'0.1.7',connected:false,blocked:'name',syncing:true,lastSync:{at:'2026-11-13T00:00:00.000Z',kind:'rejected',code:'halt-policy'}});
-  why='/Users/x';assert.equal(again.view().blocked,null);
-  assert.equal(parseLast('{"at":"x","kind":"ok"}'),null);
-  assert.equal(parseLast('{"at":"2026-11-13T00:00:00Z","kind":"weird"}'),null);
-  assert.deepEqual(parseLast('{"at":"2026-11-13T00:00:00Z","kind":"ok","code":"a b"}'),{at:'2026-11-13T00:00:00Z',kind:'ok',code:null});
+  pc.record({kind:'login',code:null});assert.equal(pc.view().last_code,'login');
+  pc.record({kind:'unknown',code:'/x y'});assert.equal(pc.view().last_code,'unknown');
+  pc.record({kind:'ok'});assert.deepEqual([pc.view().state,pc.view().last_result,pc.view().last_code],['ok','ok',null]);
+  for(const [patch,state] of [[{syncing:true,login:true},'syncing'],[{login:true,stopped:true},'login'],[{stopped:true,blocked:true},'stopped'],[{blocked:true},'failed']]){
+    live={...live,syncing:false,login:false,stopped:false,blocked:false,...patch};assert.equal(pc.view().state,state,JSON.stringify(patch));
+  }
+  live={signedIn:false,deviceId:'../x'};assert.deepEqual([pc.view().signed_in,pc.view().device_id],[false,null]);
+  const again=createPcState({store,live:()=>({}),version:'0.1.7'});
+  assert.equal(again.view().last_result,'ok');
+  assert.equal(parseLast('{"at":"x","result":"ok"}'),null);
+  assert.equal(parseLast('{"at":"2026-11-13T00:00:00Z","result":"weird"}'),null);
 });

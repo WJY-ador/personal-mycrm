@@ -4,15 +4,17 @@
 // The screen lock does not gate or stop chat.
 // No Electron here — every side effect is injected, so the gates are tested with the real Supervisor.
 
-// Preference file: allowCli (default false) and autoRun (the user's last start or stop; absent = start automatically).
+// Preference file: autoRun (the user's last start or stop; absent = start automatically) and openAtLogin (set once, then
+// by the tray). allowCli is read for old files only: main derives it from the Claude link (jobs run while Claude is linked).
 function readPreferences(text) {
   try {
     const p = JSON.parse(text);
-    return {allowCli: p.allowCli === true, ...(typeof p.autoRun === 'boolean' ? {autoRun: p.autoRun} : {})};
+    return {allowCli: p.allowCli === true, ...(typeof p.autoRun === 'boolean' ? {autoRun: p.autoRun} : {}),
+      ...(typeof p.openAtLogin === 'boolean' ? {openAtLogin: p.openAtLogin} : {})};
   } catch { return {allowCli: false}; }
 }
 
-// deps: supervisor, prefs() -> {allowCli}, connection() -> {connected, cliConfigured}, startChat()
+// deps: supervisor, prefs() -> {allowCli} (main: Claude linked), connection() -> {connected, cliConfigured}, startChat()
 async function startProcesses(names, {supervisor, prefs, connection, startChat}) {
   if (names.includes('viewer')) supervisor.start('viewer', ['serve']);
   if (names.includes('jobs') && prefs().allowCli && connection().cliConfigured) supervisor.start('jobs', ['serve', '--jobs'], {allowCli: true});
@@ -28,15 +30,6 @@ async function startConnection(deps) {
 }
 // Automatic start: the same full list as the button. The caller holds the app lock.
 function startAutomatically(deps) { return startConnection(deps); }
-// An AI connection change (ai-link.cjs) reaches the web only through a fresh chat agent: it reads the AI connection
-// once at start (spec 2026-11-13 §1.3). Restarts chat when it was started in this run and the user did not stop
-// the device; otherwise nothing changes. Returns whether chat was restarted. The caller holds the app lock.
-async function restartChat({supervisor, prefs, connection, startChat}) {
-  if (!supervisor.snapshot().chat || prefs().autoRun === false || !connection().connected) return false;
-  await supervisor.stop('chat');
-  await startChat();
-  return true;
-}
 
 // Fixed failure kinds for the log; any other error is 'error' (its text could carry sidecar or server content).
 const KINDS = new Set(['not-connected', 'cli', 'busy', 'closing']);
@@ -103,4 +96,4 @@ class AutoRun {
   userStopped() { this.phase = 'done'; this.save(false); }
 }
 
-module.exports = {AutoRun, readPreferences, startConnection, startAutomatically, startProcesses, restartChat, MAX_ATTEMPTS};
+module.exports = {AutoRun, readPreferences, startConnection, startAutomatically, startProcesses, MAX_ATTEMPTS};

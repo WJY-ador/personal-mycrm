@@ -217,9 +217,9 @@ class AgentTest(unittest.TestCase):
         self.assertIsNone(agent.current_provider)
 
     @patch.object(chat_claude, "sys", types.SimpleNamespace(platform="darwin", executable=sys.executable))
-    def test_a_provider_disconnected_on_this_pc_refuses_turns_without_a_chat_restart(self):
-        # Spec 2026-11-13 1.3: the local mark is read on every turn, so "연결 끊기" holds even before the app restarts chat.
-        from agent import ai_connection
+    def test_a_provider_not_linked_at_turn_start_is_refused_and_hello_is_sent_again(self):
+        # Spec 2026-11-13 1.3: the AI connection is checked again when a conversation starts, so "연결 끊기" or a logout
+        # holds before the app tells chat; the new state goes to the server in a hello on the same connection.
         calls = []
         class Opener:
             def open(self, *_args, **_kwargs):
@@ -238,16 +238,39 @@ class AgentTest(unittest.TestCase):
             sent = []
             class Socket:
                 def send_text(self, message): sent.append(json.loads(message)); return True
-            agent = chat.ChatAgent("wss://synthetic.invalid/api/device/chat/ws", "token", claude_factory=factory,
-                                   stopping=threading.Event(), ai_home=home)
-            agent.ws = Socket()
-            ai_connection.set_off(home, "claude", True)
-            agent._on({"type": "turn.start", "session_id": "cs_off", "turn_id": "ct_off",
-                       "text": "synthetic", "provider": "claude", "model": "claude-synthetic",
-                       "binding_version": 2, "launch_authorization_path": "/api/chat/launch-authorization"})
-        self.assertEqual(sent[-1]["data"], {"code": "AI-OFF"})
+            for state, code in (("off", "AI-OFF"), ("signed_out", "AI-SIGNED-OUT"), ("missing", "AI-MISSING")):
+                sent.clear()
+                agent = chat.ChatAgent("wss://synthetic.invalid/api/device/chat/ws", "token", claude_factory=factory,
+                                       stopping=threading.Event(), ai_status={"claude": "linked", "codex": "missing"},
+                                       ai_check=lambda p, s=state: s)
+                agent.ws = Socket()
+                agent._on({"type": "turn.start", "session_id": "cs_off", "turn_id": "ct_off",
+                           "text": "synthetic", "provider": "claude", "model": "claude-synthetic",
+                           "binding_version": 2, "launch_authorization_path": "/api/chat/launch-authorization"})
+                self.assertEqual(sent[0]["type"], "hello")
+                self.assertEqual(sent[0]["ai_links"], {"claude": state, "codex": "missing"})
+                self.assertEqual(sent[-1]["data"], {"code": code})
+                self.assertIsNone(agent.current_provider)
         self.assertEqual(calls, [])
-        self.assertIsNone(agent.current_provider)
+
+    def test_refresh_ai_swaps_providers_and_sends_hello_again_on_the_same_connection(self):
+        sent = []
+        class Socket:
+            def send_text(self, message): sent.append(json.loads(message)); return True
+        agent = chat.ChatAgent("wss://synthetic.invalid/api/device/chat/ws", "token", stopping=threading.Event(),
+                               ai_status={"claude": "signed_out", "codex": "missing"},
+                               ai_refresh=lambda: ({"claude": "off", "codex": "linked", "x": "linked"}, object(), None))
+        agent.ws = Socket()
+        agent.refresh_ai()
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0]["type"], "hello")
+        self.assertEqual(sent[0]["ai_links"], {"claude": "off", "codex": "linked"})
+        self.assertIsNone(agent.claude_factory, "only a real factory is taken")
+        failing = chat.ChatAgent("wss://synthetic.invalid/api/device/chat/ws", "token", stopping=threading.Event(),
+                                 ai_refresh=lambda: 1 / 0)
+        failing.ws = Socket()
+        failing.refresh_ai()
+        self.assertEqual(len(sent), 1)
 
     def test_rejects_missing_or_changed_provider_binding_without_fallback(self):
         got = {}
@@ -530,7 +553,7 @@ class CliTest(unittest.TestCase):
                                         ai_kw={"path_value": "", "platform": "win32", "user_home": empty})
         self.assertEqual(code, 0)
         self.assertEqual(got["hello"]["providers"], [])
-        self.assertEqual(got["hello"]["ai"], {"claude": "missing", "codex": "missing"})
+        self.assertEqual(got["hello"]["ai_links"], {"claude": "missing", "codex": "missing"})
         self.assertIn({"event": "start", "why": "claude-missing"}, [json.loads(x) for x in out.strip().splitlines()])
         self.assertNotIn(helpers.TOKEN, out)
 
@@ -540,7 +563,7 @@ class CliTest(unittest.TestCase):
         with open(cli, "w") as f:
             f.write("#!/bin/sh\nexit 0\n")
         os.chmod(cli, 0o755)
-        for off, rc, expected in ((True, 0, "off"), (False, 1, "signed-out")):
+        for off, rc, expected in ((True, 0, "off"), (False, 1, "signed_out")):
             with self.subTest(expected=expected):
                 from agent import ai_connection
                 ai_connection.set_off(self.th.home, "claude", off)
@@ -563,9 +586,49 @@ class CliTest(unittest.TestCase):
                                                    "user_home": self.th.root, "run": run})
                 self.assertEqual(code, 0)
                 self.assertEqual(got["hello"]["providers"], [])
-                self.assertEqual(got["hello"]["ai"]["claude"], expected)
+                self.assertEqual(got["hello"]["ai_links"]["claude"], expected)
                 claude_runs = [argv[1:] for argv in runs if argv[0] == os.path.realpath(cli)]
                 self.assertEqual(claude_runs, [] if off else [["auth", "status", "--json"]])
+
+    def test_desktop_ai_refresh_line_sends_hello_again_on_the_same_connection(self):
+        hellos = []
+        first, second = threading.Event(), threading.Event()
+        stopping = threading.Event()
+
+        def handler(c):
+            hellos.append(c.recv())
+            first.set()
+            hellos.append(c.recv())
+            second.set()
+            stopping.set()
+
+        server = FakeWsServer(handler)
+        self.addCleanup(server.close)
+        helpers.connected_config(self.th, f"http://127.0.0.1:{server.port}")
+        ks = helpers.keystore_with_secrets()
+        from agent import ai_connection
+
+        class ControlInput:
+            def __init__(self):
+                self.lines = ['{"command":"ai-refresh"}\n']
+            def readline(self, *_):
+                while not self.lines:
+                    if second.wait(0.05) or stopping.is_set():
+                        return '{"command":"stop"}\n'
+                first.wait(5)   # the agent is connected before the refresh is asked for
+                ai_connection.set_off(self.th_home, "claude", True)
+                return self.lines.pop()
+
+        control = ControlInput()
+        control.th_home = self.th.home
+        with patch.dict(os.environ, {"MYCRM_DESKTOP_CONTROL": "1"}):
+            code, out = helpers.run_cli(["--home", self.th.home, "chat"], ks_factory=lambda svc: ks, stdin=control,
+                                        chat_kw={"stopping": stopping, **FAST})
+        self.assertEqual(code, 0, out)
+        self.assertTrue(second.is_set())
+        self.assertEqual([h["type"] for h in hellos], ["hello", "hello"])
+        self.assertEqual(hellos[0]["ai_links"]["claude"], "missing")
+        self.assertEqual(hellos[1]["ai_links"]["claude"], "off")
 
     def test_fake_still_requires_device_token(self):
         helpers.connected_config(self.th, "http://127.0.0.1:9")

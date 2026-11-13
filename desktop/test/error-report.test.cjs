@@ -11,49 +11,55 @@ const {ERROR_REPORT_PATH}=require('../src/desktop-contract.cjs');
 const HOSTED='https://crm.example.invalid/';
 const NOW=Date.parse('2026-11-13T02:03:04.567Z');
 
-test('the report body has the fixed fields; stage and code come from fixed forms only',()=>{
+test('the report body follows the contract; unknown stages are dropped and malformed codes become unknown',()=>{
   const env={version:'0.1.7',platform:'darwin',now:()=>NOW};
-  assert.deepEqual(buildReport('sync/run-once','command-timeout',{exit:-1,status:503},env),{source:'desktop',stage:'sync/run-once',
-    code:'command-timeout',app_version:'0.1.7',os:'mac',occurred_at:'2026-11-13T02:03:04Z',http_status:503,exit_code:-1});
+  assert.deepEqual(buildReport('sync/run-once','command-timeout',{},env),{source:'app',stage:'sync/run-once',
+    code:'command-timeout',app_version:'0.1.7',os:'mac',occurred_at:'2026-11-13T02:03:04Z',count:1});
   assert.equal(buildReport('update/error','network',{},{...env,platform:'win32'}).os,'win');
-  assert.equal(buildReport('ai/status','unavailable',{exit:'x',status:1e6},env).exit_code,undefined);
-  for(const [stage,code] of [['other','x'],['sync/run-once','/Users/someone/x'],['sync/run-once','has space'],
-    ['sync/run-once','x'.repeat(41)],['sync/run-once',null],['sync/run-once','https://x.example']]){
-    assert.equal(buildReport(stage,code,{},env),null,stage+' '+code);
+  assert.equal(buildReport('update/error','network',{},{...env,platform:'linux'}).os,'other');
+  assert.equal(buildReport('sync/connect','DEVICE-LIMIT',{source:'agent'},env).source,'agent');
+  assert.equal(buildReport('sync/connect','x',{source:'web'},env),null);
+  for(const code of ['/Users/someone/x','has space','x'.repeat(49),null,'a.b','https://x.example']){
+    assert.equal(buildReport('sync/run-once',code,{},env).code,'unknown',String(code));
   }
-  assert.ok(STAGES.includes('connect/auto')&&STAGES.includes('ai/connect')&&STAGES.includes('agent/chat'));
+  assert.equal(buildReport('other','x',{},env),null);
+  const STAGE=/^[a-z][a-z0-9-]{0,23}(\/[a-z0-9-]{1,32}){0,2}$/;
+  for(const stage of STAGES)assert.match(stage,STAGE);
+  assert.ok(Buffer.byteLength(JSON.stringify(buildReport('agent/chat','authentication-required',{},env)))<=2048);
 });
 
-function reporter(status=202){
+function reporter(...statuses){
   const sent=[],logs=[];let clock=NOW;
   const r=createReporter({request:async(method,url,body,headers)=>{sent.push({method,url,body,headers});
-    if(status instanceof Error)throw status;return {status,body:{secret:'server text'}};},
+    const status=statuses[Math.min(sent.length-1,statuses.length-1)];
+    if(status instanceof Error)throw status;return {status,body:{accepted:true,state:'created',secret:'server text'}};},
     hosted:HOSTED,version:'0.1.7',platform:'darwin',log:(...a)=>logs.push(a),now:()=>clock});
   return {r,sent,logs,tick:ms=>{clock+=ms;}};
 }
 
-test('a report is one POST with the session origin; the same stage and code is spaced, others are not',async()=>{
-  const h=reporter();
+test('a report is one POST to /desktop/error-reports with the session origin; repeats in one run are spaced',async()=>{
+  const h=reporter(200);
   assert.equal(await h.r.report('connect/auto','DEVICE-LIMIT'),true);
-  assert.equal(h.sent[0].method,'POST');assert.equal(h.sent[0].url,new URL(ERROR_REPORT_PATH,HOSTED).href);
+  assert.equal(h.sent[0].method,'POST');assert.equal(h.sent[0].url,'https://crm.example.invalid/desktop/error-reports');
+  assert.equal(ERROR_REPORT_PATH,'/desktop/error-reports');
   assert.equal(h.sent[0].headers.Origin,'https://crm.example.invalid');
   assert.equal(await h.r.report('connect/auto','DEVICE-LIMIT'),false,'spaced');
   assert.equal(await h.r.report('connect/auto','FAILED'),true,'another code');
   h.tick(REPEAT_MS);assert.equal(await h.r.report('connect/auto','DEVICE-LIMIT'),true);
   assert.equal(h.sent.length,3);
-  assert.deepEqual(h.logs,[['report','sent',202],['report','sent',202],['report','sent',202]]);
+  assert.deepEqual(h.logs,[['report','sent',200],['report','sent',200],['report','sent',200]]);
 });
 
-test('no session, a refusal or a network failure drops the report silently and never retries',async()=>{
-  for(const status of [401,500,new Error('/Users/someone/token-abc')]){
-    const h=reporter(status);
-    assert.equal(await h.r.report('update/error','network'),false);
-    assert.equal(await h.r.report('update/error','network'),false);
-    assert.equal(h.sent.length,1,'no retry');
+test('a network failure or 5xx is sent once more; 4xx and 429 are not; nothing is reported about a report',async()=>{
+  for(const [statuses,ok,tries] of [[[new Error('/Users/someone/token-abc'),200],true,2],[[503,503],false,2],
+    [[401],false,1],[[403],false,1],[[429],false,1],[[400],false,1]]){
+    const h=reporter(...statuses);
+    assert.equal(await h.r.report('update/error','network'),ok,JSON.stringify(statuses));
+    assert.equal(h.sent.length,tries,JSON.stringify(statuses));
     assert.ok(!JSON.stringify(h.logs).includes('someone'));
   }
-  const h=reporter();
-  assert.equal(await h.r.report('sync/run-once','/Users/someone/file.jsonl'),false);
+  const h=reporter(200);
+  assert.equal(await h.r.report('not/a-stage','x'),false);
   assert.equal(h.sent.length,0);assert.deepEqual(h.logs,[['report','invalid']]);
 });
 

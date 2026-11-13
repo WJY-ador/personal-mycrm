@@ -1,8 +1,10 @@
 """AI 연결(명세 2026-11-13 1.3) — 이 PC 에서 공급자 CLI 인증이 되어 있는지, 로그인 띄우기, 로컬 끊기 표시.
 
 AI 연결 = 그 PC 에서 공급자 CLI 가 로그인되어 있고, 사용자가 이 PC 에서 그 공급자를 끊지 않았음.
-- 실행 파일 이름과 인자는 이 파일의 PROVIDERS 한 곳에만 둔다. 앱(desktop)은 `ai-status`, `ai-connect`,
-  `ai-disconnect` 하위 명령으로 부르고, chat 은 시작 때 같은 status() 를 쓴다.
+- 실행 파일 이름과 인자는 이 파일의 PROVIDERS, TERMINAL 한 곳에만 둔다. 앱(desktop)은 `ai-status`, `ai-connect`,
+  `ai-disconnect` 하위 명령으로 부르고, chat 은 시작 때와 턴마다 같은 status() 를 쓴다.
+- 상태 낱말(서버 계약 hello.ai_links 와 같다): linked(CLI 로그인 됨, 끊기 표시 없음) · signed_out(CLI 있음, 로그인 안 됨)
+  · off(이 PC 의 끊기 표시) · missing(CLI 없음, 또는 chat 이 실행을 거절할 CLI). 이유는 짧은 code 로 따로 둔다.
 - CLI 는 chat 과 같은 환경(chat_claude.ClaudeProviderFactory._clean_env)과 같은 작업 폴더(에이전트 홈)로 돈다.
   그래야 "인증됨" 판정이 실제 대화 실행과 어긋나지 않는다. API 키 환경 변수는 넘기지 않는다.
 - CLI 출력: 로그인은 읽지 않는다. 상태는 claude 의 authMethod 하나만 읽고 나머지(계정, 이메일)는 버린다.
@@ -11,14 +13,20 @@ AI 연결 = 그 PC 에서 공급자 CLI 가 로그인되어 있고, 사용자가
 
 공식 문서(code.claude.com/docs/en/cli-reference, 2026-11-13 확인): `claude auth status` 는 JSON 을 내고 로그인이면
 exit 0, 아니면 1. JSON 의 authMethod ∈ none, claude.ai, oauth_token, api_key, api_key_helper, third_party.
-`claude auth login` 기본은 Claude 구독(--claudeai). codex 의 `codex login status` exit code 는 --help 에 없어 미확인이다.
+`claude auth login` 기본은 Claude 구독(--claudeai).
+미확인(2026-11-13): `claude auth login` 이 TTY 없이(앱 자식 프로세스) 끝까지 도는지 — 그래서 로그인은 3초마다 상태를 보며
+최대 5분 기다리고, 로그인 프로세스가 곧바로 실패하면 시스템 터미널로 같은 명령을 띄운다(TERMINAL).
+`codex login status` 의 exit code 는 --help 에 없다. exit 0 = linked, 1 = signed_out 으로 둔다(메인 판정).
 """
 from __future__ import annotations
 
 import json
 import os
+import re
+import shlex
 import subprocess
 import sys
+import time
 
 from . import osutil
 
@@ -27,12 +35,20 @@ PROVIDERS = {
     "claude": {"binary": "claude", "status": ("auth", "status", "--json"), "login": ("auth", "login", "--claudeai")},
     "codex": {"binary": "codex", "status": ("login", "status"), "login": ("login",)},
 }
-# 구독 인증만 연결로 본다. API 키, 클라우드 공급자 인증은 종량제라 연결로 치지 않는다(unsupported).
+# 로그인 프로세스가 TTY 없이 곧바로 실패하면 같은 명령을 띄울 시스템 터미널. {script}: 명령을 담은 .command 파일.
+TERMINAL = {
+    "darwin": ("/usr/bin/open", "-a", "Terminal", "{script}"),
+    "win32": ("cmd", "/c", "start", "", "{path}", "{args}"),
+}
+# 구독 인증만 연결로 본다. API 키, 클라우드 공급자 인증은 종량제라 연결로 치지 않는다(signed_out, code unsupported-auth).
 READY_METHODS = frozenset({"claude.ai", "oauth_token"})
-# 상태 낱말(앱, 서버 보고, 화면이 같은 낱말을 쓴다).
-STATES = ("ready", "signed-out", "missing", "off", "unsupported", "error")
+# 상태 낱말(서버 계약 hello.ai_links, 앱, 화면이 같은 낱말을 쓴다).
+STATES = ("linked", "signed_out", "off", "missing")
+CODE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$")
 STATUS_TIMEOUT = 20
-LOGIN_TIMEOUT = 600
+LOGIN_POLL = 3           # 로그인 중 상태 확인 간격(초)
+LOGIN_WAIT = 300         # 로그인 끝을 기다리는 최대 시간(초)
+LOGIN_QUICK_FAIL = 10    # 이 안에 로그인 프로세스가 실패로 끝나면 TTY 가 필요한 것으로 보고 터미널로 다시 띄운다
 STATUS_OUTPUT_MAX = 64 * 1024
 USE_FILE = "ai-connection.json"
 
@@ -152,45 +168,50 @@ def set_off(home: str, provider: str, off: bool) -> None:
 
 
 # ---- 상태와 로그인 ----------------------------------------------------------------------------
-def _classify(provider: str, code: int, output: bytes) -> str:
-    if code == 1:
-        return "signed-out"
-    if code != 0:
-        return "error"
+def link(state: str, code: str | None = None) -> dict:
+    return {"state": state, "code": code if isinstance(code, str) and CODE.fullmatch(code) else None}
+
+
+def _classify(provider: str, rc: int, output: bytes) -> dict:
+    if rc == 1:
+        return link("signed_out")
+    if rc != 0:
+        return link("signed_out", "status-exit-" + str(rc if rc >= 0 else "signal"))
     if provider != "claude":
-        return "ready"
+        return link("linked")
     try:
         data = json.loads(output[:STATUS_OUTPUT_MAX].decode("utf-8"))
         method = data.get("authMethod") if isinstance(data, dict) else None
     except (ValueError, UnicodeError):
-        return "error"
+        return link("signed_out", "status-unreadable")
     if method in READY_METHODS:
-        return "ready"
+        return link("linked")
     if method == "none":
-        return "signed-out"
-    return "unsupported" if isinstance(method, str) else "error"
+        return link("signed_out")
+    return link("signed_out", "unsupported-auth" if isinstance(method, str) else "status-unreadable")
 
 
-def status(provider: str, cfg: dict, home: str, *, run=subprocess.run, env=None, off=None, **discover_kw) -> str:
-    """한 공급자의 AI 연결 상태(STATES 의 낱말 하나). 예외를 내지 않는다."""
+def status(provider: str, cfg: dict, home: str, *, run=subprocess.run, env=None, off=None, **discover_kw) -> dict:
+    """한 공급자의 AI 연결 {"state": STATES 낱말, "code": 이유 또는 None}. 예외를 내지 않는다."""
     if provider not in PROVIDERS:
-        return "error"
+        return link("missing", "unknown-provider")
     if provider in (read_off(home) if off is None else off):
-        return "off"
+        return link("off")
     path = cli_path(provider, cfg, **discover_kw)
     if path is None:
-        return "missing"
+        return link("missing")
     if not trusted(provider, path):
-        return "error"
-    spec = PROVIDERS[provider]
+        return link("missing", "untrusted-cli")
     try:
-        done = run([path, *spec["status"]], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        done = run([path, *PROVIDERS[provider]["status"]], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                    stderr=subprocess.DEVNULL, env=clean_env() if env is None else env, cwd=home,
                    timeout=STATUS_TIMEOUT, shell=False, check=False)
         output = done.stdout if provider == "claude" and isinstance(done.stdout, bytes) else b""
         return _classify(provider, done.returncode, output)
+    except subprocess.TimeoutExpired:
+        return link("signed_out", "status-timeout")
     except (OSError, subprocess.SubprocessError, ValueError):
-        return "error"
+        return link("signed_out", "status-failed")
 
 
 def statuses(cfg: dict, home: str, **kw) -> dict:
@@ -198,26 +219,77 @@ def statuses(cfg: dict, home: str, **kw) -> dict:
     return {p: status(p, cfg, home, off=off, **kw) for p in PROVIDERS}
 
 
-def login(provider: str, cfg: dict, home: str, *, popen=subprocess.Popen, env=None, timeout=LOGIN_TIMEOUT,
-          **discover_kw) -> str:
-    """공급자 로그인을 띄우고(브라우저 인증) 끝나면 상태를 다시 본다. 출력은 읽지 않는다."""
-    path = cli_path(provider, cfg, **discover_kw)
+def links(states: dict) -> dict:
+    """hello.ai_links 꼴 {공급자: 상태 낱말}."""
+    return {p: v["state"] for p, v in states.items() if p in PROVIDERS and isinstance(v, dict) and v.get("state") in STATES}
+
+
+def _open_terminal(provider: str, path: str, home: str, platform: str, popen) -> bool:
+    """같은 로그인 명령을 시스템 터미널에 띄운다(TTY 가 필요한 CLI). 띄웠으면 True."""
+    form = TERMINAL.get(platform)
+    if form is None:
+        return False
+    args = list(PROVIDERS[provider]["login"])
+    if platform == "darwin":
+        script = os.path.join(home, f"ai-login-{provider}.command")
+        body = "#!/bin/sh\nexec " + " ".join(shlex.quote(x) for x in [path, *args]) + "\n"
+        osutil.atomic_write(script, body.encode("utf-8"))
+        os.chmod(script, 0o700)
+        argv = [x.replace("{script}", script) for x in form]
+    else:
+        argv = []
+        for x in form:
+            argv.extend(args if x == "{args}" else [path] if x == "{path}" else [x])
+    try:
+        popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False,
+              close_fds=True)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def login(provider: str, cfg: dict, home: str, *, popen=subprocess.Popen, env=None, sleep=time.sleep,
+          clock=time.monotonic, platform=None, wait=LOGIN_WAIT, **kw) -> dict:
+    """공급자 로그인을 띄우고(브라우저 인증) 3초마다 상태를 보며 최대 5분 기다린다. 출력은 읽지 않는다.
+    로그인 프로세스가 LOGIN_QUICK_FAIL 안에 실패로 끝나면 시스템 터미널로 같은 명령을 띄우고 계속 기다린다."""
+    discover_kw = {k: v for k, v in kw.items() if k in ("path_value", "user_home")}
+    path = cli_path(provider, cfg, platform=platform, **discover_kw)
     if path is None:
-        return "missing"
+        return link("missing")
     if not trusted(provider, path):
-        return "error"
+        return link("missing", "untrusted-cli")
     use_env = clean_env() if env is None else env
+    check = lambda: status(provider, cfg, home, env=use_env, off=frozenset(), platform=platform, **kw)
     try:
         child = popen([path, *PROVIDERS[provider]["login"]], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                       stderr=subprocess.DEVNULL, env=use_env, cwd=home, shell=False, close_fds=True)
     except (OSError, ValueError):
-        return "error"
+        return link("signed_out", "login-start-failed")
+    start, in_terminal, last = clock(), False, None
     try:
-        child.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        child.kill()
-        try:
-            child.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            pass
-    return status(provider, cfg, home, env=use_env, off=frozenset(), **discover_kw)
+        while clock() - start < wait:
+            sleep(LOGIN_POLL)
+            last = check()
+            if last["state"] == "linked":
+                return last
+            rc = child.poll() if child is not None else None
+            if rc is None:
+                continue
+            if rc != 0 and not in_terminal and clock() - start <= LOGIN_QUICK_FAIL:
+                in_terminal = _open_terminal(provider, path, home, _platform(platform), popen)
+                child = None
+                if in_terminal:
+                    continue
+            if not in_terminal:
+                break
+    finally:
+        if child is not None and child.poll() is None:
+            child.kill()
+            try:
+                child.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+    last = check()
+    if last["state"] != "linked" and last["code"] is None:
+        last = link(last["state"], "login-terminal" if in_terminal else "login-unfinished")
+    return last

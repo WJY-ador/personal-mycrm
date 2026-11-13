@@ -5,7 +5,7 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const {EventEmitter}=require('node:events');
-const {AutoRun,readPreferences,startConnection,startAutomatically,restartChat,MAX_ATTEMPTS}=require('../src/autorun.cjs');
+const {AutoRun,readPreferences,startConnection,startAutomatically,MAX_ATTEMPTS}=require('../src/autorun.cjs');
 const {Supervisor}=require('../src/supervisor.cjs');
 
 function fakeChild(){const c=new EventEmitter();c.stdout=new EventEmitter();c.stderr=new EventEmitter();c.stdin=new EventEmitter();
@@ -200,28 +200,16 @@ test('a chat start failure is counted and gives up after the attempts, without a
  assert.equal(a.logs.at(-1),'autorun:gave-up');assert.deepEqual(a.spawned,['serve']);
 });
 
-test('an AI connection change after start restarts chat once so the web sees it; the viewer is untouched',async()=>{
- const a=app();
- a.autorun.nudge('startup');await a.settle();
- assert.deepEqual(a.spawned,['serve','chat']);
- assert.equal(await restartChat(a.deps),true);
- assert.deepEqual(a.spawned,['serve','chat','chat']);
- assert.equal(a.supervisor.snapshot().chat.state,'running');assert.equal(a.supervisor.snapshot().viewer.state,'running');
-});
-
-test('J-F1: no restart when chat never started, the user stopped the device, or the PC is not connected',async()=>{
- const never=app({saved:'{"autoRun":false}'});
- assert.equal(await restartChat(never.deps),false);assert.deepEqual(never.spawned,[]);
- const stopped=app();stopped.autorun.nudge('startup');await stopped.settle();await stopped.button.stop();
- assert.equal(await restartChat(stopped.deps),false);assert.deepEqual(stopped.spawned,['serve','chat']);
- const gone=app();gone.autorun.nudge('startup');await gone.settle();gone.state.connected=false;
- assert.equal(await restartChat(gone.deps),false);assert.deepEqual(gone.spawned,['serve','chat']);
-});
-
-test('main restarts chat after an AI connection change through the app lock, and starts chat without a bridge',()=>{
+test('main: chat starts without a bridge, hears an AI change through its control line, jobs follow the Claude link',()=>{
  const main=require('node:fs').readFileSync(require('node:path').join(__dirname,'..','src','main.cjs'),'utf8');
- assert.match(main,/try\{await exclusively\(\(\)=>restartChat\(startDeps\)\);return;\}/);
- assert.match(main,/restartChat:chatAfterAiChange/);
  assert.match(main,/async function startChatAgent\(\)\{supervisor\.start\('chat',\['chat'\]\);\}/);
- assert.doesNotMatch(main,/consent|Consent|BRIDGE/,'no consent runtime or bridge');
+ assert.match(main,/notifyChat:\(\)=>supervisor\.send\('chat',\{command:'ai-refresh'\}\)/);
+ assert.match(main,/prefs:\(\)=>\(\{\.\.\.prefs,allowCli:aiLink\?\.linked\('claude'\)===true\}\)/);
+ assert.match(main,/linkedChanged:\(provider,isLinked\)=>\{if\(provider==='claude'\)jobsFollowClaude\(isLinked\);\}/);
+ assert.doesNotMatch(main,/consent|Consent|BRIDGE|restartChat/,'no consent runtime, bridge or chat restart');
+});
+
+test('preference file keeps openAtLogin once it is set',()=>{
+ assert.deepEqual(readPreferences('{"openAtLogin":false}'),{allowCli:false,openAtLogin:false});
+ assert.deepEqual(readPreferences('{"openAtLogin":"yes"}'),{allowCli:false});
 });

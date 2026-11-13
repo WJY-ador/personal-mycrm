@@ -140,9 +140,9 @@ test('main wires the bridges: dashboard preload, sandbox and isolation kept, sen
 function desktopBridge(){
   const handlers=new Map(),calls=[];
   registerDesktopBridge({ipcMain:{handle:(name,fn)=>handlers.set(name,fn)},trusted:e=>trustedSender(e,dash,inAppAllowed),handlers:{
-    pcView:()=>({connected:true}),sync:()=>{calls.push('sync');return {kind:'ok',code:null};},
+    pcView:()=>({signed_in:true}),sync:()=>{calls.push('sync');return Promise.reject(new Error('/Users/x'));},
     aiView:()=>({providers:{claude:'ready'}}),aiRefresh:()=>{calls.push('refresh');return Promise.reject(new Error('x'));},
-    aiConnect:p=>{calls.push('connect '+p);return {};},aiDisconnect:p=>{calls.push('disconnect '+p);return {};},
+    aiConnect:p=>{calls.push('connect '+p);return new Promise(()=>{});},aiDisconnect:p=>{calls.push('disconnect '+p);throw new Error('busy');},
   }});
   return {handlers,calls};
 }
@@ -150,10 +150,12 @@ function desktopBridge(){
 test('the desktop bridge registers the contract channels and answers trusted calls',async()=>{
   const b=desktopBridge(),good=event(dash,top(page));
   assert.deepEqual([...b.handlers.keys()].sort(),[DASH.aiConnect,DASH.aiDisconnect,DASH.aiGet,DASH.pcGet,DASH.pcSync].sort());
-  assert.deepEqual(await b.handlers.get(DASH.pcGet)(good),{connected:true});
-  assert.deepEqual(await b.handlers.get(DASH.pcSync)(good),{kind:'ok',code:null});
+  assert.deepEqual(await b.handlers.get(DASH.pcGet)(good),{signed_in:true});
+  // sync, connect and disconnect answer undefined at once (a login can take minutes); failures stay inside.
+  assert.equal(b.handlers.get(DASH.pcSync)(good),undefined);
   assert.deepEqual(await b.handlers.get(DASH.aiGet)(good),{providers:{claude:'ready'}});
-  await b.handlers.get(DASH.aiConnect)(good,'claude');await b.handlers.get(DASH.aiDisconnect)(good,'codex');
+  assert.equal(b.handlers.get(DASH.aiConnect)(good,'claude'),undefined);
+  assert.equal(b.handlers.get(DASH.aiDisconnect)(good,'codex'),undefined);
   await new Promise(resolve=>setImmediate(resolve));
   assert.deepEqual(b.calls.sort(),['connect claude','disconnect codex','refresh','sync'],'a failing background check does not escape');
 });

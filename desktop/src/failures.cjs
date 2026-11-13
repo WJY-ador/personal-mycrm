@@ -2,8 +2,8 @@
 // Why an app action failed, as the person reads it (spec 2026-11-13 §1.4): locked (another task), disconnected,
 // login needed, server refused (code), unknown (code). The kind and a short code only — never an error's own text,
 // which can carry server or sidecar content. desktop.log keeps the stage and kind; main maps codes to the report.
+const {CODE} = require('./desktop-contract.cjs');
 const KINDS = Object.freeze(['ok', 'busy', 'disconnected', 'login', 'rejected', 'unknown']);
-const CODE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/;
 const HALTS = new Set(['auth', 'config', 'account', 'policy', 'forbidden', 'summary']);
 const safe = code => (typeof code === 'string' && CODE.test(code) ? code : null);
 

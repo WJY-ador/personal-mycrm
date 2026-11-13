@@ -5,7 +5,9 @@
 // No Electron here: ipcMain and the handlers are injected.
 const {DASH, PROVIDERS} = require('./desktop-contract.cjs');
 
-// handlers: pcView() · sync() -> {kind, code} · aiView() · aiRefresh() · aiConnect(p) · aiDisconnect(p)
+// handlers: pcView() · sync() · aiView() · aiRefresh() · aiConnect(p) · aiDisconnect(p)
+// pc:sync, ai:connect and ai:disconnect answer undefined at once; the work runs on and its result reaches the page as a
+// state change (pc:changed, ai:changed). A failure inside never reaches the page.
 function registerDesktopBridge({ipcMain, trusted, handlers}) {
   const none = fn => (event, ...args) => { if (args.length || !trusted(event)) throw new Error('sender'); return fn(); };
   const provider = fn => (event, ...args) => {
@@ -13,11 +15,12 @@ function registerDesktopBridge({ipcMain, trusted, handlers}) {
     return fn(args[0]);
   };
   ipcMain.handle(DASH.pcGet, none(() => handlers.pcView()));
-  ipcMain.handle(DASH.pcSync, none(() => handlers.sync()));
+  const later = fn => { Promise.resolve().then(fn).catch(() => {}); return undefined; };
+  ipcMain.handle(DASH.pcSync, none(() => later(handlers.sync)));
   // ai:get answers the last known state and starts a fresh check in the background (the page hears ai:changed).
-  ipcMain.handle(DASH.aiGet, none(() => { Promise.resolve().then(handlers.aiRefresh).catch(() => {}); return handlers.aiView(); }));
-  ipcMain.handle(DASH.aiConnect, provider(p => handlers.aiConnect(p)));
-  ipcMain.handle(DASH.aiDisconnect, provider(p => handlers.aiDisconnect(p)));
+  ipcMain.handle(DASH.aiGet, none(() => { later(handlers.aiRefresh); return handlers.aiView(); }));
+  ipcMain.handle(DASH.aiConnect, provider(p => later(() => handlers.aiConnect(p))));
+  ipcMain.handle(DASH.aiDisconnect, provider(p => later(() => handlers.aiDisconnect(p))));
 }
 
 module.exports = Object.freeze({registerDesktopBridge});

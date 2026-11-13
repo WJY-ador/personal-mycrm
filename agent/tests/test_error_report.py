@@ -11,46 +11,62 @@ from agent.tests import helpers
 
 
 class BuildTest(unittest.TestCase):
-    def test_only_fixed_fields_and_known_stages(self):
+    def test_only_fixed_fields_and_known_stages_and_bad_codes_become_unknown(self):
         now = _dt.datetime(2026, 11, 13, 3, 4, 5, 678, tzinfo=_dt.timezone.utc)
         body = error_report.build("run-once/halt", "halt-policy", now=now, platform="darwin")
         self.assertEqual(body, {"source": "agent", "stage": "run-once/halt", "code": "halt-policy",
-                                "app_version": AGENT_VERSION, "os": "mac", "occurred_at": "2026-11-13T03:04:05Z"})
+                                "app_version": AGENT_VERSION, "os": "mac", "occurred_at": "2026-11-13T03:04:05Z",
+                                "count": 1})
         self.assertEqual(error_report.build("run-once/failed", "run-error", platform="win32")["os"], "win")
-        for stage, code in (("other/stage", "x"), ("run-once/halt", "/srv/someone/file"), ("run-once/halt", "A B"),
-                            ("run-once/halt", "x" * 41), ("run-once/halt", None)):
-            with self.subTest(stage=stage, code=code):
-                self.assertIsNone(error_report.build(stage, code))
+        self.assertEqual(error_report.build("run-once/failed", "run-error", platform="linux")["os"], "other")
+        self.assertIsNone(error_report.build("other/stage", "x"))
+        for code in ("/srv/someone/file", "A B", "x" * 49, None, "a.b"):
+            with self.subTest(code=code):
+                self.assertEqual(error_report.build("run-once/halt", code)["code"], "unknown")
+        self.assertEqual(error_report.build("run-once/halt", "HTTP-503")["code"], "HTTP-503")
+        for stage in error_report.STAGES:
+            self.assertTrue(error_report.STAGE.fullmatch(stage), stage)
+        self.assertLessEqual(len(json.dumps(body).encode()), 2048)
 
-    def test_send_posts_once_with_the_device_token_and_never_raises(self):
+    def test_send_posts_with_the_device_token_and_retries_once_on_network_or_5xx_only(self):
+        import urllib.error
         seen = []
 
         class Res:
-            status = 202
+            status = 200
             def __enter__(self):
                 return self
             def __exit__(self, *a):
                 return False
 
-        class Opener:
-            def open(self, req, timeout=None):
-                seen.append((req.full_url, req.get_header("Authorization"), json.loads(req.data), timeout))
-                return Res()
+        def opener(*outcomes):
+            class Opener:
+                def open(self, req, timeout=None):
+                    seen.append((req.full_url, req.get_header("Authorization"), json.loads(req.data), timeout))
+                    outcome = outcomes[min(len(seen) - 1, len(outcomes) - 1)]
+                    if isinstance(outcome, BaseException):
+                        raise outcome
+                    return Res()
+            return Opener()
 
         self.assertTrue(error_report.send("https://crm.example.invalid", "tok-synthetic", "run-once/halt", "halt-policy",
-                                          opener=Opener()))
+                                          opener=opener(None)))
         url, auth, body, timeout = seen[0]
-        self.assertEqual((url, auth, timeout), ("https://crm.example.invalid" + error_report.REPORT_PATH,
+        self.assertEqual((url, auth, timeout), ("https://crm.example.invalid/api/device/error-reports",
                                                 "Bearer tok-synthetic", error_report.TIMEOUT))
-        self.assertEqual(set(body), {"source", "stage", "code", "app_version", "os", "occurred_at"})
-
-        class Broken:
-            def open(self, req, timeout=None):
-                raise OSError("synthetic network failure")
-        self.assertFalse(error_report.send("https://crm.example.invalid", "tok", "run-once/halt", "halt-x", opener=Broken()))
-        self.assertFalse(error_report.send("http://crm.example.invalid", "tok", "run-once/halt", "halt-x", opener=Opener()))
-        self.assertFalse(error_report.send("https://crm.example.invalid", "", "run-once/halt", "halt-x", opener=Opener()))
-        self.assertEqual(len(seen), 1)
+        self.assertEqual(set(body), {"source", "stage", "code", "app_version", "os", "occurred_at", "count"})
+        http = lambda code: urllib.error.HTTPError("https://x", code, "m", {}, None)
+        for outcomes, ok, tries in (((OSError("down"), None), True, 2), ((http(503), http(503)), False, 2),
+                                    ((http(429),), False, 1), ((http(400),), False, 1), ((http(401),), False, 1)):
+            with self.subTest(outcomes=outcomes):
+                seen.clear()
+                self.assertEqual(error_report.send("https://crm.example.invalid", "tok", "run-once/halt", "halt-x",
+                                                   opener=opener(*outcomes)), ok)
+                self.assertEqual(len(seen), tries)
+        seen.clear()
+        self.assertFalse(error_report.send("http://crm.example.invalid", "tok", "run-once/halt", "halt-x", opener=opener(None)))
+        self.assertFalse(error_report.send("https://crm.example.invalid", "", "run-once/halt", "halt-x", opener=opener(None)))
+        self.assertEqual(seen, [])
 
 
 class RunOnceReportTest(unittest.TestCase):

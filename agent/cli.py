@@ -753,18 +753,26 @@ def cmd_configure_codex(ctx: Ctx, a) -> int:
     return EXIT_OK
 
 
-def _remember_claude_path(ctx: Ctx, cfg: dict) -> dict:
-    """설정에 Claude 실행 파일이 없거나 사라졌으면 찾은 경로를 저장한다(명세 1.1 — 실행 파일 선택 화면 대신)."""
-    if ai_connection.configured_path("claude", cfg):
-        return cfg
-    found = ai_connection.discover("claude", **_discover_kw(ctx))
-    if (not found or (osutil.IS_WINDOWS and not found.lower().endswith(".exe"))
-            or not ai_connection.trusted("claude", found)):
+_PATH_KEYS = {"claude": "cli_path", "codex": "codex_cli_path"}
+
+
+def _remember_paths(ctx: Ctx, cfg: dict) -> dict:
+    """설정에 공급자 실행 파일이 없거나 사라졌으면 찾은 경로를 저장한다(명세 1.1 — 실행 파일 선택 화면 대신).
+    chat 이 실행을 거절할 파일(ai_connection.trusted)과 Windows 의 .exe 아닌 파일은 저장하지 않는다."""
+    found = {}
+    for provider, key in _PATH_KEYS.items():
+        if ai_connection.configured_path(provider, cfg):
+            continue
+        path = ai_connection.discover(provider, **_discover_kw(ctx))
+        if (path and not (osutil.IS_WINDOWS and not path.lower().endswith(".exe"))
+                and ai_connection.trusted(provider, path)):
+            found[key] = path
+    if not found:
         return cfg
     try:
         with osutil.FileLock(ctx.paths.lock("config")):
             cfg = _config.load(ctx.paths)
-            cfg["summary"]["cli_path"] = found
+            cfg["summary"].update(found)
             _config.save(ctx.paths, cfg)
     except (osutil.LockBusy, _config.ConfigError, OSError):
         pass
@@ -779,37 +787,43 @@ def _ai_kw(ctx: Ctx, *names) -> dict:
     return {k: v for k, v in ctx.ai_kw.items() if k in names + ("path_value", "platform", "user_home", "env")}
 
 
+def _say_ai(ctx: Ctx, states: dict) -> None:
+    ctx.say(json.dumps({"ai": states}, sort_keys=True))
+
+
 def cmd_ai_status(ctx: Ctx, a) -> int:
-    """AI 연결 상태 JSON 한 줄 {"ai": {공급자: 상태}}. 상태 낱말 = ai_connection.STATES. 계정 정보는 내지 않는다."""
+    """AI 연결 상태 JSON 한 줄 {"ai": {공급자: {"state": 낱말, "code": 이유|null}}}. 낱말 = ai_connection.STATES.
+    계정 정보는 내지 않는다."""
     try:
         cfg = _config.load(ctx.paths)
     except _config.ConfigError:
-        ctx.say(json.dumps({"ai": {p: "error" for p in ai_connection.PROVIDERS}}))
+        _say_ai(ctx, {p: ai_connection.link("missing", "config") for p in ai_connection.PROVIDERS})
         return EXIT_ERR
-    cfg = _remember_claude_path(ctx, cfg)
+    cfg = _remember_paths(ctx, cfg)
     ctx.paths.ensure()
-    ctx.say(json.dumps({"ai": ai_connection.statuses(cfg, ctx.paths.home, **_ai_kw(ctx, "run"))}, sort_keys=True))
+    _say_ai(ctx, ai_connection.statuses(cfg, ctx.paths.home, **_ai_kw(ctx, "run")))
     return EXIT_OK
 
 
 def cmd_ai_connect(ctx: Ctx, a) -> int:
-    """끊기 표시를 지우고, 로그인이 없으면(또는 구독 인증이 아니면) 공급자 로그인을 띄운다. 끝나면 상태 JSON 한 줄."""
+    """끊기 표시를 지우고, 로그인이 없으면(또는 구독 인증이 아니면) 공급자 로그인을 띄운다(최대 5분). 끝나면 상태 한 줄."""
     try:
         cfg = _config.load(ctx.paths)
     except _config.ConfigError:
-        ctx.say(json.dumps({"ai": {a.provider: "error"}}))
+        _say_ai(ctx, {a.provider: ai_connection.link("missing", "config")})
         return EXIT_ERR
-    cfg = _remember_claude_path(ctx, cfg) if a.provider == "claude" else cfg
+    cfg = _remember_paths(ctx, cfg)
     ctx.paths.ensure()
     try:
         ai_connection.set_off(ctx.paths.home, a.provider, False)
     except OSError:
-        ctx.say(json.dumps({"ai": {a.provider: "error"}}))
+        _say_ai(ctx, {a.provider: ai_connection.link("off", "mark-unwritable")})
         return EXIT_ERR
     state = ai_connection.status(a.provider, cfg, ctx.paths.home, **_ai_kw(ctx, "run"))
-    if state in ("signed-out", "unsupported"):
-        state = ai_connection.login(a.provider, cfg, ctx.paths.home, **_ai_kw(ctx, "popen", "run", "timeout"))
-    ctx.say(json.dumps({"ai": {a.provider: state}}))
+    if state["state"] == "signed_out":
+        state = ai_connection.login(a.provider, cfg, ctx.paths.home,
+                                    **_ai_kw(ctx, "popen", "run", "sleep", "clock", "wait"))
+    _say_ai(ctx, {a.provider: state})
     return EXIT_OK
 
 
@@ -819,9 +833,9 @@ def cmd_ai_disconnect(ctx: Ctx, a) -> int:
     try:
         ai_connection.set_off(ctx.paths.home, a.provider, True)
     except OSError:
-        ctx.say(json.dumps({"ai": {a.provider: "error"}}))
+        _say_ai(ctx, {a.provider: ai_connection.link("signed_out", "mark-unwritable")})
         return EXIT_ERR
-    ctx.say(json.dumps({"ai": {a.provider: "off"}}))
+    _say_ai(ctx, {a.provider: ai_connection.link("off")})
     return EXIT_OK
 
 
@@ -988,6 +1002,7 @@ def _run_chat(ctx: Ctx, a, cfg, sid, server, log) -> int:
         codex_factory = None
         kw.pop("codex_factory", None)
     stopping = kw.pop("stopping", None) or threading.Event()
+    holder = {}   # the ChatAgent, once built — the desktop control thread asks it to re-check the AI connection
     if os.environ.get("MYCRM_DESKTOP_CONTROL") == "1":
         def read_desktop_control():
             # Supervisor owns this pipe and sends one small stop record before
@@ -1015,6 +1030,9 @@ def _run_chat(ctx: Ctx, a, cfg, sid, server, log) -> int:
                 if isinstance(message, dict) and message == {"command": "stop"}:
                     stopping.set()
                     return
+                if isinstance(message, dict) and message == {"command": "ai-refresh"} and holder.get("agent"):
+                    # The app changed the AI connection (명세 1.3): re-check and send hello again on the same connection.
+                    threading.Thread(target=holder["agent"].refresh_ai, name="chat-ai-refresh", daemon=True).start()
 
         threading.Thread(target=read_desktop_control, name="chat-desktop-control", daemon=True).start()
     old = {}
@@ -1032,56 +1050,75 @@ def _run_chat(ctx: Ctx, a, cfg, sid, server, log) -> int:
 
         ref_store = kw.pop("ref_store", None) or chat_providers.CliSessionRefStore(ks, sid)
         live = not a.fake
-        summary = cfg.get("summary") or {}
-        # AI 연결(명세 1.3): 이 PC 의 끊기 표시와 공급자 CLI 인증을 시작 때 본다. 준비된 공급자만 모델을 알린다.
-        # 상태는 hello 로 서버에 보고한다(장치가 보고한 값이 서버 grant 를 대신한다).
-        ai_status = None
+        home = ctx.paths.home
+
+        def build_factories(states):
+            """AI 연결(명세 1.3): linked 인 공급자만 factory 를 만든다(모델을 알린다). (claude, codex, 멈춤 이유|None)."""
+            made = {"claude": None, "codex": None}
+            current = _config.load(ctx.paths)
+            summary = current.get("summary") or {}
+            if CHAT_CLAUDE_PROVIDER_READY:
+                cli_path = ai_connection.cli_path("claude", current, **_discover_kw(ctx))
+                if states.get("claude", {}).get("state") != "linked" or not cli_path:
+                    # Claude 를 끊었거나, CLI 가 없거나, 로그인이 없다. Claude 모델을 알리지 않고 계속 돈다.
+                    log({"event": "start", "why": "claude-" + str(states.get("claude", {}).get("state"))})
+                else:
+                    from .chat_launch_authority import LaunchAuthorizationClient
+                    from .chat_claude import ClaudeProviderFactory, ClaudeProviderUnavailable
+                    try:
+                        auth_client = LaunchAuthorizationClient(server, token_now)
+                        # The factory resolves and pins the CLI and asks it for models once per build.
+                        made["claude"] = ClaudeProviderFactory(auth_client, cli_path=cli_path, server_url=server,
+                            agent_home=home, expected_device_id=sid)
+                    except ClaudeProviderUnavailable as exc:
+                        if str(exc) != "models-unavailable":
+                            return None, None, "claude-runtime"
+                        # No model list from the CLI: advertise no Claude model, keep the agent running.
+                        log({"event": "start", "claude": "models-unavailable"})
+                    except Exception:
+                        return None, None, "claude-runtime"
+            if CHAT_CODEX_PROVIDER_READY:
+                cli_path = summary.get("codex_cli_path")
+                models = summary.get("codex_models")
+                if (states.get("codex", {}).get("state") != "linked"
+                        or not (isinstance(cli_path, str) and isinstance(models, list) and models)):
+                    # Codex not linked on this PC (or no model IDs). Advertise no Codex model and keep running.
+                    log({"event": "start", "why": "codex-not-configured"})
+                else:
+                    from .chat_launch_authority import LaunchAuthorizationClient
+                    from .chat_codex import CodexProviderFactory
+                    try:
+                        auth_client = LaunchAuthorizationClient(server, token_now)
+                        made["codex"] = CodexProviderFactory(auth_client, cli_path=cli_path, server_url=server,
+                            agent_home=home, expected_device_id=sid, models=tuple(models))
+                    except Exception:
+                        return None, None, "codex-runtime"
+            return made["claude"], made["codex"], None
+
         if live:
-            ai_status = ai_connection.statuses(cfg, ctx.paths.home, **_ai_kw(ctx, "run"))
-            kw.setdefault("ai_status", ai_status)
-        if live and claude_factory is None and CHAT_CLAUDE_PROVIDER_READY:
-            cli_path = ai_connection.cli_path("claude", cfg, **_discover_kw(ctx))
-            if ai_status.get("claude") != "ready" or not cli_path:
-                # Claude 를 끊었거나, CLI 가 없거나, 로그인이 없다. Claude 모델을 알리지 않고 계속 돈다(다른 공급자는 된다).
-                log({"event": "start", "why": "claude-" + str(ai_status.get("claude"))})
-            else:
-                from .chat_launch_authority import LaunchAuthorizationClient
-                from .chat_claude import ClaudeProviderFactory, ClaudeProviderUnavailable
-                try:
-                    auth_client = LaunchAuthorizationClient(server, token_now)
-                    # The factory resolves and pins the CLI and asks it for models once per start.
-                    claude_factory = ClaudeProviderFactory(auth_client, cli_path=cli_path, server_url=server,
-                        agent_home=ctx.paths.home, expected_device_id=sid)
-                except ClaudeProviderUnavailable as exc:
-                    if str(exc) != "models-unavailable":
-                        log({"event": "start", "stopped": "claude-runtime"})
-                        return EXIT_ERR
-                    # No model list from the CLI: advertise no Claude model, keep the agent running.
-                    claude_factory = None
-                    log({"event": "start", "claude": "models-unavailable"})
-                except Exception:
-                    log({"event": "start", "stopped": "claude-runtime"})
+            # 시작 때 한 번 보고 hello 로 서버에 보고한다(장치가 보고한 값이 서버 grant 를 대신한다).
+            ai_states = ai_connection.statuses(cfg, home, **_ai_kw(ctx, "run"))
+            kw.setdefault("ai_status", ai_connection.links(ai_states))
+            if claude_factory is None and codex_factory is None:
+                claude_factory, codex_factory, stopped = build_factories(ai_states)
+                if stopped:
+                    log({"event": "start", "stopped": stopped})
                     return EXIT_ERR
-        if live and codex_factory is None and CHAT_CODEX_PROVIDER_READY:
-            cli_path = summary.get("codex_cli_path")
-            models = summary.get("codex_models")
-            if ai_status.get("codex") != "ready" or not (isinstance(cli_path, str) and isinstance(models, list) and models):
-                # J-F1: Codex not chosen on this PC. Advertise no Codex model and keep running (see Claude above).
-                log({"event": "start", "why": "codex-not-configured"})
-            else:
-                from .chat_launch_authority import LaunchAuthorizationClient
-                from .chat_codex import CodexProviderFactory
-                try:
-                    auth_client = LaunchAuthorizationClient(server, token_now)
-                    codex_factory = CodexProviderFactory(auth_client, cli_path=cli_path, server_url=server,
-                        agent_home=ctx.paths.home, expected_device_id=sid, models=tuple(models))
-                except Exception:
-                    log({"event": "start", "stopped": "codex-runtime"})
-                    return EXIT_ERR
-        kw.setdefault("ai_home", ctx.paths.home)
+            # 턴마다 같은 상태를 다시 본다(끊기 표시, 로그인). 앱이 연결을 바꾸면 다시 확인하고 factory 를 새로 만든다.
+            kw.setdefault("ai_check", lambda p: ai_connection.status(p, _config.load(ctx.paths), home,
+                                                                     **_ai_kw(ctx, "run"))["state"])
+
+            def ai_refresh():
+                states = ai_connection.statuses(_config.load(ctx.paths), home, **_ai_kw(ctx, "run"))
+                made_claude, made_codex, stopped = build_factories(states)
+                if stopped:
+                    log({"event": "ai-refresh", "error": stopped})
+                return ai_connection.links(states), made_claude, made_codex
+            kw.setdefault("ai_refresh", ai_refresh)
         agent = chat.ChatAgent(chat.ws_url(server), token_now, provider, ref_store=ref_store,
                                agent_version=AGENT_VERSION, stopping=stopping, log=log,
                                claude_factory=claude_factory, codex_factory=codex_factory, **kw)
+        holder["agent"] = agent
         why = agent.run()
     finally:
         for sig, h in old.items():

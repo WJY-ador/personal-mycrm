@@ -14,7 +14,7 @@ const {OutputTail,failureLine,hasLiveProcess} = require('./sidecar.cjs');
 const handoff = require('./handoff.cjs');
 const grants = require('./grants.cjs');
 const {Connector,ConnectError} = require('./connector.cjs');
-const {AutoRun,readPreferences,startConnection,startAutomatically,restartChat,startProcesses:launchProcesses}=require('./autorun.cjs');
+const {AutoRun,readPreferences,startConnection,startAutomatically,startProcesses:launchProcesses}=require('./autorun.cjs');
 const {AutoSync}=require('./autosync.cjs');
 const {createUpdater,inAppSupported,trustedSender,registerDashboardBridge,CHANNELS:UPDATE}=require('./updater.cjs');
 const {DASH}=require('./desktop-contract.cjs');
@@ -24,7 +24,7 @@ const {classify,syncOutcome,message}=require('./failures.cjs');
 const {createAiLink}=require('./ai-link.cjs');
 const {createPcState}=require('./pc-state.cjs');
 let dash,tray,supervisor,log,prefs={},binary,home,settingsFile,quitting=false,ready=false;
-let busy=false,trayLive=null,connector=null,pollTimer=null,autorun=null,autosync=null,reporter=null,aiLink=null,pcState=null;
+let busy=false,syncing=false,trayKey=null,connector=null,pollTimer=null,autorun=null,autosync=null,reporter=null,aiLink=null,pcState=null,logsDir=null;
 const commands=new Map();   // running sidecar commands: child -> first argument (ai-connect waits for a browser login)
 // installing: an in-app update is quitting the app (set on 'before-quit-for-update'); the window's close no longer hides it.
 let updater=null,installing=false;
@@ -53,8 +53,9 @@ function connection() {
     if(fs.statSync(file).size>1024*1024) throw new Error('large');
     const c=JSON.parse(fs.readFileSync(file,'utf8'));
     return {connected:typeof c.source_instance_id==='string' && !!c.source_instance_id,cliConfigured:typeof c.summary?.cli_path==='string' && path.isAbsolute(c.summary.cli_path),
-      expires:c.token_expires_at||null,deviceLabel:typeof c.device_label==='string'?c.device_label:''};
-  } catch {return {connected:false,cliConfigured:false,expires:null,deviceLabel:''};}
+      expires:c.token_expires_at||null,deviceLabel:typeof c.device_label==='string'?c.device_label:'',
+      deviceId:typeof c.source_instance_id==='string'?c.source_instance_id:null};
+  } catch {return {connected:false,cliConfigured:false,expires:null,deviceLabel:'',deviceId:null};}
 }
 // The dashboard hears an empty signal and reads the state again (dash-preload.cjs).
 function signal(channel){if(dash&&!dash.isDestroyed())dash.webContents.send(channel);}
@@ -70,10 +71,19 @@ function watchProcesses(){
   }
 }
 function changed(){refreshTray();autorun?.nudge('change');signal(DASH.pcChanged);watchProcesses();}
-function trayMenu(live){return Menu.buildFromTemplate([{label:'대시보드 열기',click:showDashboard},{label:'지금 동기화',click:()=>{runSync().then(trayResult,()=>{});}},
+// Tray (main's decision 2026-11-13): open, sync now, stop or start, open at login (on by default), diagnostic logs, quit.
+function openAtLogin(){return app.isPackaged&&app.getLoginItemSettings().openAtLogin===true;}
+function setOpenAtLogin(value){if(!app.isPackaged)return;app.setLoginItemSettings({openAtLogin:value});prefs.openAtLogin=value;savePreferences();trayKey=null;refreshTray();}
+function trayMenu(live,login){return Menu.buildFromTemplate([{label:'대시보드 열기',click:showDashboard},{label:'지금 동기화',click:()=>{runSync().then(trayResult,()=>{});}},
   {type:'separator'},live?{label:'중지',click:()=>exclusively(userStop).catch(()=>{})}:{label:'시작',click:()=>exclusively(userStart).catch(()=>{})},
-  {label:'종료',click:()=>app.quit()}]);}
-function refreshTray(){if(!tray||tray.isDestroyed())return;const live=hasLiveProcess(supervisor?.snapshot());if(live===trayLive)return;trayLive=live;tray.setContextMenu(trayMenu(live));}
+  {label:'로그인할 때 열기',type:'checkbox',checked:login,enabled:app.isPackaged,click:item=>setOpenAtLogin(item.checked)},
+  {label:'진단 로그 열기',click:()=>{if(logsDir)shell.openPath(logsDir).catch(()=>{});}},
+  {type:'separator'},{label:'종료',click:()=>app.quit()}]);}
+function refreshTray(){
+  if(!tray||tray.isDestroyed())return;
+  const live=hasLiveProcess(supervisor?.snapshot()),login=openAtLogin(),key=live+'|'+login;
+  if(key===trayKey)return;trayKey=key;tray.setContextMenu(trayMenu(live,login));
+}
 function showDashboard(){if(dash&&!dash.isDestroyed()){dash.show();dash.focus();}}
 // Links that leave the hosted origin go to the system browser, https only.
 function leave(url){if(externalHttps(url))shell.openExternal(url).catch(()=>{});}
@@ -202,18 +212,22 @@ function request(method,url,body,extraHeaders={}){
 // Chat starts with no approval channel to the app (spec §1.3): the agent checks the AI connection itself at its start.
 async function startChatAgent(){supervisor.start('chat',['chat']);}
 // One start for the tray and the automatic start (autorun.cjs). The caller holds the app lock.
-const startDeps={get supervisor(){return supervisor;},prefs:()=>prefs,connection:()=>connection(),
-  ready:()=>ready,startChat:()=>startChatAgent()};
+// Conversation summary (jobs) has no toggle of its own (main's decision 2026-11-13): it runs while Claude is linked.
+const startDeps={get supervisor(){return supervisor;},prefs:()=>({...prefs,allowCli:aiLink?.linked('claude')===true}),
+  connection:()=>connection(),ready:()=>ready,startChat:()=>startChatAgent()};
 function startProcesses(names){return launchProcesses(names,startDeps);}
-// After an AI connection change: the running chat picks it up only on a fresh start. Retried while another task holds
-// the app lock (a sync), at most for a minute.
-async function chatAfterAiChange(){
+// Claude became linked or stopped being linked: start or stop jobs (when the person did not stop the PC processes).
+// Retried while another task holds the app lock, at most for a minute.
+async function jobsFollowClaude(isLinked){
   for(let attempt=0;attempt<12&&!quitting;attempt++){
-    try{await exclusively(()=>restartChat(startDeps));return;}
-    catch(e){if(e?.message!=='busy')throw e;await new Promise(resolve=>setTimeout(resolve,5000));}
+    try{
+      await exclusively(async()=>{
+        if(!isLinked){await supervisor.stop('jobs');return;}
+        if(prefs.autoRun!==false&&connection().connected&&!hasLiveProcess({p:supervisor.snapshot().jobs}))await startProcesses(['jobs']);
+      });
+      return;
+    }catch(e){if(e?.message!=='busy'){log('jobs','follow-failed');return;}await new Promise(resolve=>setTimeout(resolve,5000));}
   }
-  // The agent still reads the local mark on every turn, so a disconnect holds without this restart.
-  log('chat','restart-gave-up');
 }
 // The user's stop and start (tray). A stop is recorded first so the automatic start cannot bring it back in this run.
 async function userStop(){autorun?.userStopped();await stopProcesses();}
@@ -282,7 +296,7 @@ async function syncOnce(){
 async function runSync(){
   let outcome,stage=null,exit;
   try{
-    const r=await exclusively(()=>syncOnce());
+    const r=await exclusively(async()=>{syncing=true;changed();try{return await syncOnce();}finally{syncing=false;}});
     outcome=syncOutcome(r);exit=r.code;
     if(![0,1,3].includes(r.code))stage='sync/run-once';
   }catch(e){
@@ -333,17 +347,24 @@ async function initialize(){
   const userData=app.getPath('userData');fs.mkdirSync(userData,{recursive:true,mode:0o700});
   settingsFile=path.join(userData,'desktop-preferences.json');prefs=preferences();home=agentHome();
   binary=app.isPackaged?path.join(process.resourcesPath,'agent',process.platform==='win32'?'mycrm-agent.exe':'mycrm-agent'):path.resolve(__dirname,'../../release/agent',process.platform==='win32'?'mycrm-agent.exe':'mycrm-agent');
-  log=diagnosticLog(path.join(userData,'logs'));
+  logsDir=path.join(userData,'logs');log=diagnosticLog(logsDir);
+  // Open at login: on by default (main's decision 2026-11-13), once; the tray item changes it afterwards.
+  if(app.isPackaged&&typeof prefs.openAtLogin!=='boolean'){try{app.setLoginItemSettings({openAtLogin:true});prefs.openAtLogin=true;savePreferences();}catch{}}
   reporter=createReporter({request,hosted:HOSTED,version:app.getVersion(),platform:process.platform,log});
   ready=await compatibleBinary();
-  if(!ready){log('app','agent-incompatible');reporter.report('app/command','agent-incompatible');}
+  if(!ready){log('app','agent-incompatible');reporter.report('app/start','agent-incompatible');}
   supervisor=new Supervisor({binary,home,log,changed});
   connector=new Connector({hosted:HOSTED,request,store:jsonStore(path.join(userData,'desktop-connection.json')),install,forgetLocal,
     exclusive:exclusively,canDeliver:()=>ready&&!busy&&!quitting,connection,notify,log,client:grants.clientInfo(os.hostname(),process.platform),changed});
-  pcState=createPcState({store:jsonStore(path.join(userData,'desktop-sync.json')),connected:()=>connection().connected,
-    syncing:()=>busy,blocked:()=>connector.blockReason(),version:app.getVersion(),changed:()=>signal(DASH.pcChanged)});
+  pcState=createPcState({store:jsonStore(path.join(userData,'desktop-sync.json')),version:app.getVersion(),changed:()=>signal(DASH.pcChanged),
+    live:()=>{const c=connection(),why=connector.blockReason();
+      return {signedIn:connector.session==='ok',deviceId:c.connected?c.deviceId:null,syncing,login:why==='login',
+        stopped:prefs.autoRun===false,blocked:!!why&&why!=='login'};}});
   aiLink=createAiLink({run:(args,{timeoutMs})=>ready?command(args,undefined,{},timeoutMs):Promise.reject(new Error('agent-unavailable')),
-    restartChat:chatAfterAiChange,report:(stage,code)=>reporter.report(stage,code),log,changed:()=>signal(DASH.aiChanged)});
+    // The running chat agent checks again and sends hello again on the same connection (agent: desktop control line).
+    notifyChat:()=>supervisor.send('chat',{command:'ai-refresh'}),
+    linkedChanged:(provider,isLinked)=>{if(provider==='claude')jobsFollowClaude(isLinked);},
+    report:(stage,code)=>reporter.report(stage,code),log,changed:()=>signal(DASH.aiChanged)});
   // Opening the app starts the processes, unless the user stopped them last time.
   autorun=new AutoRun({wanted:()=>prefs.autoRun!==false,connected:()=>connection().connected,idle:()=>!busy&&!quitting,
     start:()=>exclusively(()=>startAutomatically(startDeps)),remember:value=>{prefs.autoRun=value;savePreferences();},log});
