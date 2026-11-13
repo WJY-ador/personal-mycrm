@@ -69,7 +69,7 @@ export const OP_NAME: Record<string, string> = {
   question_add: "질문 더하기", profile_set: "프로필 항목 저장하기", record_add: "기록 남기기",
   record_attach: "기록 붙일 곳 정하기", record_title_set: "기록 제목 바꾸기", candidates_propose: "판단 후보 제안하기",
   definition_propose: "자료 종류 제안하기", item_propose: "항목 제안하기", person_save: "사람 저장하기",
-  source_create: "출처 만들기", source_reflection_save: "읽고 든 생각 저장하기",
+  source_create: "출처 만들기", source_reflection_save: "읽고 든 생각 저장하기", collected_post_decide: "수집 글 보관, 버림",
 };
 export const CARD_HEAD = "확인이 필요한 작업";
 export const CARD_MORE = "자세히";

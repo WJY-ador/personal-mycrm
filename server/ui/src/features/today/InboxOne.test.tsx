@@ -18,6 +18,7 @@ beforeEach(() => {
     if (url.startsWith("/api/inbox/")) return json(200, sample.one);
     if (url.startsWith("/api/inbox?")) return json(200, { entries: [], next_cursor: "", counts: { pending: 0 } });
     if (url.startsWith("/api/activities")) return json(200, { activities: [], next_cursor: "" });
+    if (url.startsWith("/api/collected?")) return json(200, { ready: true, posts: [], counts: { pending: 0, kept: 0 } });   // 맨 위 수집 인박스
     return json(404, {});
   });
 });

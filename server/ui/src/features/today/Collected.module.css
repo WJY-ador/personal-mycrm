@@ -1,0 +1,33 @@
+/* 수집 인박스 — 기존 토큰만(디자인 2: 한 색 고동 --accent, AI 는 무채색 --ai). 수집 글은 남의 글이라 명조(--prose)를 쓰지 않는다. */
+.box { padding: var(--sp-8) var(--sp-9); margin-bottom: var(--sp-10); }
+.head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-4) var(--sp-7); }
+.head h3 { margin: 0; font-size: var(--fs-4); }
+.headline { color: var(--muted); font-size: var(--fs-3); }
+.only { margin-left: auto; font-size: var(--fs-2); color: var(--muted); display: inline-flex; align-items: center; gap: var(--sp-2); }
+.toast { display: flex; align-items: center; gap: var(--sp-3); }
+.empty { min-height: 4rem; display: flex; align-items: center; }
+.group { margin-top: var(--sp-8); }
+.ghead { display: flex; align-items: center; gap: var(--sp-4); border-bottom: 1px solid var(--line); padding-bottom: var(--sp-2); }
+.ghead h4 { margin: 0; font-size: var(--fs-3); font-weight: 600; color: var(--accent); }
+.ghead :global(button) { margin-left: auto; }
+.cards { list-style: none; margin: 0; padding: 0; }
+.card { border-bottom: 1px solid var(--line); padding: var(--sp-5) 0; }
+.face { display: block; width: 100%; text-align: left; background: transparent; border: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; }
+.face:hover { color: inherit; }
+.face:hover .line { color: var(--accent); }
+.top { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); font-size: var(--fs-2); }
+.author { font-weight: 600; color: var(--ink); }
+.axis { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.date { color: var(--muted); }
+.line { display: block; margin-top: var(--sp-2); font-size: var(--fs-3); line-height: 1.55; overflow-wrap: anywhere; }
+.aitag { margin-right: var(--sp-3); }
+.acts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); margin-top: var(--sp-3); }
+.detail { margin-top: var(--sp-4); padding: var(--sp-5) var(--sp-6); background: var(--ai-bg); border-radius: var(--r-3); font-size: var(--fs-3); }
+.titleLine { margin: 0 0 var(--sp-4); font-weight: 600; overflow-wrap: anywhere; }
+.ai { color: var(--ink); }
+.aihead { margin: 0 0 var(--sp-3); color: var(--ai); font-size: var(--fs-2); }
+.kvrow { display: contents; }
+.sub { margin: var(--sp-4) 0 var(--sp-2); font-weight: 600; font-size: var(--fs-2); color: var(--muted); }
+.points { margin: 0; padding-left: var(--sp-8); }
+.kept { margin-top: var(--sp-9); }
+.kept > summary { cursor: pointer; font-weight: 600; color: var(--muted); }

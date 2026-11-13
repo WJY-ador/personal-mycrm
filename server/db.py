@@ -132,8 +132,10 @@ _DAILY_SOURCES = {
     "records": (("records", "COALESCE(received_at, created)", "ingest_kind <> 'board_migration'"),),   # 받은 시각으로 센다(created 가 과거여도)
     "candidates": (("candidates", "created"),),
     # 수집 글(2026-11-12 명세 2절): 장치 수집 항목(ingest_kind inbox · 이력 ingest device)도 제안·결정 한도에 세지 않는다
+    # 수집 글 판별(2026-11-13, action collected_decide)은 인박스 정리라 판단 결정 한도에 세지 않는다(묶음 버림 200건)
     "decisions": (("candidate_history", "at"),
-                  ("item_history", "at", "COALESCE(event_meta->>'ingest', '') NOT IN ('board_migration','device')")),
+                  ("item_history", "at", "COALESCE(event_meta->>'ingest', '') NOT IN ('board_migration','device')",
+                   "action <> 'collected_decide'")),
     "proposals": (("object_defs", "created_at", "std_id IS NULL"),   # 표준 정의(시드·편입)는 사용자 제안이 아니다
                   ("items", "COALESCE(received_at, created_at)", "ingest_kind NOT IN ('board_migration','inbox')")),
     # 이관 반영 행 = 이전 입력원 대응표의 적용 행(기록·항목, 받은 시각) + 이관 plan 의 출처 적용(반영 시각). noop·중복은 세지 않는다
@@ -589,7 +591,9 @@ _WIDEN_CHECKS = (
     ("field_defs", "field_defs_target_kind_check", "target_kind", ("item", "record", "candidate", "person", "source", "activity")),
     # 수집 글(2026-11-12) — 접수 종류 collected_post
     ("import_entries", "import_entries_kind_check", "kind",
-     ("self_text", "self_summary", "activity", "migration_object", "migration_item", "migration_record", "collected_post")))
+     ("self_text", "self_summary", "activity", "migration_object", "migration_item", "migration_record", "collected_post")),
+    # 받는 즉시 승인(2026-11-13) — 접수 처리 주체 auto(NULL 은 IN 검사에서 통과한다)
+    ("import_entries", "import_entries_resolved_by_check", "resolved_by", ("user", "expiry", "superseded", "system", "migration", "auto")))
 
 # board 이전(2026-10-20) — 옛 DB 에 더할 열(schema.sql 최종형과 같은 모양). received_at·ingest_kind 는 옛 행 값이 다르다(아래 함수)
 _IMPORT_PROV_COLS = (("source_created_at", "timestamptz"), ("source_date", "date"),
@@ -3653,7 +3657,7 @@ DELETE_NOTICE = ("7일 뒤 자료를 모두 지우고 계정을 닫습니다. �
 # tickets 는 보존 문의 1건을 빼고 지운다(ticket_history 는 cascade). 시험이 「이 목록 = schema 의 user_id 테이블 − 예외」를 정적으로 본다.
 # board 이전(2026-10-20): 관계(activity_links) → 접수 대응표(import_entries) → 업무 자료(activities) → 한도·입력원(import_counters·import_streams).
 # PR ②-b: 판·stage(items 자식, 확인 이벤트를 가리킨다) → 확인 이벤트 → items.
-DELETE_TABLES = ("chat_approvals", "chat_sessions", "chat_provider_permits", "chat_consent_challenges", "chat_provider_grants", "desktop_consent_keys", "record_history", "token_grants", "desktop_installations", "desktop_handoffs", "page_layouts", "stack_sessions", "jobs", "item_links", "activity_links", "import_entries", "activities", "import_counters",
+DELETE_TABLES = ("chat_approvals", "chat_sessions", "chat_provider_permits", "chat_consent_challenges", "chat_provider_grants", "desktop_consent_keys", "record_history", "token_grants", "desktop_installations", "desktop_handoffs", "page_layouts", "stack_sessions", "jobs", "item_links", "activity_links", "collected_states", "import_entries", "activities", "import_counters",
                  "import_streams", "migration_plan_items", "migration_plans", "migration_tokens", "item_stage", "item_versions", "confirm_events", "item_history", "items", "user_roles", "field_defs",
                  "object_defs", "std_choices", "std_marks",
                  "candidate_history", "candidates", "source_reflections", "records", "sources", "questions", "profile", "tabs",

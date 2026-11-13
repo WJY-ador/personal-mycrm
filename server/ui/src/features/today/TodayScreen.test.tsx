@@ -39,8 +39,8 @@ afterEach(() => { hideScreen(); vi.unstubAllGlobals(); });
 
 test("오늘 목록 — 대기·보관됨 줄 · 오늘 머리글(KST) · 그냥 쓴 글 0 · 활동 5줄 + 「더 1」 · [삭제]·쓰기 0", async () => {
   const el = await show("#_today", ["today", "", ""]);
-  expect(calls.map(c => c.url).sort()).toEqual(["/api/activities?limit=50", "/api/inbox?state=pending"]);
-  expect(el.querySelector("h3:not(#today-h)")!.textContent).toMatch(/^오늘, /);
+  expect(calls.map(c => c.url).sort()).toEqual(["/api/activities?limit=50", "/api/collected?state=pending", "/api/inbox?state=pending"]);
+  expect(el.querySelector("#home-list h3:not(#today-h)")!.textContent).toMatch(/^오늘, /);
   expect(el.textContent).toContain("대기 2");
   const kinds = text(el, ".hrows .ht").map(t => t!.replace(/\s+/g, " ").trim());
   expect(kinds.filter(k => k.startsWith("대기"))).toEqual(["대기 내 글 e1 제목", "대기 내 글 AI 요약 e2 제목"]);

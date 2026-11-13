@@ -125,6 +125,8 @@
       "examples": [{"import_id": "ie_example01"}]},
     "inbox_decide": {"family": "inbox", "tier": "decide", "direct": false, "keywords": ["승인", "제외", "승인 대기", "저장 승인", "받은 글 저장", "빼줘"],
       "examples": [{"import_id": "ie_example01", "action": "approve"}]},
+    "collected_post_decide": {"family": "inbox", "tier": "write", "direct": false, "keywords": ["수집 글", "보관", "버림", "버려", "수집 인박스", "피드"],
+      "examples": [{"item_id": "i_example01", "state": "kept"}, {"item_id": "i_example02", "state": "dropped"}]},
 
     "trash_list": {"family": "trash", "tier": "read", "keywords": ["휴지통", "지운 것", "삭제 목록"],
       "examples": [{"kind": ""}]},

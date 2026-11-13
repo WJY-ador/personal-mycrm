@@ -1,9 +1,11 @@
 // 「오늘」 화면 틀(옛 renderToday2) — 넓은 화면 = 목록 | 상세(대기 하나), 1열 = 목록 또는 상세 하나. 읽기: 대기 목록 · 최근 활동 50 · 상태의 내 글(불러온 범위).
 // 상태를 새로 받으면(껍데기 reload) 조회를 다시 받는다. [삭제] 없음 — 동작은 대기 상세의 승인·제외뿐
+// 맨 위 = 수집 인박스(Collected, 2026-11-13). 그 아래 「들어온 내 글과 활동」 머리 밑에 위 목록 | 상세.
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import type { UiCtx } from "../../shared/ctx";
 import { useMobile } from "../../shared/mobile";
+import { Collected } from "./Collected";
 import { InboxOne } from "./InboxOne";
 import { todayRows } from "./rows";
 import { LOADING } from "./text";
@@ -21,7 +23,7 @@ export function Today({ ctx, sel, flash, say }: Props) {
   const n = pend.data?.counts?.pending;
   const list = (
     <section className={`hlist ${css.list}`} id="home-list" aria-labelledby="today-h">
-      <div className="htools"><h3 id="today-h">들어온 것</h3>{n == null ? null : <span className="count">대기 {n}</span>}</div>
+      <div className="htools"><h3 id="today-h">들어온 내 글과 활동</h3>{n == null ? null : <span className="count">대기 {n}</span>}</div>
       {pend.isError || acts.isError ? <p className="ferr" role="alert">들어온 것 일부를 불러오지 못했어요. 새로 고침해 주세요.</p> : null}
       {ready ? <TodayList rows={todayRows(S, pend.data?.entries || [], acts.data?.activities || [])} sel={sel ? "inbox:" + sel : ""} /> : <p className="hint">{LOADING}</p>}
       <p className={`hint ${css.more}`}>지난 승인 대기(승인함, 제외함, 만료)는 <a href="#_inbox/all">여기</a>에서 봐요.</p>
@@ -36,6 +38,7 @@ export function Today({ ctx, sel, flash, say }: Props) {
   return (
     <>
       <div className="hhead"><h2>오늘</h2>{flash}</div>
+      {!mobile || !sel ? <Collected /> : null}
       <div className="home today">{!mobile || !sel ? list : null}{detail}</div>
     </>
   );

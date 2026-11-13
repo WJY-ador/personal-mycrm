@@ -480,7 +480,7 @@ CREATE TABLE IF NOT EXISTS import_entries (
   expires_at           timestamptz,
   received_at          timestamptz NOT NULL DEFAULT now(),
   resolved_at          timestamptz,
-  resolved_by          text CHECK (resolved_by IS NULL OR resolved_by IN ('user','expiry','superseded','system','migration')),
+  resolved_by          text CHECK (resolved_by IS NULL OR resolved_by IN ('user','expiry','superseded','system','migration','auto')),   -- auto = 받는 즉시 승인(2026-11-13). 옛 DB 는 db._WIDEN_CHECKS
   target_object_id     text,
   target_item_id       text,
   target_record_id     text,
@@ -518,6 +518,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_import_latest ON import_entries (user_id, s
 CREATE UNIQUE INDEX IF NOT EXISTS ux_import_revision ON import_entries (user_id, stream_id, original_id, source_revision) WHERE state <> 'reverted';
 CREATE UNIQUE INDEX IF NOT EXISTS ux_import_current ON import_entries (user_id, stream_id, original_id) WHERE is_current_applied;
 CREATE INDEX IF NOT EXISTS ix_import_pending ON import_entries (user_id, received_at) WHERE state = 'pending';
+
+-- 수집 글 판별(2026-11-13 오늘 탭 수집 인박스) — collected_posts 항목 하나의 state 정본. 행이 없으면 pending 으로 본다(옛 항목).
+-- decided_by device = 장치가 보낸 state(PC 대시보드 판별) · user = 사용자가 웹·대화로 판별. 사용자 kept·dropped 는 장치 개정이 덮지 않는다(imports._apply_collected).
+-- seq = 사용자 판별 때만 매기는 단조 번호(사용자 잠금 안 nextval — 같은 사용자 안에서 커밋 순서와 같다). 장치 판별 목록(GET /api/imports/decisions)의 커서.
+-- 항목이 지워지면(영구 삭제·계정 삭제) 함께 지운다. 판별 이력은 item_history(action collected_decide) 한 줄 + 항목 revision +1
+CREATE SEQUENCE IF NOT EXISTS collected_state_seq;
+CREATE TABLE IF NOT EXISTS collected_states (
+  user_id     text NOT NULL,
+  item_id     text NOT NULL,
+  state       text NOT NULL CHECK (state IN ('pending','kept','dropped')),
+  decided_by  text NOT NULL CHECK (decided_by IN ('device','user')),
+  decided_at  timestamptz NOT NULL DEFAULT now(),
+  seq         bigint,
+  PRIMARY KEY (user_id, item_id),
+  FOREIGN KEY (user_id, item_id) REFERENCES items(user_id, id) ON DELETE CASCADE,
+  CHECK (decided_by = 'device' OR seq IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS ix_collected_states_seq ON collected_states (user_id, seq) WHERE decided_by = 'user';
 CREATE INDEX IF NOT EXISTS ix_import_target_activity ON import_entries (user_id, target_activity_id) WHERE target_activity_id IS NOT NULL;
 
 -- 원자적 접수·요청 한도. scope_key = 'user' 또는 장치(입력원) ID, bucket = 서버 고정 열거(imports.BUCKETS). 클라이언트 입력을 그대로 쓰지 않는다.

@@ -7125,6 +7125,18 @@ def _bi_axes(uid, n=2):
     return p["object_id"], out
 
 
+def _bi_approve(uid, iid):
+    """승인 스위치를 켜고 승인 — 받을 때는 꺼 둬서 대기로 남긴다(받는 즉시 승인 2026-11-13 은 스위치가 켜졌을 때만). 원래 값으로 되돌린다."""
+    old = os.environ.get("CRM_INBOX_APPROVALS_ENABLED")
+    os.environ["CRM_INBOX_APPROVALS_ENABLED"] = "1"
+    try:
+        return imports.inbox_approve(uid, iid)
+    finally:
+        os.environ.pop("CRM_INBOX_APPROVALS_ENABLED", None)
+        if old is not None:
+            os.environ["CRM_INBOX_APPROVALS_ENABLED"] = old
+
+
 def _bi_o():
     return "o_" + secrets.token_hex(16)
 
@@ -7457,7 +7469,8 @@ async def test_bi_imports():
             h.cookies.set("crm_session", main.site.session_value(A))
             r = await h.post("/api/imports", content=json.dumps(act()).encode(), headers={"origin": PUBLIC})
             assert r.status_code == 401, r.text
-    on = ("IMPORTS_ENABLED", "ACTIVITY_IMPORTS_ENABLED", "INBOX_APPROVALS_ENABLED", "UNATTENDED_SUMMARY_IMPORTS_ENABLED")
+    # 승인 스위치는 끈 채 받는다 — 켜져 있으면 받는 즉시 승인(2026-11-13, test_inbox_auto.py). 승인은 _bi_approve 가 그때만 켠다
+    on = ("IMPORTS_ENABLED", "ACTIVITY_IMPORTS_ENABLED", "UNATTENDED_SUMMARY_IMPORTS_ENABLED")
     fast = _bi_fast()
     fast.__enter__()
     with _bi_switch(*on):
@@ -7553,10 +7566,10 @@ async def test_bi_imports():
         ig = imports.inbox_get(A, e1)
         assert ig["body"] == bt["body"] and ig["approve_notice"] is None and ig["device"]["label"] == "합성 맥북"
         assert expect("NOT-FOUND", imports.inbox_get, B, e1).message == "그 승인 대기 글을 찾지 못했어요."
-        expect("NOT-FOUND", imports.inbox_approve, B, e1)
+        expect("NOT-FOUND", _bi_approve, B, e1)
         with _bi_switch("IMPORTS_ENABLED"):
             expect("APPROVALS-OFF", imports.inbox_approve, A, e1)
-        ap = imports.inbox_approve(A, e1)
+        ap = _bi_approve(A, e1)
         rec = db.record_get(A, ap["record_id"])
         assert (rec["author_kind"], rec["text_process"], rec["body"]) == ("self", "verbatim", bt["body"])
         with db.tx() as c:
@@ -7565,7 +7578,7 @@ async def test_bi_imports():
         assert rr["ingest_kind"] == "inbox" and rr["generation_kind"] == "unknown" and str(rr["source_date"]) == "2026-10-18"
         assert dict(ent) == {"state": "applied", "payload": None, "payload_bytes": 0, "is_current_applied": True}, "승인 = 본문 파기"
         assert activity.activity_get(A, a1b)["memos"][0]["record_id"] == ap["record_id"], "activity_ref → 메모 연결"
-        expect("INBOX-RESOLVED", imports.inbox_approve, A, e1)
+        expect("INBOX-RESOLVED", _bi_approve, A, e1)
         r = await _bi_post(tok, bt)
         assert r.status_code == 200 and r.json()["state"] == "applied" and r.json()["target_id"] == ap["record_id"], "본문 파기 뒤 재전송 = 기존 결과"
         n_rec = _bi_count(A, "records")
@@ -7577,15 +7590,15 @@ async def test_bi_imports():
         assert rA["state"] == rB["state"] == "pending"
         old = imports.inbox_get(A, rA["import_id"])
         assert old["state"] == "excluded" and old["body"] is None, "새 개정이 오면 옛 대기는 superseded 로 닫힌다"
-        expect("INBOX-RESOLVED", imports.inbox_approve, A, rA["import_id"])
+        expect("INBOX-RESOLVED", _bi_approve, A, rA["import_id"])
         assert imports.inbox_exclude(A, rB["import_id"])["state"] == "excluded"
         rC = (await _bi_post(tok, _bi_text(DEV, policy_revision=2))).json()
         _sql("UPDATE import_entries SET expires_at = now() - interval '1 second' WHERE id=%s", (rC["import_id"],))
-        expect("INBOX-EXPIRED", imports.inbox_approve, A, rC["import_id"])
+        expect("INBOX-EXPIRED", _bi_approve, A, rC["import_id"])
         assert imports.expire_pending() >= 1 and imports.inbox_get(A, rC["import_id"])["state"] == "expired"
         # ── AI 요약: 무인 스위치 · 승인 = unknown/generated·ai · 출처 정정 차단 ──
         sm = _bi_text(DEV, kind="self_summary", policy_revision=2, execution="unattended")
-        with _bi_switch("IMPORTS_ENABLED", "INBOX_APPROVALS_ENABLED"):
+        with _bi_switch("IMPORTS_ENABLED"):
             r = await _bi_post(tok, sm)
             assert r.status_code == 503 and r.json()["code"] == "SUMMARY-IMPORTS-OFF"
             r = await _bi_post(tok, {**sm, "execution": "attended", "original_id": _bi_o()})   # 사람이 시작한 요약은 무인 스위치와 무관
@@ -7597,7 +7610,7 @@ async def test_bi_imports():
         assert imports.inbox_get(A, es)["approve_notice"] == imports.AI_APPROVE_NOTICE
         assert imports.inbox_get(A, es)["generation"] == {"method": "ai_summary", "tool": "claude-cli", "model": "unknown",
                                                           "input_scope": "self_only", "inputs": 1}
-        sr = imports.inbox_approve(A, es)["record_id"]
+        sr = _bi_approve(A, es)["record_id"]
         rs = db.record_get(A, sr)
         assert (rs["author_kind"], rs["text_process"]) == ("unknown", "generated")
         with db.tx() as c:
@@ -7617,7 +7630,11 @@ async def test_bi_imports():
             except db.CrmError as e:
                 return e.code
         pend = (await _bi_post(d2["token"], _bi_text(d2["device"]["id"]))).json()["import_id"]
-        outs = await asyncio.gather(asyncio.to_thread(_try, imports.inbox_approve, A, pend), asyncio.to_thread(_try, imports.inbox_exclude, A, pend))
+        os.environ["CRM_INBOX_APPROVALS_ENABLED"] = "1"   # 받은 뒤에 켠다(대기 한 건을 두고 승인·제외 경합)
+        try:
+            outs = await asyncio.gather(asyncio.to_thread(_try, imports.inbox_approve, A, pend), asyncio.to_thread(_try, imports.inbox_exclude, A, pend))
+        finally:
+            os.environ.pop("CRM_INBOX_APPROVALS_ENABLED", None)
         assert sorted(outs) == ["INBOX-RESOLVED", "ok"], outs
         # 폐기 vs 접수 동시(스레드 2개·커넥션 2개) — 폐기가 먼저 커밋되면 접수 0, 접수가 먼저면 접수 1 · 둘 다 끝난 뒤엔 401
         for _ in range(6):
@@ -8305,9 +8322,10 @@ async def test_bi_delete():
         with _bi_switch("IMPORTS_ENABLED", "ACTIVITY_IMPORTS_ENABLED", "INBOX_APPROVALS_ENABLED"), _bi_fast():
             r = await _bi_post(tok, _bi_act(DEV, policy_revision=2, people=[{"hmac": secrets.token_hex(32), "role": "author"}], axes=[X1]))
             aid = r.json()["target_id"]
-            e = (await _bi_post(tok, _bi_text(DEV, policy_revision=2, activity_ref=aid))).json()["import_id"]
-            imports.inbox_approve(D, e)
-            await _bi_post(tok, _bi_text(DEV, policy_revision=2))
+            e = (await _bi_post(tok, _bi_text(DEV, policy_revision=2, activity_ref=aid))).json()   # 스위치 켬 = 받는 즉시 승인
+            assert e["state"] == "applied" and e["target_kind"] == "record", e
+            with _bi_switch("IMPORTS_ENABLED"):   # 승인 스위치 끔 = 대기 한 건(계정 삭제가 대기도 지우는지 본다)
+                await _bi_post(tok, _bi_text(DEV, policy_revision=2))
             return aid
     aid = await fill()
     p = db.definition_propose(D, None, 0, {"key": "notes", "label": "노트", "semantic_kind": "collection", "fields": [

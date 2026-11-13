@@ -38,6 +38,7 @@ _PINNED_TIERS = {
     "profile_set": "write", "record_add": "write", "record_attach": "write", "record_title_set": "write",
     "candidates_propose": "write", "definition_propose": "write", "item_propose": "write",
     "person_save": "write", "source_create": "write", "source_reflection_save": "write", "pc_connect": "write",
+    "collected_post_decide": "write",
     "record_edit": "decide", "record_provenance_set": "decide", "candidate_decide": "decide",
     "definition_apply": "decide", "definition_archive": "decide", "definition_restore": "decide",
     "item_decide": "decide", "person_delete": "decide", "source_reflection_review": "decide",

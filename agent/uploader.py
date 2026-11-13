@@ -38,6 +38,12 @@ IMPORTS_PATH = "/api/imports"
 DEVICE_PATH = "/api/imports/device"
 DEVICE_REVOKE_PATH = "/api/imports/device/revoke"
 DEVICE_ROTATE_PATH = "/api/device/rotate"   # Bearer 교체(PC 연결 계획 §4). M2: 옛 토큰은 새 토큰 첫 사용 때 무효
+# 웹 판별 목록(오늘 탭 수집 인박스 명세 2026-11-13 2절 장치 API, 서버 정본 계약). 업로드 토큰 GET ?since=<커서>&limit=<1..200>
+# → {"decisions": [{"item_id", "state": kept|dropped|pending, "decided_at"}], "next_cursor", "has_more"}. 장치 request 버킷(분당 10).
+# 경로는 이 상수 한 곳에서만 바꾼다
+DECISIONS_PATH = "/api/imports/decisions"
+DECISIONS_LIMIT = 200
+DECISIONS_MAX_BYTES = 1024 * 1024   # 한 쪽 응답 상한. 넘으면 형식 오류로 보고 커서를 옮기지 않는다
 # 서버 server/imports.py _HTTP 표 기준
 DAILY_LIMIT_CODES = ("IMPORT-QUOTA", "PEOPLE-QUOTA")   # 본문 resume_at(다음 KST 0시) 이 있으면 그 시각
 AUTH_CODES = ("AUTH-INVALID", "TOKEN-EXPIRED", "TOKEN-REVOKED", "AUTH-BLOCKED", "DEVICE-REVOKED")
@@ -107,7 +113,7 @@ class Uploader:
         return self._request("POST", self.url, body, {"Idempotency-Key": idem_key,
                                                       "Content-Type": "application/json"})
 
-    def _request(self, method: str, url: str, body: bytes | None, extra: dict):
+    def _request(self, method: str, url: str, body: bytes | None, extra: dict, max_bytes: int = MAX_RESPONSE_BYTES):
         req = urllib.request.Request(url, data=body, method=method)
         req.add_header("Authorization", "Bearer " + self._token)
         req.add_header("Accept", "application/json")
@@ -115,7 +121,7 @@ class Uploader:
             req.add_header(k, v)
         try:
             resp = self.opener.open(req, timeout=self.timeout)
-            status, headers, data = resp.status, resp.headers, resp.read(MAX_RESPONSE_BYTES)
+            status, headers, data = resp.status, resp.headers, resp.read(max_bytes + 1)
             resp.close()
         except urllib.error.HTTPError as e:
             status, headers = e.code, e.headers
@@ -124,6 +130,8 @@ class Uploader:
             except Exception:
                 data = b""
             e.close()
+        if len(data) > max_bytes:
+            data = b""      # 상한을 넘은 본문은 읽지 않는다(잘린 JSON 을 쓰지 않는다)
         try:
             payload = json.loads(data.decode("utf-8")) if data else {}
         except (UnicodeDecodeError, ValueError):
@@ -154,6 +162,22 @@ class Uploader:
         """POST /api/device/rotate → {stream_id, token, token_expires_at}. 새 토큰은 응답에만 한 번 온다.
         옛 토큰은 새 토큰이 처음 쓰일 때 무효(M2) — 그 전까지 옛 토큰으로 계속 보낼 수 있다."""
         return self._device_call("POST", DEVICE_ROTATE_PATH)
+
+    def decisions(self, since: str | None) -> dict:
+        """GET 판별 목록 한 쪽. 200 이고 decisions 가 목록일 때만 응답을 돌려준다. 그 밖은 DeviceError(값 없음)."""
+        q = {"since": since} if since else {}
+        q["limit"] = DECISIONS_LIMIT
+        url = self.base + DECISIONS_PATH + "?" + urllib.parse.urlencode(q)
+        try:
+            status, _h, payload = self._request("GET", url, None, {}, max_bytes=DECISIONS_MAX_BYTES)
+        except (urllib.error.URLError, OSError, TimeoutError):
+            raise DeviceError("network") from None
+        if status != 200:
+            code = payload.get("code") if isinstance(payload.get("code"), str) else ""
+            raise DeviceError("auth" if status == 401 else "server", status, code)
+        if not isinstance(payload.get("decisions"), list):
+            raise DeviceError("malformed", status)
+        return payload
 
     def run(self, store, *, max_n: int = 100, min_interval: float = 0.0) -> dict:
         out = {"sent": 0, "accepted": 0, "duplicate": 0, "deleted": 0, "conflict": 0, "halted": 0, "rejected": 0,
