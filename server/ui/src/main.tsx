@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { App } from "./layout/App";
 import { queryClient } from "./shared/queries";
+import { installGlobalReport } from "./shared/report";
 
 export function boot(el: HTMLElement | null = document.getElementById("view")) {
   if (!el) return null;
@@ -13,4 +14,5 @@ export function boot(el: HTMLElement | null = document.getElementById("view")) {
   root.render(<QueryClientProvider client={queryClient}><App /></QueryClientProvider>);
   return root;
 }
+installGlobalReport();   // 오류 자동 Case — 잡히지 않은 오류를 코드만으로 보낸다(shared/report)
 boot();

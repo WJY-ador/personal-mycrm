@@ -49,7 +49,11 @@ TRANSFORMS = {
     "board-reactions/1": {"kind": "activity", "actions": ("like", "comment", "repost", "reply"), "providers": ("sns", "web")},
     "board-mail/1": {"kind": "activity", "actions": ("read", "save", "send", "reply"), "providers": ("mail",)},
 }
-DEFAULT_POLICY = {"actions": ["like"], "transform_versions": ["board-likes/1", "self-text/1", "self-summary/1", "session-wrap/1"], "axes": []}
+# 앱 하나 자동 연결(2026-11-13 명세 1.2): 허용 규칙은 사용자가 고르지 않는다 — 제품이 지원하는 모든 행동과 변환, 축 0개.
+# 무엇을 모을지는 PC 수집기 설정이 정한다. 비상 끄기는 조직 기능 스위치(imports, activity_imports 등) 그대로
+DEFAULT_POLICY = {"actions": list(ACTIONS), "transform_versions": list(TRANSFORMS), "axes": []}
+# 기존 장치를 DEFAULT_POLICY 로 맞추는 이관 표식 — 행동, 변환 목록이 바뀌면 키가 바뀌어 다음 시작 때 한 번 더 돈다(migrate_device_policy)
+POLICY_ALL_MARK = "device_policy_all:" + hashlib.sha256(json.dumps(DEFAULT_POLICY, sort_keys=True).encode()).hexdigest()[:16]
 # 세션 정리 승인 = 내가 쓴(author self) 구조 정리(structured) · 나와 AI 가 함께 만든 글(mixed) · 「내 결정」 표시(decision_owner self — 화면엔 안 보인다)
 SESSION_WRAP = "session-wrap/1"
 SESSION_WRAP_SOURCE = "세션 정리"
@@ -582,6 +586,16 @@ def _norm_policy(c, uid, policy):
     if trashed:   # 휴지통 축을 정책에 새로 넣지 않는다 — 축 이동(core)과 같은 사용자 잠금 안이라 경합하지 않는다
         raise CrmError("ARG-INVALID", "axes 에 휴지통에 있는 축이 있어요.", "축을 복원하거나 정책에서 빼세요.")
     return {"actions": list(acts), "transform_versions": list(tvs), "axes": list(axes)}
+
+
+def migrate_device_policy(c) -> int:
+    """기존 장치의 허용 규칙을 DEFAULT_POLICY 로 맞춘다(명세 1.2). POLICY_ALL_MARK 가 없을 때 한 번 — 다른 규칙인 장치만 바꾸고
+    policy_revision +1(에이전트는 다음 업로드의 POLICY-STALE 에서 새 규칙을 받아 다시 보낸다, agent/runner.py). 반환 = 바꾼 장치 수."""
+    if not _one(c, "INSERT INTO schema_marks (key) VALUES (%s) ON CONFLICT (key) DO NOTHING RETURNING key", (POLICY_ALL_MARK,)):
+        return 0
+    rows = _all(c, "UPDATE import_streams SET policy=%s, policy_revision=policy_revision+1 "
+                   "WHERE channel='device' AND policy IS DISTINCT FROM %s RETURNING id", (Jsonb(DEFAULT_POLICY), Jsonb(DEFAULT_POLICY)))
+    return len(rows)
 
 
 # ── 연결 장치 (web #_devices) ─────────────────────────────

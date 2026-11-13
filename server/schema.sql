@@ -587,7 +587,7 @@ CREATE TABLE IF NOT EXISTS tickets (
   user_id     text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   kind        text NOT NULL CHECK (kind IN ('bug','request','question','privacy')),
   text        text NOT NULL CHECK (char_length(text) BETWEEN 1 AND 4096),
-  via         text NOT NULL CHECK (via IN ('web','mcp')),
+  via         text NOT NULL CHECK (via IN ('web','mcp','auto')),   -- auto = 오류 자동 Case(2026-11-13). 옛 DB 는 db._WIDEN_CHECKS
   page        text NOT NULL DEFAULT 'other',               -- 열거: today/question/record/structure/map/review/start/help/privacy/other
   tool        text NOT NULL DEFAULT '',                    -- MCP 도구 이름 또는 ''
   ua_family   text NOT NULL DEFAULT '',                    -- 'chrome'/'safari'/'firefox'/'edge'/'other'/'' (버전·OS 없음)
@@ -600,6 +600,13 @@ CREATE TABLE IF NOT EXISTS tickets (
   reply          text CHECK (octet_length(reply) <= 4096),   -- 운영자 공개 답변(P3). NULL = 답변 없음. 옛 DB 는 init_schema ADD COLUMN
   reply_at       timestamptz,                                -- 답변을 쓰거나 고친 때
   public_updated timestamptz,                                -- 사용자에게 보이는 변경(상태·답변)의 마지막 시각. 내부 메모는 안 바꾼다
+  -- 오류 자동 Case(2026-11-13 명세 1.4) — via='auto' 행만 채운다(ck_tickets_auto). 묶음 = (사용자, auto_day, auto_key). 옛 DB 는 db._migrate_auto_cases
+  auto_key    text CHECK (auto_key IS NULL OR char_length(auto_key) <= 160),   -- 출처|단계|오류 코드(코드와 고정 낱말만)
+  auto_day    date,                                        -- KST 날짜(서버 수신 시각)
+  auto_count  integer CHECK (auto_count IS NULL OR auto_count >= 1),   -- 같은 묶음 발생 횟수
+  auto_first  timestamptz,                                 -- 묶음 첫 수신
+  auto_last   timestamptz,                                 -- 묶음 마지막 수신
+  auto_meta   jsonb,                                       -- {source, stage, code, app_version, os, occurred_at} — 마지막 보고 값
   CHECK ((status IN ('done','wontfix')) = (closed_at IS NOT NULL))
 );
 CREATE INDEX IF NOT EXISTS ix_tickets_user ON tickets(user_id, created DESC);
@@ -1182,10 +1189,13 @@ CREATE TABLE IF NOT EXISTS chat_provider_permits (
   user_id          text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   device_id        text NOT NULL CHECK (char_length(device_id) BETWEEN 1 AND 200),
   provider         text NOT NULL CHECK (provider IN ('claude','codex')),
-  installation_id  text NOT NULL CHECK (installation_id ~ '^di_[0-9a-f]{24}$'),
-  key_id           text NOT NULL CHECK (key_id ~ '^ck_[0-9a-f]{24}$'),
-  grant_id         text NOT NULL CHECK (grant_id ~ '^cg_[0-9a-f]{24}$'),
-  challenge_id     text NOT NULL CHECK (challenge_id ~ '^cc_[0-9a-f]{24}$'),
+  -- 근거 넷은 basis='consent'(옛 앱 0.1.5, 0.1.6 허용 창 + 서명)만 채운다. basis='device'(앱 0.1.7~, 2026-11-13 앱 하나 1.3) = PC 가 알린
+  -- 공급자 인증(WS hello ai_links linked)으로 세운 허용 — 넷 다 NULL(ck_chat_provider_permits_basis, 옛 DB 는 db._migrate_device_permits)
+  installation_id  text CHECK (installation_id ~ '^di_[0-9a-f]{24}$'),
+  key_id           text CHECK (key_id ~ '^ck_[0-9a-f]{24}$'),
+  grant_id         text CHECK (grant_id ~ '^cg_[0-9a-f]{24}$'),
+  challenge_id     text CHECK (challenge_id ~ '^cc_[0-9a-f]{24}$'),
+  basis            text NOT NULL DEFAULT 'consent' CHECK (basis IN ('consent','device')),
   created_at       timestamptz NOT NULL DEFAULT now(),
   UNIQUE (user_id, device_id, provider)
 );

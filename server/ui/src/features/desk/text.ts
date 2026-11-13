@@ -3,6 +3,10 @@
 export const DESK_MAX = 4096;
 export const DESK_NOTICE = "이 글은 서버에 저장되고 운영자가 직접 읽어요. 기록 원문이나 다른 사람 정보는 넣지 마세요.";
 export const TICKET_KIND: Record<string, string> = { bug: "버그", request: "요청", question: "질문", privacy: "개인정보 요청" };
+// 오류 자동 Case(via auto) — 사용자가 쓰지 않은 문의. 종류 대신 이 이름과 횟수를 보인다
+export const AUTO_KIND = "자동으로 보낸 오류 보고";
+export const kindLabel = (t: { kind: string; via: string; auto_count?: number | null }) =>
+  t.via === "auto" ? `${AUTO_KIND}${t.auto_count && t.auto_count > 1 ? `, ${t.auto_count}회` : ""}` : TICKET_KIND[t.kind] || t.kind;
 export const TICKET_STATUS: Record<string, string> = { open: "접수", ack: "확인", doing: "처리중", done: "완료", wontfix: "보류" };
 export const DESK_CHIP: Record<string, string> = { open: "st-wait", ack: "", doing: "flag", done: "st-mine", wontfix: "st-off" };
 export const DESK_LEAD = "안 되는 것, 바라는 것, 궁금한 것을 운영자에게 보내요. 처리 상태는 내 문의에서 보여요.";

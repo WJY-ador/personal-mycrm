@@ -219,7 +219,7 @@ test("상태 한 벌 → 탭 줄·머리글·바닥 · 설정 페이지 줄 · �
   expect($("foot").textContent).toBe("불러온 시각 11월 3일 10:05.");
   expect($("subnav").hidden).toBe(false);
   expect($("subnav").querySelector("a.on")!.textContent).toBe("문의 및 개인정보");
-  expect(text($("subnav"), "a")).toEqual(["페이지 레이아웃", "내 구조 설정", "자료 종류", "연결 장치", "지도", "문의 및 개인정보", "이관"]);   // 휴지통 = 스위치 켜짐만 · 운영 링크 = 관리자만
+  expect(text($("subnav"), "a")).toEqual(["페이지 레이아웃", "내 구조 설정", "자료 종류", "이 PC", "지도", "문의 및 개인정보", "이관"]);   // 휴지통 = 스위치 켜짐만 · 운영 링크 = 관리자만
   expect(($("setup-link") as HTMLAnchorElement).getAttribute("href")).toBe("#_setup");
   expect(document.body.classList.contains("navnew-screen")).toBe(true);
   expect($("view").textContent).toContain("문의 및 개인정보");

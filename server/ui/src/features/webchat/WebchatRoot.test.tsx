@@ -5,10 +5,11 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { AppState } from "../../shared/state";
 import { flush } from "../../test/fakeServer";
+import { ApiFail } from "../../shared/api";
 import type { Approval } from "./api";
 import { WebchatStore } from "./store";
 import { WebchatRoot } from "./WebchatRoot";
-import { EMPTY, END, GRANT, GUIDE_OFFLINE, GUIDE_RECHECK, GUIDE_STEPS, GUIDE_TITLE, HISTORY_NOTE, MORE_MODELS, NO_MODEL, OP_NAME, PC_ON, PICK_SWITCH, TITLE, WAITING } from "./text";
+import { AI_UNLINKED, EMPTY, END, GRANT, GUIDE_OFFLINE, GUIDE_RECHECK, GUIDE_STEPS, GUIDE_TITLE, HISTORY_NOTE, MORE_MODELS, NO_MODEL, OP_NAME, PC_ON, PICK_SWITCH, TITLE, WAITING } from "./text";
 
 let el: HTMLDivElement, nav: HTMLSpanElement, root: Root;
 beforeEach(() => {
@@ -295,11 +296,12 @@ test("확인 카드: 모르는 op = op 이름 그대로 · 승인 목록 오류�
 });
 
 // ── 대화 하나로 J(2026-11-12) ──
-test("J-F1: 쓸 수 있는 AI가 없으면 한 줄 대신 연결 안내 3단계, 멈춘 단계 = 서버 setup, PC 앱에서 열기 = mycrm:// 딥링크, 다시 확인", async () => {
+test("J-F1(앱 하나): 쓸 수 있는 AI가 없으면 연결 안내 2단계, 멈춘 단계 = 서버 setup, PC 앱 받기 = none 만, 다시 확인", async () => {
   for (const [setup, states, links] of [
-    ["none", ["now", "todo", "todo"], ["/download", "mycrm://connection?step=connect"]],
-    ["offline", ["now", "done", "todo"], ["mycrm://connection?step=connect"]],
-    ["no_provider", ["done", "done", "now"], ["mycrm://connection?step=provider"]],
+    ["none", ["now", "todo"], ["/download"]],
+    ["offline", ["now", "todo"], []],
+    ["no_provider", ["done", "now"], []],
+    ["no_link", ["done", "now"], []],
   ] as const) {
     const { s } = mk();
     s.api.capabilities = vi.fn(async () => ({ devices: [], setup }));
@@ -310,6 +312,7 @@ test("J-F1: 쓸 수 있는 AI가 없으면 한 줄 대신 연결 안내 3단계,
     expect([...g.querySelectorAll("li")].map(li => li.getAttribute("data-state"))).toEqual(states);
     expect([...g.querySelectorAll("li")].map(li => li.querySelector("h5")!.firstChild!.textContent!.trim())).toEqual(GUIDE_STEPS.map(x => x.title));
     expect([...g.querySelectorAll("a")].map(a => a.getAttribute("href"))).toEqual(links);
+    expect(g.querySelector("[href^=\"mycrm:\"]")).toBeNull();   // 연결 장치 창 딥링크는 없앴다
     if (setup === "offline") expect(g.textContent).toContain(GUIDE_OFFLINE);
     expect(aside().textContent).not.toContain(EMPTY);
     await act(async () => { btn(GUIDE_RECHECK, g).click(); }); await flush();
@@ -319,6 +322,53 @@ test("J-F1: 쓸 수 있는 AI가 없으면 한 줄 대신 연결 안내 3단계,
   const { s } = mk();   // 고를 AI가 있으면 안내 없음
   await open(s);
   expect(aside().querySelector("section[data-setup]")).toBeNull();
+});
+
+test("앱 하나 1.3: 새 앱(ai_links)은 linked 공급자만 고르고, 허용 요청 없이 바로 세션을 연다", async () => {
+  const { s } = mk();
+  s.api.capabilities = vi.fn(async () => ({ devices: [{ device_id: "is_1", connected: true, agent_version: "1.0", capabilities_version: 2,
+    capabilities: [{ provider: "claude" as const, models: ["sonnet"] }, { provider: "codex" as const, models: ["gpt"] }],
+    ai_links: { claude: "linked" as const, codex: "signed_out" as const } }] }));
+  await open(s);
+  expect(s.choices().map(c => c.provider)).toEqual(["claude"]);
+  await type("안녕");
+  await send();
+  expect(s.api.grant).not.toHaveBeenCalled();
+  expect(s.api.create).toHaveBeenCalledWith("is_1", "claude", "sonnet", expect.any(String));
+});
+
+test("앱 하나 1.3: 새 앱인데 그새 끊김(CONSENT_REQUIRED) = 허용 창 대신 다시 연결 안내, 선택지 다시 읽기", async () => {
+  const { s } = mk();
+  s.api.capabilities = vi.fn(async () => ({ devices: [{ device_id: "is_1", connected: true, agent_version: "1.0", capabilities_version: 2,
+    capabilities: [{ provider: "claude" as const, models: ["sonnet"] }], ai_links: { claude: "linked" as const } }] }));
+  s.api.create = vi.fn(async () => { throw new ApiFail({ code: "CONSENT_REQUIRED", msg: "", status: 409 }); });
+  await open(s);
+  await type("안녕");
+  await send();
+  expect(s.api.grant).not.toHaveBeenCalled();
+  expect(aside().textContent).toContain(AI_UNLINKED);
+  expect(s.api.capabilities).toHaveBeenCalledTimes(2);
+});
+
+test("앱 하나 1.3: 앱 다리가 있으면 AI 연결 줄 — 끊김은 [Claude 연결] 하나, 연결됨은 [연결 끊기], CLI 없음은 줄 없음", async () => {
+  const calls: string[] = [];
+  let push: (v: unknown) => void = () => {};
+  const state = { providers: [{ provider: "claude", state: "signed_out", code: null }, { provider: "codex", state: "missing", code: null }] };
+  (window as unknown as { mycrmDesktop: unknown }).mycrmDesktop = { ai: {
+    get: async () => state, onChange: (cb: (v: unknown) => void) => { push = cb; return () => {}; },
+    connect: async (p: string) => { calls.push("connect:" + p); }, disconnect: async (p: string) => { calls.push("disconnect:" + p); } } };
+  try {
+    const { s } = mk();
+    await open(s);
+    const links = () => aside().querySelector("[aria-label='이 PC의 AI 연결']") as HTMLElement;
+    expect([...links().querySelectorAll("p")].map(p => p.getAttribute("data-ai"))).toEqual(["claude"]);
+    await act(async () => { btn("Claude 연결", links()).click(); }); await flush();
+    expect(calls).toEqual(["connect:claude"]);
+    await act(async () => { push({ providers: [{ provider: "claude", state: "linked", code: null }] }); }); await flush();
+    expect(s.api.capabilities).toHaveBeenCalledTimes(2);   // 연결이 끝나면 서버 선택지를 다시 읽는다
+    await act(async () => { btn("연결 끊기", links()).click(); }); await flush();
+    expect(calls).toEqual(["connect:claude", "disconnect:claude"]);
+  } finally { delete (window as unknown as { mycrmDesktop?: unknown }).mycrmDesktop; }
 });
 
 test("J-F4: 입력 칸 Enter = 보내기, Shift+Enter = 보내지 않음(줄바꿈), 한글 조합 중 Enter = 보내지 않음", async () => {

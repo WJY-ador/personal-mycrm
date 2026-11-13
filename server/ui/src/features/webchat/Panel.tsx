@@ -2,6 +2,7 @@
 // 도구 허용 범위, 확인 규칙, 보관 기간은 서버가 정한다. 화면은 보여 주기만 한다(계획 결정 8). Enter = 보내기, Shift+Enter = 줄바꿈, Esc = 닫기.
 import { useEffect, useRef, type RefObject } from "react";
 import { Sprout } from "../../shared/Sprout";
+import { AiLinks } from "./AiLinks";
 import { Approvals } from "./ApprovalCard";
 import { Composer } from "./Composer";
 import { ConnectGuide } from "./ConnectGuide";
@@ -39,6 +40,7 @@ export function Panel({ s, inRef, dev = "" }: { s: WebchatStore; inRef: RefObjec
       <div className={css.info} aria-label="대화 정보">
         <p role="status">{cur && cur.provider ? `${modelLabel(cur.provider, cur.model)}${pc ? `, ${pc}` : ""}` : ""}</p>
         <p>{KEEP} {TOOLS_ONLY}</p>
+        {!guide && <AiLinks s={s} />}
       </div>
       <div className={css.body}>
         {s.view === "history" ? <History s={s} /> : <>

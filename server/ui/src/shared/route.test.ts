@@ -15,7 +15,7 @@ const rep = (h: string, st: AppState = S) => (resolve(h, st) as { replace?: stri
 test("옛 묶음 주소 = 새 자리로 replace", () => {
   expect(["#_obj", "#_settings", "#_settings/structure", "#_devices", "#map", "#_inbox", "#_inbox/i1", "#today", "#home/x", "#structure/defs",
     "#structure/d1/p1", "#structure/d2/x1", "#_setup/nope", "#_setup/trash"].map(h => rep(h)))
-    .toEqual(["#_setup/objects", "#_setup/structure", "#_setup/structure", "#_setup/devices", "#_setup/map", "#_today", "#_today/inbox/i1", "#_today",
+    .toEqual(["#_setup/objects", "#_setup/structure", "#_setup/structure", "#_setup/pc", "#_setup/map", "#_today", "#_today/inbox/i1", "#_today",
       "#_today", "#_setup/structure", "#_me/principle/p1", "#_me/custom/x1", "#_setup/layout", "#_setup/layout"]);
   expect([rep("#structure/d1/n1"), rep("#structure/d1"), rep("#map/review/q1/c1"), rep("#today/review/q1/c1"), rep("#_inbox/applied")]).toEqual([undefined, undefined, undefined, undefined, undefined]);
 });
@@ -58,6 +58,12 @@ test("휴지통 스위치 — 꺼짐·필드 없음 = 페이지 0 · 켜짐 = Se
   const pages = (sw: object) => setupPages({ ...S, switches: sw } as AppState).map(p => p[0]);
   expect(pages({ converse: true })).not.toContain("trash");
   expect(pages({ trash: false })).not.toContain("trash");
-  expect(pages({ trash: true })).toEqual(["layout", "structure", "objects", "devices", "map", "help", "migration", "trash"]);
+  expect(pages({ trash: true })).toEqual(["layout", "structure", "objects", "pc", "map", "help", "migration", "trash"]);
   expect(go("#_setup/trash", { ...S, switches: { trash: true } } as AppState).screen).toBe("trash");
+});
+
+test("옛 「연결 장치」 주소는 「이 PC」로 — 연결 장치 페이지는 설정 줄에 없다", () => {
+  expect(go("#_setup/devices")).toEqual({ replace: "#_setup/pc" });
+  expect(setupPages(S).map(p => p[0])).not.toContain("devices");
+  expect(go("#_setup/pc").screen).toBe("pc");
 });

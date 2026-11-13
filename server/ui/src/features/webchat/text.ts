@@ -109,18 +109,24 @@ export const endText = (code: string) => END[code] || `답이 끝나지 못했�
 export const MORE_MODELS = "다른 모델";
 export const PICKED = "고른 모델";
 
-// 연결 안내(J-F1) — 쓸 수 있는 AI가 없을 때 3단계. 상태는 서버 capabilities.setup 이 정한다
-export const GUIDE_TITLE = "AI와 대화하려면 PC를 연결해 주세요";
+// 연결 안내(J-F1, 2026-11-13 앱 하나) — 쓸 수 있는 AI가 없을 때 2단계. 상태는 서버 capabilities.setup 이 정한다.
+// PC 연결은 앱 로그인으로 저절로 된다(토큰, 연결 장치 창 없음). AI 연결은 PC의 Claude, Codex 로그인이다
+export const GUIDE_TITLE = "AI와 대화하려면 PC 앱에서 연결해 주세요";
 export const GUIDE_NOTE = "AI는 내 PC의 Claude나 Codex로 답해요. 아래 단계를 마치면 여기서 바로 대화할 수 있어요.";
 export const GUIDE_STEPS: Array<{ title: string; text: string }> = [
-  { title: "PC 앱 받기와 열기", text: "MyCRM PC 앱을 받아 설치하고 열어요." },
-  { title: "PC 연결", text: "PC 앱에서 이 계정으로 로그인하면 PC가 연결돼요." },
-  { title: "Claude 또는 Codex 고르기", text: "PC 앱의 연결 장치 창에서 대화에 쓸 AI를 골라요. PC에 Claude나 Codex CLI가 있어야 해요." },
+  { title: "PC 앱 받기와 로그인", text: "MyCRM PC 앱을 받아 설치하고, 앱에서 이 계정으로 로그인해요. PC는 자동으로 연결돼요." },
+  { title: "AI 연결", text: "PC 앱의 AI 패널에서 [Claude 연결]을 눌러 로그인을 마쳐요. PC에 Claude나 Codex CLI가 있어야 해요." },
 ];
 export const GUIDE_OFFLINE = "PC 앱이 꺼져 있어요. PC에서 MyCRM 앱을 열어 주세요.";
 export const GUIDE_STATE: Record<string, string> = { done: "끝났어요", now: "지금 할 일", todo: "다음 단계" };
 export const GUIDE_DOWNLOAD = "PC 앱 받기";
-export const GUIDE_OPEN = "PC 앱에서 열기";
 export const GUIDE_RECHECK = "다시 확인";
-// PC 앱의 연결 장치 창을 그 칸으로 연다(서버와 PC 앱의 계약: mycrm://connection?step=connect|provider|permits)
-export const appLink = (step: "connect" | "provider" | "permits") => `mycrm://connection?step=${step}`;
+
+// AI 연결(1.3) — 앱 창 안에서만 버튼(window.mycrmDesktop.ai). 연결 = 공급자 로그인, 끊기 = 이 PC에서 MyCRM 이 그 AI 를 쓰지 않게 하는 표시(공급자 로그아웃 아님)
+export const AI_UNLINKED = "이 PC의 AI 연결이 끊겼어요. AI 패널에서 다시 연결해 주세요.";
+export const AI_CONNECT = (p: string) => `${providerName(p)} 연결`;
+export const AI_DISCONNECT = "연결 끊기";
+export const AI_STATE: Record<string, string> = {
+  linked: "연결됨", signed_out: "로그인이 필요해요", off: "연결을 끊어 두었어요", checking: "확인하는 중", linking: "로그인 창에서 마쳐 주세요",
+};
+export const AI_LINKS = "이 PC의 AI 연결";

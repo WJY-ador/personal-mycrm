@@ -1,5 +1,7 @@
 // 서버 접점 — 같은 origin 의 /api/* 만 부른다. 옛 app.html getJSON·corePost 와 같은 규칙:
 // 401 = 시작 화면(/)으로 보낸다 · 연결 실패 = code "OFFLINE" · 그 밖 실패 = 서버 오류 {code, msg, action}.
+import { reportError, stageOf } from "./report";
+
 export type ApiError = { code: string; msg: string; action?: string; status?: number; j?: Record<string, unknown> };   // status = HTTP 상태(연결 실패면 없음) · j = 오류 응답 전체(이관 detail·resume_at)
 
 export class ApiFail extends Error {
@@ -24,6 +26,7 @@ async function call<T>(url: string, init: RequestInit): Promise<T> {
   const j: unknown = await r.json().catch(() => ({}));
   if (r.ok) return j as T;
   const e = (j && typeof j === "object" ? j : {}) as Partial<ApiError>;
+  if (r.status >= 500) reportError(stageOf(url), `HTTP-${r.status}`);   // 오류 자동 Case — 서버 쪽 실패만(4xx 는 사용자 입력·권한이라 보내지 않는다)
   throw new ApiFail({ code: String(e.code || ""), msg: String(e.msg || ""), action: e.action, status: r.status, j: e as Record<string, unknown> });
 }
 

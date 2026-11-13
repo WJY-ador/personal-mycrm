@@ -6,9 +6,10 @@
 // 턴 = 사용자 글 + 답(delta 합) + 도구 호출 목록 + 끝 상태. 같은 SSE id 는 두 번 그리지 않는다.
 // 브라우저 저장소에는 모델 선택(PC, 공급자, 모델 이름) 하나만 쓴다. 글과 대화 내용은 쓰지 않는다.
 import { apiErr } from "../../shared/api";
+import { reportError } from "../../shared/report";
 import { webchatApi, type Capabilities, type Es, type Grant, type Message, type Session, type WebchatApi } from "./api";
 import type { Approval } from "./api";
-import { BUSY_NEW, PAST_END, REPLACED, TEXT_MAX, TRIMMED, endText, errText } from "./text";
+import { AI_UNLINKED, BUSY_NEW, PAST_END, REPLACED, TEXT_MAX, TRIMMED, endText, errText } from "./text";
 import { splitModels } from "./models";
 
 export type Tool = { name: string; input?: unknown; ok?: boolean; summary?: string };
@@ -78,9 +79,14 @@ export class WebchatStore {
   say(text: string, bad = false) { this.line = text; this.bad = bad; this.emit(); }
 
   // 고를 수 있는 (PC, 공급자, 모델) — 서버가 준 capabilities(연결된 PC 만) 순서 그대로
+  // 새 앱(ai_links 있음)은 연결된(linked) Claude, Codex 만 고른다 — 연결 안 된 AI 는 고르기 대신 AI 연결 버튼(AiLinks)
   choices(): Choice[] {
-    return this.capabilities.devices.filter(d => d.connected).flatMap(d => d.capabilities.flatMap(c => c.models.map(m => ({ device: d.device_id, provider: c.provider, model: m }))));
+    return this.capabilities.devices.filter(d => d.connected).flatMap(d => d.capabilities
+      .filter(c => !d.ai_links || !GRANT_PROVIDERS.includes(c.provider) || d.ai_links[c.provider as "claude" | "codex"] === "linked")
+      .flatMap(c => c.models.map(m => ({ device: d.device_id, provider: c.provider, model: m }))));
   }
+  // 그 PC 가 새 앱인가(공급자 인증을 알린다) — 허용 창 흐름을 타지 않는다
+  linksOf(device: string) { return this.capabilities.devices.find(d => d.device_id === device)?.ai_links || null; }
   // 고르기 버튼에 보일 것 — 진행 중 대화가 있으면 그 대화에 고정된 모델, 없으면 다음 새 대화에 쓸 선택
   shown(): Choice | null { return this.sid && this.provider ? { device: this.device, provider: this.provider, model: this.model } : this.choice; }
 
@@ -277,6 +283,15 @@ export class WebchatStore {
   // ── 새 대화 시작(첫 메시지) — fake 는 바로, Claude 와 Codex 는 PC 허용 뒤 같은 id 로 ──
   private async begin(c: Choice) {
     if (!GRANT_PROVIDERS.includes(c.provider)) return this.create(c, cid());
+    if (this.linksOf(c.device)) {   // 새 앱(1.3): 허용 = 그 PC 의 공급자 인증. 허용 창, 서명 없이 바로 연다. 그새 끊겼으면 연결 버튼으로
+      try { this.attach(await this.api.create(c.device, c.provider, c.model, cid())); return true; }
+      catch (e) {
+        const err = apiErr(e);
+        this.say(err.code === "CONSENT_REQUIRED" ? AI_UNLINKED : errText(err), true);
+        if (err.code === "CONSENT_REQUIRED") void this.loadCapabilities();
+        return false;
+      }
+    }
     if (this.allowed(c)) {   // J(JD1): 서 있는 허용 = 허용 창 없이
       try { this.attach(await this.api.create(c.device, c.provider, c.model, cid())); return true; }
       catch (e) {
@@ -378,7 +393,10 @@ export class WebchatStore {
       const open = [...t.tools].reverse().find(o => o.ok === undefined && (!x.name || o.name === x.name));
       if (open) { open.ok = x.ok === true; open.summary = str(x.summary); } else t.tools.push({ name: str(x.name) || "도구", ok: x.ok === true, summary: str(x.summary) });
     } else if (kind === "done") t.end = "done";
-    else { t.end = "error"; t.endNote = endText(str(x.code)); }
+    else {
+      t.end = "error"; t.endNote = endText(str(x.code));
+      if (str(x.code) !== "STOPPED") reportError("chat/turn", str(x.code) || "unknown");   // 웹 대화 실패 — 오류 자동 Case(사용자가 멈춘 것은 빼고)
+    }
   }
 
   async send() {
