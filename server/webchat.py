@@ -783,12 +783,28 @@ def _consent_bearer(authorization):
     return imports.authenticate(authorization if isinstance(authorization, str) else "")
 
 
-def _consent_bind(c, uid, dev, installation_id) -> str:
-    """세션 uid·토큰 장치·설치본이 한 묶음인지 tx 안에서 다시 본다(잠금 포함). 반환 = 장치 id."""
+def _consent_bind(c, uid, dev, installation_id, *, bind_empty: bool = False) -> str:
+    """세션 uid·토큰 장치·설치본이 한 묶음인지 tx 안에서 다시 본다(잠금 포함). 반환 = 장치 id.
+    bind_empty(키 등록 시작 begin 만): 설치본에 장치가 아직 없으면(NULL·빈 값) 이 Bearer 의 장치로 처음 한 번 묶는다.
+    장치 토큰을 손으로 넣은(connect --token-stdin) PC 는 설치본 경로로 토큰을 받지 않아 설치본 device_id 가 비어 있다(2026-11-13).
+    조건 = 세션 사용자와 토큰 사용자가 같고, 장치가 연결 중이고, 설치본이 해제되지 않았고, 그 장치가 다른 살아 있는 설치본에 묶여 있지 않을 때.
+    이미 다른 장치로 묶인 설치본은 지금처럼 거절한다. 호출자는 _user_lock 을 잡고 부른다(token_grants 의 묶음과 직렬화)."""
     if dev.get("user_id") != uid or dev.get("id") not in _active_devices(c, uid):
         raise _consent_denied()
     inst = _one(c, "SELECT device_id, revoked_at FROM desktop_installations WHERE user_id=%s AND id=%s FOR UPDATE", (uid, installation_id))
-    if not inst or inst["revoked_at"] is not None or inst["device_id"] != dev["id"]:
+    if not inst or inst["revoked_at"] is not None:
+        raise _consent_denied()
+    if bind_empty and not inst["device_id"]:
+        held = _one(c, "SELECT 1 AS x FROM desktop_installations WHERE user_id=%s AND device_id=%s AND id<>%s AND revoked_at IS NULL "
+                       "LIMIT 1", (uid, dev["id"], installation_id))
+        if held:
+            raise _consent_denied()
+        cur = c.execute("UPDATE desktop_installations SET device_id=%s WHERE user_id=%s AND id=%s AND revoked_at IS NULL "
+                        "AND (device_id IS NULL OR device_id='')", (dev["id"], uid, installation_id))
+        if cur.rowcount != 1:
+            raise _consent_denied()
+        return dev["id"]
+    if inst["device_id"] != dev["id"]:
         raise _consent_denied()
     return dev["id"]
 
@@ -846,7 +862,7 @@ def consent_key_begin(uid: str, authorization: str, installation_id: str, spki_d
     dev = _consent_bearer(authorization)
     with tx() as c:
         _user_lock(c, uid)
-        device_id = _consent_bind(c, uid, dev, installation_id)
+        device_id = _consent_bind(c, uid, dev, installation_id, bind_empty=True)
         c.execute("DELETE FROM desktop_consent_keys WHERE user_id=%s AND installation_id=%s AND state='pending'", (uid, installation_id))
         now = _db_now(c)
         nonce = secrets.token_urlsafe(32)

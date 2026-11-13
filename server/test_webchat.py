@@ -384,6 +384,107 @@ def _code(fn):
     raise AssertionError("CrmError 가 나야 해요")
 
 
+def test_consent_bind_empty_device(srv, ua, ub):
+    """2026-11-13: 장치 토큰을 손으로 넣은 PC 는 설치본 device_id 가 비어 있어 키 등록 시작(begin)이 매번 409 CONSENT_REQUIRED 였다.
+    usage 집계는 이 code 를 EXC 로 센다(밑줄은 web._usage 의 code 형식 밖). begin 만 빈 설치본을 요청 장치로 처음 한 번 묶는다.
+    합성 장치·합성 설치본만."""
+    import base64
+    import secrets
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    import consent_signature
+
+    def b64(raw):
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+    def der(k):
+        return k.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+
+    def sign(k, claims):
+        return b64(k.sign(consent_signature.encode_consent(claims)))
+
+    def inst_dev(i):
+        return rows("SELECT device_id FROM desktop_installations WHERE user_id=%s AND id=%s", (ua, i))[0]["device_id"]
+
+    def usage(code):
+        return sum(n for (_d, u, name, cd), n in db.usage_snapshot().items()
+                   if u == ua and name == "web:chat_consent_key_begin" and cd == code)
+
+    BEGIN = "/api/chat/consent/keys/begin"
+    d1, d2, d3 = (imports.device_connect(ua, f"bind pc{n}") for n in (1, 2, 3))
+    gone = imports.device_connect(ua, "bind pc gone")
+    imports.device_revoke(ua, gone["device"]["id"])
+    foreign = imports.device_connect(ub, "b bind pc")
+    b1, b3 = "Bearer " + d1["token"], "Bearer " + d3["token"]
+    i_null, i_blank, i_bound, i_revoked, i_held = ("di_" + secrets.token_hex(12) for _ in range(5))
+    k1, k2 = Ed25519PrivateKey.generate(), Ed25519PrivateKey.generate()
+    try:
+        with db.tx() as c:
+            for i, d in ((i_null, None), (i_blank, ""), (i_bound, d2["device"]["id"]), (i_revoked, None), (i_held, None)):
+                c.execute("INSERT INTO desktop_installations (user_id,id,client_name,os,device_id) VALUES (%s,%s,'bind pc','darwin',%s)", (ua, i, d))
+            c.execute("UPDATE desktop_installations SET revoked_at=now() WHERE user_id=%s AND id=%s", (ua, i_revoked))
+
+        # 고치기 전 동작 재현: 빈 설치본은 묶음 검사 마지막 줄(device_id != 토큰 장치)에서 CONSENT_REQUIRED
+        with db.tx() as c:
+            webchat._user_lock(c, ua)
+            dev1 = imports.authenticate(b1)
+            assert _code(lambda: webchat._consent_bind(c, ua, dev1, i_null)) == "CONSENT_REQUIRED"
+        assert inst_dev(i_null) is None
+        # 그 409 CONSENT_REQUIRED 를 usage 는 EXC 로 센다(예외가 아니다) — 다른 장치에 묶인 설치본으로 같은 응답을 본다
+        before = usage("EXC")
+        with web(srv, ua) as h:
+            r = h.post(BEGIN, json={"installation_id": i_bound, "spki": b64(der(k1))}, headers={"authorization": b1})
+        assert r.status_code == 409 and r.json()["code"] == "CONSENT_REQUIRED", r.text
+        assert usage("EXC") == before + 1 and inst_dev(i_bound) == d2["device"]["id"]
+        ok("동의 키 묶음: 빈 설치본 거절은 409 CONSENT_REQUIRED, usage 는 그 code 를 EXC 로 센다")
+
+        # 다른 사용자 토큰·해제된 장치 토큰·해제된 설치본·begin 이 아닌 호출은 빈 설치본을 묶지 않는다
+        assert _code(lambda: webchat.consent_key_begin(ua, "Bearer " + foreign["token"], i_null, der(k1))) == "CONSENT_REQUIRED"
+        assert _code(lambda: webchat.consent_key_begin(ub, b1, i_null, der(k1))) == "CONSENT_REQUIRED"
+        assert _code(lambda: webchat.consent_key_begin(ua, "Bearer " + gone["token"], i_null, der(k1))) != "OK"
+        assert _code(lambda: webchat.consent_key_begin(ua, b1, i_revoked, der(k1))) == "CONSENT_REQUIRED"
+        assert _code(lambda: webchat.consent_key_revoke_bound(ua, b1, i_null)) == "CONSENT_REQUIRED"
+        assert _code(lambda: webchat.consent_challenge_issue(ua, b1, i_null, "bind-r0")) == "CONSENT_REQUIRED"
+        assert _code(lambda: webchat.consent_key_activate(ua, b1, i_null, "ck_" + "0" * 24, "A" * 86)) == "CONSENT_REQUIRED"
+        assert (inst_dev(i_null), inst_dev(i_revoked)) == (None, None)
+        ok("동의 키 묶음: 남의 토큰·다른 세션·해제된 장치·해제된 설치본·begin 밖 호출은 묶지 않는다")
+
+        # NULL 설치본: begin(route) 이 요청 장치로 묶고, 그 뒤 activate → grant → issue → verify 가 끝까지 간다
+        ok_before = usage("OK")
+        with web(srv, ua) as h:
+            r = h.post(BEGIN, json={"installation_id": i_null, "spki": b64(der(k1))}, headers={"authorization": b1})
+        assert r.status_code == 200, r.text
+        assert usage("OK") == ok_before + 1 and inst_dev(i_null) == d1["device"]["id"]
+        b = r.json()
+        assert webchat.consent_key_activate(ua, b1, i_null, b["key_id"], sign(k1, b["claims"]))["state"] == "active"
+        webchat.grant_request(ua, d1["device"]["id"], "claude", "test-model", "bind-r1")
+        cl = webchat.consent_challenge_issue(ua, b1, i_null, "bind-r1")["claims"]
+        assert cl["device_id"] == d1["device"]["id"]
+        assert webchat.consent_challenge_verify(ua, b1, i_null, cl["nonce"], sign(k1, cl))["state"] == "verified"
+        # 한 번 묶이면 다른 장치는 거절, 같은 장치의 다음 begin 은 그대로 통과
+        assert _code(lambda: webchat.consent_key_begin(ua, b3, i_null, der(k2))) == "CONSENT_REQUIRED"
+        assert inst_dev(i_null) == d1["device"]["id"]
+        # 이미 살아 있는 설치본에 묶인 장치는 두 번째 빈 설치본을 묶지 못한다(장치 하나 = PC 하나)
+        assert _code(lambda: webchat.consent_key_begin(ua, b1, i_held, der(k2))) == "CONSENT_REQUIRED"
+        assert inst_dev(i_held) is None
+        ok("동의 키 묶음: 빈(NULL) 설치본은 begin 이 요청 장치로 처음 한 번 묶고 동의가 끝까지 간다, 다른 장치 재묶음·장치 중복 묶음 거절")
+
+        # 빈 문자열 설치본도 빈 것으로 본다
+        b = webchat.consent_key_begin(ua, b3, i_blank, der(k2))
+        assert b["claims"]["device_id"] == d3["device"]["id"] and inst_dev(i_blank) == d3["device"]["id"]
+        ok("동의 키 묶음: 빈 문자열 device_id 설치본도 begin 이 묶는다")
+    finally:
+        installs = [i_null, i_blank, i_bound, i_revoked, i_held]
+        with db.tx() as c:
+            c.execute("DELETE FROM chat_consent_challenges WHERE user_id=%s AND installation_id = ANY(%s)", (ua, installs))
+            c.execute("DELETE FROM chat_provider_grants WHERE user_id=%s AND request_id LIKE 'bind-r%%'", (ua,))
+            c.execute("DELETE FROM desktop_consent_keys WHERE user_id=%s AND installation_id = ANY(%s)", (ua, installs))
+            c.execute("DELETE FROM desktop_installations WHERE user_id=%s AND id = ANY(%s)", (ua, installs))
+        for d in (d1, d2, d3):
+            imports.device_revoke(ua, d["device"]["id"])
+        imports.device_revoke(ub, foreign["device"]["id"])
+
+
 def _grant_state(uid, rid):
     return rows("SELECT state FROM chat_provider_grants WHERE user_id=%s AND request_id=%s", (uid, rid))[0]["state"]
 
@@ -2595,6 +2696,7 @@ def main_():
         test_unapproved_keeps_active(srv, ua, tok_a, dev_a)
         test_consent_routes(srv, ua, ub, tok_a, dev_a)
         test_consent_result(srv, ua, ub, tok_a, dev_a)
+        test_consent_bind_empty_device(srv, ua, ub)
         test_standing_permit(srv)
         sid_a, sid_b = test_sessions(srv, ua, ub, tok_a, dev_a, b2["device"]["id"])
         tid_a = test_turns(srv, ua, tok_a, sid_a)
