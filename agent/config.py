@@ -103,6 +103,7 @@ def default_config() -> dict:
                 "input_path": None,          # feed-queue JSONL 절대 경로
                 "channels": dict(FEED_CHANNELS),   # 원천 source 값 → 채널. 키 "" = source 없음. 값 null = 그 source 안 보냄
                 "axes_map": {},              # 원천 축 코드 → 축 항목 ID(allowed_axes 안). 없는 코드는 버린다
+                "write_back": False,         # 웹 판별(보관·버림)을 이 입력 파일의 pending 행에 되돌려 쓴다(2026-11-13)
             },
             "reactions": {
                 "enabled": False,
@@ -280,6 +281,8 @@ def _validate_collected_sections(adapters: dict, allowed_axes: list) -> None:
         raise ConfigError("feed.axes_map")
     if any(v not in allowed_axes for v in amap.values()):
         raise ConfigError("feed.axes_map not in allowed_axes")
+    if not isinstance(feed.get("write_back", False), bool):
+        raise ConfigError("feed.write_back")
     reactions = adapters.get("reactions") or {}
     inputs = reactions.get("inputs") or []
     if not isinstance(inputs, list) or not all(isinstance(i, dict) for i in inputs):

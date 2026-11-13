@@ -9,6 +9,8 @@
 - people: 키 공간 · 제공자 · 계정 식별자 ↔ HMAC (PC 전용 매핑)
 - quarantine: 판별 불가 중복·형식 오류. 원문·식별자는 넣지 않고 다이제스트만.
 - halts: 사용자 조치 전까지 멈춘 범위(인증·요약 로그인 등)
+- cursors: 서버 목록을 이어 받는 커서(예: 웹 판별 목록)와 한 번 하는 일의 표시. 이름 → 값
+- state_resync: 수집 글 상태 다시 보내기(2026-11-13) 대상 원본과 진행(queued → staged → sent | unseen | failed)
 """
 from __future__ import annotations
 
@@ -82,6 +84,16 @@ CREATE TABLE IF NOT EXISTS input_versions (
   revision    TEXT NOT NULL UNIQUE,
   created_at  TEXT NOT NULL,
   PRIMARY KEY (original_id, sha256)
+);
+CREATE TABLE IF NOT EXISTS cursors (
+  name        TEXT PRIMARY KEY,
+  value       TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS state_resync (
+  original_id TEXT PRIMARY KEY,
+  status      TEXT NOT NULL CHECK (status IN ('queued','staged','sent','unseen','failed')),
+  updated_at  TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS summary_done (
   input_original_id TEXT NOT NULL,
@@ -370,6 +382,81 @@ class Store:
     def summary_set(self, input_original_id: str, sha256: str, status: str, day: str, reason=None) -> None:
         self.conn.execute("INSERT OR REPLACE INTO summary_done(input_original_id, sha256, status, day, reason)"
                           " VALUES (?,?,?,?,?)", (input_original_id, sha256, status, day, reason))
+
+    # ---- 서버 목록 커서 ----
+    def cursor_get(self, name: str):
+        r = self.conn.execute("SELECT value FROM cursors WHERE name=?", (name,)).fetchone()
+        return r[0] if r else None
+
+    def cursor_set(self, name: str, value: str) -> None:
+        self.conn.execute("INSERT INTO cursors(name, value, updated_at) VALUES (?,?,?)"
+                          " ON CONFLICT(name) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                          (name, value, _now()))
+
+    # ---- 수집 글 상태 다시 보내기 ----
+    def resync_begin(self) -> int:
+        """대응표의 수집 글 중 마지막 개정이 접수되어 서버에 항목이 있는 것(applied·noop)을 대상으로 올린다. 올린 수."""
+        rows = self.conn.execute(
+            "SELECT e.original_id FROM events e JOIN revisions r ON r.original_id=e.original_id"
+            " WHERE e.kind='collected_post' AND r.seq=(SELECT MAX(seq) FROM revisions WHERE original_id=e.original_id)"
+            " AND r.status='accepted' AND r.server_state IN ('applied','noop')").fetchall()
+        now = _now()
+        with self.tx():
+            for r in rows:
+                self.conn.execute("INSERT OR IGNORE INTO state_resync(original_id, status, updated_at) VALUES (?,?,?)",
+                                  (r[0], "queued", now))
+        return len(rows)
+
+    def resync_status(self, original_id: str):
+        r = self.conn.execute("SELECT status FROM state_resync WHERE original_id=?", (original_id,)).fetchone()
+        return r[0] if r else None
+
+    def resync_set(self, original_id: str, status: str) -> None:
+        self.conn.execute("UPDATE state_resync SET status=?, updated_at=? WHERE original_id=?", (status, _now(), original_id))
+
+    def resync_unseen(self, adapter: str, seen) -> int:
+        """이번 수집에서 그 어댑터가 보지 못한 대상(입력에서 사라진 행) — 같은 필드를 만들 수 없어 unseen 으로 닫는다."""
+        rows = self.conn.execute(
+            "SELECT s.original_id FROM state_resync s JOIN events e ON e.original_id=s.original_id"
+            " WHERE s.status='queued' AND e.adapter=?", (adapter,)).fetchall()
+        n = 0
+        for r in rows:
+            if r[0] not in seen:
+                self.resync_set(r[0], "unseen")
+                n += 1
+        return n
+
+    def resync_settle(self) -> int:
+        """staged 대상의 마지막 개정이 접수되면 sent, 거절·충돌이면 failed. 이번에 sent 가 된 수."""
+        sent = 0
+        for r in self.conn.execute("SELECT original_id FROM state_resync WHERE status='staged'").fetchall():
+            last = self.latest_revision(r[0])
+            if last is None:
+                continue
+            if last["status"] == "accepted":
+                self.resync_set(r[0], "sent")
+                sent += 1
+            elif last["status"] in ("rejected", "conflict"):
+                self.resync_set(r[0], "failed")
+        return sent
+
+    def resync_closed(self) -> dict:
+        out = {"unseen": 0, "failed": 0}
+        for st, n in self.conn.execute("SELECT status, COUNT(*) FROM state_resync WHERE status IN ('unseen','failed')"
+                                       " GROUP BY status"):
+            out[st] = n
+        return out
+
+    def resync_remaining(self) -> int:
+        return self.conn.execute("SELECT COUNT(*) FROM state_resync WHERE status IN ('queued','staged')").fetchone()[0]
+
+    # ---- 서버 항목 → 원천 ----
+    def dedupe_keys_for_target(self, adapter: str, target_id: str) -> list:
+        """서버가 접수 응답으로 준 대상 ID(수집 글 = 항목 ID) → 그 어댑터의 중복 기준들. 원본의 어느 개정이든 본다
+        (「삭제됨」 응답을 받은 개정은 target_id 가 비어 있다)."""
+        return [r[0] for r in self.conn.execute(
+            "SELECT DISTINCT e.dedupe_key FROM revisions r JOIN events e ON e.original_id=r.original_id"
+            " WHERE r.target_id=? AND r.status='accepted' AND e.adapter=? ORDER BY e.dedupe_key", (target_id, adapter))]
 
     # ---- 상태 ----
     def counts(self) -> dict:

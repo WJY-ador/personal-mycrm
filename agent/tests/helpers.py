@@ -16,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from agent import config as _config
 from agent import keystore
+from agent.uploader import DECISIONS_PATH
 
 STREAM_ID = "is_5a5a5a5a5a5a5a5a5a5a5a5a"
 TOKEN = "imp_" + STREAM_ID + ".tok_Synth01." + "S" * 43
@@ -126,6 +127,12 @@ class FakeImportServer:
         self.claim_script = []      # claim 강제 응답 (status, dict)
         self.migration_token = None
         self.device_script = []     # 장치 경로 강제 응답
+        self.decisions = []         # 웹 판별 목록(서버 순서). 커서 = 다음 위치의 문자열
+        self.decisions_page = 100
+        self.decisions_script = []  # 판별 목록 강제 응답 (status, dict)
+        self.decision_calls = []    # 받은 since 값(None = 없음)
+        self.decision_limits = []   # 받은 limit 값
+        self.items = {}             # 수집 글 original_id → 서버 항목 ID(접수 응답 target_id)
         self.device_info = {"stream_id": STREAM_ID, "label": "synthetic-device",
                             "policy": {"actions": ["like"],
                                        "transform_versions": ["board-likes/1", "self-text/1", "self-summary/1"],
@@ -244,7 +251,29 @@ class FakeImportServer:
                                             "account_label": "synth@example.invalid"})
                 return self._json(400, {"code": "ARG-INVALID"})
 
+            def _decisions(self):
+                u = urllib.parse.urlsplit(self.path)
+                q = dict(urllib.parse.parse_qsl(u.query))
+                since = q.get("since")
+                with outer.lock:
+                    outer.decision_calls.append(since)
+                    outer.decision_limits.append(q.get("limit"))
+                    forced = outer.decisions_script.pop(0) if outer.decisions_script else None
+                if forced is not None:
+                    return self._json(*forced)
+                if not self._auth_ok():
+                    return
+                # 서버 정본 계약: 빈 목록이면 next_cursor = since 그대로, has_more 면 이어 받는다
+                start = int(since or 0)
+                n = min(int(q.get("limit") or 200), outer.decisions_page)
+                page = outer.decisions[start:start + n]
+                nxt = str(start + len(page)) if page else (since or "")
+                return self._json(200, {"decisions": page, "next_cursor": nxt,
+                                        "has_more": start + len(page) < len(outer.decisions)})
+
             def do_GET(self):
+                if urllib.parse.urlsplit(self.path).path == DECISIONS_PATH:
+                    return self._decisions()
                 if self.path.startswith("/desktop/login?"):
                     return self._desktop_login()
                 if self.path == "/api/imports/device":
@@ -287,6 +316,9 @@ class FakeImportServer:
                                 "target_id": ("a_" + secrets.token_hex(6)) if obj["kind"] == "activity" else None,
                                 "duplicate": False, "received_at": "2026-10-20T00:00:00+09:00",
                                 "expires_at": None}
+                        if obj["kind"] == "collected_post":   # 서버 _target: 수집 글 = 항목(원본 하나 = 항목 하나)
+                            iid = outer.items.setdefault(obj["original_id"], "i_" + secrets.token_hex(8))
+                            resp.update({"state": "applied", "target_kind": "item", "target_id": iid})
                         outer.by_key[key] = (body, resp)
                         res = (201, resp)
                 if forced in ("drop", "drop-after-apply"):

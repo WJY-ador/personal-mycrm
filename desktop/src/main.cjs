@@ -18,9 +18,10 @@ const {createPermits}=require('./permits.cjs');
 const {startChatSidecar}=require('./chat-sidecar.cjs');
 const {findCliCandidates,parseModelIds}=require('./cli-discovery.cjs');
 const {AutoRun,readPreferences,startConnection,startAutomatically,restartChat,startProcesses:launchProcesses}=require('./autorun.cjs');
+const {AutoSync}=require('./autosync.cjs');
 const {createUpdater,inAppSupported,trustedSender,registerDashboardBridge,CHANNELS:UPDATE}=require('./updater.cjs');
 let win,dash,tray,supervisor,log,prefs={},binary,home,settingsFile,quitting=false,ready=false;
-let busy=false,trayLive=null,connector=null,pollTimer=null,consentBridge=null,consentRuntime=null,consentLock=null,autorun=null; const commands=new Set();
+let busy=false,trayLive=null,connector=null,pollTimer=null,consentBridge=null,consentRuntime=null,consentLock=null,autorun=null,autosync=null; const commands=new Set();
 // installing: an in-app update is quitting the app (set on 'before-quit-for-update'); the windows' close no longer hides them.
 let updater=null,installing=false;
 function stopProcesses(options){consentBridge?.abortPending();return supervisor.stopAll(options);}
@@ -380,16 +381,23 @@ async function initialize(){
   register('stop',()=>exclusively(async()=>{await userStop();return snapshot();}));
   // Turning collection on is the moment this PC gets a device automatically (no device yet, or one left from another
   // account). A run halted on auth asks for a fresh token for the same device once, then resumes.
-  register('sync',()=>exclusively(async()=>{
+  // The automatic sync (autosync.cjs) runs the same run-once but never connects by itself: it runs only on a PC that is
+  // already connected, and an auth halt waits for the button.
+  async function syncOnce({auto=false}={}){
     if(!ready)throw new Error('not-connected');
-    if(connector.needsAuto())await connector.autoConnect();
+    if(connector.needsAuto()){if(auto)throw new Error('not-connected');await connector.autoConnect();}
     let {code,detail}=await command(grants.runOnceArgs());log('sync','completed',code);
-    if(code===3&&/--resume auth/.test(detail||'')){
+    if(!auto&&code===3&&/--resume auth/.test(detail||'')){
       await connector.autoConnect();
       ({code,detail}=await command(grants.runOnceArgs(true)));log('sync','resumed',code);
     }
     return {code,detail};
-  }));
+  }
+  register('sync',()=>exclusively(()=>syncOnce()));
+  // Automatic sync: 2 minutes after the app opens, then every 60 minutes. Skipped while the user stopped the device, this
+  // PC is not connected, or another command holds the app (spec 2026-11-13 §5).
+  autosync=new AutoSync({wanted:()=>prefs.autoRun!==false,connected:()=>ready&&connection().connected&&!connector.needsAuto(),
+    idle:()=>!busy&&!quitting&&!installing,run:()=>exclusively(()=>syncOnce({auto:true})),log});
   // A disconnect made here is a release: automatic connection does not bring this PC back; a conversation does.
   // First screen step 2 (J-F1): connect this PC with the app's login session, as the first sync does, without syncing.
   register('auto-connect',()=>exclusively(async()=>{
@@ -420,7 +428,7 @@ async function initialize(){
   register('releases',()=>external(RELEASES));
   app.on('activate',showDashboard);
   app.on('before-quit',event=> {
-    if(quitting)return;event.preventDefault();quitting=true;clearInterval(pollTimer);updater?.dispose();changed();
+    if(quitting)return;event.preventDefault();quitting=true;clearInterval(pollTimer);autosync?.dispose();updater?.dispose();changed();
     const pending=[...commands].map(child=>new Promise(resolve=>child.once('close',resolve)));
     Promise.all([stopProcesses({closing:true}),...pending]).finally(async()=>{consentLock?.dispose();consentRuntime?.dispose();await consentBridge?.close();tray?.destroy();app.quit();});
   });
@@ -433,6 +441,7 @@ async function initialize(){
   const icon=nativeImage.createFromDataURL('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAIElEQVR42mNkYPj/n4ECwESJ5lEDRg0YNWDUgFEDBg0AADMSAh/0xSqxAAAAAElFTkSuQmCC');
   tray=new Tray(icon);tray.setToolTip('MyCRM');refreshTray();tray.on('double-click',showDashboard);tray.on('click',showDashboard);
   autorun.nudge('startup');
+  autosync.start();
   updater.start();
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {label:'MyCRM',submenu:[{label:'대시보드',accelerator:'CmdOrCtrl+1',click:showDashboard},{label:'연결 장치',accelerator:'CmdOrCtrl+2',click:show},{type:'separator'},{label:'종료',accelerator:process.platform==='darwin'?'Command+Q':'Alt+F4',click:()=>app.quit()}]},
