@@ -478,3 +478,100 @@ class MailAdapter(Adapter):
                 acts.append(("reply", None))
             for action, occurred_on in acts:
                 yield _activity(key, key, row, action, occurred_on, observed_on, "mail", [])
+
+
+# ---- feed 판별 되돌림(write_back, 명세 2026-11-13 4절) ---------------------------------
+# 웹에서 사용자가 보관·버림한 수집 글을 feed 입력 파일(feed-queue JSONL)의 그 행에 되돌려 쓴다. 대시보드·수집기도 같은 파일을
+# 잠금 없이 원자 교체(os.replace)로 쓴다 — 같은 방식으로 쓰고, 읽은 뒤 파일이 바뀌었으면 한 번 다시 읽어 재시도한다.
+# 바꾸는 것: 그 id 의 마지막 행(어댑터가 읽는 행)이 pending 일 때만 status·decided_at 두 필드. 다른 줄은 원래 바이트 그대로 둔다.
+WRITE_BACK_STATES = ("kept", "dropped")
+
+
+class FileChanged(RuntimeError):
+    """다시 읽어 재시도한 뒤에도 쓰기 직전에 파일이 바뀌었다(다른 프로그램이 쓰는 중)."""
+
+
+def _file_sig(path: str):
+    s = os.stat(path)
+    return (s.st_mtime_ns, s.st_size, s.st_ino)
+
+
+def _plan_write_back(data: bytes, changes: dict):
+    """(새 바이트 | None, applied, skipped_not_pending, missing). 변경이 없으면 새 바이트 None."""
+    lines = data.splitlines(keepends=True)
+    last = {}
+    for i, line in enumerate(lines):
+        if not line.strip() or len(line) > MAX_LINE_BYTES:
+            continue
+        try:
+            row = json.loads(line.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            continue
+        if isinstance(row, dict) and isinstance(row.get("id"), str) and row["id"] in changes:
+            last[row["id"]] = (i, row)
+    applied = skipped = 0
+    for rid, (state, decided_at) in changes.items():
+        if rid not in last:
+            continue
+        i, row = last[rid]
+        if row.get("status") != "pending":
+            skipped += 1            # 대시보드에서 먼저 판별했거나 만료된 행 — 건드리지 않는다
+            continue
+        row["status"], row["decided_at"] = state, decided_at
+        line = lines[i]
+        eol = line[len(line.rstrip(b"\r\n")):]
+        lines[i] = json.dumps(row, ensure_ascii=False).encode("utf-8") + eol
+        applied += 1
+    missing = len(changes) - len(last)
+    return (b"".join(lines) if applied else None), applied, skipped, missing
+
+
+def _replace_keep_mode(path: str, data: bytes, mode: int) -> None:
+    """같은 폴더 임시 파일 → fsync → os.replace. 원래 파일 권한을 유지한다(osutil.atomic_write 는 0600 으로 만든다)."""
+    import tempfile
+    d = os.path.dirname(path)
+    fd, tmp = tempfile.mkstemp(prefix=".tmp-writeback-", dir=d)
+    try:
+        if os.name != "nt":
+            os.fchmod(fd, mode & 0o7777)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def write_back_feed(path: str, changes: dict, *, before_replace=None) -> dict:
+    """changes: 원천 id → (status kept|dropped, decided_at). 반환 {applied, skipped_not_pending, missing, retried}.
+    파일을 못 읽으면 OSError, 재시도 뒤에도 파일이 바뀌면 FileChanged(아무것도 쓰지 않음).
+    before_replace: 시험용 — 계획을 세운 뒤 바뀜 확인 직전에 부른다."""
+    for rid, (state, decided_at) in changes.items():
+        if state not in WRITE_BACK_STATES or not isinstance(rid, str) or not isinstance(decided_at, str):
+            raise ValueError("write_back change")
+    real = os.path.realpath(path)
+    retried = 0
+    for attempt in (0, 1):
+        sig = _file_sig(real)
+        mode = os.stat(real).st_mode
+        with open(real, "rb") as f:
+            data = f.read()
+        new, applied, skipped, missing = _plan_write_back(data, changes)
+        out = {"applied": applied, "skipped_not_pending": skipped, "missing": missing, "retried": retried}
+        if new is None:
+            return out
+        if before_replace is not None:
+            before_replace(attempt)
+        if _file_sig(real) != sig:
+            if attempt == 0:
+                retried = 1
+                continue
+            raise FileChanged("feed input changed while writing back")
+        _replace_keep_mode(real, new, mode)
+        return out
+    raise FileChanged("feed input changed while writing back")     # 도달하지 않음

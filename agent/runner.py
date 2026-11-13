@@ -4,13 +4,16 @@
 from __future__ import annotations
 
 import json
+import os
 import random
+import re
 import time
 
 from . import adapters as _adapters
 from . import config as _config
 from . import contract, hmacid, jcs, keystore, store as _store
 from .adapters.base import CollectedPost, Observation, Quarantine
+from .adapters import collected as _collected
 from .adapters.collected import masked_count
 
 
@@ -252,6 +255,89 @@ def _policy_missing_transforms(cfg: dict) -> bool:
     return bool(need - set(allowed))
 
 
+# ---- 웹 판별 되돌림(명세 2026-11-13 4절) -------------------------------------------------
+WRITE_BACK_MAX_PAGES = 20
+_ITEM_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+_NO_WRITE_BACK_AFTER = ("auth", "config", "forbidden")    # 업로드가 이 이유로 멈췄으면 판별 목록도 받지 않는다
+
+
+def _decision(d):
+    """판별 한 줄 → (item_id, (state, decided_at) | None). 쓸 수 없는 줄은 None. None 값 = 되돌리지 않는 판별(예: pending)."""
+    if not isinstance(d, dict):
+        return None
+    iid, state, at = d.get("item_id"), d.get("state"), d.get("decided_at")
+    if not isinstance(iid, str) or not _ITEM_ID_RE.match(iid):
+        return None
+    if state not in _collected.WRITE_BACK_STATES:
+        return iid, None
+    if not isinstance(at, str) or not 1 <= len(at) <= 64 or any(c in at for c in "\r\n\x00"):
+        return iid, None
+    return iid, (state, at)
+
+
+def write_back(st, cfg: dict, up) -> dict | None:
+    """업로드 뒤 — 서버의 사용자 판별 목록을 커서로 이어 받아 feed 입력 파일의 pending 행에 되돌려 쓴다.
+    feed.write_back 이 꺼져 있으면 받지도 않는다(커서를 옮기지 않아, 나중에 켜면 그 전 판별부터 받는다). 반환 None(꺼짐) 또는
+    {applied, skipped_not_pending, missing, retried, stopped}. 쪽마다 파일 쓰기를 마친 뒤에만 커서를 옮긴다.
+    결과엔 수만 남긴다(항목 ID·원천 ID·경로 없음)."""
+    from .uploader import DeviceError
+    feed = (cfg.get("adapters") or {}).get("feed") or {}
+    if feed.get("write_back") is not True:
+        return None
+    out = {"applied": 0, "skipped_not_pending": 0, "missing": 0, "retried": 0, "stopped": None}
+    if not feed.get("enabled") or not isinstance(feed.get("input_path"), str):
+        out["stopped"] = "feed-off"
+        return out
+    path = os.path.expanduser(feed["input_path"])
+    name = "decisions:" + str(cfg.get("source_instance_id"))
+    since = st.cursor_get(name)
+    for _ in range(WRITE_BACK_MAX_PAGES):
+        try:
+            page = up.decisions(since)
+        except DeviceError as e:
+            out["stopped"] = e.kind + (f"-{e.status}" if e.status else "")
+            return out
+        latest = {}
+        for d in page["decisions"]:
+            got = _decision(d)
+            if got is not None:
+                latest.pop(got[0], None)     # 같은 항목은 목록의 마지막 판별(되돌리기 포함)을 따른다
+                latest[got[0]] = got[1]
+        changes = {}
+        for iid, change in latest.items():
+            if change is None:
+                continue
+            keys = [k for k in st.dedupe_keys_for_target("feed", iid) if k.startswith("feed:")]
+            if not keys:
+                out["missing"] += 1          # 이 PC 의 feed 에서 올린 항목이 아니다
+                continue
+            for k in keys:
+                changes[k[len("feed:"):]] = change
+        if changes:
+            try:
+                r = _collected.write_back_feed(path, changes)
+            except _collected.FileChanged:
+                out["retried"] += 1
+                out["stopped"] = "file-changed"
+                return out
+            except OSError:
+                out["stopped"] = "input-unreadable"
+                return out
+            for k in ("applied", "skipped_not_pending", "missing", "retried"):
+                out[k] += r[k]
+        nxt = page.get("next_cursor")
+        if isinstance(nxt, str) and 1 <= len(nxt) <= 512 and nxt != since:
+            st.cursor_set(name, nxt)
+            since = nxt
+        else:
+            break
+        if not page["decisions"]:
+            break
+    else:
+        out["stopped"] = "max-pages"
+    return out
+
+
 def new_counts() -> dict:
     return {"observed": 0, "new_events": 0, "staged": 0, "unchanged": 0, "waiting": 0, "blocked": 0,
             "quarantined": 0, "not_sent": 0, "masked": 0, "skipped_policy": 0}
@@ -309,6 +395,10 @@ def run_once(paths, *, ks: keystore.KeyStore, uploader_factory=None, summarizer=
                         res_up = up.run(st, max_n=int(cfg["upload"]["max_per_run"]),
                                         min_interval=float(cfg["upload"]["min_interval_sec"]))
                 result["upload"] = res_up
+                if (res_up.get("stopped") or "").replace("-halted", "") not in _NO_WRITE_BACK_AFTER:
+                    wb = write_back(st, cfg, up)
+                    if wb is not None:
+                        result["write_back"] = wb
             result["state"] = st.counts()
             return result
         finally:

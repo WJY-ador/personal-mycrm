@@ -9,6 +9,7 @@
 - people: 키 공간 · 제공자 · 계정 식별자 ↔ HMAC (PC 전용 매핑)
 - quarantine: 판별 불가 중복·형식 오류. 원문·식별자는 넣지 않고 다이제스트만.
 - halts: 사용자 조치 전까지 멈춘 범위(인증·요약 로그인 등)
+- cursors: 서버 목록을 이어 받는 커서(예: 웹 판별 목록). 이름 → 서버가 준 불투명 값
 """
 from __future__ import annotations
 
@@ -82,6 +83,11 @@ CREATE TABLE IF NOT EXISTS input_versions (
   revision    TEXT NOT NULL UNIQUE,
   created_at  TEXT NOT NULL,
   PRIMARY KEY (original_id, sha256)
+);
+CREATE TABLE IF NOT EXISTS cursors (
+  name        TEXT PRIMARY KEY,
+  value       TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS summary_done (
   input_original_id TEXT NOT NULL,
@@ -370,6 +376,24 @@ class Store:
     def summary_set(self, input_original_id: str, sha256: str, status: str, day: str, reason=None) -> None:
         self.conn.execute("INSERT OR REPLACE INTO summary_done(input_original_id, sha256, status, day, reason)"
                           " VALUES (?,?,?,?,?)", (input_original_id, sha256, status, day, reason))
+
+    # ---- 서버 목록 커서 ----
+    def cursor_get(self, name: str):
+        r = self.conn.execute("SELECT value FROM cursors WHERE name=?", (name,)).fetchone()
+        return r[0] if r else None
+
+    def cursor_set(self, name: str, value: str) -> None:
+        self.conn.execute("INSERT INTO cursors(name, value, updated_at) VALUES (?,?,?)"
+                          " ON CONFLICT(name) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                          (name, value, _now()))
+
+    # ---- 서버 항목 → 원천 ----
+    def dedupe_keys_for_target(self, adapter: str, target_id: str) -> list:
+        """서버가 접수 응답으로 준 대상 ID(수집 글 = 항목 ID) → 그 어댑터의 중복 기준들. 원본의 어느 개정이든 본다
+        (「삭제됨」 응답을 받은 개정은 target_id 가 비어 있다)."""
+        return [r[0] for r in self.conn.execute(
+            "SELECT DISTINCT e.dedupe_key FROM revisions r JOIN events e ON e.original_id=r.original_id"
+            " WHERE r.target_id=? AND r.status='accepted' AND e.adapter=? ORDER BY e.dedupe_key", (target_id, adapter))]
 
     # ---- 상태 ----
     def counts(self) -> dict:

@@ -139,6 +139,16 @@ python3 -m agent [--home 경로] <명령>
 - 웹 연결 장치 허용 규칙에서 변환(`collected-post/1`, `board-feed/1`, `board-reactions/1`, `board-mail/1`)과 행동(`save`, `comment`, `repost`, `reply`, `read`, `send`)을 켜야 서버가 받습니다. 꺼져 있으면 만들지 않고 건너뜁니다(`run-once` 결과의 `skipped_policy`). 웹에서 켜면 다음 실행이 허용 규칙을 다시 받아 만듭니다.
 - 서버 계정에 커스텀 오브젝트 `collected_posts` 가 있어야 수집 글을 받습니다.
 
+**웹 판별 되돌림 (`feed.write_back`, 기본 `false`)**
+
+웹 오늘 탭에서 보관하거나 버린 수집 글을 이 PC 의 feed 입력 파일에도 반영합니다. 켜려면 `"feed": {..., "write_back": true}` 로 적습니다.
+- `run-once` 가 업로드를 마친 뒤 서버에서 사용자 판별 목록을 받습니다(업로드 토큰, 커서는 PC 상태 저장 `state.sqlite` 에 둡니다). 꺼져 있으면 목록을 받지 않고 커서도 옮기지 않습니다. 나중에 켜면 그 전 판별부터 받습니다.
+- 판별 항목을 이 PC 의 feed 에서 올린 원천 `id` 로 찾고, 그 `id` 의 마지막 행(어댑터가 읽는 행)의 `status` 가 `pending` 일 때만 `status`(`kept` 또는 `dropped`)와 `decided_at`(서버가 남긴 판별 시각)을 바꿉니다. 그 밖의 필드와 다른 줄은 그대로 둡니다. 대시보드에서 먼저 판별한 행(`pending` 이 아닌 행)은 건너뜁니다.
+- 대시보드, 수집기와 같이 잠금 없이 원자 교체로 씁니다. 읽은 뒤 파일이 바뀌었으면 한 번 다시 읽어 재시도하고, 그래도 바뀌면 이번 실행엔 쓰지 않습니다. 파일 권한은 그대로 둡니다.
+- 커서는 그 쪽을 파일에 다 쓴 뒤에만 옮깁니다. 서버 오류, 형식 오류, 파일 바뀜이면 커서를 그대로 두고 다음 실행에 다시 받습니다. 판별 목록 실패는 업로드 멈춤을 만들지 않습니다.
+- 결과 JSON 의 `write_back: {applied, skipped_not_pending, missing, retried, stopped}` — 바꾼 행 수, `pending` 이 아니라 건너뛴 수, 이 PC feed 에서 찾지 못한 수(다른 장치나 `reactions` 에서 올린 항목, 파일에서 사라진 행), 재시도 수, 멈춘 이유(`null` 이면 끝까지 받음). 항목 ID, 원천 ID, 경로는 남기지 않습니다.
+- 다음 `run-once` 때 바뀐 행은 그 `status` 로 다시 올라갑니다(`kept` → `state: kept` 와 `save` 활동, `dropped` → `state: removed`). 서버는 사용자가 판별한 항목의 상태를 장치 재전송으로 덮지 않습니다.
+
 **입력 JSONL 필드 (수집기 출력 계약)** — 표에 없는 필드는 PC 원문 저장소에만 둡니다.
 
 `feed` (feed-queue 꼴) → 수집 글 + 보관이면 `save` 활동
