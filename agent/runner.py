@@ -275,11 +275,12 @@ def _decision(d):
     return iid, (state, at)
 
 
-def write_back(st, cfg: dict, up) -> dict | None:
+def write_back(st, cfg: dict, up, *, min_interval: float = 0.0) -> dict | None:
     """업로드 뒤 — 서버의 사용자 판별 목록을 커서로 이어 받아 feed 입력 파일의 pending 행에 되돌려 쓴다.
     feed.write_back 이 꺼져 있으면 받지도 않는다(커서를 옮기지 않아, 나중에 켜면 그 전 판별부터 받는다). 반환 None(꺼짐) 또는
     {applied, skipped_not_pending, missing, retried, stopped}. 쪽마다 파일 쓰기를 마친 뒤에만 커서를 옮긴다.
-    결과엔 수만 남긴다(항목 ID·원천 ID·경로 없음)."""
+    has_more 면 이어 받는다. 요청 사이 min_interval(업로드와 같은 장치 분당 한도). 429 = 다음 실행으로 미룸(stopped rate-limit),
+    400 ARG-INVALID = 커서를 버리고 처음부터 한 번. 결과엔 수만 남긴다(항목 ID·원천 ID·경로 없음)."""
     from .uploader import DeviceError
     feed = (cfg.get("adapters") or {}).get("feed") or {}
     if feed.get("write_back") is not True:
@@ -291,11 +292,17 @@ def write_back(st, cfg: dict, up) -> dict | None:
     path = os.path.expanduser(feed["input_path"])
     name = "decisions:" + str(cfg.get("source_instance_id"))
     since = st.cursor_get(name)
+    reset = False
     for _ in range(WRITE_BACK_MAX_PAGES):
+        if min_interval > 0:
+            up.sleep(min_interval)
         try:
             page = up.decisions(since)
         except DeviceError as e:
-            out["stopped"] = e.kind + (f"-{e.status}" if e.status else "")
+            if e.status == 400 and e.code == "ARG-INVALID" and since and not reset:
+                since, reset = None, True        # 서버가 커서를 모른다 — 처음부터 한 번(이미 바꾼 행은 pending 이 아니라 건너뛴다)
+                continue
+            out["stopped"] = "rate-limit" if e.status == 429 else e.kind + (f"-{e.status}" if e.status else "")
             return out
         latest = {}
         for d in page["decisions"]:
@@ -335,7 +342,7 @@ def write_back(st, cfg: dict, up) -> dict | None:
             if page["decisions"]:
                 out["stopped"] = "no-cursor"     # 판별은 받았는데 이어 받을 커서가 없다 — 다음 실행이 같은 쪽을 다시 받는다
             break
-        if not page["decisions"]:
+        if page.get("has_more") is not True or not page["decisions"]:
             break
     else:
         out["stopped"] = "max-pages"
@@ -401,7 +408,7 @@ def run_once(paths, *, ks: keystore.KeyStore, uploader_factory=None, summarizer=
                 result["upload"] = res_up
                 if (res_up.get("stopped") or "").replace("-halted", "") not in _NO_WRITE_BACK_AFTER:
                     try:
-                        wb = write_back(st, cfg, up)
+                        wb = write_back(st, cfg, up, min_interval=float(cfg["upload"]["min_interval_sec"]))
                     except Exception:     # 되돌림의 뜻밖 오류가 이미 끝난 업로드 결과·종료 코드를 바꾸지 않게(값 없이 표시만)
                         wb = {"applied": 0, "skipped_not_pending": 0, "missing": 0, "retried": 0, "stopped": "error"}
                     if wb is not None:

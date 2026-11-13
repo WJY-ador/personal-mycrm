@@ -207,7 +207,8 @@ class WriteBackRunTest(unittest.TestCase):
         self.srv.decisions = [{"item_id": self.item_of(n), "state": "kept", "decided_at": AT} for n in (1, 2, 3)]
         res = self.run_once()
         self.assertEqual(res["write_back"]["applied"], 3)
-        self.assertEqual(self.srv.decision_calls[-4:], ["0", "1", "2", "3"])   # 마지막 빈 쪽에서 멈춘다
+        self.assertEqual(self.srv.decision_calls[-3:], [None, "1", "2"])   # has_more 가 false 인 쪽에서 멈춘다
+        self.assertEqual(set(self.srv.decision_limits), {"200"})             # limit 를 늘 밝힌다
         self.assertEqual(self.cursor(), "3")
 
     def test_server_errors_keep_cursor(self):
@@ -217,11 +218,11 @@ class WriteBackRunTest(unittest.TestCase):
         res = self.run_once()
         self.assertEqual(res["write_back"]["stopped"], "server-404")
         self.assertNotIn("stopped", {k: v for k, v in res["upload"].items() if v})      # 업로드는 멈추지 않음
-        self.assertEqual(self.cursor(), "0")                 # 첫 실행에서 받은 빈 쪽의 커서 그대로
+        self.assertIsNone(self.cursor())                      # 첫 실행의 빈 목록은 커서를 만들지 않는다
         self.srv.decisions_script = [(200, {"next_cursor": "9"})]                     # decisions 없음 = 형식 오류
         res = self.run_once()
         self.assertEqual(res["write_back"]["stopped"], "malformed-200")
-        self.assertEqual(self.cursor(), "0")
+        self.assertIsNone(self.cursor())
         st = _store.Store(self.th.paths)
         try:
             self.assertEqual(st.counts()["halts"], [])       # 판별 목록 실패는 멈춤을 만들지 않는다
@@ -237,7 +238,7 @@ class WriteBackRunTest(unittest.TestCase):
                                             "next_cursor": None})]
         res = self.run_once()
         self.assertEqual((res["write_back"]["applied"], res["write_back"]["stopped"]), (1, "no-cursor"))
-        self.assertEqual(self.cursor(), "0")
+        self.assertIsNone(self.cursor())
         self.srv.decisions_script = [(200, {"decisions": [], "next_cursor": 7}), (200, {"decisions": [], "next_cursor": 7})]
         res = self.run_once()
         self.assertEqual((res["write_back"]["stopped"], self.cursor()), (None, "7"))     # 숫자 커서도 받는다
@@ -256,7 +257,29 @@ class WriteBackRunTest(unittest.TestCase):
             C.write_back_feed = orig
         self.assertEqual(res["write_back"]["stopped"], "error")
         self.assertIn("upload", res)
-        self.assertEqual(self.cursor(), "0")
+        self.assertIsNone(self.cursor())
+
+    def test_rate_limit_and_bad_cursor(self):
+        self.run_once()
+        self.srv.decisions = [{"item_id": self.item_of(n), "state": "kept", "decided_at": AT} for n in (1, 2)]
+        self.srv.decisions_script = [(429, {"code": "RATE-LIMIT"})]
+        res = self.run_once()
+        self.assertEqual((res["write_back"]["stopped"], res["write_back"]["applied"]), ("rate-limit", 0))
+        self.assertIsNone(self.cursor())
+        st = _store.Store(self.th.paths)
+        try:
+            st.cursor_set("decisions:" + _config.load(self.th.paths)["source_instance_id"], "stale-cursor")
+        finally:
+            st.close()
+        self.srv.decisions_script = [(400, {"code": "ARG-INVALID"})]     # 서버가 모르는 커서 → 처음부터 한 번
+        res = self.run_once()
+        self.assertEqual((res["write_back"]["applied"], res["write_back"]["stopped"]), (2, None))
+        self.assertEqual(self.srv.decision_calls[-2:], ["stale-cursor", None])
+        self.assertEqual(self.cursor(), "2")
+        self.srv.decisions_script = [(400, {"code": "ARG-INVALID"}), (400, {"code": "ARG-INVALID"})]
+        res = self.run_once()
+        self.assertEqual(res["write_back"]["stopped"], "server-400")         # 한 번만 처음부터
+        self.assertEqual(self.cursor(), "2")
 
     def test_feed_off_keeps_cursor(self):
         self.run_once()
@@ -266,7 +289,7 @@ class WriteBackRunTest(unittest.TestCase):
         _config.save(self.th.paths, cfg)
         res = self.run_once()
         self.assertEqual(res["write_back"]["stopped"], "feed-off")
-        self.assertEqual(self.cursor(), "0")
+        self.assertIsNone(self.cursor())
 
     def test_off_by_default_no_request(self):
         cfg = _config.load(self.th.paths)

@@ -38,9 +38,11 @@ IMPORTS_PATH = "/api/imports"
 DEVICE_PATH = "/api/imports/device"
 DEVICE_REVOKE_PATH = "/api/imports/device/revoke"
 DEVICE_ROTATE_PATH = "/api/device/rotate"   # Bearer 교체(PC 연결 계획 §4). M2: 옛 토큰은 새 토큰 첫 사용 때 무효
-# 웹 판별 목록(오늘 탭 수집 인박스 명세 2026-11-13 2절 장치 API). 업로드 토큰 GET ?since=<커서>
-# → {"decisions": [{"item_id", "state", "decided_at"}], "next_cursor"}. 경로는 이 상수 한 곳에서만 바꾼다
+# 웹 판별 목록(오늘 탭 수집 인박스 명세 2026-11-13 2절 장치 API, 서버 정본 계약). 업로드 토큰 GET ?since=<커서>&limit=<1..200>
+# → {"decisions": [{"item_id", "state": kept|dropped|pending, "decided_at"}], "next_cursor", "has_more"}. 장치 request 버킷(분당 10).
+# 경로는 이 상수 한 곳에서만 바꾼다
 DECISIONS_PATH = "/api/imports/decisions"
+DECISIONS_LIMIT = 200
 DECISIONS_MAX_BYTES = 1024 * 1024   # 한 쪽 응답 상한. 넘으면 형식 오류로 보고 커서를 옮기지 않는다
 # 서버 server/imports.py _HTTP 표 기준
 DAILY_LIMIT_CODES = ("IMPORT-QUOTA", "PEOPLE-QUOTA")   # 본문 resume_at(다음 KST 0시) 이 있으면 그 시각
@@ -163,9 +165,9 @@ class Uploader:
 
     def decisions(self, since: str | None) -> dict:
         """GET 판별 목록 한 쪽. 200 이고 decisions 가 목록일 때만 응답을 돌려준다. 그 밖은 DeviceError(값 없음)."""
-        url = self.base + DECISIONS_PATH
-        if since:
-            url += "?" + urllib.parse.urlencode({"since": since})
+        q = {"since": since} if since else {}
+        q["limit"] = DECISIONS_LIMIT
+        url = self.base + DECISIONS_PATH + "?" + urllib.parse.urlencode(q)
         try:
             status, _h, payload = self._request("GET", url, None, {}, max_bytes=DECISIONS_MAX_BYTES)
         except (urllib.error.URLError, OSError, TimeoutError):

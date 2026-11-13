@@ -131,6 +131,7 @@ class FakeImportServer:
         self.decisions_page = 100
         self.decisions_script = []  # 판별 목록 강제 응답 (status, dict)
         self.decision_calls = []    # 받은 since 값(None = 없음)
+        self.decision_limits = []   # 받은 limit 값
         self.items = {}             # 수집 글 original_id → 서버 항목 ID(접수 응답 target_id)
         self.device_info = {"stream_id": STREAM_ID, "label": "synthetic-device",
                             "policy": {"actions": ["like"],
@@ -252,17 +253,23 @@ class FakeImportServer:
 
             def _decisions(self):
                 u = urllib.parse.urlsplit(self.path)
-                since = dict(urllib.parse.parse_qsl(u.query)).get("since")
+                q = dict(urllib.parse.parse_qsl(u.query))
+                since = q.get("since")
                 with outer.lock:
                     outer.decision_calls.append(since)
+                    outer.decision_limits.append(q.get("limit"))
                     forced = outer.decisions_script.pop(0) if outer.decisions_script else None
                 if forced is not None:
                     return self._json(*forced)
                 if not self._auth_ok():
                     return
+                # 서버 정본 계약: 빈 목록이면 next_cursor = since 그대로, has_more 면 이어 받는다
                 start = int(since or 0)
-                page = outer.decisions[start:start + outer.decisions_page]
-                return self._json(200, {"decisions": page, "next_cursor": str(start + len(page))})
+                n = min(int(q.get("limit") or 200), outer.decisions_page)
+                page = outer.decisions[start:start + n]
+                nxt = str(start + len(page)) if page else (since or "")
+                return self._json(200, {"decisions": page, "next_cursor": nxt,
+                                        "has_more": start + len(page) < len(outer.decisions)})
 
             def do_GET(self):
                 if urllib.parse.urlsplit(self.path).path == DECISIONS_PATH:
