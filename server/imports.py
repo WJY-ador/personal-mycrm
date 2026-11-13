@@ -6,7 +6,7 @@
 호출하는 곳
   · main.py  — POST /api/imports · GET /api/imports/{import_id}(장치 토큰) · MCP 읽기 inbox_list·inbox_get · MCP 확정 inbox_decide(facade)
                · 주기 파기 expire_pending
-  · web.py   — 「연결 장치」(#_devices) device_* · 「승인 대기」(#_inbox) inbox_* (세션·Origin·write_gate 는 web 이 먼저)
+  · web.py   — 장치 API device_*(사용자 화면 「연결 장치」는 2026-11-13 없앴다, API 는 관리자·시험·옛 앱용) · 「승인 대기」(#_inbox) inbox_* (세션·Origin·write_gate 는 web 이 먼저)
   · migrate_cli.py — migration_* (DATABASE_URL 명시, 웹 실행 없음)
 
 오류 = db.CrmError(code, message, action). HTTP 상태는 http_status(code) 한 곳에서 정한다.
@@ -740,9 +740,9 @@ def authenticate(authorization: str) -> dict:
     if not r or r["id"] != sid or r["channel"] != "device" or stored is None or not _hmac.compare_digest(bytes(stored), h):
         raise CrmError("AUTH-INVALID", "장치 토큰이 맞지 않아요.", "장치를 다시 연결하세요.")
     if r["revoked_at"] is not None or (not pending and r["token_revoked_at"] is not None):
-        raise CrmError("TOKEN-REVOKED", "이 장치 토큰은 폐기됐어요.", "웹의 「연결 장치」에서 다시 연결하세요.")
+        raise CrmError("TOKEN-REVOKED", "이 장치 토큰은 폐기됐어요.", "MyCRM 앱에서 다시 로그인하면 새로 연결돼요.")
     if r["pending_expired"] if pending else r["expired"]:
-        raise CrmError("TOKEN-EXPIRED", "장치 토큰이 만료됐어요.", "웹의 「연결 장치」에서 토큰을 재발급하세요.")
+        raise CrmError("TOKEN-EXPIRED", "장치 토큰이 만료됐어요.", "MyCRM 앱을 열어 두면 로그인 상태로 새 토큰을 받아요.")
     if r["status"] != "active":
         raise CrmError("AUTH-INVALID", "사용자를 찾을 수 없어요.")
     if r["blocked_at"] is not None:

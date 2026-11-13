@@ -2202,6 +2202,23 @@ def test_ai_links(srv):
         assert wait_for(lambda: len(permits()) == 1)
     finally:
         pc.close()
+    old_app = PC(srv, tok, capabilities=caps)   # 옛 앱이 같은 장치로 붙음(ai_links 없는 hello) = device 근거 허용을 지운다(열린 쪽으로 남지 않게)
+    try:
+        assert wait_for(lambda: permits() == []), permits()
+        with web(srv, uid) as h:
+            r = h.post("/api/chat/sessions", json={"operation": "new", "device_id": dev, "provider": "claude", "model": "sonnet",
+                                                   "client_session_id": "link-legacy"})
+            assert r.status_code == 409 and r.json()["code"] == "CONSENT_REQUIRED", r.text
+    finally:
+        old_app.close()
+    ok("앱 하나 1.3: ai_links 없는 hello(옛 앱) = device 근거 허용 지움 → 옛 consent 흐름(CONSENT_REQUIRED)")
+    pc = PC(srv, tok, capabilities=caps)
+    try:
+        pc.send({"type": "hello", "agent_version": "0.1.7", "providers": ["claude"], "capabilities_version": 2, "capabilities": caps,
+                 "ai_links": {"claude": "linked"}})
+        assert wait_for(lambda: len(permits()) == 1)
+    finally:
+        pc.close()
     imports.device_revoke(uid, dev)
     with db.tx() as c:
         assert webchat._permit_live(c, uid, dev, "claude", lock=False) is None

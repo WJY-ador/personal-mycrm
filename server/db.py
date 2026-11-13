@@ -5198,7 +5198,7 @@ def job_create(uid, kind, text, session_id=None, input_kind=None, restack=None):
             raise CrmError("NOT-FOUND", "그 대화 세션을 찾을 수 없어요.")
         # 연결 장치(연결 해제 안 된 device) 0 = 접수 거절 — 받을 PC 가 없어 queued 로 24시간 남는다. 오프라인 장치는 대기로 접수
         if not _one(c, "SELECT 1 AS x FROM import_streams WHERE user_id=%s AND channel='device' AND revoked_at IS NULL LIMIT 1", (uid,)):
-            raise CrmError("NO-DEVICE", JOB_NO_DEVICE_MSG, "Setup › 연결 장치에서 PC 를 연결하세요.")
+            raise CrmError("NO-DEVICE", JOB_NO_DEVICE_MSG, "MyCRM 앱을 열고 로그인하면 이 PC 가 자동으로 연결돼요.")
         n_open = _one(c, "SELECT count(*) AS n FROM jobs WHERE user_id=%s AND status = ANY(%s)", (uid, list(JOB_LIVE)))["n"]
         if n_open >= imports.JOBS_OPEN_MAX:
             raise CrmError("JOB-LIMIT", f"진행 중인 작업이 너무 많아요(최대 {imports.JOBS_OPEN_MAX}).", "끝나거나 취소된 뒤 다시 보내세요.")

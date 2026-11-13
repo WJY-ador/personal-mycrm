@@ -47,7 +47,8 @@ CORE_FIELDS = {
                    "wording_by": "문장 작성 주체", "wording_approved": "문장 승인"},
     "tickets": {"id": "ID", "kind": "종류", "text": "문의 글", "via": "경로", "page": "화면", "tool": "도구", "ua_family": "브라우저",
                 "status": "상태", "created": "접수", "updated": "갱신", "closed_at": "종결", "reply": "공개 답변", "reply_at": "답변 시각",
-                "public_updated": "공개 갱신"},
+                "public_updated": "공개 갱신", "auto_key": "자동 묶음", "auto_day": "자동 날짜", "auto_count": "자동 횟수",
+                "auto_first": "자동 첫 시각", "auto_last": "자동 마지막 시각", "auto_meta": "자동 보고 값"},
     "sources": {"id": "ID", "kind": "종류", "name": "이름", "location": "위치", "created": "만든 때",
                 "activity_provider": "활동 제공자 종류"},   # board 이전 — 연결 장치 활동의 일반 출처
     "users": {"display_name": "표시 이름", "status": "상태", "nav_accepted_at": "새 탐색 수락", "created": "만든 때"},

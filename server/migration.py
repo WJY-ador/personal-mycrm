@@ -240,7 +240,7 @@ def authenticate(authorization: str) -> dict:
         raise _err("MIGRATION-OFF", "이관이 지금 꺼져 있어요.", "운영자가 켤 때까지 기다리세요.")
     m = _TOKEN_RE.match(authorization or "")
     if not m:
-        raise _err("AUTH-INVALID", "이관 토큰이 없거나 형식이 틀렸어요.", "웹 「연결 장치」에서 이관 토큰을 발급하세요.")
+        raise _err("AUTH-INVALID", "이관 토큰이 없거나 형식이 틀렸어요.", "웹 설정 › 이관에서 이관 토큰을 발급하세요.")
     tid, secret = m.groups()
     with tx() as c:
         r = _one(c, "SELECT t.user_id,t.secret_hash,t.revoked_at,(t.expires_at <= now()) AS expired,u.status,u.blocked_at "

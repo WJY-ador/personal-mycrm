@@ -1882,8 +1882,8 @@ async def test_feedback():
             assert r.status_code == 200 and r.headers.get("cache-control") == "no-store", r.status_code
             ts = r.json()["tickets"]
             assert len(ts) == 5, ts   # 웹 3 + MCP 2
-            assert all(set(t) == {"id", "kind", "text", "status", "via", "created", "updated", "has_reply", "reply_at", "public_updated"}
-                       for t in ts), ts
+            assert all(set(t) == {"id", "kind", "text", "status", "via", "created", "updated", "has_reply", "reply_at", "public_updated",
+                                  "auto_count", "auto_first", "auto_last"} and t["auto_count"] is None for t in ts), ts   # auto_* = 오류 자동 Case 만(2026-11-13)
             assert "운영자만 보는 메모" not in r.text and "privacy?" not in r.text and "다른 사람의 문의 글" not in r.text, r.text
             assert [t["status"] for t in ts if t["id"] == j["id"]] == ["doing"], ts
             assert ts == sorted(ts, key=lambda t: (t["public_updated"] or t["created"], t["created"]), reverse=True), "최근 공개 갱신(없으면 접수)부터"
@@ -3254,7 +3254,7 @@ async def test_optional_consent():
             db.init_schema(c)
             assert c.execute("SELECT count(*) AS n FROM usage_daily").fetchone()["n"] == 2, "표식이 있으면 지우지 않는다"
             assert [r["key"] for r in c.execute("SELECT key FROM schema_marks").fetchall()
-                    if not r["key"].startswith("perm_seed:")] == [db.USAGE_RESET_MARK]   # perm_seed:* = 관리자 프로필 권한 시드 표식(2026-11-12)
+                    if not r["key"].startswith(("perm_seed:", "device_policy_all:"))] == [db.USAGE_RESET_MARK]   # perm_seed:* = 관리자 프로필 권한 시드 표식(2026-11-12), device_policy_all:* = 장치 허용 규칙 이관 표식(2026-11-13)
             c.execute("DELETE FROM schema_marks")   # 표식 없는 옛 DB
             c.commit()
             db.init_schema(c)
@@ -3340,7 +3340,8 @@ async def test_ticket_p3():
             async with Client(main.mcp) as c:
                 lst = val(await c.call_tool("ticket_list_mine", {}))
                 me = next(t for t in lst if t["id"] == t1)
-                assert set(me) == {"id", "kind", "status", "created", "has_reply", "public_updated"} and me["has_reply"] is True, me
+                assert set(me) == {"id", "kind", "status", "created", "has_reply", "public_updated", "via", "auto_count"} and me["has_reply"] is True, me
+                assert me["via"] in ("web", "mcp") and me["auto_count"] is None, me
                 got = val(await c.call_tool("ticket_get_mine", {"ticket_id": t1}))
                 assert got["reply"] == "공개 답변이에요" and [h["kind"] for h in got["history"]] == ["status", "reply"], got
                 assert "MARKNOTE" not in json.dumps(got, ensure_ascii=False) and "admin_note" not in got
@@ -6011,8 +6012,8 @@ async def test_prA_setup():
         std = {o["key"]: o for o in json.loads(web.STD_PATH.read_text(encoding="utf-8"))["objects"]}
         want = [len(core[tb]["fields"]) for _, tb, _, _ in service_schema.CORE] + [len(std[k]["fields"]) for _, k, _ in service_schema.STD]
         assert [len(o["fields"]) for o in sd["objects"]] == want, want
-        assert sd["objects"][3]["fields"][-1]["name"] == "공개 갱신" and "내부 메모" not in json.dumps(sd, ensure_ascii=False)
-        assert [f["choices"] for f in sd["objects"][3]["fields"] if f["choices"] is not None] == [4, 2, 5], "문의 열거 CHECK 개수(종류·경로·상태)"
+        assert sd["objects"][3]["fields"][-1]["name"] == "자동 보고 값" and "내부 메모" not in json.dumps(sd, ensure_ascii=False)   # 오류 자동 Case 열(2026-11-13)이 끝
+        assert [f["choices"] for f in sd["objects"][3]["fields"] if f["choices"] is not None] == [4, 3, 5], "문의 열거 CHECK 개수(종류·경로 web/mcp/auto·상태)"
         with pytest_raises(ValueError):
             service_schema.build([{**core["questions"], "fields": core["questions"]["fields"] + [{"name": "zz_new", "type": "text", "required": False,
                                                                                                   "choices": None}]}] + list(core.values())[1:],

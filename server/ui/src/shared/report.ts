@@ -65,6 +65,8 @@ export function installGlobalReport(w: Window = window) {
     const r = (e as PromiseRejectionEvent).reason;
     if (!(r instanceof Error) || "err" in r) return;   // ApiFail(err 필드) = API 실패는 call 이 맡는다(빌드는 이름을 줄여 이름으로 못 가린다)
     if (typeof r.stack === "string" && !r.stack.includes("/app/assets/")) return;
+    // 배포 뒤 열려 있던 탭이 옛 화면 조각을 못 받음 — 새로 고치면 풀리는 일이라 오류 Case 로 보내지 않는다
+    if (/dynamically imported module|Importing a module script failed|error loading dynamically imported/i.test(r.message)) return;
     reportError("ui/promise", "unknown");
   });
 }

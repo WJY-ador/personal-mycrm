@@ -422,7 +422,7 @@ def session_open(uid: str, device_id: str | None):
         _user_lock(c, uid)
         devs = _active_devices(c, uid)
         if device_id is not None and device_id not in devs:
-            raise CrmError("NOT-FOUND", "그 장치를 찾을 수 없어요.", "웹의 「연결 장치」에서 확인하세요.")
+            raise CrmError("NOT-FOUND", "그 장치를 찾을 수 없어요.", "MyCRM 앱에서 로그인했는지 확인하세요.")
         cur = _one(c, "SELECT * FROM chat_sessions WHERE user_id=%s AND status='active' FOR NO KEY UPDATE", (uid,))
         if cur and cur["device_id"] in devs and (device_id is None or device_id == cur["device_id"]):
             return _session_out(cur), []
@@ -591,6 +591,13 @@ def ai_links_apply(dev: dict, links: dict) -> list:
     반환 = 닫은 것 [{session_id, device_id, turn_ids, events}] — 호출자(WS)가 PC 에 turn.stop, 화면 SSE 에 끝 이벤트를 보낸다."""
     uid, device_id = dev["user_id"], dev["id"]
     closed = []
+    if links is None:   # 옛 앱 hello — device 근거 행만 지운다(consent 행은 그대로)
+        with tx() as c:
+            gone = [r["provider"] for r in _all(c, "SELECT provider FROM chat_provider_permits WHERE user_id=%s AND device_id=%s "
+                                                   "AND basis='device'", (uid, device_id))]
+        for provider in gone:
+            permit_revoke(uid, device_id=device_id, provider=provider, closed=closed)
+        return closed
     for provider in GRANT_PROVIDERS:
         if links.get(provider) == "linked":
             with tx() as c:
@@ -2632,18 +2639,24 @@ class Routes:
                 d.capabilities = _normalize_capabilities(m.get("capabilities")) if d.v2 else []
                 if not d.capabilities:
                     d.v2 = False
-                if "ai_links" in m:   # 앱 하나 1.3 — 바뀔 때마다 같은 연결에서 hello 를 다시 보낸다. 허용을 맞추고 닫힌 세션을 알린다
-                    d.ai_links = normalize_ai_links(m.get("ai_links"))
+                # 앱 하나 1.3 — 바뀔 때마다 같은 연결에서 hello 를 다시 보낸다. 허용을 맞추고 닫힌 세션을 알린다.
+                # 필드가 없는 hello(옛 앱이 같은 장치로 붙음) = 그 장치의 device 근거 허용을 지운다(옛 앱은 consent 흐름). 닫힌 쪽으로만 움직인다
+                d.ai_links = normalize_ai_links(m.get("ai_links")) if "ai_links" in m else None
+                try:
+                    closed = await run_in_threadpool(ai_links_apply, dev, d.ai_links)
+                except Exception:   # 끊기 보고를 버리지 않는다 — 1011 로 닫아 PC 가 다시 붙어 hello 를 다시 보내게 한다(event 경로와 같다)
+                    db.usage_count(None, "api:chat_ws_ai_links", "EXC")
+                    d.ai_links = None
                     try:
-                        closed = await run_in_threadpool(ai_links_apply, dev, d.ai_links)
+                        await d.ws.close(code=1011)
                     except Exception:
-                        db.usage_count(None, "api:chat_ws_ai_links", "EXC")
-                        closed = []
-                    for cs in closed:
-                        for ev in cs["events"]:
-                            hub.publish_event(dev["user_id"], cs["session_id"], ev)
-                        for tid in cs["turn_ids"]:
-                            await d.send({"type": "turn.stop", "turn_id": tid})
+                        pass
+                    return
+                for cs in closed:
+                    for ev in cs["events"]:
+                        hub.publish_event(dev["user_id"], cs["session_id"], ev)
+                    for tid in cs["turn_ids"]:
+                        await d.send({"type": "turn.stop", "turn_id": tid})
             elif typ == "event":
                 try:
                     r = await run_in_threadpool(ingest, dev, m.get("turn_id"), m.get("seq"), m.get("kind"), m.get("data"))
