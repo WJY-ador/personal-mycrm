@@ -3,8 +3,8 @@
 계약(서버 server/webchat.py 와 같은 값, notes 구현계획 §2):
 - 연결: wss://<서버>/api/device/chat/ws · Authorization: Bearer <장치 토큰>. 장치당 1연결(새 연결이 옛 연결을 대체).
 - 서버→PC turn.start{session_id, turn_id, text, cli_session_ref?, approval_outcomes?} · turn.stop{turn_id} · ack{turn_id, seq} · ping
-- PC→서버 hello{agent_version, providers[]} · event{turn_id, seq, kind, data} · session_ref{session_id, cli_session_ref} · pong
-  · consent.result{request_id, outcome} — PC 앱 동의 창이 거절·실패했을 때만, outcome ∈ declined·locked·failed. 보내기 실패는 무시한다.
+- PC→서버 hello{agent_version, providers[], ai?} · event{turn_id, seq, kind, data} · session_ref{session_id, cli_session_ref} · pong
+  · ai = 이 PC 의 AI 연결 상태 {공급자: agent/ai_connection.STATES 낱말}(명세 2026-11-13 1.3, 장치가 보고한 값).
 - kind = delta{text} · tool_call{name, input?} · tool_result{name, ok, summary?} · done{} · error{code}. 중지 = error{code:"STOPPED"}.
 - seq 는 턴 안에서 1부터. delta 는 최대 COALESCE_SEC(0.5초) 묶음. ack(누적) 전 이벤트만 턴당 BUFFER_MAX(256KB) 보유,
   재연결 때 그대로 다시 보낸다(서버가 (turn_id, seq) 중복을 무시). 버퍼가 차면 공급자를 멈추고 error{code:"BUFFER-LIMIT"} 로 끝낸다.
@@ -44,8 +44,8 @@ RECV_TICK = 1.0
 SEEN_MAX = 1000
 KINDS = ("delta", "tool_call", "tool_result", "done", "error")
 TERMINAL = ("done", "error")
-# PC→서버 consent.result{request_id, outcome} 의 outcome 고정 목록(agent/consent_bridge.REASONS 와 같다). 거절일 때만 보낸다.
-CONSENT_OUTCOMES = frozenset({"declined", "locked", "failed"})
+# hello 에 AI 연결 상태를 싣는 필드 이름(계약, 서버 S 가 정본). 받으면 이 줄만 맞춘다.
+HELLO_AI_KEY = "ai"
 
 
 def ws_url(server_url: str) -> str:
@@ -168,7 +168,7 @@ class ChatAgent:
 
     def __init__(self, url: str, token, provider=None, *, registry=None, ref_store=None, agent_version: str = "", connect=wsclient.connect,
                  backoff: wsclient.Backoff | None = None, stopping: threading.Event | None = None, log=None,
-                 coalesce: float = COALESCE_SEC, buffer_max: int = BUFFER_MAX, recv_tick: float = RECV_TICK, consent_request=None,
+                 coalesce: float = COALESCE_SEC, buffer_max: int = BUFFER_MAX, recv_tick: float = RECV_TICK, ai_status=None,
                  ws_max: int = WS_MESSAGE_MAX, silence_max: float = SILENCE_MAX, claude_factory=None,
                  codex_factory=None):
         """token = 글자 또는 공급 함수(호출할 때마다 키 저장소를 다시 읽는다)."""
@@ -189,9 +189,10 @@ class ChatAgent:
         self.ws_max, self.silence_max = ws_max, silence_max
         self.agent_version = agent_version
         self.connect = connect
-        self.consent_request = consent_request
-        self.consent_lock = threading.Lock()
-        self.consent_pending = set()
+        # 공급자 이름과 상태 낱말만 남긴다(그 밖의 값은 hello 에 싣지 않는다).
+        from .ai_connection import PROVIDERS, STATES
+        self.ai_status = ({k: v for k, v in ai_status.items() if k in PROVIDERS and v in STATES}
+                          if isinstance(ai_status, dict) else None)
         self.backoff = backoff or wsclient.Backoff()
         self.stopping = stopping or threading.Event()
         self.log = log or (lambda rec: None)
@@ -340,43 +341,6 @@ class ChatAgent:
         typ = m.get("type")
         if typ == "ping":
             self._send(_dumps({"type": "pong"}))
-        elif typ == "consent.request":
-            request_id = m.get("request_id")
-            if (not callable(self.consent_request) or not isinstance(request_id, str)
-                    or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", request_id)):
-                return
-            with self.consent_lock:
-                if request_id in self.consent_pending:
-                    return
-                self.consent_pending.add(request_id)
-
-            def forward():
-                # Only a refusal is reported. An approval is already known to the server through the
-                # signed challenge verification, so (True, None) sends nothing. A lost report is
-                # harmless: the server still closes the grant on its own timeout.
-                outcome = "failed"
-                try:
-                    token = self.token_fn()
-                    if isinstance(token, str) and token:
-                        result = self.consent_request(request_id, "Bearer " + token)
-                        if type(result) is tuple and len(result) == 2 and result[0] is True and result[1] is None:
-                            outcome = None
-                        elif (type(result) is tuple and len(result) == 2 and result[0] is False
-                              and isinstance(result[1], str) and result[1] in CONSENT_OUTCOMES):
-                            outcome = result[1]
-                except Exception:
-                    outcome = "failed"
-                try:
-                    if outcome is not None:
-                        self._send(_dumps({"type": "consent.result", "request_id": request_id,
-                                           "outcome": outcome}))
-                except Exception:
-                    pass
-                finally:
-                    with self.consent_lock:
-                        self.consent_pending.discard(request_id)
-
-            threading.Thread(target=forward, name="chat-consent-bridge", daemon=True).start()
         elif typ == "ack":
             b = self.buffers.get(m.get("turn_id"))
             if b and isinstance(m.get("seq"), int):
@@ -489,9 +453,11 @@ class ChatAgent:
                 caps.append({"provider": "claude", "models": list(self.claude_factory.models)})
             if self.codex_factory is not None:
                 caps.append({"provider": "codex", "models": list(self.codex_factory.models)})
-            self._send(_dumps({"type": "hello", "agent_version": self.agent_version,
-                               "providers": [c["provider"] for c in caps], "capabilities_version": 2,
-                               "capabilities": caps}))
+            hello = {"type": "hello", "agent_version": self.agent_version,
+                     "providers": [c["provider"] for c in caps], "capabilities_version": 2, "capabilities": caps}
+            if self.ai_status is not None:
+                hello[HELLO_AI_KEY] = dict(self.ai_status)
+            self._send(_dumps(hello))
             self._resend()
         try:
             while not self.stopping.is_set():

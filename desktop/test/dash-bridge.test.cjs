@@ -6,6 +6,8 @@ const fs=require('node:fs');
 const path=require('node:path');
 const vm=require('node:vm');
 const {trustedSender,registerDashboardBridge,CHANNELS}=require('../src/updater.cjs');
+const {registerDesktopBridge}=require('../src/dash-bridge.cjs');
+const {DASH,PROVIDERS}=require('../src/desktop-contract.cjs');
 const {inAppAllowed,HOSTED}=require('../src/policy.cjs');
 const src=name=>fs.readFileSync(path.join(__dirname,'..','src',name),'utf8');
 
@@ -65,7 +67,7 @@ test('the bridge refuses other senders and any argument',()=>{
 function loadPreload(){
   const invoked=[],listeners=new Map();let exposed=null,name=null;
   const ipcRenderer={
-    invoke:(...args)=>{invoked.push(args);return Promise.resolve(args[0]===CHANNELS.get?{phase:'available',version:'0.2.0'}:'ignored');},
+    invoke:(...args)=>{invoked.push(args);return Promise.resolve(args[0]===CHANNELS.get?{phase:'available',version:'0.2.0'}:args[0]===DASH.pcGet?{connected:true}:'ignored');},
     on:(channel,fn)=>listeners.set(channel,fn),removeListener:(channel,fn)=>{if(listeners.get(channel)===fn)listeners.delete(channel);},
   };
   const electron={contextBridge:{exposeInMainWorld:(key,value)=>{name=key;exposed=value;}},ipcRenderer};
@@ -76,7 +78,7 @@ function loadPreload(){
 test('the dashboard preload opens window.mycrmDesktop.update with get, onChange, download and install only',async()=>{
   const p=loadPreload();
   assert.equal(p.name,'mycrmDesktop');
-  assert.deepEqual(Object.keys(p.api),['update']);
+  assert.deepEqual(Object.keys(p.api),['update','pc','ai']);
   assert.deepEqual(Object.keys(p.api.update).sort(),['download','get','install','onChange']);
   assert.ok(Object.isFrozen(p.api)&&Object.isFrozen(p.api.update));
   assert.deepEqual(await p.api.update.get('ignored'),{phase:'available',version:'0.2.0'});
@@ -98,16 +100,80 @@ test('onChange reads the state again through get on each signal and unsubscribes
   assert.equal(p.listeners.has(CHANNELS.changed),false);
 });
 
-test('main wires the bridge: dashboard preload, sandbox and isolation kept, sender check, empty change signal',()=>{
+test('the preload\'s pc and ai calls: no argument except a provider name from the fixed list',async()=>{
+  const p=loadPreload();
+  assert.deepEqual(Object.keys(p.api.pc).sort(),['get','onChange','sync']);
+  assert.deepEqual(Object.keys(p.api.ai).sort(),['connect','disconnect','get','onChange']);
+  assert.ok(Object.isFrozen(p.api.pc)&&Object.isFrozen(p.api.ai));
+  assert.deepEqual(await p.api.pc.get('x'),{connected:true});
+  await p.api.pc.sync({force:true});await p.api.ai.get();
+  await p.api.ai.connect('claude');await p.api.ai.disconnect('codex');
+  await assert.rejects(p.api.ai.connect('../../evil'),/provider/);
+  await assert.rejects(p.api.ai.disconnect({provider:'claude'}),/provider/);
+  assert.deepEqual(p.invoked,[[DASH.pcGet],[DASH.pcSync],[DASH.aiGet],[DASH.aiConnect,'claude'],[DASH.aiDisconnect,'codex']]);
+  const seen=[];p.api.pc.onChange(v=>seen.push(v));p.listeners.get(DASH.pcChanged)({},{secret:'/Users/x'});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(seen,[{connected:true}]);
+});
+
+test('main wires the bridges: dashboard preload, sandbox and isolation kept, sender check, empty change signals',()=>{
   const main=src('main.cjs');
   const dashPrefs=/dash=new BrowserWindow\(\{[^\n]*webPreferences:\{([^}]*)\}/.exec(main)?.[1]||'';
   assert.match(dashPrefs,/preload:path\.join\(__dirname,'dash-preload\.cjs'\)/);
   assert.match(dashPrefs,/contextIsolation:true/);assert.match(dashPrefs,/sandbox:true/);assert.match(dashPrefs,/nodeIntegration:false/);
-  assert.match(main,/registerDashboardBridge\(\{ipcMain,updater,trusted:event=>trustedSender\(event,dash&&!dash\.isDestroyed\(\)\?dash\.webContents:null,inAppAllowed\)\}\)/);
+  assert.match(main,/const trusted=event=>trustedSender\(event,dash&&!dash\.isDestroyed\(\)\?dash\.webContents:null,inAppAllowed\);/);
+  assert.match(main,/registerDashboardBridge\(\{ipcMain,updater,trusted\}\);/);
+  assert.match(main,/registerDesktopBridge\(\{ipcMain,trusted,handlers:\{/);
   assert.match(main,/dash\.webContents\.send\(UPDATE\.changed\);/,'the dashboard gets a signal without the state');
-  // The preload's channel names repeat updater.cjs (a sandboxed preload cannot require it).
+  assert.match(main,/function signal\(channel\)\{if\(dash&&!dash\.isDestroyed\(\)\)dash\.webContents\.send\(channel\);\}/);
+  // One window (spec 2026-11-13 §1.1): no other BrowserWindow, no ipcMain handler outside the two bridges.
+  assert.equal((main.match(/new BrowserWindow\(/g)||[]).length,1);
+  assert.doesNotMatch(main,/ipcMain\.handle\(|register\('/);
+  // The preload's channel names repeat updater.cjs and desktop-contract.cjs (a sandboxed preload cannot require them).
   const preload=src('dash-preload.cjs');
-  for(const channel of Object.values(CHANNELS))assert.ok(preload.includes(`'${channel}'`),channel);
+  for(const channel of [...Object.values(CHANNELS),...Object.values(DASH)])assert.ok(preload.includes(`'${channel}'`),channel);
+  const repeated=/const DASH=Object\.freeze\((\{[\s\S]*?\})\);/.exec(preload)[1];
+  assert.deepEqual(JSON.parse(JSON.stringify(vm.runInNewContext('('+repeated+')'))),{...DASH});
+  assert.ok(preload.includes(`const PROVIDERS=Object.freeze(${JSON.stringify(PROVIDERS).replace(/"/g,"'")});`));
+});
+
+function desktopBridge(){
+  const handlers=new Map(),calls=[];
+  registerDesktopBridge({ipcMain:{handle:(name,fn)=>handlers.set(name,fn)},trusted:e=>trustedSender(e,dash,inAppAllowed),handlers:{
+    pcView:()=>({connected:true}),sync:()=>{calls.push('sync');return {kind:'ok',code:null};},
+    aiView:()=>({providers:{claude:'ready'}}),aiRefresh:()=>{calls.push('refresh');return Promise.reject(new Error('x'));},
+    aiConnect:p=>{calls.push('connect '+p);return {};},aiDisconnect:p=>{calls.push('disconnect '+p);return {};},
+  }});
+  return {handlers,calls};
+}
+
+test('the desktop bridge registers the contract channels and answers trusted calls',async()=>{
+  const b=desktopBridge(),good=event(dash,top(page));
+  assert.deepEqual([...b.handlers.keys()].sort(),[DASH.aiConnect,DASH.aiDisconnect,DASH.aiGet,DASH.pcGet,DASH.pcSync].sort());
+  assert.deepEqual(await b.handlers.get(DASH.pcGet)(good),{connected:true});
+  assert.deepEqual(await b.handlers.get(DASH.pcSync)(good),{kind:'ok',code:null});
+  assert.deepEqual(await b.handlers.get(DASH.aiGet)(good),{providers:{claude:'ready'}});
+  await b.handlers.get(DASH.aiConnect)(good,'claude');await b.handlers.get(DASH.aiDisconnect)(good,'codex');
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(b.calls.sort(),['connect claude','disconnect codex','refresh','sync'],'a failing background check does not escape');
+});
+
+test('the desktop bridge refuses other senders, extra arguments and unknown providers',()=>{
+  const b=desktopBridge(),good=event(dash,top(page));
+  for(const name of [DASH.pcGet,DASH.pcSync,DASH.aiGet]){
+    const fn=b.handlers.get(name);
+    assert.throws(()=>fn(event(other,top(page))),/sender/,name);
+    assert.throws(()=>fn(event(dash,sub(page))),/sender/,name);
+    assert.throws(()=>fn(good,'x'),/sender/,name);
+  }
+  for(const name of [DASH.aiConnect,DASH.aiDisconnect]){
+    const fn=b.handlers.get(name);
+    assert.throws(()=>fn(good),/sender/,name);
+    assert.throws(()=>fn(good,'claude','x'),/sender/,name);
+    assert.throws(()=>fn(good,'gemini'),/sender/,name);
+    assert.throws(()=>fn(event(dash,top('https://evil.example/app')),'claude'),/sender/,name);
+  }
+  assert.deepEqual(b.calls,[]);
 });
 
 test('electron-updater is required in main.cjs only',()=>{
@@ -117,17 +183,16 @@ test('electron-updater is required in main.cjs only',()=>{
   }
 });
 
-test('the windows let an install quit them; the install path never uses userStop or changes autoRun',()=>{
+test('the window lets an install quit it; the install path never uses userStop or changes autoRun',()=>{
   const main=src('main.cjs');
   assert.match(main,/dash\.on\('close',event=>\{if\(!quitting&&!installing\)/);
-  assert.match(main,/win\.on\('close',event=>\{if\(!quitting&&!installing\)/);
   assert.match(main,/nativeUpdater\.on\('before-quit-for-update',\(\)=>\{installing=true;\}\)/);
   assert.equal((main.match(/installing=true/g)||[]).length,1,'the windows close only for the updater\'s own quit');
   const prepare=/async function prepareInstall\(\)\{[\s\S]*?\n\}/.exec(main)?.[0]||'';
   assert.ok(prepare,'prepareInstall exists');
   assert.doesNotMatch(prepare,/userStop|autorun|savePreferences|prefs\.|quitting=true/);
   assert.match(prepare,/await stopProcesses\(\);/);
-  assert.match(prepare,/commands\]/,'waits for running commands');
+  assert.match(prepare,/abortLogins\(\);\n    await Promise\.all\(\[\.\.\.commands\.keys\(\)\]/,'ends a provider login and waits for running commands');
   // before-quit keeps its own cleanup; the install does not set quitting, so that cleanup still runs.
-  assert.match(main,/consentLock\?\.dispose\(\);consentRuntime\?\.dispose\(\);await consentBridge\?\.close\(\);tray\?\.destroy\(\);app\.quit\(\);/);
+  assert.match(main,/Promise\.all\(\[stopProcesses\(\{closing:true\}\),\.\.\.pending\]\)\.finally\(\(\)=>\{tray\?\.destroy\(\);app\.quit\(\);\}\);/);
 });

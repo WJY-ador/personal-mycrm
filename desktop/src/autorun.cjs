@@ -1,7 +1,7 @@
 'use strict';
-// Starting the connection device. The [연결 장치 시작] button and the automatic start when the app opens run the same
-// startConnection(), so a start the button refuses (not connected, CLI not chosen) is refused here too.
-// The screen lock does not gate or stop chat (J JD2): it only keeps the consent window from opening (consent-runtime).
+// Starting the PC processes (viewer, jobs, chat). The tray's start and the automatic start when the app opens run the same
+// startConnection(), so a start the tray refuses (not connected, CLI not chosen) is refused here too.
+// The screen lock does not gate or stop chat.
 // No Electron here — every side effect is injected, so the gates are tested with the real Supervisor.
 
 // Preference file: allowCli (default false) and autoRun (the user's last start or stop; absent = start automatically).
@@ -28,8 +28,8 @@ async function startConnection(deps) {
 }
 // Automatic start: the same full list as the button. The caller holds the app lock.
 function startAutomatically(deps) { return startConnection(deps); }
-// A Claude or Codex CLI chosen in the window reaches the web only through a fresh chat agent: it reads the CLI settings
-// once at start (J-F1 first screen, step 3). Restarts chat when it was started in this run and the user did not stop
+// An AI connection change (ai-link.cjs) reaches the web only through a fresh chat agent: it reads the AI connection
+// once at start (spec 2026-11-13 §1.3). Restarts chat when it was started in this run and the user did not stop
 // the device; otherwise nothing changes. Returns whether chat was restarted. The caller holds the app lock.
 async function restartChat({supervisor, prefs, connection, startChat}) {
   if (!supervisor.snapshot().chat || prefs().autoRun === false || !connection().connected) return false;
@@ -97,9 +97,9 @@ class AutoRun {
     finally { this.inFlight = false; }
   }
   save(value) { try { this.remember(value); } catch { this.log('autorun', 'save-failed'); } }
-  // The user's [연결 장치 시작] succeeded: start automatically next time, and nothing is left to do in this run.
+  // The user's start (tray) succeeded: start automatically next time, and nothing is left to do in this run.
   manualStarted() { this.phase = 'done'; this.save(true); }
-  // The user pressed stop (window or tray): stay off next time and in this run. Quitting is not a stop.
+  // The user pressed stop (tray): stay off next time and in this run. Quitting is not a stop.
   userStopped() { this.phase = 'done'; this.save(false); }
 }
 

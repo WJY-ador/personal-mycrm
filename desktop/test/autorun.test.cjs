@@ -1,29 +1,25 @@
 'use strict';
 // Automatic start when the app opens. The gates are the real ones: startConnection and startProcesses (the same calls as
-// the [연결 장치 시작] button), the real Supervisor with a fake spawn, and the real consent lock guard wired as main.cjs
-// wires it (J JD2: a lock only cancels the consent window in flight; it never holds or stops chat).
+// the tray's start), the real Supervisor with a fake spawn. Chat starts as main.cjs starts it: no consent bridge
+// (spec 2026-11-13 §1.3), and a screen lock neither holds nor stops it.
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const {EventEmitter}=require('node:events');
 const {AutoRun,readPreferences,startConnection,startAutomatically,restartChat,MAX_ATTEMPTS}=require('../src/autorun.cjs');
 const {Supervisor}=require('../src/supervisor.cjs');
-const {createConsentLockGuard}=require('../src/consent-lock-guard.cjs');
-const {startChatSidecar}=require('../src/chat-sidecar.cjs');
 
 function fakeChild(){const c=new EventEmitter();c.stdout=new EventEmitter();c.stderr=new EventEmitter();c.stdin=new EventEmitter();
  c.stdin.end=()=>setImmediate(()=>c.emit('close',0,null));c.kill=()=>c.emit('close',null,'SIGTERM');return c;}
 // A small app: the same pieces main.cjs wires, minus Electron.
-function app({saved='{}',connected=true,cliConfigured=false,screen='active',platform='darwin',bridge,ready=true}={}){
- const spawned=[],logs=[],writes=[],cancels=[];
+function app({saved='{}',connected=true,cliConfigured=false,chatFails=null,ready=true}={}){
+ const spawned=[],logs=[],writes=[];
  const supervisor=new Supervisor({binary:'/bundle/agent',home:'/user/data',spawn:(_b,args)=>{spawned.push(args.slice(2).join(' '));return fakeChild();}});
- const powerMonitor=Object.assign(new EventEmitter(),{getSystemIdleState:()=>state.screen});
- const state={connected,cliConfigured,screen,busy:false,quitting:false,ready};
- // onLock as in main.cjs: abort the bridge's pending approvals and cancel the runtime's approval in flight.
- const consentLock=createConsentLockGuard({powerMonitor,platform,onLock:()=>{cancels.push('lock');}});
- const chatBridge=bridge||{start:async()=>({MYCRM_CHAT_BRIDGE_SOCKET:'/private/tmp/chat.sock',MYCRM_CHAT_BRIDGE_TOKEN:'A'.repeat(43)})};
+ const state={connected,cliConfigured,busy:false,quitting:false,ready};
+ // main.cjs startChatAgent: supervisor.start('chat',['chat']). chatFails makes it throw like a failed spawn setup.
+ const startChat=async()=>{if(chatFails)throw new Error(chatFails);supervisor.start('chat',['chat']);};
  let prefs=readPreferences(saved);
  const connection=()=>({connected:state.connected,cliConfigured:state.cliConfigured});
- const deps={supervisor,prefs:()=>prefs,connection,ready:()=>state.ready,startChat:()=>startChatSidecar(supervisor,chatBridge)};
+ const deps={supervisor,prefs:()=>prefs,connection,ready:()=>state.ready,startChat};
  // Like main.cjs: taking and releasing the app lock reports a change, and a change nudges the automatic start.
  async function exclusively(fn){if(state.busy||state.quitting)throw new Error('busy');state.busy=true;autorun.nudge('change');
   try{return await fn();}finally{state.busy=false;autorun.nudge('change');}}
@@ -33,18 +29,13 @@ function app({saved='{}',connected=true,cliConfigured=false,screen='active',plat
   log:(component,event)=>logs.push(component+':'+event),defer:fn=>queue.push(fn)});
  // Runs deferred checks until none are left (a check may queue another one).
  async function settle(){while(queue.length){queue.shift()();await new Promise(r=>setImmediate(r));}}
- // The handlers main.cjs registers for the window buttons and the tray.
+ // The handlers main.cjs gives the tray (start, stop) and its quit.
  const button={
   start:()=>exclusively(async()=>{await startConnection(deps);autorun.manualStarted();}),
   stop:()=>exclusively(async()=>{autorun.userStopped();await supervisor.stopAll();}),
   quit:async()=>{state.quitting=true;await supervisor.stopAll({closing:true});},
-  // [연결 해제] stops every process and drops the device; a pasted token or sync connects again.
-  disconnect:()=>exclusively(async()=>{await supervisor.stopAll();state.connected=false;}),
-  connect:()=>exclusively(async()=>{state.connected=true;}),
  };
- const lockScreen={lock:()=>{state.screen='locked';powerMonitor.emit('lock-screen');},
-  unlock:()=>{state.screen='active';powerMonitor.emit('unlock-screen');}};
- return {autorun,state,spawned,logs,writes,cancels,prefs:()=>prefs,settle,button,supervisor,screen:lockScreen,consentLock,deps};
+ return {autorun,state,spawned,logs,writes,prefs:()=>prefs,settle,button,supervisor,deps};
 }
 
 test('no saved preference and a connected PC: starts once on open, through the same start as the button',async()=>{
@@ -146,7 +137,7 @@ test('the sidecar binary does not match the app: refused like the button',async(
 
 test('partial failure: the viewer runs, the chat failure is logged as a fixed kind and nothing escapes',async()=>{
  const secret='/Users/someone/Library/token-abc';
- const a=app({bridge:{start:async()=>{throw new Error(secret);}}});
+ const a=app({chatFails:secret});
  a.autorun.nudge('startup');await a.settle();
  assert.deepEqual(a.spawned,['serve']);
  assert.equal(a.supervisor.snapshot().viewer.state,'running');
@@ -180,7 +171,7 @@ test('quitting app: no automatic start',async()=>{
 });
 
 test('a refused start does not loop on change notices',async()=>{
- const a=app({bridge:{start:async()=>{throw new Error('bridge');}}});
+ const a=app({chatFails:'chat'});
  let runs=0;const start=a.autorun.start;a.autorun.start=()=>{runs++;return start();};
  a.autorun.nudge('startup');await a.settle();
  for(let i=0;i<20;i++){a.autorun.nudge('change');await a.settle();}
@@ -193,43 +184,23 @@ test('a manual start that fails saves nothing',async()=>{
  assert.deepEqual(a.writes,[]);assert.equal(a.prefs().autoRun,false);assert.deepEqual(a.spawned,[]);
 });
 
-test('J-F6: an idle screen (no input for a second) starts chat at once with the viewer, no 30-second hold',async()=>{
- const a=app({screen:'idle'});
+test('chat starts with the viewer at once, whatever the screen state (no consent window to wait for)',async()=>{
+ const a=app();
  a.autorun.nudge('startup');await a.settle();
  assert.deepEqual(a.spawned,['serve','chat']);
  assert.deepEqual(a.logs,['autorun:attempt-startup','autorun:started']);
-});
-
-test('JD2: a locked screen or a platform without lock events does not hold the chat start (the button too)',async()=>{
- for(const options of [{screen:'locked'},{screen:'unknown'},{platform:'linux'}]){
-  const a=app(options);
-  a.autorun.nudge('startup');await a.settle();
-  assert.deepEqual(a.spawned,['serve','chat'],JSON.stringify(options));
-  const b=app(options);await b.button.start();assert.deepEqual(b.spawned,['serve','chat']);
- }
-});
-
-test('JD2: a screen lock and unlock leave chat running and only cancel the consent window in flight',async()=>{
- const a=app({saved:'{"allowCli":true}',cliConfigured:true});
- a.autorun.nudge('startup');await a.settle();
- assert.deepEqual(a.spawned,['serve','serve --jobs','chat']);
- a.screen.lock();await a.settle();
- assert.deepEqual(a.cancels,['lock']);
- assert.equal(a.supervisor.snapshot().chat.state,'running');
- a.screen.unlock();a.autorun.nudge('focus');a.autorun.nudge('timer');await a.settle();
- assert.deepEqual(a.spawned,['serve','serve --jobs','chat'],'nothing restarts');
- assert.deepEqual(a.writes,[]);
+ const b=app();await b.button.start();assert.deepEqual(b.spawned,['serve','chat']);
 });
 
 test('a chat start failure is counted and gives up after the attempts, without a second viewer',async()=>{
- const a=app({bridge:{start:async()=>{throw new Error('bridge down');}}});
+ const a=app({chatFails:'chat down'});
  a.autorun.nudge('startup');await a.settle();
  for(let i=0;i<MAX_ATTEMPTS+3;i++){a.autorun.nudge('focus');await a.settle();}
  assert.equal(a.logs.filter(l=>l==='autorun:failed-error').length,MAX_ATTEMPTS);
  assert.equal(a.logs.at(-1),'autorun:gave-up');assert.deepEqual(a.spawned,['serve']);
 });
 
-test('J-F1: a CLI chosen after start restarts chat once so the web sees the new AI service; the viewer is untouched',async()=>{
+test('an AI connection change after start restarts chat once so the web sees it; the viewer is untouched',async()=>{
  const a=app();
  a.autorun.nudge('startup');await a.settle();
  assert.deepEqual(a.spawned,['serve','chat']);
@@ -247,8 +218,10 @@ test('J-F1: no restart when chat never started, the user stopped the device, or 
  assert.equal(await restartChat(gone.deps),false);assert.deepEqual(gone.spawned,['serve','chat']);
 });
 
-test('main restarts chat only after a successful CLI choice',()=>{
+test('main restarts chat after an AI connection change through the app lock, and starts chat without a bridge',()=>{
  const main=require('node:fs').readFileSync(require('node:path').join(__dirname,'..','src','main.cjs'),'utf8');
- assert.match(main,/if\(result\?\.code===0\)await restartChat\(startDeps\)/);
- assert.equal((main.match(/return chatAfterProviderChange\(\{code,detail\}\);/g)||[]).length,2);
+ assert.match(main,/try\{await exclusively\(\(\)=>restartChat\(startDeps\)\);return;\}/);
+ assert.match(main,/restartChat:chatAfterAiChange/);
+ assert.match(main,/async function startChatAgent\(\)\{supervisor\.start\('chat',\['chat'\]\);\}/);
+ assert.doesNotMatch(main,/consent|Consent|BRIDGE/,'no consent runtime or bridge');
 });

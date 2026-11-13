@@ -1,7 +1,7 @@
 'use strict';
-// The connection window takes the web dashboard's tokens (server/ui/src/shared/tokens.css is the one source).
-// src/tokens.css is a generated copy (scripts/sync-tokens.cjs); these checks fail when it drifts or when the
-// window's own CSS brings back colour literals, and they keep the page's CSP as strict as before.
+// The app's copy of the web dashboard's tokens (server/ui/src/shared/tokens.css is the one source; CI checks it).
+// src/tokens.css is a generated copy (scripts/sync-tokens.cjs); these checks fail when it drifts. The connection window
+// that used it is gone (spec 2026-11-13); the copy stays while CI's sync-tokens --check reads it.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -33,27 +33,4 @@ test('build reads the last plain :root value and ignores media-wrapped or :not()
   assert.match(out, /@media \(prefers-color-scheme: dark\) \{\n  :root \{\n    --paper: #222222;/);
   assert.match(out, /--sp-1: 4px;/);
   assert.throws(() => build(':root{--paper:#111111}'), /token source lacks/);
-});
-
-test('style.css takes colours only from tokens (no hex, rgb or named colour literals)', () => {
-  const css = src('style.css').replace(/\/\*[\s\S]*?\*\//g, '');
-  assert.doesNotMatch(css, /#[0-9A-Fa-f]{3,8}\b/, 'hex literal');
-  assert.doesNotMatch(css, /\brgba?\(|\bhsla?\(/, 'rgb/hsl literal');
-  assert.doesNotMatch(css, /:\s*(white|black)\b/, 'named colour');
-  assert.doesNotMatch(css, /prefers-color-scheme/, 'dark values live in tokens.css');
-});
-
-test('every var(--x) style.css uses is defined in the copy', () => {
-  const copy = src('tokens.css');
-  const used = new Set([...src('style.css').matchAll(/var\(--([a-z0-9-]+)/g)].map(m => m[1]));
-  for (const name of used) assert.match(copy, new RegExp(`--${name}:`), `--${name} missing from src/tokens.css (add it to COLORS in scripts/sync-tokens.cjs)`);
-});
-
-test('index.html loads tokens.css before style.css and keeps its CSP', () => {
-  const html = src('index.html');
-  const t = html.indexOf('<link rel="stylesheet" href="tokens.css">');
-  const s = html.indexOf('<link rel="stylesheet" href="style.css">');
-  assert.ok(t > 0 && s > t, 'tokens.css first');
-  assert.ok(html.includes(`content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-src 'none'"`), 'CSP unchanged');
-  assert.doesNotMatch(html, /unsafe-|<style|\sstyle=/);
 });

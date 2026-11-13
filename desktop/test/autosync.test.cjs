@@ -86,14 +86,15 @@ test('a gate that throws counts as busy; dispose stops the schedule',async()=>{
  assert.equal(await r.sync.tick(),'disposed');
 });
 
-test('main wires the automatic sync to the button sync, never connects by itself, stops it on quit',()=>{
+test('main wires the automatic sync to the same sync as the dashboard and tray, connects first, stops it on quit',()=>{
  const main=fs.readFileSync(path.join(__dirname,'..','src','main.cjs'),'utf8');
- assert.match(main,/register\('sync',\(\)=>exclusively\(\(\)=>syncOnce\(\)\)\);/);
- assert.match(main,/run:\(\)=>exclusively\(\(\)=>syncOnce\(\{auto:true\}\)\)/);
- assert.match(main,/wanted:\(\)=>prefs\.autoRun!==false,connected:\(\)=>ready&&connection\(\)\.connected&&!connector\.needsAuto\(\)/);
+ // Spec 2026-11-13 §1.2: the automatic sync also connects this PC (no device, or a refused token) — not only a button.
+ assert.match(main,/sync:\(\)=>runSync\(\)/);
+ assert.match(main,/run:async\(\)=>\{const o=await runSync\(\);if\(o\.kind==='busy'\)throw new Error\('busy'\);/);
+ assert.match(main,/wanted:\(\)=>prefs\.autoRun!==false,connected:\(\)=>ready&&!connector\.view\(\)\.revoked/);
  assert.match(main,/idle:\(\)=>!busy&&!quitting&&!installing/);
- assert.match(main,/if\(connector\.needsAuto\(\)\)\{if\(auto\)throw new Error\('not-connected'\);/);
- assert.match(main,/if\(!auto&&code===3&&/);
+ assert.match(main,/if\(connector\.needsAuto\(\)\)await connector\.autoConnect\(\);/);
+ assert.match(main,/if\(code===3&&\/--resume auth\/\.test\(detail\|\|''\)\)\{\n    await connector\.autoConnect\(\);/);
  assert.match(main,/log\('sync','completed',code\)/);
  assert.match(main,/autosync\.start\(\);/);
  assert.match(main,/clearInterval\(pollTimer\);autosync\?\.dispose\(\);/);

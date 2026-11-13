@@ -15,7 +15,8 @@ import os
 import re
 import sys
 
-from . import AGENT_VERSION, chat_mcp_bridge, config as _config, contract, hmacid, keystore, osutil, runner, schedule, store as _store
+from . import (AGENT_VERSION, ai_connection, chat_mcp_bridge, config as _config, contract, error_report, hmacid, keystore,
+               osutil, runner, schedule, store as _store)
 
 EXIT_OK, EXIT_ERR, EXIT_USAGE, EXIT_HALT = 0, 1, 2, 3
 CHAT_CLAUDE_PROVIDER_READY = True  # 2026-11-12 K: 원작자 실사용, 독립 검토 I와 J 반영 뒤 켬, Codex는 꺼짐
@@ -26,7 +27,7 @@ class Ctx:
     def __init__(self, home, *, ks_factory=None, getpass_fn=None, uploader_factory=None,
                  schedule_runner=None, launch_agents_dir=None, exec_runner=None, out=None, stdin=None,
                  jobs_adapter_factory=None, jobs_client_factory=None, jobs_serve_kw=None,
-                 browser_open=None, login_timeout=None, chat_kw=None):
+                 browser_open=None, login_timeout=None, chat_kw=None, report_fn=None, ai_kw=None):
         self.paths = _config.Paths(home)
         self.ks_factory = ks_factory or keystore.for_platform
         self.getpass_fn = getpass_fn or getpass.getpass
@@ -40,6 +41,8 @@ class Ctx:
         self.browser_open = browser_open                    # 시스템 브라우저 열기 — 시험은 가짜
         self.login_timeout = login_timeout                  # 브라우저 로그인 기다림(초) — 기본 uploader.LOGIN_TIMEOUT
         self.chat_kw = dict(chat_kw or {})                  # 시험용 chat.ChatAgent 인자(connect·stopping·provider 등)
+        self.report_fn = report_fn or error_report.send     # 오류 자동 보고(server, token, stage, code) — 시험은 가짜
+        self.ai_kw = dict(ai_kw or {})                      # 시험용 ai_connection 인자(run·popen·env·path_value 등)
         self.out = out or sys.stdout
         self.stdin = stdin or sys.stdin
 
@@ -103,7 +106,11 @@ def _parser() -> argparse.ArgumentParser:
 
     ch = sub.add_parser("chat", help="웹 「대화」 — 서버에 WebSocket 으로 붙어 받은 턴을 이 PC 에서 실행(상주, 종료 = Ctrl+C)")
     ch.add_argument("--fake", action="store_true", help="모델 대신 정해진 가짜 대본으로 답한다(시험·측정용)")
-    ch.add_argument("--consent-only", action="store_true", help="데스크톱 native 동의 요청만 중계한다(모델 실행 없음)")
+
+    sub.add_parser("ai-status", help="AI 연결 상태(공급자 CLI 인증, 이 PC 의 끊기 표시) — JSON 한 줄")
+    for name, hlp in (("ai-connect", "공급자 연결 — 끊기 표시를 지우고, 로그인이 없으면 공급자 로그인을 띄운다"),
+                      ("ai-disconnect", "공급자 끊기 — 이 PC 에서 MyCRM 이 그 공급자를 쓰지 않는다(공급자 로그아웃은 안 한다)")):
+        sub.add_parser(name, help=hlp).add_argument("--provider", required=True, choices=tuple(ai_connection.PROVIDERS))
 
     bridge = sub.add_parser("chat-mcp-bridge", help=argparse.SUPPRESS)
     bridge.add_argument("--agent-home", required=True)
@@ -579,9 +586,11 @@ def cmd_run_once(ctx: Ctx, a) -> int:
                               scheduled=a.scheduled, upload=not a.no_upload)
     except (runner.RunError, AdapterError, keystore.KeyStoreError, _config.ConfigError) as e:
         ctx.say(f"실행 멈춤: {e}")
+        _report(ctx, cfg, ks, "run-once/failed", _failure_code(e))
         return EXIT_ERR
     except Exception as e:  # 요약 단계 설정 오류 등 — 값 없이 종류만
         ctx.say(f"실행 멈춤: {type(e).__name__}")
+        _report(ctx, cfg, ks, "run-once/failed", "unexpected")
         return EXIT_ERR
     if res.get("skipped"):
         ctx.say("이미 실행 중이라 건너뛰었어요.")
@@ -608,8 +617,36 @@ def cmd_run_once(ctx: Ctx, a) -> int:
     }
     if stopped in hints:
         ctx.say(f"{hints[stopped]} `run-once --resume {stopped}` 로 다시 시작하세요.")
+        if stopped != "auth":   # 토큰이 거절됐으면 이 토큰으로는 보고도 못 한다 — 앱이 다시 연결하고 실패하면 앱이 보고한다
+            _report(ctx, cfg, ks, "run-once/halt", "halt-" + stopped)
         return EXIT_HALT
     return EXIT_OK
+
+
+def _failure_code(e: BaseException) -> str:
+    """run-once 실패의 오류 코드 — 예외 종류만(메시지는 경로, 원문을 담을 수 있어 보내지 않는다)."""
+    from .adapters import AdapterError
+    for kind, code in ((runner.RunError, "run-error"), (AdapterError, "adapter"),
+                       (keystore.KeyStoreError, "keystore"), (_config.ConfigError, "config")):
+        if isinstance(e, kind):
+            return code
+    return "unexpected"
+
+
+def _report(ctx: Ctx, cfg: dict, ks, stage: str, code: str) -> None:
+    """오류 자동 보고(명세 1.4) — 장치 토큰으로 한 번. 연결이 없거나 토큰을 못 읽으면 보내지 않는다. 결과는 무시한다."""
+    sid, server = cfg.get("source_instance_id"), cfg.get("server_url")
+    if not sid or not server:
+        return
+    try:
+        token = ks.get(_config.token_account(sid))
+    except keystore.KeyStoreError:
+        return
+    if token:
+        try:
+            ctx.report_fn(server, token, stage, code)
+        except Exception:
+            pass
 
 
 def cmd_status(ctx: Ctx, a) -> int:
@@ -713,6 +750,73 @@ def cmd_configure_codex(ctx: Ctx, a) -> int:
         return EXIT_ERR
     # Setting a path/model list does not enable the provider readiness gate.
     ctx.say("Codex CLI와 모델 ID를 저장했어요.")
+    return EXIT_OK
+
+
+def _remember_claude_path(ctx: Ctx, cfg: dict) -> dict:
+    """설정에 Claude 실행 파일이 없거나 사라졌으면 찾은 경로를 저장한다(명세 1.1 — 실행 파일 선택 화면 대신)."""
+    if ai_connection.configured_path("claude", cfg):
+        return cfg
+    found = ai_connection.discover("claude", **{k: v for k, v in ctx.ai_kw.items() if k in ("path_value", "platform", "user_home")})
+    if not found or (osutil.IS_WINDOWS and not found.lower().endswith(".exe")):
+        return cfg
+    try:
+        with osutil.FileLock(ctx.paths.lock("config")):
+            cfg = _config.load(ctx.paths)
+            cfg["summary"]["cli_path"] = found
+            _config.save(ctx.paths, cfg)
+    except (osutil.LockBusy, _config.ConfigError, OSError):
+        pass
+    return cfg
+
+
+def _ai_kw(ctx: Ctx, *names) -> dict:
+    return {k: v for k, v in ctx.ai_kw.items() if k in names + ("path_value", "platform", "user_home", "env")}
+
+
+def cmd_ai_status(ctx: Ctx, a) -> int:
+    """AI 연결 상태 JSON 한 줄 {"ai": {공급자: 상태}}. 상태 낱말 = ai_connection.STATES. 계정 정보는 내지 않는다."""
+    try:
+        cfg = _config.load(ctx.paths)
+    except _config.ConfigError:
+        ctx.say(json.dumps({"ai": {p: "error" for p in ai_connection.PROVIDERS}}))
+        return EXIT_ERR
+    cfg = _remember_claude_path(ctx, cfg)
+    ctx.paths.ensure()
+    ctx.say(json.dumps({"ai": ai_connection.statuses(cfg, ctx.paths.home, **_ai_kw(ctx, "run"))}, sort_keys=True))
+    return EXIT_OK
+
+
+def cmd_ai_connect(ctx: Ctx, a) -> int:
+    """끊기 표시를 지우고, 로그인이 없으면(또는 구독 인증이 아니면) 공급자 로그인을 띄운다. 끝나면 상태 JSON 한 줄."""
+    try:
+        cfg = _config.load(ctx.paths)
+    except _config.ConfigError:
+        ctx.say(json.dumps({"ai": {a.provider: "error"}}))
+        return EXIT_ERR
+    cfg = _remember_claude_path(ctx, cfg) if a.provider == "claude" else cfg
+    ctx.paths.ensure()
+    try:
+        ai_connection.set_off(ctx.paths.home, a.provider, False)
+    except OSError:
+        ctx.say(json.dumps({"ai": {a.provider: "error"}}))
+        return EXIT_ERR
+    state = ai_connection.status(a.provider, cfg, ctx.paths.home, **_ai_kw(ctx, "run"))
+    if state in ("signed-out", "unsupported"):
+        state = ai_connection.login(a.provider, cfg, ctx.paths.home, **_ai_kw(ctx, "popen", "run", "timeout"))
+    ctx.say(json.dumps({"ai": {a.provider: state}}))
+    return EXIT_OK
+
+
+def cmd_ai_disconnect(ctx: Ctx, a) -> int:
+    """이 PC 에서 MyCRM 이 그 공급자를 쓰지 않게 표시한다. 공급자 로그인은 그대로 둔다."""
+    ctx.paths.ensure()
+    try:
+        ai_connection.set_off(ctx.paths.home, a.provider, True)
+    except OSError:
+        ctx.say(json.dumps({"ai": {a.provider: "error"}}))
+        return EXIT_ERR
+    ctx.say(json.dumps({"ai": {a.provider: "off"}}))
     return EXIT_OK
 
 
@@ -830,14 +934,6 @@ def cmd_chat(ctx: Ctx, a) -> int:
         if flush:
             flush()
 
-    if a.consent_only:
-        if not (os.environ.get("MYCRM_CHAT_BRIDGE_SOCKET") and os.environ.get("MYCRM_CHAT_BRIDGE_TOKEN")):
-            log({"event": "start", "stopped": "bridge"})
-            return EXIT_ERR
-    elif CHAT_CLAUDE_PROVIDER_READY and not a.fake:
-        if not (os.environ.get("MYCRM_CHAT_BRIDGE_SOCKET") and os.environ.get("MYCRM_CHAT_BRIDGE_TOKEN")):
-            log({"event": "start", "stopped": "bridge"})
-            return EXIT_ERR
     try:
         cfg = _config.load(ctx.paths)
     except _config.ConfigError:
@@ -878,31 +974,12 @@ def _run_chat(ctx: Ctx, a, cfg, sid, server, log) -> int:
     from . import chat, chat_providers
     kw = dict(ctx.chat_kw)
     kw.pop("instance", None)
-    if a.consent_only:
-        from .consent_bridge import request_approval
-        bridge_socket = os.environ["MYCRM_CHAT_BRIDGE_SOCKET"]
-        bridge_token = os.environ["MYCRM_CHAT_BRIDGE_TOKEN"]
-        provider = None
-        kw.pop("provider", None)
-        kw.pop("registry", None)
-
-        def consent_request(request_id, authorization):
-            return request_approval(bridge_socket, bridge_token, request_id, authorization)
-    else:
-        provider = kw.pop("provider", None) or (chat.FakeProvider() if a.fake else None)
-        consent_request = kw.pop("consent_request", None)
-        if consent_request is None and not a.fake:
-            bridge_socket = os.environ.get("MYCRM_CHAT_BRIDGE_SOCKET")
-            bridge_token = os.environ.get("MYCRM_CHAT_BRIDGE_TOKEN")
-            if bridge_socket and bridge_token:
-                from .consent_bridge import request_approval
-                consent_request = lambda request_id, authorization: request_approval(
-                    bridge_socket, bridge_token, request_id, authorization)
-    claude_factory = kw.pop("claude_factory", None) if not (a.fake or a.consent_only) else None
-    if a.fake or a.consent_only:
+    provider = kw.pop("provider", None) or (chat.FakeProvider() if a.fake else None)
+    claude_factory = kw.pop("claude_factory", None) if not a.fake else None
+    if a.fake:
         kw.pop("claude_factory", None)
-    codex_factory = kw.pop("codex_factory", None) if not (a.fake or a.consent_only) else None
-    if a.fake or a.consent_only or not CHAT_CODEX_PROVIDER_READY:
+    codex_factory = kw.pop("codex_factory", None) if not a.fake else None
+    if a.fake or not CHAT_CODEX_PROVIDER_READY:
         codex_factory = None
         kw.pop("codex_factory", None)
     stopping = kw.pop("stopping", None) or threading.Event()
@@ -949,14 +1026,19 @@ def _run_chat(ctx: Ctx, a, cfg, sid, server, log) -> int:
                 return None
 
         ref_store = kw.pop("ref_store", None) or chat_providers.CliSessionRefStore(ks, sid)
-        live = not a.fake and not a.consent_only
+        live = not a.fake
         summary = cfg.get("summary") or {}
+        # AI 연결(명세 1.3): 이 PC 의 끊기 표시와 공급자 CLI 인증을 시작 때 본다. 준비된 공급자만 모델을 알린다.
+        # 상태는 hello 로 서버에 보고한다(장치가 보고한 값이 서버 grant 를 대신한다).
+        ai_status = None
+        if live:
+            ai_status = ai_connection.statuses(cfg, ctx.paths.home, **_ai_kw(ctx, "run"))
+            kw.setdefault("ai_status", ai_status)
         if live and claude_factory is None and CHAT_CLAUDE_PROVIDER_READY:
-            cli_path = summary.get("cli_path")
-            if not cli_path:
-                # J-F1: the person chose Codex only (or nothing yet). Advertise no Claude model and keep running, so
-                # the other AI service and the consent relay still work; the PC app's first screen asks for the CLI.
-                log({"event": "start", "why": "claude-not-configured"})
+            cli_path = ai_connection.cli_path("claude", cfg, **_ai_kw(ctx))
+            if ai_status.get("claude") != "ready" or not cli_path:
+                # Claude 를 끊었거나, CLI 가 없거나, 로그인이 없다. Claude 모델을 알리지 않고 계속 돈다(다른 공급자는 된다).
+                log({"event": "start", "why": "claude-" + str(ai_status.get("claude"))})
             else:
                 from .chat_launch_authority import LaunchAuthorizationClient
                 from .chat_claude import ClaudeProviderFactory, ClaudeProviderUnavailable
@@ -978,7 +1060,7 @@ def _run_chat(ctx: Ctx, a, cfg, sid, server, log) -> int:
         if live and codex_factory is None and CHAT_CODEX_PROVIDER_READY:
             cli_path = summary.get("codex_cli_path")
             models = summary.get("codex_models")
-            if not (isinstance(cli_path, str) and isinstance(models, list) and models):
+            if ai_status.get("codex") != "ready" or not (isinstance(cli_path, str) and isinstance(models, list) and models):
                 # J-F1: Codex not chosen on this PC. Advertise no Codex model and keep running (see Claude above).
                 log({"event": "start", "why": "codex-not-configured"})
             else:
@@ -992,7 +1074,7 @@ def _run_chat(ctx: Ctx, a, cfg, sid, server, log) -> int:
                     log({"event": "start", "stopped": "codex-runtime"})
                     return EXIT_ERR
         agent = chat.ChatAgent(chat.ws_url(server), token_now, provider, ref_store=ref_store,
-                               agent_version=AGENT_VERSION, stopping=stopping, log=log, consent_request=consent_request,
+                               agent_version=AGENT_VERSION, stopping=stopping, log=log,
                                claude_factory=claude_factory, codex_factory=codex_factory, **kw)
         why = agent.run()
     finally:
@@ -1078,6 +1160,7 @@ def cmd_migrate(ctx: Ctx, a) -> int:
 COMMANDS = {"connect": cmd_connect, "validate": cmd_validate, "run-once": cmd_run_once, "status": cmd_status,
             "schedule": cmd_schedule, "serve": cmd_serve, "disconnect": cmd_disconnect,
             "configure-cli": cmd_configure_cli, "configure-codex": cmd_configure_codex,
+            "ai-status": cmd_ai_status, "ai-connect": cmd_ai_connect, "ai-disconnect": cmd_ai_disconnect,
             "migrate": cmd_migrate, "chat": cmd_chat,
             "chat-mcp-bridge": cmd_chat_mcp_bridge}
 
