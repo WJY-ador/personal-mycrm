@@ -116,17 +116,3 @@ test('pc:get shape: state from the live values and the last sync kept across a r
   assert.equal(parseLast('{"at":"x","result":"ok"}'),null);
   assert.equal(parseLast('{"at":"2026-11-13T00:00:00Z","result":"weird"}'),null);
 });
-
-test('an unchecked provider (Codex before it is ready) keeps the linked result of the user connect until a real answer',async()=>{
-  const h=link([line({claude:L('linked'),codex:L('signed_out','unchecked')}),line({codex:L('linked')}),
-    line({claude:L('linked'),codex:L('signed_out','unchecked')}),line({claude:L('linked'),codex:L('off')})]);
-  await h.ai.refresh();
-  assert.deepEqual(h.ai.view().providers[1],{provider:'codex',state:'signed_out',code:'unchecked'},'before the press: not run, not linked');
-  await h.ai.connect('codex');
-  assert.equal(h.states().codex,'linked');
-  await h.ai.refresh();
-  assert.deepEqual(h.ai.view().providers[1],{provider:'codex',state:'linked',code:null},'an unchecked refresh does not undo the connect');
-  await h.ai.refresh();
-  assert.equal(h.states().codex,'off','a real answer replaces it');
-  assert.deepEqual(h.runs.map(r=>r[0][0]),['ai-status','ai-connect','ai-status','ai-status']);
-});

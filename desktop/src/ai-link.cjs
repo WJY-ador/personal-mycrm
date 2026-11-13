@@ -43,10 +43,7 @@ function createAiLink({run, notifyChat = () => {}, linkedChanged = () => {}, rep
     const crossed = [];let moved = false;
     for (const p of providers) {
       const before = links[p];
-      let next = parsed?.[p] || {state: before?.state === 'off' ? 'off' : 'missing', code: failCode};
-      // code unchecked = the sidecar did not run that CLI (Codex before it is ready: only ai:connect runs it). A linked result
-      // from the user's own connect stays until a real answer (off, missing, or a run) replaces it.
-      if (next.code === 'unchecked' && before?.state === 'linked') next = before;
+      const next = parsed?.[p] || {state: before?.state === 'off' ? 'off' : 'missing', code: failCode};
       if ((before?.state === 'linked') !== (next.state === 'linked')) crossed.push(p);
       if (!before || before.state !== next.state) moved = true;
       links[p] = next;
