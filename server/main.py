@@ -1325,6 +1325,11 @@ async def purge_once():
             print(f"[imports] 승인 대기 만료 {n}건 · 지난 한도 카운터 {m}행 파기", flush=True)
     except Exception as e:
         print(f"[imports] 승인 대기 만료·카운터 파기 실패 — 계속: {type(e).__name__}", flush=True)
+    try:   # 받는 즉시 승인(2026-11-13) — 스위치 꺼짐·기록 한도로 남은 대기를 다시 승인(다음 KST 구간)
+        if n := await run_in_threadpool(imports.auto_approve_pending):
+            print(f"[imports] 남은 대기 {n}건 승인", flush=True)
+    except Exception as e:
+        print(f"[imports] 남은 대기 승인 실패 — 계속: {type(e).__name__}", flush=True)
     try:   # PR ②-a — 작업 만료·임대 만료 정리 · 임시 보관 본문 삭제 · 종료 표식 보유 기간 지난 행 삭제
         n = await run_in_threadpool(db.jobs_purge)
         if n:

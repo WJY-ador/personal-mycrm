@@ -411,23 +411,32 @@ def test_axes(ctx):
 
 
 # ── 5. 승인한 내 글의 원천 · 활동 반응 연결 ─────────────
+def _approve_on(uid, iid):
+    """승인 스위치를 켜고 승인 — 받을 때는 꺼 둬서 대기로 남긴다(받는 즉시 승인 2026-11-13 은 스위치가 켜졌을 때만)."""
+    os.environ["CRM_INBOX_APPROVALS_ENABLED"] = "1"
+    try:
+        return imports.inbox_approve(uid, iid)
+    finally:
+        os.environ.pop("CRM_INBOX_APPROVALS_ENABLED", None)
+
+
 def test_record_source(ctx):
     uid, dev, tok, ax, _pr = ctx
     pr = imports.device_list(uid)["devices"][0]["policy_revision"]   # 축 시험이 정책을 바꿨다
-    os.environ["CRM_INBOX_APPROVALS_ENABLED"] = "1"
+    os.environ.pop("CRM_INBOX_APPROVALS_ENABLED", None)
     st, b = send(tok, act_req(dev, policy_revision=pr))
     aid = b["target_id"]
     o, v = _o(), _v()
     st, b = send(tok, text_req(dev, o, v, policy_revision=pr, activity_ref=aid))
     assert st == 201 and b["state"] == "pending", (st, b)
     db.trash_move(uid, "activity", aid)
-    a = imports.inbox_approve(uid, b["import_id"])
+    a = _approve_on(uid, b["import_id"])
     assert count(uid, "activity_links", "AND linked_record_id=%s", (a["record_id"],)) == 0, "휴지통 활동엔 반응 연결을 달지 않는다"
     db.trash_restore(uid, "activity", aid)
     r1 = a["record_id"]
     v2 = _v()   # 같은 원천 두 번째 승인 = 새 기록 R2(현재 판). 옛 판 기록 R1 만 휴지통이면 원천은 살아 있다
     st, b = send(tok, text_req(dev, o, v2, prev=v, policy_revision=pr, body="두 번째 본문"))
-    r2 = imports.inbox_approve(uid, b["import_id"])["record_id"]
+    r2 = _approve_on(uid, b["import_id"])["record_id"]
     db.trash_move(uid, "record", r1)
     v3 = _v()
     st, b = send(tok, text_req(dev, o, v3, prev=v2, policy_revision=pr, body="세 번째 본문"))

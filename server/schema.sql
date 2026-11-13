@@ -480,7 +480,7 @@ CREATE TABLE IF NOT EXISTS import_entries (
   expires_at           timestamptz,
   received_at          timestamptz NOT NULL DEFAULT now(),
   resolved_at          timestamptz,
-  resolved_by          text CHECK (resolved_by IS NULL OR resolved_by IN ('user','expiry','superseded','system','migration')),
+  resolved_by          text CHECK (resolved_by IS NULL OR resolved_by IN ('user','expiry','superseded','system','migration','auto')),   -- auto = 받는 즉시 승인(2026-11-13). 옛 DB 는 db._WIDEN_CHECKS
   target_object_id     text,
   target_item_id       text,
   target_record_id     text,

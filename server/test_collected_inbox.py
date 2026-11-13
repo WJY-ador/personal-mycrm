@@ -102,7 +102,7 @@ def setup_user(uid, axes=True):
 class Dev:
     """장치 한 대의 수집 글 전송 — 원본마다 개정 사슬을 기억한다."""
     def __init__(self, token, dev_id):
-        self.token, self.id, self.chain = token, dev_id, {}
+        self.token, self.id, self.chain, self.last = token, dev_id, {}, {}
 
     def body(self, key, **kw):
         o, prev = self.chain.get(key, (None, None, None))[:2]
@@ -122,6 +122,17 @@ class Dev:
             r = await h.post("/api/imports", content=json.dumps(b, ensure_ascii=False).encode("utf-8"), headers=hd)
         assert r.status_code in (200, 201), r.text
         self.chain[key] = (b["original_id"], b["revision"], b["raw_id"])
+        self.last[key] = b
+        return r.json()
+
+    async def resend(self, key):
+        """마지막에 보낸 요청 그대로(같은 개정) — duplicate."""
+        b = self.last[key]
+        hd = {"content-type": "application/json", "authorization": "Bearer " + self.token,
+              "idempotency-key": imports.idempotency_key(b["source_instance_id"], b["original_id"], b["revision"])}
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url=PUBLIC) as h:
+            r = await h.post("/api/imports", content=json.dumps(b, ensure_ascii=False).encode("utf-8"), headers=hd)
+        assert r.status_code == 200, r.text
         return r.json()
 
     async def decisions(self, token=None, **params):
@@ -182,19 +193,23 @@ async def body(A, B, d, ax):
     i3 = (await d.send("p3", collected_on="2026-11-13"))["target_id"]
     r = await d.send("p2", collected_on="2026-11-11", ai={"grade": "news"}, state="kept")
     assert r["state"] == "applied" and cs(A, i2)["state"] == "kept"
-    i4 = (await d.send("p4", state="dropped"))["target_id"]   # 장치 dropped(enum 확장) = 버림, 휴지통 아님
-    assert cs(A, i4)["state"] == "dropped" and item(A, i4)["trashed_at"] is None
+    i4 = (await d.send("p4", collected_on="2026-11-10"))["target_id"]
+    expect("CONTRACT-INVALID", imports.validate, d.body("px", state="dropped"))   # 장치 계약엔 dropped 가 없다(판별 표 값일 뿐)
     with db.tx() as c:   # 판별 표가 생기기 전에 올라온 항목 흉내 — 행을 지운다. 같은 내용 새 개정(noop)이 state 를 다시 채운다
         c.execute("DELETE FROM collected_states WHERE user_id=%s AND item_id=%s", (A, i3))
     assert (await d.send("p3", collected_on="2026-11-13"))["state"] == "noop" and cs(A, i3)["state"] == "pending"
-    print("OK 1 장치 state 기록(pending·kept·dropped · noop 재전송이 빈 state 를 채움)")
+    with db.tx() as c:   # 같은 개정 재전송(duplicate)도 빈 state 를 채운다
+        c.execute("DELETE FROM collected_states WHERE user_id=%s AND item_id=%s", (A, i3))
+    r = await d.resend("p3")
+    assert r["duplicate"] is True and cs(A, i3) == {"state": "pending", "decided_by": "device", "seq": None}, (r, cs(A, i3))
+    print("OK 1 장치 state 기록(pending·kept · 장치 dropped 거절 · noop·duplicate 재전송이 빈 state 를 채움)")
 
     # ── 2. 웹 목록 ──
     r = await web("GET", "/api/collected?state=pending")
     assert r.status_code == 200 and r.headers["cache-control"] == "no-store", r.text
     j = r.json()
-    assert j["ready"] is True and [p["id"] for p in j["posts"]] == [i3, i1] and j["counts"] == {"pending": 2, "kept": 1}, j
-    p1 = j["posts"][1]
+    assert j["ready"] is True and [p["id"] for p in j["posts"]] == [i3, i1, i4] and j["counts"] == {"pending": 3, "kept": 1}, j
+    p1 = j["posts"][1]   # 같은 수집일(11-12)이면 id 순
     assert p1["axes"] == [{"id": ax, "title": "합성 축"}] and p1["post_url"] == "https://www.linkedin.com/posts/synthetic-1", p1
     assert p1["ai"] == {"grade": "signal", "summary": "합성 요약", "as_is": "지금", "to_be": "다음", "ops": "운영", "points": ["점"]}, p1["ai"]
     assert p1["state"] == "pending" and p1["decided_by"] == "device" and p1["author_display"] == "합성 작성자"
@@ -249,12 +264,22 @@ async def body(A, B, d, ax):
     assert r["state"] == "applied" and cs(A, i1)["state"] == "kept" and cs(A, i1)["decided_by"] == "device" and cs(A, i1)["seq"] is None
     imports.collected_decide(A, i3, "dropped")
     assert item(A, i3)["trashed_at"] is None and cs(A, i3)["state"] == "dropped", "버림은 휴지통이 아니다"
+    # 웹 버림 → PC 행 dropped → 다음 업로드는 removed 로 온다 → 사용자 판별 항목이라 noop(휴지통 아님)
+    r = await d.send("p3", collected_on="2026-11-13", state="removed")
+    assert r["state"] == "noop" and item(A, i3)["trashed_at"] is None and cs(A, i3)["state"] == "dropped", r
+    # 사용자 되돌리기(pending) 행 = 같은 내용 재전송(noop)이 건드리지 않는다
+    iq = (await d.send("q1"))["target_id"]
+    imports.collected_decide(A, iq, "kept")
+    imports.collected_decide(A, iq, "pending")
+    assert (await d.send("q1"))["state"] == "noop" and cs(A, iq)["decided_by"] == "user", cs(A, iq)
+    imports.collected_decide(A, iq, "dropped")
     j = (await web("GET", "/api/collected?state=pending")).json()
-    assert i3 not in [p["id"] for p in j["posts"]] and j["counts"]["pending"] == 0
+    assert i3 not in [p["id"] for p in j["posts"]] and j["counts"]["pending"] == 1, j["counts"]   # i4 만
     # 보관(archive)한 항목 = 판별 CONFLICT · 목록에서 빠짐
     db.item_decide(A, i4, item(A, i4)["revision"], None, "archive")
     expect("CONFLICT", imports.collected_decide, A, i4, "kept")
-    print("OK 4 사용자 판별 잠금(장치 pending·removed noop) · 되돌리기 뒤 장치 state · 버림 ≠ 휴지통 · 보관 항목 CONFLICT")
+    print("OK 4 사용자 판별 잠금(장치 pending·removed noop) · 되돌리기 뒤 장치 state · 버림 ≠ 휴지통 · 버림 뒤 removed noop · "
+          "되돌리기 행은 noop 재전송이 안 건드림 · 보관 항목 CONFLICT")
 
     # ── 5. 묶음 버림 · 일반 결정 한도 ──
     i5 = (await d.send("p5"))["target_id"]
@@ -285,13 +310,13 @@ async def body(A, B, d, ax):
     assert r.status_code == 200 and r.headers["cache-control"] == "no-store", r.text
     j = r.json()
     got = [(x["item_id"], x["state"]) for x in j["decisions"]]
-    assert got == [(i3, "dropped"), (i5, "dropped"), (i6, "dropped")], got   # i1 은 장치가 덮어 device · i4 는 사용자 판별 없음
+    assert got == [(i3, "dropped"), (iq, "dropped"), (i5, "dropped"), (i6, "dropped")], got   # 오래된 seq 부터   # i1 은 장치가 덮어 device · i4 는 사용자 판별 없음
     assert j["has_more"] is False and j["next_cursor"].isdigit() and all(x["decided_at"] for x in j["decisions"])
     assert set(j) == {"decisions", "next_cursor", "has_more"} and set(j["decisions"][0]) == {"item_id", "state", "decided_at"}
     j1 = (await d.decisions(limit="1")).json()
     assert [x["item_id"] for x in j1["decisions"]] == [i3] and j1["has_more"] is True
     j2 = (await d.decisions(since=j1["next_cursor"], limit="2")).json()
-    assert [x["item_id"] for x in j2["decisions"]] == [i5, i6] and j2["has_more"] is False
+    assert [x["item_id"] for x in j2["decisions"]] == [iq, i5] and j2["has_more"] is True
     j3 = (await d.decisions(since=j["next_cursor"])).json()
     assert j3 == {"decisions": [], "next_cursor": j["next_cursor"], "has_more": False}, j3
     imports.collected_decide(A, i3, "pending")   # 되돌리기도 새 seq 로 실린다(PC 는 pending 을 무시)

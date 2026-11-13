@@ -235,10 +235,9 @@ async def test_import(uid):
         con = imports.device_connect(uid, "합성 PC")
         dev, tok = con["device"], con["token"]
         assert "session-wrap/1" in dev["policy"]["transform_versions"]
-        r = await _post(tok, _req(dev["id"]))
-        assert r.status_code == 201 and r.json()["state"] == "pending", r.text
-        iid = r.json()["import_id"]
-        rid = imports.inbox_approve(uid, iid)["record_id"]
+        r = await _post(tok, _req(dev["id"]))   # 받는 즉시 승인(2026-11-13) — 대기 없이 기록, 출처 판정은 승인과 같다
+        assert r.status_code == 201 and r.json()["state"] == "applied" and r.json()["target_kind"] == "record", r.text
+        rid = r.json()["target_id"]
         x = row(uid, rid)
         assert (x["author_kind"], x["text_process"], x["generation_kind"], x["decision_owner"], x["source"], x["ingest_kind"]) == \
             ("self", "structured", "mixed", "self", "세션 정리", "inbox"), x
@@ -247,20 +246,20 @@ async def test_import(uid):
         assert db.candidate_decide(uid, cid, "confirm")["status"] == "confirmed"
         # 같은 계약의 self-text/1 은 그대로 원문(표시 없음)
         r = await _post(tok, _req(dev["id"], transform="self-text/1"))
-        y = row(uid, imports.inbox_approve(uid, r.json()["import_id"])["record_id"])
+        y = row(uid, r.json()["target_id"])
         assert (y["text_process"], y["decision_owner"], y["source"]) == ("verbatim", None, imports.RECORD_SOURCE_TEXT), y
         # 허용 규칙에서 빼면 POLICY-DENIED
         pol = {"actions": ["like"], "transform_versions": ["self-text/1"], "axes": []}
         imports.device_policy_set(uid, dev["id"], pol, 1)
         r = await _post(tok, _req(dev["id"], policy_revision=2))
         assert r.status_code == 403 and r.json()["code"] == "POLICY-DENIED", r.text
-        assert web.TRANSFORM_LABELS["session-wrap/1"] == "세션 정리(승인 대기)"
+        assert web.TRANSFORM_LABELS["session-wrap/1"] == "세션 정리(바로 저장)"
     finally:
         for n, v in saved.items():
             os.environ.pop("CRM_" + n, None)
             if v is not None:
                 os.environ["CRM_" + n] = v
-    ok("가져오기 session-wrap/1 — 승인 = self·structured·mixed·「내 결정」·출처 「세션 정리」 → 후보 확정 · self-text/1 그대로 · 허용 규칙 밖 거절")
+    ok("가져오기 session-wrap/1 — 받는 즉시 승인 = self·structured·mixed·「내 결정」·출처 「세션 정리」 → 후보 확정 · self-text/1 그대로 · 허용 규칙 밖 거절")
 
 
 # ── 3b) MCP inbox_decide(승인·제외, facade 전용 D) ────────
@@ -273,8 +272,12 @@ async def test_inbox_decide(uid):
         con = imports.device_connect(uid, "합성 PC 2")
         dev, tok = con["device"], con["token"]
 
-        async def pending(**kw):
-            r = await _post(tok, _req(dev["id"], **kw))
+        async def pending(**kw):   # 승인 스위치를 끄고 받아 대기로 남긴다(켜져 있으면 받는 즉시 승인)
+            os.environ.pop("CRM_INBOX_APPROVALS_ENABLED", None)
+            try:
+                r = await _post(tok, _req(dev["id"], **kw))
+            finally:
+                os.environ["CRM_INBOX_APPROVALS_ENABLED"] = "1"
             assert r.status_code == 201 and r.json()["state"] == "pending", r.text
             return r.json()["import_id"]
         wrap_body = f"합성 정리 글이다. {mask} 에 남긴 계획을 보고 칸을 하나로 줄이기로 정했다. 비교 표는 {mask} 에 있다."

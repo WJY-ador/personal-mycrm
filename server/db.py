@@ -591,7 +591,9 @@ _WIDEN_CHECKS = (
     ("field_defs", "field_defs_target_kind_check", "target_kind", ("item", "record", "candidate", "person", "source", "activity")),
     # 수집 글(2026-11-12) — 접수 종류 collected_post
     ("import_entries", "import_entries_kind_check", "kind",
-     ("self_text", "self_summary", "activity", "migration_object", "migration_item", "migration_record", "collected_post")))
+     ("self_text", "self_summary", "activity", "migration_object", "migration_item", "migration_record", "collected_post")),
+    # 받는 즉시 승인(2026-11-13) — 접수 처리 주체 auto(NULL 은 IN 검사에서 통과한다)
+    ("import_entries", "import_entries_resolved_by_check", "resolved_by", ("user", "expiry", "superseded", "system", "migration", "auto")))
 
 # board 이전(2026-10-20) — 옛 DB 에 더할 열(schema.sql 최종형과 같은 모양). received_at·ingest_kind 는 옛 행 값이 다르다(아래 함수)
 _IMPORT_PROV_COLS = (("source_created_at", "timestamptz"), ("source_date", "date"),

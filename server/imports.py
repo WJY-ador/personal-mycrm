@@ -59,8 +59,8 @@ SESSION_WRAP_PATH_MASK = "‹경로›"
 # 장치가 덮는 필드 키(DEVICE_FIELDS)만 쓴다. 사용자가 지웠거나 꼴이 다른 필드는 건너뛰고, 필수 둘(COLLECTED_REQUIRED)이 없으면 OBJECT-MISSING.
 COLLECTED_OBJECT_KEY = "collected_posts"
 COLLECTED_CHANNELS = ("linkedin", "reddit", "kakao", "threads", "blog", "web")
-COLLECTED_STATES = ("pending", "kept", "dropped", "removed")   # removed = 서버가 그 항목을 휴지통으로 보낸다(S7). dropped = 버림(휴지통 아님, 2026-11-13)
-COLLECTED_DECIDE_STATES = ("pending", "kept", "dropped")       # 사용자 판별(웹·대화). pending = 판별 되돌리기(인박스로)
+COLLECTED_STATES = ("pending", "kept", "removed")          # 장치 state. removed = 서버가 그 항목을 휴지통으로 보낸다(S7)
+COLLECTED_DECIDE_STATES = ("pending", "kept", "dropped")       # 사용자 판별(웹·대화). dropped = 버림(휴지통 아님, 판별 표의 값만) · pending = 되돌리기
 COLLECTED_LOCK_STATES = ("kept", "dropped")                    # 사용자가 이 둘로 판별한 항목 = 장치 개정이 덮지 않는다(noop)
 COLLECTED_BULK_MAX = 200     # 웹 묶음 버림 한 번에
 COLLECTED_LIST_MAX = 1000    # 웹 인박스·보관함 한 번에(수집일 최근 먼저)
@@ -1076,8 +1076,8 @@ def _apply_collected(c, dev, req, latest, current, req_sha, proj_sha, nbytes):
         c.execute("UPDATE import_entries SET is_current_applied=false WHERE user_id=%s AND id=%s", (uid, current["id"]))
         archived = _one(c, "SELECT archived_at IS NOT NULL AS a FROM items WHERE user_id=%s AND id=%s", (uid, item_id))["a"]
         if bytes(current["projection_sha256"]) == proj_sha or archived:   # 같은 내용 · 사용자가 보관(archive)한 항목 = 쓰지 않는다
-            if not archived:   # 같은 내용 재전송도 장치 state 는 적는다(판별 표가 생기기 전에 올라온 항목을 채운다)
-                _cs_device(c, uid, item_id, req["state"])
+            if not archived:   # 같은 내용 재전송도 장치 state 를 채운다(판별 표가 생기기 전에 올라온 항목). 사용자 판별 행은 그대로
+                _cs_device(c, uid, item_id, req["state"], fill_only=True)
             return _insert_entry(c, dev, req, latest, req_sha, proj_sha, "noop", True, item_id=item_id), False
     od, byk = _collected_target(c, uid)
     values = _collected_values(req, byk)
@@ -1102,11 +1102,15 @@ def _user_locked(cs) -> bool:
     return bool(cs) and cs["decided_by"] == "user" and cs["state"] in COLLECTED_LOCK_STATES
 
 
-def _cs_device(c, uid, item_id, state):
-    """장치가 보낸 state 를 적는다(removed 는 휴지통 경로라 여기 오지 않는다). 같은 장치 state 면 그대로 둔다(decided_at 유지)."""
+def _cs_device(c, uid, item_id, state, fill_only=False):
+    """장치가 보낸 state 를 적는다(removed 는 휴지통 경로라 여기 오지 않는다). 같은 장치 state 면 그대로 둔다(decided_at 유지).
+    fill_only = 같은 내용 재전송(noop·duplicate) — 행이 없거나 decided_by device 일 때만(사용자 되돌리기 pending 행은 그대로).
+    아니면(새 내용 applied) 사용자 pending 행도 장치 state 로 바꾼다(되돌리기 = 잠금 풀기). 사용자 kept·dropped 행은 여기 오기 전에 noop."""
+    cond = "collected_states.decided_by = 'device' AND collected_states.state <> EXCLUDED.state" if fill_only else \
+        "collected_states.state <> EXCLUDED.state OR collected_states.decided_by <> 'device'"
     c.execute("INSERT INTO collected_states (user_id,item_id,state,decided_by,decided_at) VALUES (%s,%s,%s,'device',now()) "
               "ON CONFLICT (user_id,item_id) DO UPDATE SET state=EXCLUDED.state, decided_by='device', decided_at=now(), seq=NULL "
-              "WHERE collected_states.state <> EXCLUDED.state OR collected_states.decided_by <> 'device'", (uid, item_id, state))
+              f"WHERE {cond}", (uid, item_id, state))
 
 
 def _collected_obj(c, uid):
@@ -1329,6 +1333,8 @@ def submit(authorization: str, idempotency_key_header: str, raw: bytes) -> tuple
         if same:
             if bytes(same["request_sha256"]) != req_sha:
                 raise CrmError("IDEMPOTENCY-CONFLICT", "같은 개정 ID 로 다른 내용을 보냈어요.", "새 개정 ID 로 보내세요.")
+            if same["kind"] == "collected_post" and same["is_latest_received"] and same["target_item_id"] and req["state"] != "removed":
+                _cs_device(c, uid, same["target_item_id"], req["state"], fill_only=True)   # 같은 개정 재전송도 빈 state 를 채운다(D3)
             c.execute("UPDATE import_streams SET last_used_at=now() WHERE user_id=%s AND id=%s", (uid, dev["id"]))
             return 200, _resp(same, True)
         latest = _one(c, f"SELECT {_ENTRY_COLS} FROM import_entries WHERE user_id=%s AND stream_id=%s AND original_id=%s "
@@ -1350,7 +1356,7 @@ def submit(authorization: str, idempotency_key_header: str, raw: bytes) -> tuple
                 c.execute("UPDATE import_streams SET last_used_at=now() WHERE user_id=%s AND id=%s", (uid, dev["id"]))
                 return 201, _deleted_resp(e, "trash", False)
         else:
-            e = _receive_self(c, dev, req, latest, current, req_sha, proj_sha)
+            e = _auto_approve(c, uid, _receive_self(c, dev, req, latest, current, req_sha, proj_sha))
         c.execute("UPDATE import_streams SET last_used_at=now() WHERE user_id=%s AND id=%s", (uid, dev["id"]))
         return 201, _resp(e, False)
 
@@ -1493,6 +1499,35 @@ def _approve_check(e: dict):
         raise CrmError("INBOX-EXPIRED", "보관 기간이 지난 승인 대기예요.")
 
 
+def _approve_in(c, uid, e, by="user") -> str:
+    """승인 본체(잠근 대기 행 e, 사용자 잠금·기록 한도는 호출하는 쪽) — 기록 하나 + 활동 연결 + 접수 행 applied·현재 판 이동·payload 삭제.
+    by = resolved_by(user = 웹·대화 승인, auto = 받는 즉시 승인). 반환 기록 id."""
+    p = e["payload"]
+    body = p["body"]
+    title = _inbox_title(p)
+    s = _approve_shape(e["kind"], p)
+    ak, tp, gk, gm, owner, src = s["ak"], s["tp"], s["gk"], s["gm"], s["owner"], s["src"]
+    rid = db.new_id("r")
+    hist = [{"at": db.now().isoformat(), "by": "inbox", "author_kind": ak, "text_process": tp}]
+    if owner:
+        hist[0]["decision_owner"] = owner
+    sca = p.get("source_created_at")
+    c.execute("INSERT INTO records (id,user_id,title,body,source,author_kind,text_process,provenance_history,ingest_kind,"
+              "generation_kind,generation_meta,source_created_at,source_date,decision_owner) "
+              "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'inbox',%s,%s,%s,%s,%s)",
+              (rid, uid, title, body, src, ak, tp, Jsonb(hist), gk, Jsonb(gm),
+               _dt.datetime.fromisoformat(sca.replace("Z", "+00:00")) if sca else None, _d(p.get("source_date")), owner))
+    ref = p.get("activity_ref")
+    if ref and _one(c, "SELECT 1 FROM activities WHERE user_id=%s AND id=%s AND deleted_at IS NULL AND trashed_at IS NULL", (uid, ref)):
+        c.execute("INSERT INTO activity_links (user_id,id,activity_id,linked_record_id,relation) VALUES (%s,%s,%s,%s,'reaction') "
+                  "ON CONFLICT DO NOTHING", (uid, db.new_id("al"), ref, rid))
+    c.execute("UPDATE import_entries SET is_current_applied=false WHERE user_id=%s AND stream_id=%s AND original_id=%s "
+              "AND is_current_applied", (uid, e["stream_id"], e["original_id"]))
+    c.execute("UPDATE import_entries SET state='applied', payload=NULL, payload_bytes=0, resolved_at=now(), resolved_by=%s, "
+              "target_record_id=%s, is_current_applied=true WHERE user_id=%s AND id=%s", (by, rid, uid, e["id"]))
+    return rid
+
+
 def inbox_approve(uid: str, import_id: str) -> dict:
     """승인(웹 [승인] · MCP inbox_decide approve) — 스위치 INBOX_APPROVALS 필요. 최신 대기 개정만. 기록 한도(기록 200) 사용. 한 트랜잭션:
     self_text → records(self/verbatim, ingest_kind=inbox) · self_summary → records(unknown/generated, generation_kind=ai, generation_meta)
@@ -1505,30 +1540,61 @@ def inbox_approve(uid: str, import_id: str) -> dict:
         db._daily_gate(c, uid, "records")   # users 잠금 + 기록 한도
         e = _inbox_lock(c, uid, import_id)
         _approve_check(e)
-        p = e["payload"]
-        body = p["body"]
-        title = _inbox_title(p)
-        s = _approve_shape(e["kind"], p)
-        ak, tp, gk, gm, owner, src = s["ak"], s["tp"], s["gk"], s["gm"], s["owner"], s["src"]
-        rid = db.new_id("r")
-        hist = [{"at": db.now().isoformat(), "by": "inbox", "author_kind": ak, "text_process": tp}]
-        if owner:
-            hist[0]["decision_owner"] = owner
-        sca = p.get("source_created_at")
-        c.execute("INSERT INTO records (id,user_id,title,body,source,author_kind,text_process,provenance_history,ingest_kind,"
-                  "generation_kind,generation_meta,source_created_at,source_date,decision_owner) "
-                  "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'inbox',%s,%s,%s,%s,%s)",
-                  (rid, uid, title, body, src, ak, tp, Jsonb(hist), gk, Jsonb(gm),
-                   _dt.datetime.fromisoformat(sca.replace("Z", "+00:00")) if sca else None, _d(p.get("source_date")), owner))
-        ref = p.get("activity_ref")
-        if ref and _one(c, "SELECT 1 FROM activities WHERE user_id=%s AND id=%s AND deleted_at IS NULL AND trashed_at IS NULL", (uid, ref)):
-            c.execute("INSERT INTO activity_links (user_id,id,activity_id,linked_record_id,relation) VALUES (%s,%s,%s,%s,'reaction') "
-                      "ON CONFLICT DO NOTHING", (uid, db.new_id("al"), ref, rid))
-        c.execute("UPDATE import_entries SET is_current_applied=false WHERE user_id=%s AND stream_id=%s AND original_id=%s "
-                  "AND is_current_applied", (uid, e["stream_id"], e["original_id"]))
-        c.execute("UPDATE import_entries SET state='applied', payload=NULL, payload_bytes=0, resolved_at=now(), resolved_by='user', "
-                  "target_record_id=%s, is_current_applied=true WHERE user_id=%s AND id=%s", (rid, uid, e["id"]))
+        rid = _approve_in(c, uid, e, "user")
     return {"import_id": e["id"], "state": "applied", "record_id": rid}
+
+
+# ── 받는 즉시 승인(2026-11-13 원작자 「서버에 넣는건 항상 승인」) ─────────────
+# 장치가 올린 내 글(self_text·session-wrap/1·self_summary)은 대기에 쌓지 않고 inbox_approve 와 같은 본체로 바로 기록이 된다(resolved_by auto).
+# 출처 판정도 같다(세션 정리 = structured·decision_owner self, AI 요약 = generated·ai·인용 불가). 대기에 남는 것은 둘뿐 —
+# 승인 스위치(inbox_approvals)가 꺼졌을 때(비상 끄기)와 기록 일일 한도(records)에 걸렸을 때. 남은 대기는 auto_approve_pending 이
+# 서버 시작·매일 다시 시도한다(잃지 않는다, 보관 30일 안). 웹 「저장 승인 대기」 화면은 그 둘만 보인다.
+AUTO_BY = "auto"
+
+
+def _auto_approve(c, uid, e):
+    """submit 안(사용자 잠금 중) — 방금 대기로 들어온 행 e 를 바로 승인. 스위치 꺼짐·기록 한도 = 대기 그대로. 반환 지금 접수 행."""
+    if e["state"] != "pending" or not feature_on(uid, "inbox_approvals", c):
+        return e
+    try:
+        with c.transaction():   # 한도 초과만 이 승인 조각을 되돌린다(접수 행은 대기로 남는다)
+            db._daily_gate(c, uid, "records")
+            full = _one(c, f"SELECT {_ENTRY_COLS},(expires_at > now()) AS alive FROM import_entries WHERE user_id=%s AND id=%s FOR UPDATE",
+                        (uid, e["id"]))
+            _approve_check(full)
+            _approve_in(c, uid, full, AUTO_BY)
+    except CrmError as x:
+        if x.code != "RATE-LIMIT":
+            raise
+        return e
+    return _one(c, f"SELECT {_ENTRY_COLS} FROM import_entries WHERE user_id=%s AND id=%s", (uid, e["id"]))
+
+
+def auto_approve_pending() -> int:
+    """남은 대기(최신 개정·보관 기간 안)를 다시 승인 — 서버 시작·매일(main.purge_once). 사용자마다 받은 순서대로, 스위치가 꺼졌거나
+    기록 한도에 걸리면 그 사용자는 다음 회차로 넘긴다. 반환 승인 건수."""
+    with tx() as c:
+        rows = _all(c, "SELECT user_id, id FROM import_entries WHERE state='pending' AND is_latest_received AND expires_at > now() "
+                       "AND kind IN ('self_text','self_summary') ORDER BY user_id, received_at, id")
+    n, skip = 0, set()
+    for r in rows:
+        uid = r["user_id"]
+        if uid in skip:
+            continue
+        if not feature_on(uid, "inbox_approvals"):
+            skip.add(uid)
+            continue
+        try:
+            with tx() as c:
+                db._daily_gate(c, uid, "records")
+                e = _inbox_lock(c, uid, r["id"])
+                _approve_check(e)
+                _approve_in(c, uid, e, AUTO_BY)
+            n += 1
+        except CrmError as x:
+            if x.code == "RATE-LIMIT":
+                skip.add(uid)   # 기록 한도 — 다음 KST 구간 회차에
+    return n
 
 
 def inbox_exclude(uid: str, import_id: str) -> dict:
