@@ -647,7 +647,7 @@ CREATE TABLE IF NOT EXISTS admin_audit (
                                          'delete_notify','delete_run','delete_cancel',
                                          'device_connect','device_reissue','device_revoke','device_policy',
                                          'migration_apply','migration_extend','migration_close','migration_token',
-                                         'token_grant','token_grant_redeem','pc_forget','device_rotate')),   -- 삭제 CLI(PR B) 3종 · board 이전 7종 · 이관 토큰 1종 · PC 연결 4종(2026-11-02). 옛 DB 는 init_schema 가 넓힌다
+                                         'token_grant','token_grant_redeem','pc_forget','device_rotate','auto_case_cap')),   -- 삭제 CLI(PR B) 3종 · board 이전 7종 · 이관 토큰 1종 · PC 연결 4종(2026-11-02) · 오류 자동 Case 전역 상한 첫 도달 1종(2026-11-13). 옛 DB 는 init_schema 가 넓힌다
   target_id  text,
   detail     jsonb NOT NULL DEFAULT '{}'
 );

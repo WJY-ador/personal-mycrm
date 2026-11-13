@@ -590,7 +590,7 @@ _WIDEN_CHECKS = (
     ("admin_audit", "admin_audit_action_check", "action",
      ("bootstrap", "recover", "role_grant", "role_revoke", "web_signout", "block", "unblock", "delete_notify", "delete_run", "delete_cancel",
       "device_connect", "device_reissue", "device_revoke", "device_policy", "migration_apply", "migration_extend", "migration_close",
-      "migration_token", "token_grant", "token_grant_redeem", "pc_forget", "device_rotate")),
+      "migration_token", "token_grant", "token_grant_redeem", "pc_forget", "device_rotate", "auto_case_cap")),
     ("ticket_history", "ticket_history_kind_check", "kind", ("status", "reply", "note", "reclassify", "deleted")),
     ("field_defs", "field_defs_target_kind_check", "target_kind", ("item", "record", "candidate", "person", "source", "activity")),
     # 수집 글(2026-11-12) — 접수 종류 collected_post
@@ -3363,6 +3363,7 @@ AUTO_SOURCE_LABEL = {"app": "앱", "agent": "PC 에이전트", "web": "웹"}
 AUTO_DAILY_USER = 20      # 사용자 하루(KST) 자동 Case 20건 — 넘치면 버리고 집계만(명세 1.4)
 AUTO_DAILY_ALL = 1000     # 전역 하루 자동 Case 상한(폭주 방어). 넘치면 버리고 집계만
 AUTO_COUNT_MAX = 1_000_000
+AUTO_CAP_MARK = "auto_case_cap"   # schema_marks 키 앞부분 — 뒤에 KST 날짜. 전역 상한 첫 도달 감사를 하루 한 번만
 
 
 def ticket_auto(uid, source, stage, code, app_version, os_kind, occurred_at, n=1) -> str:
@@ -3384,6 +3385,10 @@ def ticket_auto(uid, source, stage, code, app_version, os_kind, occurred_at, n=1
         if _one(c, "SELECT count(*) AS n FROM tickets WHERE user_id=%s AND via='auto' AND auto_day=%s", (uid, day))["n"] >= AUTO_DAILY_USER:
             return "capped"
         if _one(c, "SELECT count(*) AS n FROM tickets WHERE via='auto' AND auto_day=%s", (day,))["n"] >= AUTO_DAILY_ALL:
+            # 그날 처음 걸린 순간만 감사 한 줄(운영 콘솔 Administration 감사 로그). 표식 INSERT 가 원자적이라 동시 요청도 한 줄
+            if _one(c, "INSERT INTO schema_marks (key) VALUES (%s) ON CONFLICT (key) DO NOTHING RETURNING key",
+                    (f"{AUTO_CAP_MARK}:{day.isoformat()}",)):
+                _audit(c, "auto_case_cap", None, None, {"day": day.isoformat(), "limit": AUTO_DAILY_ALL})
             return "capped"
         text = (f"자동 오류 보고\n출처: {AUTO_SOURCE_LABEL[source]}\n단계: {stage}\n오류 코드: {code}\n"
                 f"앱 버전: {app_version or '없음'}\nOS: {os_kind}")
@@ -3548,7 +3553,8 @@ ADMIN_ACTIONS = ("bootstrap", "recover", "role_grant", "role_revoke", "web_signo
                  "device_connect", "device_reissue", "device_revoke", "device_policy",   # board 이전: 장치 토큰(actor = 사용자 본인)
                  "migration_apply", "migration_extend", "migration_close",              # board 이전 CLI — detail 은 열거 키·건수·해시 앞자리만
                  "migration_token",                                                     # 이관 토큰 발급(2026-11-02)
-                 "token_grant", "token_grant_redeem", "pc_forget", "device_rotate")    # PC 연결(2026-11-02) — detail 은 id·scope·via·장치 이름만(토큰 값 없음)
+                 "token_grant", "token_grant_redeem", "pc_forget", "device_rotate",    # PC 연결(2026-11-02) — detail 은 id·scope·via·장치 이름만(토큰 값 없음)
+                 "auto_case_cap")   # 오류 자동 Case 전역 하루 상한 첫 도달(2026-11-13) — 실행자, 대상 없음. detail = day, limit
 _iat_missing_logged = False
 
 

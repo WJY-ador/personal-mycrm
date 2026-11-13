@@ -584,33 +584,48 @@ def normalize_ai_links(value):
     return {p: value.get(p) if value.get(p) in AI_LINK_STATES else "missing" for p in GRANT_PROVIDERS}
 
 
-def ai_links_apply(dev: dict, links: dict) -> list:
+def ai_links_apply(dev: dict, links: dict, closed: list | None = None, current=None) -> list:
     """앱 하나 1.3 — PC 가 알린 공급자 인증 상태로 서 있는 허용을 맞춘다(grant, 허용 창, 서명 대신). 장치 토큰으로 인증된 연결에서만 부른다.
     linked = 살아 있는 허용이 없으면 basis='device' 행을 세운다(살아 있는 옛 consent 행은 그대로 둔다).
     그 밖(signed_out, off, missing) = permit_revoke 와 같이 그 (장치, 공급자) 허용을 지우고 열린 세션, 실행 중 턴을 닫는다.
-    반환 = 닫은 것 [{session_id, device_id, turn_ids, events}] — 호출자(WS)가 PC 에 turn.stop, 화면 SSE 에 끝 이벤트를 보낸다."""
+    closed = 닫은 것 [{session_id, device_id, turn_ids, events}]을 채울 목록(반환값도 같은 목록) — 호출자(WS)가 PC 에 turn.stop,
+    화면 SSE 에 끝 이벤트를 보낸다. 공급자마다 따로 커밋한다: 한 공급자가 실패해도 다른 공급자를 맞추고, 커밋된 닫힘만 closed 에 넣은 뒤
+    첫 예외를 다시 낸다(호출자가 closed 를 보내고 1011 로 닫는다).
+    current = 이 hello 를 보낸 연결이 아직 그 장치의 연결인지(F3). 공급자마다 쓰기 전에 보고, 밀려났으면 더 쓰지 않는다
+    (새 연결의 hello 가 맞춘 허용을 밀려난 연결의 옛 상태가 덮지 않게)."""
     uid, device_id = dev["user_id"], dev["id"]
-    closed = []
+    closed = [] if closed is None else closed
+    live = current if callable(current) else (lambda: True)
     if links is None:   # 옛 앱 hello — device 근거 행만 지운다(consent 행은 그대로)
         with tx() as c:
-            gone = [r["provider"] for r in _all(c, "SELECT provider FROM chat_provider_permits WHERE user_id=%s AND device_id=%s "
-                                                   "AND basis='device'", (uid, device_id))]
-        for provider in gone:
-            permit_revoke(uid, device_id=device_id, provider=provider, closed=closed)
-        return closed
-    for provider in GRANT_PROVIDERS:
-        if links.get(provider) == "linked":
-            with tx() as c:
-                _user_lock(c, uid)
-                if _permit_live(c, uid, device_id, provider):
-                    continue
-                c.execute("DELETE FROM chat_provider_permits WHERE user_id=%s AND device_id=%s AND provider=%s", (uid, device_id, provider))
-                if _one(c, "SELECT 1 FROM import_streams WHERE user_id=%s AND id=%s AND channel='device' AND revoked_at IS NULL "
-                           "AND token_revoked_at IS NULL AND token_expires_at > clock_timestamp()", (uid, device_id)):
-                    c.execute("INSERT INTO chat_provider_permits (id,user_id,device_id,provider,basis) VALUES (%s,%s,%s,%s,'device')",
-                              (_id("cp"), uid, device_id, provider))
-        else:
-            permit_revoke(uid, device_id=device_id, provider=provider, closed=closed)
+            todo = [(r["provider"], "off") for r in _all(c, "SELECT provider FROM chat_provider_permits WHERE user_id=%s AND device_id=%s "
+                                                             "AND basis='device'", (uid, device_id))]
+    else:
+        todo = [(p, links.get(p)) for p in GRANT_PROVIDERS]
+    error = None
+    for provider, state in todo:
+        if not live():
+            break
+        mine = []
+        try:
+            if state == "linked":
+                with tx() as c:
+                    _user_lock(c, uid)
+                    if _permit_live(c, uid, device_id, provider) or not live():
+                        continue
+                    c.execute("DELETE FROM chat_provider_permits WHERE user_id=%s AND device_id=%s AND provider=%s", (uid, device_id, provider))
+                    if _one(c, "SELECT 1 FROM import_streams WHERE user_id=%s AND id=%s AND channel='device' AND revoked_at IS NULL "
+                               "AND token_revoked_at IS NULL AND token_expires_at > clock_timestamp()", (uid, device_id)):
+                        c.execute("INSERT INTO chat_provider_permits (id,user_id,device_id,provider,basis) VALUES (%s,%s,%s,%s,'device')",
+                                  (_id("cp"), uid, device_id, provider))
+            else:
+                permit_revoke(uid, device_id=device_id, provider=provider, closed=mine)
+        except Exception as e:   # 이 공급자만 실패 — mine 은 커밋되지 않았을 수 있어 버린다. 다른 공급자는 계속
+            error = error or e
+            continue
+        closed.extend(mine)   # permit_revoke 가 돌아왔다 = 커밋됨
+    if error is not None:
+        raise error
     return closed
 
 
@@ -2632,6 +2647,8 @@ class Routes:
                 continue
             typ = m.get("type")
             if typ == "hello":
+                if hub.dev(dev["user_id"], dev["id"]) is not d:   # F3 — 밀려난 연결(새 연결이 대체)의 hello 는 버린다
+                    return
                 p = m.get("providers")
                 d.providers = [x for x in p if isinstance(x, str) and PROVIDER_RE.match(x)][:8] if isinstance(p, list) else []
                 d.v2 = m.get("capabilities_version") == 2 and isinstance(m.get("agent_version"), str) and len(m["agent_version"]) <= 80
@@ -2642,9 +2659,20 @@ class Routes:
                 # 앱 하나 1.3 — 바뀔 때마다 같은 연결에서 hello 를 다시 보낸다. 허용을 맞추고 닫힌 세션을 알린다.
                 # 필드가 없는 hello(옛 앱이 같은 장치로 붙음) = 그 장치의 device 근거 허용을 지운다(옛 앱은 consent 흐름). 닫힌 쪽으로만 움직인다
                 d.ai_links = normalize_ai_links(m.get("ai_links")) if "ai_links" in m else None
+                closed, failed = [], False
                 try:
-                    closed = await run_in_threadpool(ai_links_apply, dev, d.ai_links)
+                    await run_in_threadpool(ai_links_apply, dev, d.ai_links, closed, lambda: hub.dev(dev["user_id"], dev["id"]) is d)
                 except Exception:   # 끊기 보고를 버리지 않는다 — 1011 로 닫아 PC 가 다시 붙어 hello 를 다시 보내게 한다(event 경로와 같다)
+                    failed = True
+                # 커밋된 닫힘은 DB 사실이라 실패, 밀려남과 상관없이 화면에 알린다. turn.stop 은 지금 그 장치의 연결로 보낸다(F4)
+                now = hub.dev(dev["user_id"], dev["id"])
+                for cs in closed:
+                    for ev in cs["events"]:
+                        hub.publish_event(dev["user_id"], cs["session_id"], ev)
+                    if now is not None:
+                        for tid in cs["turn_ids"]:
+                            await now.send({"type": "turn.stop", "turn_id": tid})
+                if failed:
                     db.usage_count(None, "api:chat_ws_ai_links", "EXC")
                     d.ai_links = None
                     try:
@@ -2652,11 +2680,8 @@ class Routes:
                     except Exception:
                         pass
                     return
-                for cs in closed:
-                    for ev in cs["events"]:
-                        hub.publish_event(dev["user_id"], cs["session_id"], ev)
-                    for tid in cs["turn_ids"]:
-                        await d.send({"type": "turn.stop", "turn_id": tid})
+                if now is not d:   # F3 — 처리하는 동안 밀려났다. 이 연결은 끝낸다(남은 일은 새 연결의 hello 가 맞춘다)
+                    return
             elif typ == "event":
                 try:
                     r = await run_in_threadpool(ingest, dev, m.get("turn_id"), m.get("seq"), m.get("kind"), m.get("data"))

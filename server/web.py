@@ -644,7 +644,8 @@ ADMIN_LABELS = {"bootstrap": "첫 지정", "recover": "복구(CLI)", "role_grant
                 "migration_token": "이관 토큰 발급",
                 # PC 연결(2026-11-02) — 대화 요청(grant)·앱 수령·PC 해제·장치 토큰 교체. detail 에 토큰 값 없음
                 "token_grant": "토큰 전달 요청(대화)", "token_grant_redeem": "토큰 앱 수령", "pc_forget": "PC 연결 해제",
-                "device_rotate": "장치 토큰 교체"}
+                "device_rotate": "장치 토큰 교체",
+                "auto_case_cap": "오류 자동 Case 전역 하루 상한 도달"}
 # 연결 장치 허용 규칙의 변환 이름 — 화면 표시용(키 = imports.TRANSFORMS). 모르는 키는 키 그대로 보인다
 POLICY_MAX_BYTES = 4 * 1024   # 장치 허용 규칙(policy) JSON 상한 — WRITE_LIMITS 밖이라 웹이 write_gate 전에 직접 센다
 TRANSFORM_LABELS = {"board-likes/1": "좋아요 활동(바로 저장)", "self-text/1": "내 글(바로 저장)", "self-summary/1": "AI 요약(바로 저장, 인용 불가)",

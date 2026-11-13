@@ -95,16 +95,44 @@ def main_test():
     dev = imports.device_connect(A, "자동시험 PC")
     token, did = dev["token"], dev["device"]["id"]
     assert dev["device"]["policy"] == imports.DEFAULT_POLICY, dev["device"]["policy"]
+    # 이관(F2): 옛 기본값 장치만 넓힌다(두 옛 기본값, 배열 순서 무관). 사용자가 바꾼 장치는 그대로. 표식은 고정 키
+    assert imports.POLICY_ALL_MARK == "device-policy-all-v1"
+    old_a, old_b = imports.OLD_DEFAULT_POLICIES
+    old_b_shuffled = {"actions": ["like"], "transform_versions": list(reversed(old_b["transform_versions"])), "axes": []}
     narrow = {"actions": ["like"], "transform_versions": ["self-text/1"], "axes": []}
+    extra = imports.device_connect(A, "자동시험 PC2")["device"]["id"]
+    third = imports.device_connect(A, "자동시험 PC3")["device"]["id"]
     with db.tx() as c:
-        c.execute("UPDATE import_streams SET policy=%s WHERE id=%s AND user_id=%s", (Jsonb(narrow), did, A))
-        rev = c.execute("SELECT policy_revision FROM import_streams WHERE id=%s", (did,)).fetchone()["policy_revision"]
+        c.execute("UPDATE import_streams SET policy=%s WHERE id=%s AND user_id=%s", (Jsonb(old_a), did, A))
+        c.execute("UPDATE import_streams SET policy=%s WHERE id=%s AND user_id=%s", (Jsonb(old_b_shuffled), extra, A))
+        c.execute("UPDATE import_streams SET policy=%s WHERE id=%s AND user_id=%s", (Jsonb(narrow), third, A))
+        revs = {r["id"]: r["policy_revision"] for r in c.execute(
+            "SELECT id, policy_revision FROM import_streams WHERE id = ANY(%s)", ([did, extra, third],)).fetchall()}
         c.execute("DELETE FROM schema_marks WHERE key=%s", (imports.POLICY_ALL_MARK,))
-        assert imports.migrate_device_policy(c) >= 1
-        r = c.execute("SELECT policy, policy_revision FROM import_streams WHERE id=%s", (did,)).fetchone()
-        assert r["policy"] == imports.DEFAULT_POLICY and r["policy_revision"] == rev + 1, r
+        assert imports.migrate_device_policy(c) >= 2
+        rows = {r["id"]: r for r in c.execute("SELECT id, policy, policy_revision FROM import_streams WHERE id = ANY(%s)",
+                                              ([did, extra, third],)).fetchall()}
+        for x in (did, extra):
+            assert rows[x]["policy"] == imports.DEFAULT_POLICY and rows[x]["policy_revision"] == revs[x] + 1, rows[x]
+        assert rows[third]["policy"] == narrow and rows[third]["policy_revision"] == revs[third], "사용자가 바꾼 장치는 그대로"
+        # 두 번째 실행 = 0. 변환 목록이 늘어도(DEFAULT_POLICY 가 바뀌어도) 표식이 고정 키라 다시 돌지 않는다
+        c.execute("UPDATE import_streams SET policy=%s WHERE id=%s AND user_id=%s", (Jsonb(old_a), did, A))
         assert imports.migrate_device_policy(c) == 0, "표식이 있으면 다시 돌지 않는다"
-    ok("기본 허용 규칙 = 모든 행동과 변환, 축 0개 · 기존 장치 이관은 표식 한 번, revision +1")
+        saved = dict(imports.TRANSFORMS), imports.DEFAULT_POLICY
+        try:
+            imports.TRANSFORMS["future-x/1"] = {"kind": "self_text"}
+            imports.DEFAULT_POLICY = {"actions": list(imports.ACTIONS), "transform_versions": list(imports.TRANSFORMS), "axes": []}
+            assert imports.POLICY_ALL_MARK == "device-policy-all-v1"
+            assert imports.migrate_device_policy(c) == 0, "변환 목록이 늘어도 다시 돌지 않는다"
+        finally:
+            imports.TRANSFORMS.clear()
+            imports.TRANSFORMS.update(saved[0])
+            imports.DEFAULT_POLICY = saved[1]
+        c.execute("UPDATE import_streams SET policy=%s WHERE id=%s AND user_id=%s", (Jsonb(imports.DEFAULT_POLICY), did, A))
+        assert c.execute("SELECT policy FROM import_streams WHERE id=%s", (third,)).fetchone()["policy"] == narrow
+    for x in (extra, third):
+        imports.device_revoke(A, x)
+    ok("기본 허용 규칙 = 모든 행동과 변환, 축 0개 · 이관은 옛 기본값 장치만, 사용자가 바꾼 장치는 그대로, 고정 표식 한 번")
 
     # ── 스위치 기본 켜짐(행도 env 도 없을 때) ──
     with db.tx() as c:
@@ -187,6 +215,27 @@ def main_test():
     assert len(autos(A)) == db.AUTO_DAILY_USER
     assert db.ticket_auto(A, "app", "sync/run-once", "HTTP-503", "0.1.7", "mac", now_z()) == "counted", "상한이어도 있는 묶음은 센다"
     ok("사용자 하루 20 — 넘치면 만들지 않고, 있는 묶음 횟수는 계속 센다")
+
+    # ── 전역 하루 상한 첫 도달 = 감사 한 줄(F8). 1000건 대신 상한을 낮춘다 ──
+    with db.tx() as c:
+        day = c.execute("SELECT (now() AT TIME ZONE 'Asia/Seoul')::date AS d").fetchone()["d"]
+        n_all = c.execute("SELECT count(*) AS n FROM tickets WHERE via='auto' AND auto_day=%s", (day,)).fetchone()["n"]
+        c.execute("DELETE FROM schema_marks WHERE key=%s", (f"{db.AUTO_CAP_MARK}:{day.isoformat()}",))
+        c.execute("DELETE FROM admin_audit WHERE action='auto_case_cap'")
+    saved_all = db.AUTO_DAILY_ALL
+    try:
+        db.AUTO_DAILY_ALL = n_all
+        assert db.ticket_auto(B, "agent", "chat/run", "CAP-1", "0.1.7", "mac", now_z()) == "capped"
+        assert db.ticket_auto(B, "agent", "chat/run", "CAP-2", "0.1.7", "mac", now_z()) == "capped"
+    finally:
+        db.AUTO_DAILY_ALL = saved_all
+    with db.tx() as c:
+        caps = c.execute("SELECT actor_id, target_id, detail FROM admin_audit WHERE action='auto_case_cap'").fetchall()
+        c.execute("DELETE FROM admin_audit WHERE action='auto_case_cap'")
+    assert len(caps) == 1 and caps[0]["actor_id"] is None and caps[0]["target_id"] is None, caps
+    assert caps[0]["detail"] == {"day": day.isoformat(), "limit": n_all}, caps
+    assert not autos(B), "상한이면 만들지 않는다"
+    ok("전역 하루 상한 첫 도달 = 감사 auto_case_cap 한 줄(두 번째는 없음), 실행자와 대상 없음")
 
     # ── 사람이 쓰는 문의 한도에 자동 Case 가 안 들어간다 ──
     t = db.ticket_add(A, "bug", "손으로 쓴 문의", "web")
