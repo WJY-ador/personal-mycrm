@@ -336,7 +336,7 @@ class StateResyncTest(unittest.TestCase):
         _config.save(self.th.paths, cfg)
         self.ks = keystore_with_secrets()
         res = self.run_once()                                   # 옛 판: 다 올라갔고, 그 실행에선 대상이 없어 끝 표시
-        self.assertEqual(res["state_resync"], {"queued": 0, "sent": 0, "done": True})
+        self.assertEqual(res["state_resync"], {"queued": 0, "sent": 0, "done": True, "unseen": 0, "failed": 0})
         self.old = self.collected_bodies()
         self.assertEqual(len(self.old), 4)
         # 새 판의 첫 실행처럼 — 끝 표시를 지우고, 그 사이 허용 규칙 판이 바뀌었다
@@ -375,7 +375,7 @@ class StateResyncTest(unittest.TestCase):
 
     def test_same_fields_new_revision_current_policy(self):
         res = self.run_once()
-        self.assertEqual(res["state_resync"], {"queued": 4, "sent": 4, "done": True})
+        self.assertEqual(res["state_resync"], {"queued": 4, "sent": 4, "done": True, "unseen": 0, "failed": 0})
         new = self.collected_bodies(self.n0)
         self.assertEqual(set(new), set(self.old))               # feed 3 + reactions 1
         meta = ("revision", "previous_revision", "policy_revision")
@@ -387,7 +387,7 @@ class StateResyncTest(unittest.TestCase):
             self.assertEqual({k: v for k, v in o.items() if k not in meta}, {k: v for k, v in old.items() if k not in meta})
         n = len(self.srv.requests)
         res = self.run_once()                                   # 한 번만
-        self.assertEqual(res["state_resync"], {"queued": 0, "sent": 0, "done": True})
+        self.assertEqual(res["state_resync"], {"queued": 0, "sent": 0, "done": True, "unseen": 0, "failed": 0})
         self.assertEqual(self.collected_bodies(n), {})
 
     def test_budget_per_run_and_day(self):
@@ -397,10 +397,10 @@ class StateResyncTest(unittest.TestCase):
         osutil.kst_now = lambda: day[0]
         try:
             got = [self.run_once()["state_resync"] for _ in range(3)]
-            self.assertEqual(got, [{"queued": 2, "sent": 2, "done": False}, {"queued": 1, "sent": 1, "done": False},
-                                   {"queued": 0, "sent": 0, "done": False}])   # 하루 몫(3)을 다 썼다
+            self.assertEqual([(g["queued"], g["sent"], g["done"]) for g in got],
+                             [(2, 2, False), (1, 1, False), (0, 0, False)])   # 하루 몫(3)을 다 썼다
             day[0] = day[0] + _dt.timedelta(days=1)
-            self.assertEqual(self.run_once()["state_resync"], {"queued": 1, "sent": 1, "done": True})
+            self.assertEqual(self.run_once()["state_resync"], {"queued": 1, "sent": 1, "done": True, "unseen": 0, "failed": 0})
         finally:
             runner.RESYNC_PER_RUN, runner.RESYNC_PER_DAY, osutil.kst_now = orig
 
@@ -408,8 +408,26 @@ class StateResyncTest(unittest.TestCase):
         write_jsonl(self.feed, [feed_row(1), feed_row(2)])     # FEED0003 이 입력에서 사라짐 — 같은 필드를 만들 수 없다
         self.srv.script = [(422, {"code": "ARG-INVALID"})]     # 첫 다시 보내기는 거절
         res = self.run_once()
-        self.assertEqual(res["state_resync"], {"queued": 3, "sent": 2, "done": True})
+        self.assertEqual(res["state_resync"], {"queued": 3, "sent": 2, "done": True, "unseen": 1, "failed": 1})
         self.assertEqual(self.statuses(), ["failed", "sent", "sent", "unseen"])
+
+    def test_day_budget_survives_interrupted_run(self):
+        orig = (runner.RESYNC_PER_RUN, runner.RESYNC_PER_DAY)
+        runner.RESYNC_PER_RUN, runner.RESYNC_PER_DAY = 2, 3
+        orig_up = runner._Resync.finish
+
+        def die(self):           # 앱의 600초 종료처럼 업로드 뒤 정리 전에 끊긴 실행
+            raise KeyboardInterrupt
+        try:
+            runner._Resync.finish = die
+            with self.assertRaises(KeyboardInterrupt):
+                self.run_once()
+            runner._Resync.finish = orig_up
+            res = self.run_once()
+            self.assertEqual((res["state_resync"]["queued"], res["state_resync"]["done"]), (1, False))   # 3 - 2 = 1
+        finally:
+            runner.RESYNC_PER_RUN, runner.RESYNC_PER_DAY = orig
+            runner._Resync.finish = orig_up
 
     def test_only_items_on_server(self):
         st = _store.Store(self.th.paths)
@@ -419,5 +437,5 @@ class StateResyncTest(unittest.TestCase):
         finally:
             st.close()
         res = self.run_once()
-        self.assertEqual(res["state_resync"], {"queued": 3, "sent": 3, "done": True})
+        self.assertEqual(res["state_resync"], {"queued": 3, "sent": 3, "done": True, "unseen": 0, "failed": 0})
         self.assertNotIn(ev["original_id"], self.collected_bodies(self.n0))

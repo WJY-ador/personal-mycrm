@@ -440,6 +440,13 @@ class Store:
                 self.resync_set(r[0], "failed")
         return sent
 
+    def resync_closed(self) -> dict:
+        out = {"unseen": 0, "failed": 0}
+        for st, n in self.conn.execute("SELECT status, COUNT(*) FROM state_resync WHERE status IN ('unseen','failed')"
+                                       " GROUP BY status"):
+            out[st] = n
+        return out
+
     def resync_remaining(self) -> int:
         return self.conn.execute("SELECT COUNT(*) FROM state_resync WHERE status IN ('queued','staged')").fetchone()[0]
 

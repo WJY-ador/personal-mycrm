@@ -139,6 +139,8 @@ class _Resync:
     def staged_one(self, oid: str) -> None:
         self.st.resync_set(oid, "staged")
         self.staged += 1
+        # 하루 몫은 만들 때마다 남긴다 — 실행이 중간에 끊겨도(앱의 600초 종료 등) 다음 실행이 같은 날 몫을 다시 쓰지 않게
+        self.st.cursor_set(self.day_key, str(self.day_used + self.staged))
 
     def collected(self, adapter: str) -> None:
         """그 어댑터의 수집이 끝까지 돌았다 — 보지 못한 대상을 닫는다."""
@@ -146,15 +148,17 @@ class _Resync:
             self.st.resync_unseen(adapter, self.seen.get(adapter, set()))
 
     def finish(self) -> dict:
-        if not self.active:
-            return {"queued": 0, "sent": 0, "done": True}
-        if self.staged:
-            self.st.cursor_set(self.day_key, str(self.day_used + self.staged))
-        sent = self.st.resync_settle()
-        done = self.st.resync_remaining() == 0
-        if done:
-            self.st.cursor_set(RESYNC_FLAG, "done")
-        return {"queued": self.staged, "sent": sent, "done": done}
+        """{queued: 이번 실행에 만든 새 개정, sent: 이번 실행에 접수된 수, done: 남은 대상 없음,
+        unseen·failed: 보내지 못하고 닫은 대상 누적(입력에서 사라짐 · 거절·지금 규칙으로 못 만듦)}."""
+        if self.active:
+            sent = self.st.resync_settle()
+            done = self.st.resync_remaining() == 0
+            if done:
+                self.st.cursor_set(RESYNC_FLAG, "done")
+        else:
+            sent, done = 0, True
+        closed = self.st.resync_closed()
+        return {"queued": self.staged, "sent": sent, "done": done, "unseen": closed["unseen"], "failed": closed["failed"]}
 
 
 def _stage(st, cfg, original_id, kind, transform_version, execution, fields, counts, adapter_name,
