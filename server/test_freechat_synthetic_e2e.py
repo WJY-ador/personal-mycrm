@@ -1,8 +1,13 @@
 """Synthetic full-path free chat test; requires only a local crm_test* PostgreSQL DB.
 
-The test creates an ephemeral CA/server certificate, HTTPS Uvicorn, synthetic
-desktop Ed25519 approval, fake Claude/Codex executables, and a real stdio MCP bridge.
-It never reads server/.env, uses user records, or calls an external model/network.
+The test creates an ephemeral CA/server certificate, HTTPS Uvicorn, fake Claude/Codex
+executables, and a real stdio MCP bridge. It never reads server/.env, uses user records,
+or calls an external model/network.
+
+앱 하나 1.3(2026-11-13): 새 앱 경로 = agent hello ai_links linked → 서 있는 허용(basis device) → 허용 창, grant, 서명 없이
+세션 → launch-authorization → 실제 MCP 다리. 끊기(off) hello = 허용 지움 → 새 대화 CONSENT_REQUIRED.
+옛 앱(0.1.5, 0.1.6) consent 경로 호환은 desktop 파일 없이 서버만으로 본다: 파이썬 Ed25519 키로 server/consent_signature.py 의
+encode_consent 바이트에 서명해 키 등록, challenge 검증, grant 소비 → basis consent 허용 → launch-authorization binding.
 """
 from __future__ import annotations
 
@@ -184,8 +189,9 @@ try:
  stage='tools-list'; listed=rpc(2,'tools/list')
  if 'result' not in listed: raise RuntimeError('tools-list-denied')
  tools=listed['result']['tools']
- if not any(t['name']=='mcp__my-crm__read' for t in tools): raise RuntimeError('read-tool-missing')
- stage='state-get'; call=rpc(3,'tools/call',{'name':'mcp__my-crm__read','arguments':{'op':'state_get','params':{}}})
+ # Claude Code 는 MCP 이름에 mcp__my-crm__ 를 스스로 붙인다 — 다리는 접두어 없는 이름을 준다(agent/chat_mcp_bridge._PROVIDER_TOOL_PREFIX)
+ if not any(t['name']=='read' for t in tools): raise RuntimeError('read-tool-missing')
+ stage='state-get'; call=rpc(3,'tools/call',{'name':'read','arguments':{'op':'state_get','params':{}}})
  if 'result' not in call or call['result'].get('isError') is not False: raise RuntimeError('state-get-denied')
  with open(EXECUTION_PATH,'a',encoding='utf-8') as log: log.write(resume+':state_get-ok\n')
  p.stdin.close(); p.wait(timeout=10)
@@ -195,7 +201,7 @@ except Exception as exc:
  raise
 sid='synthetic-cli-session'
 print(json.dumps({'type':'system','subtype':'init','session_id':sid,'model':MODEL,
- 'tools':[t['name'] for t in tools],'mcp_servers':[{'name':'my-crm','status':'connected'}],
+ 'tools':['mcp__my-crm__'+t['name'] for t in tools],'mcp_servers':[{'name':'my-crm','status':'connected'}],
  'permissionMode':'dontAsk'}),flush=True)
 print(json.dumps({'type':'assistant','session_id':sid,'message':{'content':[
  {'type':'tool_use','id':'tool-1','name':'mcp__my-crm__read','input':{'op':'state_get','params':{}}} ]}}),flush=True)
@@ -256,43 +262,35 @@ print(json.dumps({'type':'turn.completed','thread_id':thread_id}),flush=True)
     path.chmod(0o700)
 
 
-def desktop_approval_script(js_path, ca_path):
-    js_path.write_text(r'''const https=require('node:https'),{EventEmitter}=require('node:events');
-const {createConsentRuntime}=require(DESKTOP_RUNTIME);
-const base=process.env.SYNTHETIC_BASE, ca=require('node:fs').readFileSync(CA_PATH), token=process.env.SYNTHETIC_TOKEN;
-const post=async(path,body,authorization)=>new Promise(resolve=>{
- const raw=Buffer.from(JSON.stringify(body));const req=https.request(base+path,{method:'POST',ca,headers:{authorization,origin:process.env.SYNTHETIC_ORIGIN,cookie:process.env.SYNTHETIC_COOKIE,'content-type':'application/json','content-length':raw.length}},res=>{
-  let data='';res.on('data',x=>data+=x);res.on('end',()=>{try{const parsed=JSON.parse(data);process.stderr.write(path+' '+res.statusCode+' '+(parsed.code||'ok')+'\\n');resolve({status:res.statusCode,body:parsed})}catch{process.stderr.write(path+' '+res.statusCode+' invalid\\n');resolve({status:500,body:null})}})});
- req.on('error',e=>{process.stderr.write('request network '+e.code+'\\n');resolve({status:0,body:null})});req.end(raw);
-});
-const pair=require('node:crypto').generateKeyPairSync('ed25519');
-const url='file:///synthetic/mycrm/index.html',win={isDestroyed:()=>false,isFocused:()=>true,webContents:{
- isDevToolsOpened:()=>false,mainFrame:{parent:null,url},getURL:()=>url}};
-const powerMonitor=Object.assign(new EventEmitter(),{getSystemIdleState:()=>locked?'locked':'active'});let locked=false;
-const runtime=createConsentRuntime({request:post,getInstallationId:async()=>INSTALLATION,safeStorage:{isEncryptionAvailable:()=>true},
- keyFile:'/synthetic/key',loadKey:async()=>pair,app:{getPath:()=>'/synthetic'},dialog:{showMessageBox:async()=>({response:1})},
- powerMonitor,trustedWindow:()=>win,allowedUrl:url,focusWindow:async()=>true});
-(async()=>{
- const ok=await runtime.handle({request_id:REQUEST_ID,device_bearer:'Bearer '+token});
- console.log(ok?'APPROVED':'DENIED');
- if(!ok)process.exit(2);
- let line='';process.stdin.setEncoding('utf8');process.stdin.on('data',async chunk=>{line+=chunk;if(line.includes('LOCK')){
-  // 대화 하나로 J(JD2): 잠금은 서버의 동의 키를 폐기하지 않는다 — 잠금 이벤트만 보내고 끝낸다(진행 중 동의 창 취소는 desktop 시험 몫)
-  locked=true;powerMonitor.emit('lock-screen');setTimeout(()=>{console.log('LOCKED');process.exit(0);},200);
- }});
-})();
-'''.replace("DESKTOP_RUNTIME", json.dumps(str(HERE.parent / "desktop/src/consent-runtime.cjs")))
-       .replace("CA_PATH", json.dumps(str(ca_path)))
-       .replace("INSTALLATION", json.dumps(INSTALLATION))
-       .replace("REQUEST_ID", json.dumps("synthetic-e2e-session")), encoding="utf-8")
+def old_app_consent(uid, did, bearer, provider, model, request_id):
+    """옛 앱 consent 경로(서버만) — 키 begin, activate(PoP 서명) → grant 요청 → challenge → 서명 검증 → 세션이 grant 를 소비해 허용(basis consent)."""
+    import base64
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    import consent_signature
+
+    key = Ed25519PrivateKey.generate()
+    der = key.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+    sign = lambda claims: base64.urlsafe_b64encode(key.sign(consent_signature.encode_consent(claims))).rstrip(b"=").decode("ascii")  # noqa: E731
+    with db.tx() as c:
+        c.execute("INSERT INTO desktop_installations (user_id,id,client_name,os,device_id) VALUES (%s,%s,'synthetic','darwin',%s) "
+                  "ON CONFLICT DO NOTHING", (uid, INSTALLATION, did))
+    webchat.grant_request(uid, did, provider, model, request_id)
+    begun = webchat.consent_key_begin(uid, bearer, INSTALLATION, der)
+    webchat.consent_key_activate(uid, bearer, INSTALLATION, begun["key_id"], sign(begun["claims"]))
+    claims = webchat.consent_challenge_issue(uid, bearer, INSTALLATION, request_id)["claims"]
+    assert webchat.consent_challenge_verify(uid, bearer, INSTALLATION, claims["nonce"], sign(claims))["state"] == "verified"
 
 
 class FreechatSyntheticE2ETests(unittest.TestCase):
-    def test_model_approval_consumption_claude_mcp_response_resume_and_lock(self):
+    def test_ai_link_claude_mcp_response_resume_and_disconnect(self):
         self._run_isolated_provider("claude")
 
-    def test_model_approval_consumption_codex_mcp_response_resume_and_lock(self):
+    def test_ai_link_codex_mcp_response_resume_and_disconnect(self):
         self._run_isolated_provider("codex")
+
+    def test_old_app_consent_path_server_only(self):
+        self._run_isolated_provider("consent")
 
     def _run_isolated_provider(self, provider_name):
         """Run each provider in its own app lifespan and readiness-patched process."""
@@ -303,6 +301,34 @@ class FreechatSyntheticE2ETests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0,
             f"isolated synthetic {provider_name} E2E failed\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}")
+
+    def _run_consent(self):
+        """옛 앱 consent 경로 호환(서버만): 서명 검증된 grant 를 세션이 소비 → basis consent 허용 → launch-authorization binding = grant, challenge id."""
+        import secrets
+        uid = db.user_by_email(EMAIL)["id"]
+        try:
+            device = imports.device_connect(uid, "synthetic old desktop")
+            bearer, did = "Bearer " + device["token"], device["device"]["id"]
+            old_app_consent(uid, did, bearer, "claude", CLAUDE_MODEL, SESSION_REQUEST)
+            session, _, _ = webchat.session_new(uid, did, "claude", CLAUDE_MODEL, SESSION_REQUEST, capability_ok=True)
+            with db.tx() as c:
+                permit = c.execute("SELECT basis, grant_id, challenge_id FROM chat_provider_permits WHERE user_id=%s AND device_id=%s",
+                                   (uid, did)).fetchone()
+                tid = "ct_" + secrets.token_hex(12)
+                c.execute("INSERT INTO chat_turns (id,session_id,client_turn_id) VALUES (%s,%s,'synthetic-consent')", (tid, session["session_id"]))
+            self.assertEqual(permit["basis"], "consent")
+            with patch("webchat.PROVIDER_LAUNCH_READY", True):
+                out = webchat._chat_launch_authorization(imports.authenticate(bearer), bearer, session["session_id"], tid)
+            self.assertEqual((out["binding"]["grant_id"], out["binding"]["consent_challenge_id"]), (permit["grant_id"], permit["challenge_id"]))
+            # 옛 앱이 붙은 장치에 새 앱이 ai_links 없이(옛 hello) 다시 붙어도 consent 허용은 그대로(device 근거만 지운다)
+            self.assertEqual(webchat.ai_links_apply({"user_id": uid, "id": did}, None), [])
+            with db.tx() as c:
+                self.assertEqual(c.execute("SELECT basis FROM chat_provider_permits WHERE user_id=%s AND device_id=%s", (uid, did)).fetchone()["basis"],
+                                 "consent")
+        finally:
+            with db.tx() as c:
+                c.execute("DELETE FROM admin_audit WHERE actor_id=%s OR target_id=%s", (uid, uid))
+            db.user_delete(uid)
 
     def _run_provider(self, provider_name):
         model = CLAUDE_MODEL if provider_name == "claude" else CODEX_MODEL
@@ -315,8 +341,6 @@ class FreechatSyntheticE2ETests(unittest.TestCase):
             bridge_wrapper = temp / "synthetic-bridge-main.py"
             token_path = temp / "synthetic-device-token.txt"
             fake_bridge_wrapper(bridge_wrapper, token_path)
-            approval_js = temp / "desktop-approval.cjs"
-            desktop_approval_script(approval_js, ca)
             previous_ca = os.environ.get("SSL_CERT_FILE")
             os.environ["SSL_CERT_FILE"] = str(ca)
             uid = db.user_by_email(EMAIL)["id"]
@@ -324,9 +348,6 @@ class FreechatSyntheticE2ETests(unittest.TestCase):
             token, did = device["token"], device["device"]["id"]
             token_path.write_text(token, encoding="utf-8")
             token_path.chmod(0o600)
-            with db.tx() as c:
-                c.execute("INSERT INTO desktop_installations (user_id,id,client_name,os,device_id) VALUES (%s,%s,'synthetic','darwin',%s)",
-                          (uid, INSTALLATION, did))
             agent_home = temp / "agent-home"
             agent_home.mkdir(mode=0o700)
             agent_home.chmod(0o700)
@@ -341,8 +362,6 @@ class FreechatSyntheticE2ETests(unittest.TestCase):
             agent_config.save(agent_config.Paths(str(agent_home)), cfg)
             stop = threading.Event()
             agent = None
-            node = None
-            node_holder = [None]
             try:
                 with patch("webchat.PROVIDER_LAUNCH_READY", True), patch("chat_mcp_gateway.ATOMIC_DISPATCH_READY", True):
                     with TlsServer(cert, key) as srv:
@@ -386,23 +405,11 @@ class FreechatSyntheticE2ETests(unittest.TestCase):
                                     raise
                             factory.process_supervisor.spawn = observe_codex_spawn
                         ref_store = RefStore()
-                        approvals = []
-                        def consent(request_id, _authorization):
-                            env = dict(os.environ, SYNTHETIC_BASE=server_url, SYNTHETIC_TOKEN=token,
-                                       SYNTHETIC_ORIGIN=os.environ["CRM_PUBLIC_URL"],
-                                       SYNTHETIC_COOKIE="crm_session=" + main.site.session_value(uid))
-                            p = subprocess.Popen(["node", str(approval_js)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                                 stderr=subprocess.PIPE, text=True, env=env)
-                            result = p.stdout.readline().strip()
-                            if result != "APPROVED":
-                                p.wait(timeout=5)
-                                result += ":" + p.stderr.read().strip()
-                            approvals.append(result)
-                            node_holder[0] = p
+                        links = {provider_name: "linked"}   # 앱이 확인한 CLI 로그인(가짜). 끊기는 아래에서 off 로 바꾼다
                         agent_log = []
                         received = []
                         agent = agent_chat.ChatAgent(srv.ws, token, ref_store=ref_store,
-                            agent_version="synthetic", stopping=stop, consent_request=consent,
+                            agent_version="synthetic", stopping=stop, ai_status=links, ai_check=lambda p: links.get(p, "missing"),
                             backoff=agent_chat.wsclient.Backoff(base=.1, cap=.3, jitter=0), recv_tick=.05, coalesce=0,
                             log=agent_log.append,
                             connect=lambda url, headers: agent_chat.wsclient.connect(
@@ -421,27 +428,23 @@ class FreechatSyntheticE2ETests(unittest.TestCase):
                                 if agent.connects and webchat.hub.connected(uid, did): break
                                 time.sleep(.05)
                             self.assertTrue(webchat.hub.connected(uid, did), f"agent WebSocket did not connect: {agent_log}")
-                            created = h.post("/api/chat/grants", json={"device_id": did, "provider": provider_name,
-                                "model": model, "request_id": SESSION_REQUEST})
-                            self.assertEqual(created.status_code, 201, created.text)
+                            def permit_rows():
+                                with db.tx() as c:
+                                    return c.execute("SELECT basis FROM chat_provider_permits WHERE user_id=%s AND device_id=%s AND provider=%s",
+                                                     (uid, did, provider_name)).fetchall()
                             for _ in range(100):
-                                if approvals: break
+                                if permit_rows(): break
                                 time.sleep(.05)
-                            self.assertEqual(approvals, ["APPROVED"],
-                                f"PC consent bridge not observed: connects={agent.connects}, logs={agent_log}, received={received}, "
-                                f"connected={webchat.hub.connected(uid,did)}, dev_binding={(webchat.hub.dev(uid,did).dev['user_id'],webchat.hub.dev(uid,did).dev['id']) if webchat.hub.dev(uid,did) else None}")
-                            with db.tx() as c:
-                                state = c.execute("SELECT state FROM chat_provider_grants WHERE user_id=%s AND request_id=%s",
-                                                  (uid, SESSION_REQUEST)).fetchone()["state"]
-                            self.assertEqual(state, "approved")
+                            self.assertEqual([r["basis"] for r in permit_rows()], ["device"],
+                                f"hello ai_links linked 가 허용을 세우지 않음: logs={agent_log}, received={received}")
                             session = h.post("/api/chat/sessions", json={"operation":"new", "device_id":did,
                                 "provider":provider_name, "model":model, "client_session_id":SESSION_REQUEST})
                             self.assertEqual(session.status_code, 201, session.text)
                             sid = session.json()["session_id"]
                             with db.tx() as c:
-                                consumed = c.execute("SELECT state FROM chat_provider_grants WHERE user_id=%s AND request_id=%s",
-                                                     (uid, SESSION_REQUEST)).fetchone()["state"]
-                            self.assertEqual(consumed, "consumed")
+                                grants = c.execute("SELECT count(*) AS n FROM chat_provider_grants WHERE user_id=%s", (uid,)).fetchone()["n"]
+                                challenges = c.execute("SELECT count(*) AS n FROM chat_consent_challenges WHERE user_id=%s", (uid,)).fetchone()["n"]
+                            self.assertEqual((grants, challenges), (0, 0), "새 앱 경로는 grant, 서명이 없다")
                             results = []
                             for number in (1, 2):
                                 turn = h.post(f"/api/chat/sessions/{sid}/turns", json={"text":f"synthetic prompt {number}",
@@ -464,31 +467,25 @@ class FreechatSyntheticE2ETests(unittest.TestCase):
                             self.assertEqual(results, [["Synthetic state loaded; turn resumed."]] * 2)
                             self.assertEqual(cli_executions.read_text(encoding="utf-8").splitlines(),
                                              ["new:state_get-ok", "resume:state_get-ok"])
-                            self.assertEqual(len(approvals), 1, "resume must not ask for a second approval")
-                            node = node_holder[0]
-                            self.assertIsNotNone(node)
-                            node.stdin.write("LOCK\n"); node.stdin.flush()
-                            self.assertEqual(node.stdout.readline().strip(), "LOCKED")
-                            node.wait(timeout=5)
-                            # J(JD2): 잠금 뒤에도 키 active, 서 있는 허용 유지. 같은 공급자의 새 대화는 동의 창 없이 열린다(JD1)
-                            with db.tx() as c:
-                                key_state = c.execute("SELECT state FROM desktop_consent_keys WHERE user_id=%s AND installation_id=%s AND state='active'",
-                                    (uid, INSTALLATION)).fetchone()
-                                permits = c.execute("SELECT count(*) AS n FROM chat_provider_permits WHERE user_id=%s AND device_id=%s AND provider=%s",
-                                    (uid, did, provider_name)).fetchone()["n"]
-                            self.assertIsNotNone(key_state)
-                            self.assertEqual(permits, 1)
+                            # 서 있는 허용: 같은 공급자의 새 대화는 다시 묻지 않는다(재시작, 잠금도 허용을 지우지 않는다 — 앱이 CLI 로그인을 보관)
                             again = h.post("/api/chat/sessions", json={"operation": "new", "device_id": did, "provider": provider_name,
-                                "model": model, "client_session_id": SESSION_REQUEST + "-after-lock"})
+                                "model": model, "client_session_id": SESSION_REQUEST + "-again"})
                             self.assertEqual(again.status_code, 201, again.text)
-                            self.assertEqual(len(approvals), 1, "a standing permit must not ask again after lock")
+                            # 끊기: 앱 AI 패널 [연결 끊기] = hello ai_links off → 허용 지움 → 새 대화 CONSENT_REQUIRED
+                            links[provider_name] = "off"
+                            agent.ai_status = dict(links)
+                            agent._resend_hello()
+                            for _ in range(100):
+                                if not permit_rows(): break
+                                time.sleep(.05)
+                            self.assertEqual(permit_rows(), [])
+                            denied = h.post("/api/chat/sessions", json={"operation": "new", "device_id": did, "provider": provider_name,
+                                "model": model, "client_session_id": SESSION_REQUEST + "-off"})
+                            self.assertEqual((denied.status_code, denied.json().get("code")), (409, "CONSENT_REQUIRED"), denied.text)
             finally:
                 stop.set()
                 if agent:
                     for th in list(agent.threads): th.join(2)
-                node = node or node_holder[0]
-                if node and node.poll() is None:
-                    node.kill(); node.wait()
                 with db.tx() as c:
                     c.execute("DELETE FROM admin_audit WHERE actor_id=%s OR target_id=%s", (uid, uid))
                 db.user_delete(uid)
@@ -498,10 +495,11 @@ class FreechatSyntheticE2ETests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) == 3 and sys.argv[1] == "--run-provider" and sys.argv[2] in ("claude", "codex"):
+    if len(sys.argv) == 3 and sys.argv[1] == "--run-provider" and sys.argv[2] in ("claude", "codex", "consent"):
         db.init_schema()
         try:
-            FreechatSyntheticE2ETests()._run_provider(sys.argv[2])
+            t = FreechatSyntheticE2ETests()
+            t._run_consent() if sys.argv[2] == "consent" else t._run_provider(sys.argv[2])
         finally:
             db.close()
     else:

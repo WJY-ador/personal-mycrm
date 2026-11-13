@@ -20,6 +20,7 @@ import hmac as _hmac
 import json
 import re
 import secrets
+import zlib
 
 from psycopg.types.json import Jsonb
 
@@ -567,6 +568,25 @@ def _axes_split(c, uid, ids):
                                                "AND id = ANY(%s) AND revision > 0 AND archived_at IS NULL", (uid, oid, list(ids)))}
     bad = next((i for i in ids if i not in rows), None)
     return bad, {i for i, live in rows.items() if not live}
+
+
+WIRE_AXES_MAX = 2000   # 장치에 내려주는 축 id 상한(응답 크기 — id 하나 ≤ 40자, 2000개 ≈ 90 KiB)
+
+
+def live_axes(c, uid) -> list:
+    """지금 계정의 축 = 분류 역할 오브젝트의 적용(revision > 0), 미보관, 휴지통 아닌 항목 id(정렬). 장치 정책 axes 의 계산값."""
+    oid = db._classify_target(c, uid)
+    if not oid:
+        return []
+    return [r["id"] for r in _all(c, "SELECT id FROM items WHERE user_id=%s AND object_id=%s AND revision > 0 AND archived_at IS NULL "
+                                     "AND trashed_at IS NULL ORDER BY id LIMIT %s", (uid, oid, WIRE_AXES_MAX))]
+
+
+def wire_revision(stored: int, axes: list) -> int:
+    """장치에 보이는 정책 판 = 저장 판 × 2^20 + 축 집합 지문(20비트). 축 항목을 더하거나 지우면 바뀌어 agent 가 다음 업로드의
+    POLICY-STALE 에서 정책을 다시 받는다(agent 는 같음만 비교한다). 지문 충돌(약 백만 분의 1)이면 새 축이 다음 재수신까지 걸러질 뿐이다.
+    접수는 저장 판도 받는다(정책을 다시 받기 전 장치, 시험). 저장 판을 든 장치는 축 변화를 알지 못한다 — 기존 장치는 이관의 판 +1 로 한 번 다시 받는다."""
+    return stored * (1 << 20) + (zlib.crc32(",".join(axes).encode("utf-8")) & 0xFFFFF)
 
 
 def _norm_policy(c, uid, policy):
@@ -1308,12 +1328,14 @@ def submit(authorization: str, idempotency_key_header: str, raw: bytes) -> tuple
             idempotency_key_header != idempotency_key(req["source_instance_id"], req["original_id"], req["revision"]):
         raise CrmError("IDEMPOTENCY-KEY-MISMATCH", "Idempotency-Key 가 요청과 맞지 않아요.", "계약의 키 계산식으로 다시 만드세요.")
     pol = dev["policy"] or {}
-    if req["policy_revision"] != dev["policy_revision"]:
+    with tx() as c:
+        wire = wire_revision(dev["policy_revision"], live_axes(c, dev["user_id"]))
+    if req["policy_revision"] not in (dev["policy_revision"], wire):   # 저장 판(정책 재수신 전 장치, 시험) 또는 계산 판(축 지문 포함)
         raise CrmError("POLICY-STALE", "장치 허용 규칙이 바뀌었어요.", "장치에서 허용 규칙을 다시 받아 오세요.")
     if req["transform_version"] not in pol.get("transform_versions", []):
         raise CrmError("POLICY-DENIED", "이 장치에 허용하지 않은 변환 버전이에요.")
-    if kind in ("activity", "collected_post") and any(a not in pol.get("axes", []) for a in req.get("axes", [])):
-        raise CrmError("POLICY-DENIED", "이 장치에 허용하지 않은 축이에요.")
+    # 축(2026-11-13 메인 판정): 정책 axes 허용 목록과 대조하지 않는다 — 그 사용자 계정의 분류(축) 항목이면 받는다.
+    # 분류 항목이 아님(남의 축, 없는 id, 보관) = POLICY-DENIED, 휴지통 축 = 그 연결만 뺀다(_axes_split, 활동과 수집 글이 각자 본다)
     if kind == "activity":
         if req["action"] not in pol.get("actions", []):
             raise CrmError("POLICY-DENIED", "이 장치에 허용하지 않은 행동이에요.")
@@ -1333,7 +1355,7 @@ def submit(authorization: str, idempotency_key_header: str, raw: bytes) -> tuple
             raise CrmError("TOKEN-REVOKED", "이 장치 토큰은 폐기됐어요.")
         if s["expired"]:
             raise CrmError("TOKEN-EXPIRED", "장치 토큰이 만료됐어요.")
-        if s["policy_revision"] != req["policy_revision"]:
+        if req["policy_revision"] not in (s["policy_revision"], wire_revision(s["policy_revision"], live_axes(c, uid))):
             raise CrmError("POLICY-STALE", "장치 허용 규칙이 바뀌었어요.")
         same = _one(c, f"SELECT {_ENTRY_COLS} FROM import_entries WHERE user_id=%s AND stream_id=%s AND original_id=%s "
                        "AND source_revision=%s", (uid, dev["id"], req["original_id"], req["revision"]))
@@ -1382,7 +1404,10 @@ def device_self(authorization: str) -> dict:
     _rate(dev)
     with tx() as c:
         r = _one(c, "SELECT token_expires_at FROM import_streams WHERE user_id=%s AND id=%s", (dev["user_id"], dev["id"]))
-    return {"stream_id": dev["id"], "label": dev["label"], "policy": dev["policy"], "policy_revision": dev["policy_revision"],
+        axes = live_axes(c, dev["user_id"])
+    # 정책 axes = 저장값이 아니라 지금 계정의 축 항목 전부(agent 의 POLICY-AXIS 검사가 그대로 통과한다). 판 = 저장 판 + 축 집합 지문
+    return {"stream_id": dev["id"], "label": dev["label"], "policy": {**(dev["policy"] or {}), "axes": axes},
+            "policy_revision": wire_revision(dev["policy_revision"], axes),
             "hmac_namespace": dev["hmac_namespace"], "token_expires_at": _j(r["token_expires_at"])}
 
 

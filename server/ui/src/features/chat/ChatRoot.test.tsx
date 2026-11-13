@@ -26,7 +26,7 @@ const q = <E extends Element>(sel: string) => el.querySelector(sel) as E;
 const btn = (t: string) => [...el.querySelectorAll("button")].find(b => b.textContent === t) as HTMLButtonElement;
 // 남의 장치 정보가 devices_status 에 섞여 와도 화면에 나오지 않는다(화면은 state·last_seen_at 만 읽는다)
 const leak = { devices: [{ id: "dv-other", label: "남의장치라벨" }], user: { email: "other@example.com" }, label: "남의장치라벨", user_id: "u-other" };
-const OFFLINE = "PC나 연결 장치가 꺼져 있어 지금은 정리되지 않아요. MyCRM 앱 메뉴의 연결 장치(⌘2, Windows는 Ctrl+2)에서 [연결 장치 시작]을 누르면 보낸 글을 이어서 정리해요(첫 입력 뒤 24시간까지).";
+const OFFLINE = "PC가 꺼져 있거나 MyCRM 앱이 닫혀 있어 지금은 정리되지 않아요. PC에서 MyCRM 앱을 열면 보낸 글을 이어서 정리해요(첫 입력 뒤 24시간까지).";
 const dev = (state: string, last: string | null = T, x: object = {}) => ({ devices_status: { state, last_seen_at: last, threshold_seconds: 180, ...x } });
 
 test("장치 상태 — 없음 = 버튼 대신 안내(탭 줄·좁은 화면 한 줄) · 최근 연결 · 오프라인 = 마지막 연결 · 필드 없음·모르는 값 = 현행 · 스위치 꺼짐 = 버튼·서랍 0 · 남 장치 0", async () => {
