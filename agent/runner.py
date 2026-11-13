@@ -91,15 +91,79 @@ def stage_collected_post(st: "_store.Store", cfg: dict, adapter, cp: CollectedPo
             pass
     fields = dict(cp.fields)
     fields["raw_id"] = ev["raw_id"]
-    _stage(st, cfg, ev["original_id"], "collected_post", COLLECTED_TRANSFORM,
-           "unattended" if cfg.get("_execution") == "unattended" else "attended", fields, counts, adapter.name)
+    oid = ev["original_id"]
+    rs = cfg.get("_resync")
+    want = rs is not None and rs.wants(oid)
+    before, quarantined = counts["staged"], counts["quarantined"]
+    _stage(st, cfg, oid, "collected_post", COLLECTED_TRANSFORM,
+           "unattended" if cfg.get("_execution") == "unattended" else "attended", fields, counts, adapter.name,
+           force=want and rs.can_stage())
+    if want:
+        if counts["staged"] > before:
+            rs.staged_one(oid)        # 같은 필드의 새 개정(또는 내용이 바뀐 새 개정) — 어느 쪽이든 state 를 싣는다
+        elif counts["quarantined"] > quarantined:
+            st.resync_set(oid, "failed")      # 지금 허용 규칙으로 만들 수 없다(축 등)
 
 
-def _stage(st, cfg, original_id, kind, transform_version, execution, fields, counts, adapter_name) -> None:
+# ---- 수집 글 상태 다시 보내기(state_resync, 명세 보강 D3, 메인 판정 가안 B 2026-11-13) ----------------------
+# 서버가 이미 올라간 수집 글의 state 를 모른다. 이 판의 첫 실행 때 한 번, 대응표의 수집 글(feed·reactions) 중 서버에 항목이 있는
+# 것을 대상으로 올리고, 수집 때 같은 필드의 새 개정(previous = 마지막 접수 개정, 지금 허용 규칙 판)을 만든다. 서버는 반영 내용이
+# 같으면 noop 으로 받으며 state 를 채운다. 옛 요청 바이트를 다시 만들지 않는다. 장치 수집 글 하루 한도(500)·max_per_run 안에서
+# 새 수집 글 몫을 남기도록 실행당·KST 하루당 만들 수를 나눈다. 입력에서 사라진 행은 같은 필드를 만들 수 없어 unseen 으로 닫는다.
+RESYNC_FLAG = "state_resync:2026-11-13"
+RESYNC_PER_RUN = 50
+RESYNC_PER_DAY = 300
+
+
+class _Resync:
+    def __init__(self, st, day: str):
+        self.st, self.day_key = st, "state_resync_day:" + day
+        flag = st.cursor_get(RESYNC_FLAG)
+        self.active = flag != "done"
+        if flag is None:
+            st.resync_begin()
+            st.cursor_set(RESYNC_FLAG, "started")
+        self.day_used = int(st.cursor_get(self.day_key) or 0)
+        self.staged = 0
+        self.seen = {}               # 어댑터 → 이번 수집에서 본 원본
+
+    def see(self, adapter: str, oid: str) -> None:
+        self.seen.setdefault(adapter, set()).add(oid)
+
+    def wants(self, oid: str) -> bool:
+        return self.active and self.st.resync_status(oid) == "queued"
+
+    def can_stage(self) -> bool:
+        return self.staged < RESYNC_PER_RUN and self.day_used + self.staged < RESYNC_PER_DAY
+
+    def staged_one(self, oid: str) -> None:
+        self.st.resync_set(oid, "staged")
+        self.staged += 1
+
+    def collected(self, adapter: str) -> None:
+        """그 어댑터의 수집이 끝까지 돌았다 — 보지 못한 대상을 닫는다."""
+        if self.active:
+            self.st.resync_unseen(adapter, self.seen.get(adapter, set()))
+
+    def finish(self) -> dict:
+        if not self.active:
+            return {"queued": 0, "sent": 0, "done": True}
+        if self.staged:
+            self.st.cursor_set(self.day_key, str(self.day_used + self.staged))
+        sent = self.st.resync_settle()
+        done = self.st.resync_remaining() == 0
+        if done:
+            self.st.cursor_set(RESYNC_FLAG, "done")
+        return {"queued": self.staged, "sent": sent, "done": done}
+
+
+def _stage(st, cfg, original_id, kind, transform_version, execution, fields, counts, adapter_name,
+           force: bool = False) -> None:
+    """force: 내용이 같아도 마지막 접수 개정 뒤로 새 개정을 만든다(state_resync). 접수되지 않은 판 뒤로는 만들지 않는다."""
     pr = cfg["policy_revision"]
     proj = _projection(fields, transform_version)
     latest = st.latest_revision(original_id)
-    if latest is not None and latest["projection_sha"] == proj:
+    if latest is not None and latest["projection_sha"] == proj and not (force and latest["status"] == "accepted"):
         # 같은 내용: 접수·대기면 변경 없음, 거절·충돌이면 같은 요청을 다시 만들지 않는다
         counts["unchanged" if latest["status"] in ("pending", "accepted", "halted") else "blocked"] += 1
         return
@@ -109,7 +173,7 @@ def _stage(st, cfg, original_id, kind, transform_version, execution, fields, cou
     # 이전 판 = 마지막으로 서버에 보낸 판. 「삭제됨」 응답을 받은 판도 accepted 라 여기 잡힌다(서버가 그 판을 기록한다)
     accepted = st.latest_accepted(original_id)
     prev = accepted["revision"] if accepted is not None else None
-    if accepted is not None and accepted["projection_sha"] == proj:
+    if accepted is not None and accepted["projection_sha"] == proj and not force:
         counts["unchanged"] += 1
         return
     rev = _store.new_revision()
@@ -214,6 +278,11 @@ def collect(st, cfg: dict, hmac_key, counts: dict) -> None:
                 counts["quarantined"] += 1
             elif isinstance(item, CollectedPost):
                 counts["observed"] += 1
+                rs = cfg.get("_resync")
+                if rs is not None:
+                    ev = st.event_get(name, item.dedupe_key)
+                    if ev is not None:
+                        rs.see(name, ev["original_id"])
                 if not _policy_allows(cfg, COLLECTED_TRANSFORM):
                     counts["skipped_policy"] += 1
                     continue
@@ -225,6 +294,8 @@ def collect(st, cfg: dict, hmac_key, counts: dict) -> None:
                     counts["skipped_policy"] += 1
                     continue
                 stage_activity(st, cfg, adapter, item, hmac_key, counts)
+        if cfg.get("_resync") is not None and adapter.kind == "collected_post":
+            cfg["_resync"].collected(name)
 
 
 def _policy_allows(cfg: dict, transform: str, action: str | None = None) -> bool:
@@ -385,6 +456,7 @@ def run_once(paths, *, ks: keystore.KeyStore, uploader_factory=None, summarizer=
                 # (대기 요청이 없으면 POLICY-STALE 이 오지 않아 허용 변경을 알 길이 없다.) 실패해도 이번 실행은 그대로
                 up = (uploader_factory or Uploader)(cfg["server_url"], token, timeout=cfg["upload"]["timeout_sec"])
                 result["policy_refresh_before"] = refresh_policy(paths, st, cfg, up)
+            cfg["_resync"] = _Resync(st, osutil.kst_now().date().isoformat())
             collect(st, cfg, hkey, counts)
             result["collect"] = counts
             from . import sessionwrap   # 세션 정리 폴더(설정에서 켰을 때만) — 같은 전송 대기·업로드 경로
@@ -413,6 +485,7 @@ def run_once(paths, *, ks: keystore.KeyStore, uploader_factory=None, summarizer=
                         wb = {"applied": 0, "skipped_not_pending": 0, "missing": 0, "retried": 0, "stopped": "error"}
                     if wb is not None:
                         result["write_back"] = wb
+            result["state_resync"] = cfg["_resync"].finish()
             result["state"] = st.counts()
             return result
         finally:

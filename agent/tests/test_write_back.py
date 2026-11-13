@@ -1,12 +1,13 @@
 """웹 판별 되돌림(feed.write_back, 오늘 탭 수집 인박스 명세 2026-11-13 4절). 전부 합성 자료·임시 폴더·가짜 서버."""
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import os
 import stat
 import unittest
 
-from agent import config as _config, runner, store as _store
+from agent import config as _config, osutil, runner, store as _store
 from agent.adapters import collected as C
 from agent.tests.helpers import FakeImportServer, TempHome, connected_config, keystore_with_secrets, write_jsonl
 from agent.tests.test_collected import feed_row
@@ -316,3 +317,107 @@ class WriteBackConfigTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StateResyncTest(unittest.TestCase):
+    """state_resync(가안 B): 이 판의 첫 실행 때 한 번, 서버에 항목이 있는 수집 글마다 같은 필드의 새 개정을 지금 판으로 보낸다."""
+
+    def setUp(self):
+        self.srv, self.th = FakeImportServer(), TempHome()
+        self.feed = os.path.join(self.th.root, "feed-queue.jsonl")
+        self.reac = os.path.join(self.th.root, "reactions.jsonl")
+        write_jsonl(self.feed, [feed_row(i) for i in range(1, 4)])
+        write_jsonl(self.reac, [{"id": "R1", "author": "합성", "text": "반응 첫 줄\n둘째", "kind": "like",
+                                 "post_url": "https://example.invalid/r/1", "collected_at": "2026-11-12"}])
+        cfg = connected_config(self.th, self.srv.url)
+        cfg["adapters"]["feed"].update({"enabled": True, "input_path": self.feed})
+        cfg["adapters"]["reactions"].update({"enabled": True, "inputs": [
+            {"path": self.reac, "format": "reactions", "channel": "linkedin"}]})
+        _config.save(self.th.paths, cfg)
+        self.ks = keystore_with_secrets()
+        res = self.run_once()                                   # 옛 판: 다 올라갔고, 그 실행에선 대상이 없어 끝 표시
+        self.assertEqual(res["state_resync"], {"queued": 0, "sent": 0, "done": True})
+        self.old = self.collected_bodies()
+        self.assertEqual(len(self.old), 4)
+        # 새 판의 첫 실행처럼 — 끝 표시를 지우고, 그 사이 허용 규칙 판이 바뀌었다
+        st = _store.Store(self.th.paths)
+        try:
+            st.conn.execute("DELETE FROM cursors WHERE name=?", (runner.RESYNC_FLAG,))
+            st.conn.execute("DELETE FROM state_resync")
+        finally:
+            st.close()
+        cfg = _config.load(self.th.paths)
+        cfg["policy_revision"] = 2
+        _config.save(self.th.paths, cfg)
+        self.n0 = len(self.srv.requests)
+
+    def tearDown(self):
+        self.srv.close()
+        self.th.cleanup()
+
+    def run_once(self):
+        return runner.run_once(self.th.paths, ks=self.ks)
+
+    def collected_bodies(self, start=0):
+        out = {}
+        for _, b in self.srv.requests[start:]:
+            o = json.loads(b)
+            if o["kind"] == "collected_post":
+                out[o["original_id"]] = o
+        return out
+
+    def statuses(self):
+        st = _store.Store(self.th.paths)
+        try:
+            return sorted(r[0] for r in st.conn.execute("SELECT status FROM state_resync"))
+        finally:
+            st.close()
+
+    def test_same_fields_new_revision_current_policy(self):
+        res = self.run_once()
+        self.assertEqual(res["state_resync"], {"queued": 4, "sent": 4, "done": True})
+        new = self.collected_bodies(self.n0)
+        self.assertEqual(set(new), set(self.old))               # feed 3 + reactions 1
+        meta = ("revision", "previous_revision", "policy_revision")
+        for oid, o in new.items():
+            old = self.old[oid]
+            self.assertEqual(o["previous_revision"], old["revision"])
+            self.assertNotEqual(o["revision"], old["revision"])
+            self.assertEqual(o["policy_revision"], 2)
+            self.assertEqual({k: v for k, v in o.items() if k not in meta}, {k: v for k, v in old.items() if k not in meta})
+        n = len(self.srv.requests)
+        res = self.run_once()                                   # 한 번만
+        self.assertEqual(res["state_resync"], {"queued": 0, "sent": 0, "done": True})
+        self.assertEqual(self.collected_bodies(n), {})
+
+    def test_budget_per_run_and_day(self):
+        orig = (runner.RESYNC_PER_RUN, runner.RESYNC_PER_DAY, osutil.kst_now)
+        runner.RESYNC_PER_RUN, runner.RESYNC_PER_DAY = 2, 3
+        day = [_dt.datetime(2026, 11, 13, 10, tzinfo=osutil.KST)]
+        osutil.kst_now = lambda: day[0]
+        try:
+            got = [self.run_once()["state_resync"] for _ in range(3)]
+            self.assertEqual(got, [{"queued": 2, "sent": 2, "done": False}, {"queued": 1, "sent": 1, "done": False},
+                                   {"queued": 0, "sent": 0, "done": False}])   # 하루 몫(3)을 다 썼다
+            day[0] = day[0] + _dt.timedelta(days=1)
+            self.assertEqual(self.run_once()["state_resync"], {"queued": 1, "sent": 1, "done": True})
+        finally:
+            runner.RESYNC_PER_RUN, runner.RESYNC_PER_DAY, osutil.kst_now = orig
+
+    def test_gone_rows_unseen_and_rejected_failed(self):
+        write_jsonl(self.feed, [feed_row(1), feed_row(2)])     # FEED0003 이 입력에서 사라짐 — 같은 필드를 만들 수 없다
+        self.srv.script = [(422, {"code": "ARG-INVALID"})]     # 첫 다시 보내기는 거절
+        res = self.run_once()
+        self.assertEqual(res["state_resync"], {"queued": 3, "sent": 2, "done": True})
+        self.assertEqual(self.statuses(), ["failed", "sent", "sent", "unseen"])
+
+    def test_only_items_on_server(self):
+        st = _store.Store(self.th.paths)
+        try:
+            ev = st.event_get("feed", "feed:FEED0001")
+            st.conn.execute("UPDATE revisions SET server_state='deleted' WHERE original_id=?", (ev["original_id"],))
+        finally:
+            st.close()
+        res = self.run_once()
+        self.assertEqual(res["state_resync"], {"queued": 3, "sent": 3, "done": True})
+        self.assertNotIn(ev["original_id"], self.collected_bodies(self.n0))
