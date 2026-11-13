@@ -34,6 +34,7 @@ class Feature:
     label: str
     note: str
     scope: str        # "profile" = 조직 설정 + 프로필 권한 · "org" = 조직 설정만
+    default_on: bool = False   # 행도 env 도 없을 때의 값. 기본 켜짐 기능만 True(오류 자동 Case)
 
 
 # 정본 — 순서 = 화면 순서. 게이트 상수(ATOMIC_DISPATCH_READY·PROVIDER_LAUNCH_READY)·개발 스위치·비밀값은 넣지 않는다.
@@ -50,6 +51,8 @@ FEATURES = (
     Feature("unattended_summary_imports", "UNATTENDED_SUMMARY_IMPORTS_ENABLED", "무인 AI 요약 접수", "약관 확인 전엔 꺼 둬요", "org"),
     Feature("board_migration", "BOARD_MIGRATION_ENABLED", "board 이전", "이전 CLI·웹 반영(허용 목록도 봐요)", "org"),
     Feature("download_public", "DOWNLOAD_PUBLIC", "설치 파일 공개 링크", "/download 직링크 보이기", "org"),
+    # 앱 하나 자동 연결(2026-11-13 명세 1.4) — 사용자 쪽 오류를 운영자 문의(kind bug, via auto)로 자동 접수. 기본 켜짐, 사용자별 끄기 없음
+    Feature("auto_cases", "AUTO_CASES_ENABLED", "오류 자동 Case", "앱, PC 에이전트, 웹의 오류를 문의로 자동 접수", "org", True),
 )
 BY_KEY = {f.key: f for f in FEATURES}
 BY_ENV = {f.env: f for f in FEATURES}
@@ -127,7 +130,7 @@ def org_on(feature: str, c=None) -> bool:
     if st == "off":
         return False
     org = _org(c)
-    return org[feature] if feature in org else st == "on"
+    return org[feature] if feature in org else st == "on" or (st == "" and f.default_on)
 
 
 def feature_on(uid, feature: str, c=None) -> bool:
@@ -175,7 +178,8 @@ def seed_org_from_env():
     out = []
     with db.tx() as c:
         for f in FEATURES:
-            on = env(f.env, "") == "1"
+            v = env(f.env, "")
+            on = v == "1" or (v == "" and f.default_on)
             if db._one(c, "INSERT INTO org_features (feature,enabled) VALUES (%s,%s) ON CONFLICT (feature) DO NOTHING RETURNING feature",
                        (f.key, on)):
                 _log(c, None, "seed", f.key, None, {"enabled": on})

@@ -41,8 +41,8 @@ import imports  # noqa: E402
 import main  # noqa: E402
 from test_sample_shape import cmp  # noqa: E402
 
-MAIN, OTHER = "ci-main@example.com", "ci-other@example.com"
-EMAILS = (MAIN, OTHER)
+MAIN, OTHER, AXU = "ci-main@example.com", "ci-other@example.com", "ci-axes@example.com"
+EMAILS = (MAIN, OTHER, AXU)
 H = {"origin": PUBLIC}
 FIELDS = [
     {"key": "channel", "label": "채널", "value_type": "select", "required": True, "options": list(imports.COLLECTED_CHANNELS)},
@@ -170,6 +170,86 @@ async def web(method, path, body=None, user=MAIN):
         site.dev, site.dev_user = real
 
 
+async def axes_from_account(other_ax):
+    """축(2026-11-13 메인 판정) — 장치 정책 axes 허용 목록을 보지 않는다. 기본 정책(축 0개) 장치도 계정의 축 항목이면 받는다.
+    장치 정책 응답 axes = 계정의 지금 축 전부, 판 = 저장 판 + 축 지문(축이 바뀌면 바뀐다). 남의 축 = POLICY-DENIED, 휴지통 축 = 연결만 뺀다."""
+    U = db.user_by_email(AXU)["id"]
+    tok, dev_id, ax = setup_user(U)
+    imports.device_policy_set(U, dev_id, imports.DEFAULT_POLICY, 2)   # 기본 정책(축 0개)으로 되돌림 — 저장 판 3
+    hd = {"authorization": "Bearer " + tok}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url=PUBLIC) as h:
+        info = (await h.get("/api/imports/device", headers=hd)).json()
+    assert info["policy"]["axes"] == [ax] and info["policy"]["transform_versions"] == imports.DEFAULT_POLICY["transform_versions"], info
+    with db.tx() as c:
+        wire = imports.wire_revision(3, imports.live_axes(c, U))
+    assert info["policy_revision"] == wire != 3, info
+    d = Dev(tok, dev_id)
+
+    async def post(b):
+        hd2 = {**hd, "content-type": "application/json",
+               "idempotency-key": imports.idempotency_key(b["source_instance_id"], b["original_id"], b["revision"])}
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url=PUBLIC) as h:
+            return await h.post("/api/imports", content=json.dumps(b, ensure_ascii=False).encode("utf-8"), headers=hd2)
+
+    r = await post(d.body("ax1", axes=[ax], policy_revision=wire))
+    assert r.status_code in (200, 201), r.text
+    with db.tx() as c:
+        links = c.execute("SELECT target_item_id FROM item_links WHERE user_id=%s AND field_key='axes' AND source_item_id IS NOT NULL", (U,)).fetchall()
+    assert [x["target_item_id"] for x in links] == [ax], links
+    act = {"contract": "canon-inbox/1", "schema_revision": 2, "source_instance_id": dev_id, "original_id": "o_" + secrets.token_hex(16),
+           "revision": "v_" + secrets.token_hex(16), "previous_revision": None, "kind": "activity", "execution": "unattended",
+           "transform_version": "board-likes/1", "policy_revision": 3, "action": "like", "state": "active", "occurred_on": None,
+           "observed_on": None, "provider": "sns", "raw_id": secrets.token_hex(24), "axes": [ax]}
+    import features
+    with db.tx() as c:   # 활동 접수 스위치를 이 시험 동안만 켠다(끝에 원래 값)
+        prev = c.execute("SELECT enabled FROM org_features WHERE feature='activity_imports'").fetchone()
+        c.execute("INSERT INTO org_features (feature, enabled) VALUES ('activity_imports', true) ON CONFLICT (feature) DO UPDATE SET enabled=true")
+    features.clear_cache()
+    try:
+        r = await post(act)
+        assert r.status_code in (200, 201), r.text   # 저장 판(3)도 받는다
+        r = await post({**act, "original_id": "o_" + secrets.token_hex(16), "revision": "v_" + secrets.token_hex(16),
+                        "raw_id": secrets.token_hex(24), "axes": [other_ax]})
+        assert r.status_code == 403 and r.json()["code"] == "POLICY-DENIED", r.text
+    finally:
+        with db.tx() as c:
+            if prev is None:
+                c.execute("DELETE FROM org_features WHERE feature='activity_imports'")
+            else:
+                c.execute("UPDATE org_features SET enabled=%s WHERE feature='activity_imports'", (prev["enabled"],))
+        features.clear_cache()
+    r = await post(d.body("ax2", axes=[other_ax], policy_revision=wire))
+    assert r.status_code == 403 and r.json()["code"] == "POLICY-DENIED", r.text
+    print("OK 8 축 = 계정의 축 항목이면 받음(기본 정책 장치, 수집 글과 활동) · 남의 축 POLICY-DENIED · 정책 응답 axes 계산값")
+    # 축을 더하면 판이 바뀐다 → 옛 계산 판 = POLICY-STALE(agent 가 다시 받는다), 저장 판은 그대로 받음
+    with db.tx() as c:
+        o = c.execute("SELECT object_id FROM items WHERE id=%s", (ax,)).fetchone()["object_id"]
+        orev = c.execute("SELECT revision FROM object_defs WHERE id=%s", (o,)).fetchone()["revision"]
+    ev = db.item_propose(U, o, orev, None, 0, "AX-1", "합성 축 둘", "", {}, [])
+    ax2 = db.item_decide(U, ev["item_id"], 0, ev["proposal_id"], "apply")["id"]
+    r = await post(d.body("ax3", axes=[ax2], policy_revision=wire))
+    assert r.status_code == 409 and r.json()["code"] == "POLICY-STALE", r.text
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url=PUBLIC) as h:
+        info2 = (await h.get("/api/imports/device", headers=hd)).json()
+    assert sorted(info2["policy"]["axes"]) == sorted([ax, ax2]) and info2["policy_revision"] != wire, info2
+    r = await post(d.body("ax3", axes=[ax2], policy_revision=info2["policy_revision"]))
+    assert r.status_code in (200, 201), r.text
+    # 휴지통 축 = 연결만 빼고 받는다(영구 격리 없음, 휴지통 PR-1 규칙 그대로), 정책 응답에서도 빠진다
+    with db.tx() as c:   # 휴지통 스위치(이 시험 뒤 계정은 지운다)
+        c.execute("INSERT INTO org_features (feature, enabled) VALUES ('trash', true) ON CONFLICT (feature) DO UPDATE SET enabled=true")
+    features.clear_cache()
+    db.trash_move(U, "item", ax2, item(U, ax2)["revision"])
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url=PUBLIC) as h:
+        info3 = (await h.get("/api/imports/device", headers=hd)).json()
+    assert info3["policy"]["axes"] == [ax], info3
+    r = await post(d.body("ax4", axes=[ax2], policy_revision=info3["policy_revision"]))
+    assert r.status_code in (200, 201), r.text
+    with db.tx() as c:
+        n = c.execute("SELECT count(*) AS n FROM item_links WHERE user_id=%s AND target_item_id=%s", (U, ax2)).fetchone()["n"]
+    assert n == 1, n   # ax3 글의 연결 하나뿐 — 휴지통 뒤 보낸 ax4 글은 그 축 연결 없이 저장
+    print("OK 9 축을 더하면 판이 바뀜(옛 계산 판 POLICY-STALE, 다시 받으면 새 축 포함) · 휴지통 축은 정책에서 빠지고 연결만 뺌")
+
+
 async def run():
     A, B = db.user_by_email(MAIN)["id"], db.user_by_email(OTHER)["id"]
     tok, dev_id, ax = setup_user(A)
@@ -179,6 +259,7 @@ async def run():
     imports.LIMITS[("user", "minute", "request")] = (100000, None)
     try:
         await body(A, B, d, ax)
+        await axes_from_account(ax)
     finally:
         imports.LIMITS.clear()
         imports.LIMITS.update(lim)

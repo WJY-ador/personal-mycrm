@@ -82,14 +82,14 @@ test('R-J5: a deep link raises a window at most once per 2 seconds; the first ra
  t=2051;assert.equal(raise(),false);
  assert.equal(h.focusLimiter()(),true,'default clock');
 });
-test('R-J5: main.cjs raises for setup and login links only through the limiter; the link is still handled',()=>{
+test('R-J5: main.cjs raises the dashboard for setup and login links only through the limiter; the link is still handled',()=>{
  const main=require('node:fs').readFileSync(require('node:path').join(__dirname,'..','src','main.cjs'),'utf8');
  const body=(name)=>main.slice(main.indexOf(`function ${name}(`),main.indexOf('\n}',main.indexOf(`function ${name}(`)));
  assert.match(main,/const linkRaise=handoff\.focusLimiter\(\);/);
  assert.match(body('raiseForLink'),/if\(!linkRaise\(\)\)return;showWindow\(\);app\.focus\(\{steal:true\}\);/);
- for(const name of ['setupLink','deepLink']){
-  assert.doesNotMatch(body(name),/steal|show\(\)|showDashboard\(\)/,name+' does not raise by itself');
- }
- assert.match(body('setupLink'),/raiseForLink\(show\);[\s\S]*setup-step/);
- assert.match(body('deepLink'),/raiseForLink\(showDashboard\);[\s\S]*handoff\.accept/);
+ assert.doesNotMatch(body('deepLink'),/steal|showDashboard\(\);/,'deepLink does not raise by itself');
+ assert.match(body('deepLink'),/raiseForLink\(showDashboard\);\r?\n  if\(handoff\.parseSetupLink\(raw\)\)return;[\s\S]*handoff\.accept/);
+ // One window (spec 2026-11-13 §1.1): an old mycrm://connection?step=… link shows the dashboard and nothing else.
+ assert.match(body('guard'),/if\(handoff\.parseSetupLink\(url\)\)\{event\.preventDefault\(\);raiseForLink\(showDashboard\);return;\}/);
+ assert.doesNotMatch(main,/setup-step|setupLink|function show\(\)/);
 });

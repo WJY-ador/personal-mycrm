@@ -8,7 +8,7 @@ A. 플래그 CRM_DOWNLOAD_PUBLIC 꺼짐(없음·"0"·"true") → 「준비 중�
 B. 켜짐("1") → 직링크 3개(고정 이름)·releases/latest 링크 1개·경고 절차 본문 없음·설치 뒤 3단계.
 C. UA 판정 — Mac UA = Mac 칸 먼저·강조, Windows UA = Windows 칸 먼저·강조, iPhone·Android·빈 UA = 같은 비중(Windows 먼저).
 D. 비로그인 200 · 로그인이면 「대시보드로」 · CSP 헤더 = CSP_BASE · 인라인 스크립트 0 · no-store.
-E. 정적 — start.html 하단에 /download 링크(「연결 장치」 화면의 링크 하나는 React — Vitest features/devices/DevicesScreen.test.tsx).
+E. 정적 — start.html 하단에 /download 링크(설정 「이 PC」 화면의 링크 하나는 React — Vitest features/pc/PcScreen.test.tsx).
 F. 색 토큰(디자인 1) — 서버가 그리는 페이지(/·/help·/privacy·/download·_page·운영 화면)는 정본 ui/src/shared/tokens.css 를 그대로 넣는다.
    start.html·web.py 인라인 CSS 에 공통 토큰 값을 다시 쓰지 않는다(시작 히어로 전용 값만 예외) · 파일이 없으면 빈 문자열 · CSP 그대로.
 """
@@ -109,7 +109,7 @@ async def test_flag_on(h):
         assert "Apple 칩용 받기" in t and "Intel 칩용 받기" in t and "칩 확인:" in t
         assert t.index("설치한 뒤") > t.index('class="dl-warn"')
         steps = re.search(r'<h2 id="download-after">설치한 뒤</h2><ol>(.*?)</ol>', t).group(1)
-        assert steps.count("<li>") == 3 and "로그인" in steps and "연결 장치에서" in steps and "토큰" in steps and "붙여 넣고 시작" in steps
+        assert steps.count("<li>") == 3 and "로그인" in steps and "자동으로 연결" in steps and "토큰" not in steps and "연결 장치" not in steps, steps
     print("OK — B 플래그 켜짐 = 직링크 3(고정 이름)·releases/latest 1·경고 절차 본문 0·설치 뒤 3단계")
 
 
@@ -161,8 +161,8 @@ def test_static():
     foot = start[start.index('<footer class="foot">'):start.index("</footer>")]
     assert foot.count('<a href="/download">PC 앱 설치</a>') == 1, "start.html 하단 링크(플래그와 무관)"
     assert start.count('href="/download"') == 1
-    assert 'href="/download"' not in (HERE / "app.html").read_text(encoding="utf-8"), "「연결 장치」 화면 = React(옛 쪽 링크 0)"
-    print("OK — E 정적(start.html 하단 /download 링크 하나 · 옛 app.html 0 — 연결 장치 화면 링크는 Vitest)")
+    assert 'href="/download"' not in (HERE / "app.html").read_text(encoding="utf-8"), "「이 PC」 화면 = React(옛 쪽 링크 0)"
+    print("OK — E 정적(start.html 하단 /download 링크 하나 · 옛 app.html 0 — 이 PC 화면 링크는 Vitest)")
 
 
 async def test_tokens(h):

@@ -2,7 +2,7 @@
 // sidecar's stdin and nowhere else (sidecar stdout, app log, notifications, renderer view, saved record, request URLs).
 const {test}=require('node:test');const assert=require('node:assert/strict');
 const http=require('node:http');const fs=require('node:fs');const os=require('node:os');const path=require('node:path');const {spawn}=require('node:child_process');
-const g=require('../src/grants.cjs');const {Connector,ConnectError}=require('../src/connector.cjs');
+const g=require('../src/grants.cjs');const {Connector,ConnectError,AUTO_NAME_MS}=require('../src/connector.cjs');
 const DEVICE='imp_dev'+'D'.repeat(40),MIGRATION='mig_tok'+'M'.repeat(40),ROTATED='imp_rot'+'R'.repeat(40),AUTO='imp_aut'+'A'.repeat(40);
 const TOKENS=[DEVICE,MIGRATION,ROTATED,AUTO];
 // Fake sidecar: records what arrives on stdin (the "key store"), writes config.json like `connect`, prints a fixed line.
@@ -146,7 +146,7 @@ test('account switch on this PC (M3): NOT-OWNER removes the old device token, re
   assert.equal(regs.at(-2).body.installation_id,u2);assert.equal(regs.at(-1).body.installation_id,undefined);assert.equal(s.inst[h.inst()].owner,'u1');
   h.assertNoLeak();
 }));
-test('auto connection: only on request; lost token gets the same device; revoked or released PC is not reconnected',()=>withServer(async s=>{
+test('auto connection: only on request; lost token gets the same device; a PC the server released is not reconnected',()=>withServer(async s=>{
   const h=harness(s);await h.c.poll();
   assert.equal(s.count('/desktop/device/auto'),0,'login alone creates no device');
   assert.equal(h.c.needsAuto(),true);await h.lock(()=>h.c.autoConnect());assert.equal(h.c.needsAuto(),false);
@@ -162,9 +162,46 @@ test('auto connection: only on request; lost token gets the same device; revoked
   // A conversation reconnect (redeem) lifts it.
   s.grant('device',h.inst());h.next();await h.c.poll();
   assert.equal(h.c.view().revoked,false);assert.equal(s.inst[h.inst()].revoked,false);
-  // Disconnecting in this app is a release too.
-  h.c.released();fs.rmSync(path.join(h.dir,'config.json'));await assert.rejects(h.lock(()=>h.c.autoConnect()),e=>e.message==='revoked');
-  h.c.manualConnected();await h.lock(()=>h.c.autoConnect());
+  // A disconnect saved by an app before 0.1.7 (released) no longer blocks: the app has no disconnect button now (spec 1.2).
+  h.c.save({released:true});fs.rmSync(path.join(h.dir,'config.json'));await h.lock(()=>h.c.autoConnect());
+  assert.equal(h.c.needsAuto(),false);
+  h.assertNoLeak();
+}));
+test('ensureDevice: connects at start and after login without a button, spaces failures, keeps a server release',()=>withServer(async s=>{
+  const h=harness(s);await h.c.poll();
+  assert.equal(await h.c.ensureDevice('startup'),'issued');
+  assert.equal(h.calls().at(-1).stdin,AUTO+'\n');
+  assert.equal(await h.c.ensureDevice('timer'),'connected');
+  assert.equal(s.count('/desktop/device/auto'),1);
+  // Busy app: nothing happens now and nothing is spaced.
+  fs.rmSync(path.join(h.dir,'config.json'));h.busy=true;
+  assert.equal(await h.c.ensureDevice('timer'),'busy');h.busy=false;
+  // A refusal is thrown with its code and the next timer try waits; a login tries at once.
+  s.override=(req,res)=>{res.writeHead(409,{'Content-Type':'application/json'});res.end('{"code":"DEVICE-LIMIT","msg":"m","action":"a"}');};
+  await assert.rejects(h.c.ensureDevice('timer'),e=>e.message==='limit');
+  assert.equal(h.c.blockReason(),'limit');
+  assert.equal(await h.c.ensureDevice('timer'),'waiting');
+  // A missing display name is fixed on the web right after login: tried again after a short gap.
+  s.override=(req,res)=>{res.writeHead(409,{'Content-Type':'application/json'});res.end('{"code":"NAME-REQUIRED","msg":"m","action":"a"}');};
+  await assert.rejects(h.c.ensureDevice('login'),e=>e.message==='name');
+  assert.equal(h.c.blockReason(),'name');
+  h.tick(AUTO_NAME_MS-1000);assert.equal(await h.c.ensureDevice('timer'),'waiting');
+  h.tick(1000);await assert.rejects(h.c.ensureDevice('timer'),e=>e.message==='name');
+  s.override=(req,res)=>{res.writeHead(500,{'Content-Type':'application/json'});res.end('{}');};
+  await assert.rejects(h.c.ensureDevice('login'),e=>e.message==='failed'&&e.code==='FAILED');
+  s.override=null;h.tick(11*60*1000);
+  assert.equal(await h.c.ensureDevice('timer'),'issued');
+  assert.equal(h.c.blockReason(),null);
+  // No session: the dashboard shows its login screen; the app does not try.
+  fs.rmSync(path.join(h.dir,'config.json'));s.cookie='';h.next();await h.c.poll();
+  const autos=s.count('/desktop/device/auto');
+  assert.equal(await h.c.ensureDevice('timer'),'login');assert.equal(s.count('/desktop/device/auto'),autos);
+  assert.equal(h.c.blockReason(),'login');
+  // Released by the server: stays released.
+  s.cookie='sess-1';h.next();await h.c.poll();
+  s.inst[h.inst()].revoked=true;s.inst[h.inst()].device.active=false;h.next();await h.c.poll();
+  assert.equal(await h.c.ensureDevice('login'),'revoked');
+  assert.equal(h.c.blockReason(),'revoked');
   h.assertNoLeak();
 }));
 test('session rotate 30 days before expiry; NOT-FOUND, DEVICE-REVOKED, NOT-OWNER and no session are handled',async()=>{

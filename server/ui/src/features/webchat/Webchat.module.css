@@ -135,3 +135,9 @@
   .picker { margin-right: auto; }   /* 글자 수가 숨으면 보내기를 오른쪽 끝에 */
   .kv > div { grid-template-columns: 1fr; gap: var(--sp-1); }
 }
+/* 이 PC의 AI 연결(2026-11-13 앱 하나 1.3) — 공급자마다 한 줄, 상태 + 버튼 하나 */
+.links { display: flex; flex-direction: column; gap: var(--sp-2); }
+.links p { margin: 0; display: flex; align-items: center; gap: var(--sp-4); font-size: var(--fs-2); }
+.links p > span { flex: 1; color: var(--muted); }
+.links p[data-state="linked"] > span { color: var(--ink); }
+.info .links { margin-top: var(--sp-2); }

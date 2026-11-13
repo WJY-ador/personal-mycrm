@@ -518,9 +518,11 @@ def feedback_send(
 @mcp.tool()
 @guard
 def ticket_list_mine(ctx: Context) -> list[dict]:
-    """내가 보낸 문의 목록(50건, 최근 공개 갱신순 — 갱신이 없으면 접수 시각) — id·종류·상태·접수 시각·답변 유무·공개 갱신 시각. 글·답변 본문은 ticket_get_mine 으로 하나씩 본다.
-    사용자가 「내 문의 어떻게 됐어?」 류를 물을 때 부른다."""
-    return [{k: t[k] for k in ("id", "kind", "status", "created", "has_reply", "public_updated")} for t in db.tickets_mine(uid_of(ctx))]
+    """내가 보낸 문의 목록(50건, 최근 공개 갱신순 — 갱신이 없으면 접수 시각) — id·종류·상태·접수 시각·답변 유무·공개 갱신 시각·경로.
+    경로 via=auto 는 앱, PC 에이전트, 웹이 오류 때 저절로 보낸 오류 보고(사용자가 쓴 글 아님, auto_count = 같은 오류 하루 횟수).
+    글·답변 본문은 ticket_get_mine 으로 하나씩 본다. 사용자가 「내 문의 어떻게 됐어?」 류를 물을 때 부른다."""
+    return [{k: t[k] for k in ("id", "kind", "status", "created", "has_reply", "public_updated", "via", "auto_count")}
+            for t in db.tickets_mine(uid_of(ctx))]
 
 
 @mcp.tool()

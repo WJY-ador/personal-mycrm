@@ -354,7 +354,10 @@ class FakeImportServer:
 
 
 def run_cli(argv, **kw):
+    """CLI 를 이 프로세스에서 돌린다. AI 연결 확인은 기본으로 이 PC 의 실제 claude, codex 를 찾지 않는다(없는 폴더만 본다)."""
     from agent import cli
+    kw.setdefault("ai_kw", {"path_value": "", "platform": "win32", "user_home": os.path.join(tempfile.gettempdir(),
+                                                                                              "mycrm-no-cli-home")})
     out = io.StringIO()
     code = cli.main(argv, out=out, **kw)
     return code, out.getvalue()

@@ -537,14 +537,14 @@ def render_download(public: bool, os_: str) -> str:
 
     order = ("mac", "win") if os_ == "mac" else ("win", "mac")
     body = ('<section class="doc" id="download"><h1>PC 앱 설치</h1>'
-            '<p class="dl-lead">PC 앱을 설치하고 연결 장치에서 이 계정에 연결해요.</p>'
+            '<p class="dl-lead">PC 앱을 설치하고 앱에서 로그인하면 이 PC가 자동으로 연결돼요.</p>'
             + "".join(section(n) for n in order)
             + '<p class="dl-warn">베타 버전이라 서명이 없어 첫 실행 때 OS 경고가 떠요. '
             f'<a href="{RELEASES_LATEST}">설치 경고 안내와 체크섬</a></p>'
             '<h2 id="download-after">설치한 뒤</h2><ol>'
-            '<li>대시보드에 로그인해요.</li>'
-            '<li>연결 장치에서 새 장치를 연결하고 토큰을 받아요.</li>'
-            '<li>PC 앱에 토큰을 붙여 넣고 시작해요.</li></ol></section>')
+            '<li>PC 앱을 열고 로그인해요. 이 PC가 자동으로 연결돼요.</li>'
+            '<li>AI 대화를 쓰려면 앱의 AI 패널에서 Claude 연결을 눌러요.</li>'
+            '<li>오류가 나면 오류 코드만 운영자에게 자동으로 보내져요.</li></ol></section>')
     return _doc_page("PC 앱 설치", "", body, '<a href="/help">도움말</a> · <a href="/privacy">개인정보 처리방침</a>', _DOWNLOAD_CSS)
 
 
@@ -644,7 +644,8 @@ ADMIN_LABELS = {"bootstrap": "첫 지정", "recover": "복구(CLI)", "role_grant
                 "migration_token": "이관 토큰 발급",
                 # PC 연결(2026-11-02) — 대화 요청(grant)·앱 수령·PC 해제·장치 토큰 교체. detail 에 토큰 값 없음
                 "token_grant": "토큰 전달 요청(대화)", "token_grant_redeem": "토큰 앱 수령", "pc_forget": "PC 연결 해제",
-                "device_rotate": "장치 토큰 교체"}
+                "device_rotate": "장치 토큰 교체",
+                "auto_case_cap": "오류 자동 Case 전역 하루 상한 도달"}
 # 연결 장치 허용 규칙의 변환 이름 — 화면 표시용(키 = imports.TRANSFORMS). 모르는 키는 키 그대로 보인다
 POLICY_MAX_BYTES = 4 * 1024   # 장치 허용 규칙(policy) JSON 상한 — WRITE_LIMITS 밖이라 웹이 write_gate 전에 직접 센다
 TRANSFORM_LABELS = {"board-likes/1": "좋아요 활동(바로 저장)", "self-text/1": "내 글(바로 저장)", "self-summary/1": "AI 요약(바로 저장, 인용 불가)",
@@ -667,7 +668,7 @@ button{font:inherit;font-size:12px;padding:3px 8px;border:1px solid var(--line);
 button.danger{border-color:var(--fail);color:var(--fail)}.tag{font-size:12px;padding:1px 6px;border-radius:4px;background:var(--memo-bg)}
 .tag.admin{background:var(--mine-bg);color:var(--mine)}.tag.blocked{background:var(--fail-bg);color:var(--fail)}.muted{color:var(--muted)}
 .tag.over{background:var(--fail-bg);color:var(--fail)}.tag.due{background:var(--warn-bg);color:var(--warn)}.tag.pub{background:var(--mine-bg);color:var(--mine)}
-.tag.int{background:var(--ai-bg);color:var(--ai)}.tag.st-done,.tag.st-wontfix{background:var(--memo-bg);color:var(--memo)}.tag.st-open{background:var(--warn-bg);color:var(--warn)}
+.tag.int{background:var(--ai-bg);color:var(--ai)}.tag.auto{background:var(--ai-bg);color:var(--ai)}.tag.st-done,.tag.st-wontfix{background:var(--memo-bg);color:var(--memo)}.tag.st-open{background:var(--warn-bg);color:var(--warn)}
 dl.meta{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px;margin:12px 0;padding:10px 12px;background:var(--card);border:1px solid var(--line);border-radius:8px}
 dl.meta dt{color:var(--muted);font-size:12px}dl.meta dd{margin:0;word-break:break-all}
 pre.txt{white-space:pre-wrap;word-break:break-word;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;font:inherit;margin:0}
@@ -1753,6 +1754,64 @@ class Web:
         gid = request.path_params["gid"]
         return await self._desktop_api(request, lambda uid, b: token_grants.grant_redeem(uid, gid, b["installation_id"]), ip_limit=True,
                                        shape={"installation_id": ((str,), True)})
+
+    # ── 오류 자동 Case(2026-11-13 명세 1.4) — 경로 셋, 본문 같음. 검사·묶기는 auto_cases.record 하나 ──
+    _ERROR_REPORT_STATUS = {"ARG-INVALID": 400, "PAYLOAD-LIMIT": 413, "RATE-LIMIT": 429, "AUTH-BLOCKED": 403}
+
+    async def _error_report(self, request, mode):
+        """mode = device(Bearer 장치 토큰) | desktop(앱 로그인 세션) | web(웹 세션 + Origin). 출처는 인증이 정한다(device·desktop = app|agent, web = web)."""
+        import auto_cases
+        code = "EXC"
+        try:
+            if mode == "device":
+                try:
+                    dev = await run_in_threadpool(imports.authenticate, request.headers.get("authorization", ""))
+                except db.CrmError as e:
+                    code = e.code
+                    return self._json_err(e.code, e.message, 403 if e.code == "AUTH-BLOCKED" else 401, e.action)
+                uid, sources = dev["user_id"], auto_cases.SOURCES_DEVICE
+            else:
+                if mode == "desktop":
+                    why = self._desktop_gate(request)
+                    if why:
+                        code = "ORIGIN" if why == "origin" else "DESKTOP-HEADER"
+                        return self._json_err(code, "MyCRM 앱에서 온 요청이 아니에요.", 403)
+                elif not self.same_origin(request):
+                    code = "ORIGIN"
+                    return self._json_err("ORIGIN", "다른 사이트에서 온 요청이에요.", 403)
+                uid, err = await self._need(request)
+                if err:
+                    code = "AUTH"
+                    err.headers["cache-control"] = "no-store"
+                    return err
+                sources = auto_cases.SOURCES_WEB if mode == "web" else auto_cases.SOURCES_DEVICE
+            raw = b""
+            async for chunk in request.stream():
+                raw += chunk
+                if len(raw) > auto_cases.BODY_MAX:
+                    break
+            try:
+                out = await run_in_threadpool(auto_cases.record, uid, raw, sources)
+            except db.CrmError as e:
+                code = e.code
+                return self._json_err(e.code, e.message, self._ERROR_REPORT_STATUS.get(e.code, 400), e.action,
+                                      self._retry_after() if e.code == "RATE-LIMIT" else None)
+            code = "OK"
+            return JSONResponse(out, headers={"cache-control": "no-store"})
+        finally:
+            db.usage_count(None, f"{mode}:error_report", code if re.fullmatch(r"[A-Z][A-Z0-9-]{0,39}", code) else "EXC")
+
+    async def api_error_report(self, request):
+        """POST /api/error-reports — 웹 세션 + Origin, source web(화면의 5xx·알 수 없는 오류, 웹 대화 실패)."""
+        return await self._error_report(request, "web")
+
+    async def api_device_error_report(self, request):
+        """POST /api/device/error-reports — Bearer 장치 토큰(PC 에이전트, 앱 main), source app | agent."""
+        return await self._error_report(request, "device")
+
+    async def desktop_error_report(self, request):
+        """POST /desktop/error-reports — 앱 로그인 세션(장치 토큰이 죽은 때: 폐기, 만료, 자동 연결 실패), source app | agent."""
+        return await self._error_report(request, "desktop")
 
     async def desktop_device_auto(self, request):
         """POST /desktop/device/auto {installation_id, client_name?, os?} — 수집을 처음 켤 때 자동 연결. 표시 이름 관문·전역 크기 = write_gate."""
@@ -3148,6 +3207,14 @@ class Web:
     _TK_HIST = {"status": "상태", "reply": "답변", "note": "메모", "reclassify": "재분류", "deleted": "삭제 완료"}
 
     @staticmethod
+    def _tk_auto(t) -> str:
+        """오류 자동 Case(via auto) 표시 — 「자동」 태그, 횟수, 첫 시각과 마지막 시각. 사람이 쓴 문의는 빈 칸."""
+        if t.get("via") != "auto":
+            return ""
+        return (f'<span class="tag auto">자동</span> {int(t["auto_count"] or 0)}회 '
+                f'<span class="muted">첫 {_esc(Web._tk_time(t["auto_first"]))}, 마지막 {_esc(Web._tk_time(t["auto_last"]))}</span>')
+
+    @staticmethod
     def _tk_time(v) -> str:
         if not v:
             return ""
@@ -3198,7 +3265,7 @@ class Web:
         filt = (f'<form method="get" action="/admin/tickets" class="bar">{sel("status", self._TK_LIST_STATUS, status)}'
                 f'{sel("kind", {"all": "전체", **self._TK_KIND}, kind)}{sel("sort", self._TK_SORT, sort)}'
                 f'<span class="muted">선택 열</span>{boxes}<button type="submit">보기</button></form>')
-        head = ["접수일", "종류", "상태", "보낸 사람", "답변", "최근 갱신", "개인정보 기한", "의심"] + [self._TK_COLS[c] for c in cols]
+        head = ["접수일", "종류", "상태", "보낸 사람", "답변", "최근 갱신", "개인정보 기한", "의심", "자동"] + [self._TK_COLS[c] for c in cols]
         trs, hint_tag = [], '<span class="tag over">개인정보?</span>'
         for t in rows:
             href = f"/admin/tickets/{quote(t['id'], safe='')}"
@@ -3210,7 +3277,7 @@ class Web:
                        f'<td>{_esc(self._TK_KIND.get(t["kind"], t["kind"]))}</td>'
                        f'<td><span class="tag st-{_esc(t["status"])}">{_esc(self._TK_STATUS.get(t["status"], t["status"]))}</span></td>'
                        f'<td class="email">{_esc(t["email"])}</td><td>{reply}</td><td>{_esc(self._tk_time(t["updated"]))}</td>'
-                       f'<td>{deadline}</td><td>{hint_tag if t["hint"] else ""}</td>'
+                       f'<td>{deadline}</td><td>{hint_tag if t["hint"] else ""}</td><td>{self._tk_auto(t)}</td>'
                        + "".join(f"<td>{extra[c]}</td>" for c in cols) + "</tr>")
         empty = f'<tr><td colspan="{len(head)}" class="muted">조건에 맞는 문의가 없어요.</td></tr>'
         note = f'<p class="muted">상위 {admin_db.TICKET_LIST_MAX}건만 보여요. 필터를 좁혀 보세요.</p>' if more else ""
@@ -3244,6 +3311,10 @@ class Web:
             meta.append(("개인정보 기한", f'받은 날 {_esc(t["privacy_received"])} · {deadline or "종결"}'))
         if t["closed_at"]:
             meta.append(("종결", _esc(self._tk_time(t["closed_at"]))))
+        if t["via"] == "auto":   # 오류 자동 Case — 묶음 값(코드와 고정 낱말만)
+            m = t.get("auto_meta") or {}
+            meta.append(("자동 보고", self._tk_auto(t)))
+            meta.append(("마지막 보고", _esc(", ".join(str(m.get(k) or "—") for k in ("source", "stage", "code", "app_version", "os")))))
         dl = "".join(f"<dt>{_esc(k)}</dt><dd>{v}</dd>" for k, v in meta)
         path = "".join(
             f'<form method="post" action="{_esc(base)}/status"><input type="hidden" name="status" value="{_esc(k)}">'
@@ -3372,6 +3443,7 @@ class Web:
             Route("/desktop/grants", _usage("desktop:grants", self.desktop_grants)),
             Route("/desktop/device/auto", _usage("desktop:device_auto", self.desktop_device_auto), methods=["POST"]),
             Route("/desktop/device/rotate", _usage("desktop:device_rotate", self.desktop_device_rotate), methods=["POST"]),
+            Route("/desktop/error-reports", self.desktop_error_report, methods=["POST"]),   # 오류 자동 Case — 앱 로그인 세션(집계는 _error_report)
             Route("/dev/login", self.dev_login, methods=["GET", "POST"]),   # CRM_DEV 만(아니면 404)
             Route("/logout", self.logout, methods=["POST"]),
             Route("/api/state", u("web:state", self.api_state)),
@@ -3429,6 +3501,8 @@ class Web:
             Route("/api/trash/{op}", u("web:trash_op", self.api_trash_op), methods=["POST"]),
             Route("/api/trash/{kind}/{tid}", u("web:trash_get", self.api_trash_one)),
             # PR ②-a 작업 전달 — 장치(Bearer 장치 토큰) 2 · 웹(세션) 3
+            Route("/api/device/error-reports", self.api_device_error_report, methods=["POST"]),   # 오류 자동 Case — Bearer 장치 토큰
+            Route("/api/error-reports", self.api_error_report, methods=["POST"]),   # 오류 자동 Case — 웹 세션 + Origin
             Route("/api/device/rotate", self.api_device_rotate, methods=["POST"]),   # PC 연결 — Bearer 장치 토큰 교체(M2)
             Route("/api/device/jobs", self.api_device_jobs),
             Route("/api/device/jobs/{jid}/{op}", self.api_device_job, methods=["GET", "POST"]),

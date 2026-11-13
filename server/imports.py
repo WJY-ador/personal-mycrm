@@ -6,7 +6,7 @@
 호출하는 곳
   · main.py  — POST /api/imports · GET /api/imports/{import_id}(장치 토큰) · MCP 읽기 inbox_list·inbox_get · MCP 확정 inbox_decide(facade)
                · 주기 파기 expire_pending
-  · web.py   — 「연결 장치」(#_devices) device_* · 「승인 대기」(#_inbox) inbox_* (세션·Origin·write_gate 는 web 이 먼저)
+  · web.py   — 장치 API device_*(사용자 화면 「연결 장치」는 2026-11-13 없앴다, API 는 관리자·시험·옛 앱용) · 「승인 대기」(#_inbox) inbox_* (세션·Origin·write_gate 는 web 이 먼저)
   · migrate_cli.py — migration_* (DATABASE_URL 명시, 웹 실행 없음)
 
 오류 = db.CrmError(code, message, action). HTTP 상태는 http_status(code) 한 곳에서 정한다.
@@ -20,6 +20,7 @@ import hmac as _hmac
 import json
 import re
 import secrets
+import zlib
 
 from psycopg.types.json import Jsonb
 
@@ -49,7 +50,17 @@ TRANSFORMS = {
     "board-reactions/1": {"kind": "activity", "actions": ("like", "comment", "repost", "reply"), "providers": ("sns", "web")},
     "board-mail/1": {"kind": "activity", "actions": ("read", "save", "send", "reply"), "providers": ("mail",)},
 }
-DEFAULT_POLICY = {"actions": ["like"], "transform_versions": ["board-likes/1", "self-text/1", "self-summary/1", "session-wrap/1"], "axes": []}
+# 앱 하나 자동 연결(2026-11-13 명세 1.2): 허용 규칙은 사용자가 고르지 않는다 — 제품이 지원하는 모든 행동과 변환, 축 0개.
+# 무엇을 모을지는 PC 수집기 설정이 정한다. 비상 끄기는 조직 기능 스위치(imports, activity_imports 등) 그대로
+DEFAULT_POLICY = {"actions": list(ACTIONS), "transform_versions": list(TRANSFORMS), "axes": []}
+# 기존 장치를 DEFAULT_POLICY 로 맞추는 이관 표식(고정 키) — 한 번만 돈다. 행동, 변환 목록이 늘어도 키는 그대로다(migrate_device_policy)
+POLICY_ALL_MARK = "device-policy-all-v1"
+# 이관 대상 = 옛 제품 기본값 그대로인 장치(사용자가 고른 값이 아니다). 2026-11-04(22e373e) 전 기본값과 그 뒤 기본값.
+# 사용자가 바꾼 정책(축, 행동, 변환이 이 둘과 다름)은 그대로 둔다. 비교는 집합(배열 순서 무관), 축은 0개
+OLD_DEFAULT_POLICIES = (
+    {"actions": ["like"], "transform_versions": ["board-likes/1", "self-text/1", "self-summary/1"], "axes": []},
+    {"actions": ["like"], "transform_versions": ["board-likes/1", "self-text/1", "self-summary/1", "session-wrap/1"], "axes": []},
+)
 # 세션 정리 승인 = 내가 쓴(author self) 구조 정리(structured) · 나와 AI 가 함께 만든 글(mixed) · 「내 결정」 표시(decision_owner self — 화면엔 안 보인다)
 SESSION_WRAP = "session-wrap/1"
 SESSION_WRAP_SOURCE = "세션 정리"
@@ -565,6 +576,25 @@ def _axes_split(c, uid, ids):
     return bad, {i for i, live in rows.items() if not live}
 
 
+WIRE_AXES_MAX = 2000   # 장치에 내려주는 축 id 상한(응답 크기 — id 하나 ≤ 40자, 2000개 ≈ 90 KiB)
+
+
+def live_axes(c, uid) -> list:
+    """지금 계정의 축 = 분류 역할 오브젝트의 적용(revision > 0), 미보관, 휴지통 아닌 항목 id(정렬). 장치 정책 axes 의 계산값."""
+    oid = db._classify_target(c, uid)
+    if not oid:
+        return []
+    return [r["id"] for r in _all(c, "SELECT id FROM items WHERE user_id=%s AND object_id=%s AND revision > 0 AND archived_at IS NULL "
+                                     "AND trashed_at IS NULL ORDER BY id LIMIT %s", (uid, oid, WIRE_AXES_MAX))]
+
+
+def wire_revision(stored: int, axes: list) -> int:
+    """장치에 보이는 정책 판 = 저장 판 × 2^20 + 축 집합 지문(20비트). 축 항목을 더하거나 지우면 바뀌어 agent 가 다음 업로드의
+    POLICY-STALE 에서 정책을 다시 받는다(agent 는 같음만 비교한다). 지문 충돌(약 백만 분의 1)이면 새 축이 다음 재수신까지 걸러질 뿐이다.
+    접수는 저장 판도 받는다(정책을 다시 받기 전 장치, 시험). 저장 판을 든 장치는 축 변화를 알지 못한다 — 기존 장치는 이관의 판 +1 로 한 번 다시 받는다."""
+    return stored * (1 << 20) + (zlib.crc32(",".join(axes).encode("utf-8")) & 0xFFFFF)
+
+
 def _norm_policy(c, uid, policy):
     if not isinstance(policy, dict) or set(policy) != {"actions", "transform_versions", "axes"}:
         raise CrmError("ARG-INVALID", "허용 규칙 키는 actions·transform_versions·axes 셋이에요.")
@@ -582,6 +612,23 @@ def _norm_policy(c, uid, policy):
     if trashed:   # 휴지통 축을 정책에 새로 넣지 않는다 — 축 이동(core)과 같은 사용자 잠금 안이라 경합하지 않는다
         raise CrmError("ARG-INVALID", "axes 에 휴지통에 있는 축이 있어요.", "축을 복원하거나 정책에서 빼세요.")
     return {"actions": list(acts), "transform_versions": list(tvs), "axes": list(axes)}
+
+
+def migrate_device_policy(c) -> int:
+    """옛 기본 허용 규칙(OLD_DEFAULT_POLICIES) 그대로인 장치를 DEFAULT_POLICY 로 맞춘다(명세 1.2). POLICY_ALL_MARK 가 없을 때 한 번.
+    사용자가 바꾼 규칙은 그대로 둔다. 바뀐 장치는 policy_revision +1(에이전트는 다음 업로드의 POLICY-STALE 에서 새 규칙을 받아
+    다시 보낸다, agent/runner.py). 반환 = 바꾼 장치 수."""
+    if not _one(c, "INSERT INTO schema_marks (key) VALUES (%s) ON CONFLICT (key) DO NOTHING RETURNING key", (POLICY_ALL_MARK,)):
+        return 0
+    n = 0
+    for old in OLD_DEFAULT_POLICIES:   # 집합 비교 = 서로 포함(@> 와 <@), 축 0개
+        acts, tvs = Jsonb(old["actions"]), Jsonb(old["transform_versions"])
+        n += len(_all(c, "UPDATE import_streams SET policy=%s, policy_revision=policy_revision+1 "
+                         "WHERE channel='device' AND policy->'actions' @> %s AND policy->'actions' <@ %s "
+                         "AND policy->'transform_versions' @> %s AND policy->'transform_versions' <@ %s "
+                         "AND policy->'axes' = '[]'::jsonb RETURNING id",
+                      (Jsonb(DEFAULT_POLICY), acts, acts, tvs, tvs)))
+    return n
 
 
 # ── 연결 장치 (web #_devices) ─────────────────────────────
@@ -726,9 +773,9 @@ def authenticate(authorization: str) -> dict:
     if not r or r["id"] != sid or r["channel"] != "device" or stored is None or not _hmac.compare_digest(bytes(stored), h):
         raise CrmError("AUTH-INVALID", "장치 토큰이 맞지 않아요.", "장치를 다시 연결하세요.")
     if r["revoked_at"] is not None or (not pending and r["token_revoked_at"] is not None):
-        raise CrmError("TOKEN-REVOKED", "이 장치 토큰은 폐기됐어요.", "웹의 「연결 장치」에서 다시 연결하세요.")
+        raise CrmError("TOKEN-REVOKED", "이 장치 토큰은 폐기됐어요.", "MyCRM 앱에서 다시 로그인하면 새로 연결돼요.")
     if r["pending_expired"] if pending else r["expired"]:
-        raise CrmError("TOKEN-EXPIRED", "장치 토큰이 만료됐어요.", "웹의 「연결 장치」에서 토큰을 재발급하세요.")
+        raise CrmError("TOKEN-EXPIRED", "장치 토큰이 만료됐어요.", "MyCRM 앱을 열어 두면 로그인 상태로 새 토큰을 받아요.")
     if r["status"] != "active":
         raise CrmError("AUTH-INVALID", "사용자를 찾을 수 없어요.")
     if r["blocked_at"] is not None:
@@ -1294,12 +1341,14 @@ def submit(authorization: str, idempotency_key_header: str, raw: bytes) -> tuple
             idempotency_key_header != idempotency_key(req["source_instance_id"], req["original_id"], req["revision"]):
         raise CrmError("IDEMPOTENCY-KEY-MISMATCH", "Idempotency-Key 가 요청과 맞지 않아요.", "계약의 키 계산식으로 다시 만드세요.")
     pol = dev["policy"] or {}
-    if req["policy_revision"] != dev["policy_revision"]:
+    with tx() as c:
+        wire = wire_revision(dev["policy_revision"], live_axes(c, dev["user_id"]))
+    if req["policy_revision"] not in (dev["policy_revision"], wire):   # 저장 판(정책 재수신 전 장치, 시험) 또는 계산 판(축 지문 포함)
         raise CrmError("POLICY-STALE", "장치 허용 규칙이 바뀌었어요.", "장치에서 허용 규칙을 다시 받아 오세요.")
     if req["transform_version"] not in pol.get("transform_versions", []):
         raise CrmError("POLICY-DENIED", "이 장치에 허용하지 않은 변환 버전이에요.")
-    if kind in ("activity", "collected_post") and any(a not in pol.get("axes", []) for a in req.get("axes", [])):
-        raise CrmError("POLICY-DENIED", "이 장치에 허용하지 않은 축이에요.")
+    # 축(2026-11-13 메인 판정): 정책 axes 허용 목록과 대조하지 않는다 — 그 사용자 계정의 분류(축) 항목이면 받는다.
+    # 분류 항목이 아님(남의 축, 없는 id, 보관) = POLICY-DENIED, 휴지통 축 = 그 연결만 뺀다(_axes_split, 활동과 수집 글이 각자 본다)
     if kind == "activity":
         if req["action"] not in pol.get("actions", []):
             raise CrmError("POLICY-DENIED", "이 장치에 허용하지 않은 행동이에요.")
@@ -1319,7 +1368,7 @@ def submit(authorization: str, idempotency_key_header: str, raw: bytes) -> tuple
             raise CrmError("TOKEN-REVOKED", "이 장치 토큰은 폐기됐어요.")
         if s["expired"]:
             raise CrmError("TOKEN-EXPIRED", "장치 토큰이 만료됐어요.")
-        if s["policy_revision"] != req["policy_revision"]:
+        if req["policy_revision"] not in (s["policy_revision"], wire_revision(s["policy_revision"], live_axes(c, uid))):
             raise CrmError("POLICY-STALE", "장치 허용 규칙이 바뀌었어요.")
         same = _one(c, f"SELECT {_ENTRY_COLS} FROM import_entries WHERE user_id=%s AND stream_id=%s AND original_id=%s "
                        "AND source_revision=%s", (uid, dev["id"], req["original_id"], req["revision"]))
@@ -1368,7 +1417,10 @@ def device_self(authorization: str) -> dict:
     _rate(dev)
     with tx() as c:
         r = _one(c, "SELECT token_expires_at FROM import_streams WHERE user_id=%s AND id=%s", (dev["user_id"], dev["id"]))
-    return {"stream_id": dev["id"], "label": dev["label"], "policy": dev["policy"], "policy_revision": dev["policy_revision"],
+        axes = live_axes(c, dev["user_id"])
+    # 정책 axes = 저장값이 아니라 지금 계정의 축 항목 전부(agent 의 POLICY-AXIS 검사가 그대로 통과한다). 판 = 저장 판 + 축 집합 지문
+    return {"stream_id": dev["id"], "label": dev["label"], "policy": {**(dev["policy"] or {}), "axes": axes},
+            "policy_revision": wire_revision(dev["policy_revision"], axes),
             "hmac_namespace": dev["hmac_namespace"], "token_expires_at": _j(r["token_expires_at"])}
 
 

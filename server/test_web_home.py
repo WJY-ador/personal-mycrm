@@ -206,7 +206,7 @@ def test_static():
     assert activity.NOTICE in ui_text("features", "activity", "text.ts"), "ME_NOTICE(React 활동) = 서버 activity.NOTICE 미러"
     chips = ui_text("shared", "CandChips.tsx")
     assert '"내가 쓴 메모"' in chips and ">확정한 판단<" in chips, "표시 낱말 = React 칩(R5b-1)"
-    for w in ('["layout", "페이지 레이아웃"]', '["structure", "내 구조 설정"]', '["objects", "자료 종류"]', '["devices", "연결 장치"]', '["map", "지도"]',
+    for w in ('["layout", "페이지 레이아웃"]', '["structure", "내 구조 설정"]', '["objects", "자료 종류"]', '["pc", "이 PC"]', '["map", "지도"]',
               '["help", "문의 및 개인정보"]', 'if (R.tab === "_obj" && !R.a) return "#_setup/objects";',
               'if ((R.tab === "today" || R.tab === "home") && R.a !== "review") return "#_today";'):
         assert w in route, w

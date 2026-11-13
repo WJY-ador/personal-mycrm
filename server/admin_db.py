@@ -36,11 +36,12 @@ ALLOW = {
     # 문의 상세 — 원문(text)·운영자 메모(admin_note)를 읽는 유일한 조회.
     "tickets.detail": {
         "sql": "SELECT t.id,t.kind,t.text,t.status,t.via,t.page,t.tool,t.ua_family,t.hint,t.admin_note,"
-               "t.created,t.updated,t.closed_at,t.reply,t.reply_at,t.public_updated,u.email,"
+               "t.created,t.updated,t.closed_at,t.reply,t.reply_at,t.public_updated,t.auto_count,t.auto_first,t.auto_last,t.auto_meta,u.email,"
                "CASE WHEN t.kind='privacy' THEN (SELECT min(p.received) FROM privacy_log p WHERE p.ticket_id=t.id) END AS privacy_received "
                "FROM tickets t JOIN users u ON u.id=t.user_id WHERE t.id=%s",
         "cols": ("id", "kind", "text", "status", "via", "page", "tool", "ua_family", "hint", "admin_note", "created", "updated",
-                 "closed_at", "reply", "reply_at", "public_updated", "email", "privacy_received"),
+                 "closed_at", "reply", "reply_at", "public_updated", "auto_count", "auto_first", "auto_last", "auto_meta", "email",
+                 "privacy_received"),
         "viewer": VIEWER_ADMIN, "consent": None,
     },
     # 문의 이력 전부(공개·내부) — 운영자 레코드 페이지용. 값은 열거값(상태·kind·사유)뿐.
@@ -295,6 +296,7 @@ TICKET_LIST_KIND = ("all",) + db.TICKET_KINDS
 TICKET_LIST_SORT = ("deadline", "new", "updated")   # deadline = 개인정보 기한 오름차순(초과 최우선) → 나머지 접수순(기본)
 ALLOW["tickets.list"] = {
     "sql": "SELECT t.id,t.kind,t.status,t.via,t.hint,t.created,t.updated,t.closed_at,(t.reply IS NOT NULL) AS has_reply,t.reply_at,"
+           "t.auto_count,t.auto_first,t.auto_last,"
            "u.email,CASE WHEN t.kind='privacy' THEN (SELECT min(p.received) FROM privacy_log p WHERE p.ticket_id=t.id) END AS privacy_received "
            "FROM tickets t JOIN users u ON u.id=t.user_id "
            "WHERE (%(kind)s = 'all' OR t.kind = %(kind)s) "
@@ -305,8 +307,8 @@ ALLOW["tickets.list"] = {
            "CASE WHEN %(sort)s = 'updated' THEN t.updated END DESC NULLS LAST, "
            "CASE WHEN %(sort)s = 'new' THEN t.created END DESC NULLS LAST, t.created ASC, t.id "
            "LIMIT %(lim)s",
-    "cols": ("id", "kind", "status", "via", "hint", "created", "updated", "closed_at", "has_reply", "reply_at", "email",
-             "privacy_received"),
+    "cols": ("id", "kind", "status", "via", "hint", "created", "updated", "closed_at", "has_reply", "reply_at",
+             "auto_count", "auto_first", "auto_last", "email", "privacy_received"),
     "viewer": VIEWER_ADMIN, "consent": None,
 }
 

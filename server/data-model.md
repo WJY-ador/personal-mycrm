@@ -31,7 +31,7 @@
 | (이관 경로, 2026-11-02) migration_tokens·migration_plans·migration_plan_items | 이관 토큰·이관 plan·plan 항목(영수증) — 아래 「이관 경로」 절 | users M-D |
 | (앱 로그인 넘김, 2026-11-02) desktop_handoffs | 시스템 브라우저 로그인(`/desktop/login` → `/auth/callback`) 뒤 앱(`mycrm://auth/callback`)이 `/desktop/claim` 으로 세션을 받는 일회용 코드. 코드 원문은 저장하지 않는다(`code_hash` = SHA-256) · `challenge` = base64url(sha256(verifier)), verifier 는 앱 메모리에만 · 앱 `state` 그대로 · 2분 만료 · `used_at` 일회용(교환은 UPDATE 한 문장) · 만료 행은 발급 때마다 지운다. 로그·감사에 값 없음 · `loopback`(PC 연결 2026-11-02) = CLI `--browser` 코드(`redirect_uri=http://127.0.0.1|[::1]:<port>/cb` 로 302, `/desktop/cli/claim` 만 받는다 — 앱 코드와 섞지 않는다) | users M-D |
 | (PC 연결, 2026-11-02 가안 2) desktop_installations·token_grants | 로그인한 데스크톱 앱 설치본(이름·OS·로그인·폴링 시각·해제 기록·연결 장치 id — IP 없음)과 대화가 남긴 토큰 전달 요청(scope device·migration, 10분, 토큰 값·해시 없음) — 아래 「PC 연결」 절 | users M-D |
-| tickets | 문의(desk-0). 종류 bug/request/question/privacy · via web/mcp · page·tool·브라우저 계열 · `hint`(오분류 개인정보 요청 표식) · 상태 open/ack/doing/done/wontfix(종결 ⇔ `closed_at`) · `admin_note`(사용자 응답에 없음). 사용자 하루 10건·전역 100건(KST), 종결 180일 뒤 파기 | users M-D |
+| tickets | 문의(desk-0). 종류 bug/request/question/privacy · via web/mcp/auto(auto = 오류 자동 Case, 2026-11-13: `auto_key`(출처, 단계, 코드) `auto_day`(KST) 묶음 UNIQUE, `auto_count` `auto_first` `auto_last` `auto_meta`(코드와 고정 낱말만), 사용자 하루 20건, 사람이 쓴 문의 한도와 따로, 스위치 `auto_cases`) · page·tool·브라우저 계열 · `hint`(오분류 개인정보 요청 표식) · 상태 open/ack/doing/done/wontfix(종결 ⇔ `closed_at`) · `admin_note`(사용자 응답에 없음). 사용자 하루 10건·전역 100건(KST), 종결 180일 뒤 파기 | users M-D |
 | privacy_log | 개인정보 요청 처리 사실(받은 날·종류·통지한 날·결과·본인 확인). 사람 식별 정보 없음. kind=privacy 문의와 같은 트랜잭션에서 1행 | 없음 — CASCADE 밖, `ticket_id` FK 없음(문의가 지워져도 남는다) |
 
 ## 판단 로그
@@ -122,7 +122,7 @@ principle 정의의 `policy.promotion`. 기본 `{"confirmed_claims_min":2,"claim
 |---|---|---|
 | access_profiles | 프로필(Salesforce Profile). 기본 둘 `system_admin`·`standard_user`(`builtin`, 지울 수 없다) + 복제한 `p_<hex>`. 이름 UNIQUE | — |
 | access_profile_perms | 프로필의 기능 권한 체크(행 = 켬). 시스템 관리자는 행과 상관없이 전부 | access_profiles M-D |
-| org_features | 조직 기능 설정(기능마다 켜짐·꺼짐). 행 없음 = 시드 전(env == "1" 이 판정) | — |
+| org_features | 조직 기능 설정(기능마다 켜짐·꺼짐). 행 없음 = 시드 전(env == "1" 이 판정, 기본 켜짐 기능 `auto_cases` 는 env 가 비면 켜짐) | — |
 | setup_changes | 변경 기록(Setup Audit Trail) — 실행자·종류·대상·전·후 값. FK 없음 | — |
 | users.profile_id | 사용자 프로필(NULL = 표준 사용자). `users.role` 은 이 열의 거울(`system_admin` = admin) | access_profiles Lookup |
 
@@ -214,11 +214,13 @@ Postgres 전환은 끝났다(2026-10-18, `db.py` psycopg 판). 후보 revision �
 
 
 ## 웹 대화 서 있는 허용 (2026-11-12 대화 하나로 J, JD1~JD3)
+- 앱 하나 1.3(2026-11-13): `chat_provider_permits.basis`(consent | device). device = 새 앱이 WS hello `ai_links` 로 알린 공급자 인증(linked)으로 세운 허용 — 서명 근거 넷(installation_id, key_id, grant_id, challenge_id) NULL(`ck_chat_provider_permits_basis`). 살아 있음 = 장치 토큰 유효. 옛 DB 는 `db._migrate_device_permits`(열 추가, NOT NULL 풀기).
 - 표 `chat_provider_permits`(새 표, `CREATE TABLE IF NOT EXISTS`)와 `chat_sessions.permit_id`(`ADD COLUMN IF NOT EXISTS`, NULL 허용). 서버 시작(`main.lifespan` → `db.init_schema`)이 schema.sql 전체를 실행하므로 운영 DB 에도 그때 생긴다. 계정 삭제 = `db.DELETE_TABLES`.
 - 단위: (사용자, 장치, 공급자) 하나에 한 행(`UNIQUE (user_id, device_id, provider)`). 모델은 단위가 아니다. Claude 를 한 번 허용하면 그 PC 에서 Claude 의 어느 모델이든, 새 대화든 다시 묻지 않는다. Codex 는 따로 한 번.
 - 성립: 첫 세션이 서명 검증된 grant 를 `session_new` 에서 소비할 때(지금과 같은 조건: PC 동의 창 허용, Ed25519 검증, 동의 키 active) 그 grant 의 verified challenge 로 행을 세운다. 열: `installation_id`, `key_id`, `grant_id`, `challenge_id`(성립 근거 식별자, FK 없음 — grant, challenge 는 30일 정리로 사라진다), `created_at`. 다시 세우면 새 id(옛 행에 묶인 세션은 살아나지 않는다). 기본 모델(grant.model = null)도 허용을 세운다. 서명 claims 의 model 은 문자열이어야 해서 null 을 표지 `:default`(`webchat.CONSENT_DEFAULT_MODEL`)로 서명하고 challenge 행에도 그 값을 둔다. 표지는 서버 내부 값이라 ':'로 시작하는 모델 이름은 grant 요청, 세션 생성, 세션 생성(`MODEL_RE`)에서 받지 않고, PC 가 알린 선택지에서는 그 모델 하나만 뺀다(R-J1).
 - 판정(`webchat._permit_live`, 하나뿐): 행이 있고 세션이 묶인 그 id 이며, 장치가 연결 중(해제, 토큰 폐기, 토큰 만료 아님), `key_id` 키가 같은 사용자, 설치본, 장치의 active 키, 설치본이 해제되지 않고 같은 장치에 묶였을 때만 살아 있다. 쓰는 곳: `session_new`(살아 있으면 grant 없이 세션), 세션 재확인(턴 만들기, 확인 카드 확정), `launch-authorization`(binding 의 `grant_id`, `consent_challenge_id` = 허용 성립 근거), `/api/chat/mcp`, capabilities(`allowed_providers`), `GET /api/chat/permits`. `permit_id` 가 없는 J 이전 세션은 닫힌 실패(`CONSENT_REQUIRED`)다.
 - 키 회전: PC 앱은 동의 창마다 키를 begin, activate 로 회전한다. activate 가 옛 키 서명(rotate)으로 이어짐을 증명하면 그 키에 선 허용을 새 키로 옮긴다(`key_id` 갱신). 그래서 다른 공급자의 동의 창이나 거절이 서 있는 허용을 죽이지 않는다.
 - 끝: 사람이 하는 해제 `POST /api/chat/permits/revoke {device_id | installation_id, provider: claude|codex|null}`(웹 쿠키 + Origin, 장치 토큰 없음, 남의 장치, 설치본 = 404, 멱등), PC 연결 해제(`imports.revoke_in`: 웹 장치 해제, `pc_forget`), 설치본 해제(`pc_forget`), 웹 토큰 재발급(`device_reissue`), 키 폐기(`keys/revoke`, 그 설치본 전부), 만료되거나 폐기된 토큰을 새 토큰으로 바꿀 때(`imports.pending_in`). 토큰 만료 자체는 판정 실패다. 살아 있는 토큰의 교체(agent 자동 rotate)는 허용을 지우지 않는다. 화면 잠금과 앱 재시작은 허용을 지우지 않는다(JD2, 원작자 위험 수용).
+- 새 앱(`ai_links`, basis device)에서 AI 허용을 끄는 길: PC 앱의 연결 끊기(hello `ai_links` 의 그 공급자 off)와 장치 해제(PC 연결 해제, 웹 장치 해제)다. `POST /api/chat/permits/revoke` 는 옛 앱 consent 행용이다. device 행을 지워도 그 PC 가 다음 hello 에 linked 를 알리면 다시 선다.
 - 사람이 하는 해제(`permit_revoke`)는 지운 (장치, 공급자)의 열린 세션을 같은 트랜잭션에서 닫는다(실행 중 턴 = failed `CONSENT_REQUIRED`). route 는 커밋 뒤 그 턴마다 PC 에 `turn.stop` 을 보낸다(R-J2). 그 밖의 끝(장치 해제, 토큰 만료 등) 뒤 열린 세션은 다음 재확인(턴, 확인 카드, launch-authorization 5초 주기, `/api/chat/mcp`)에서 거절된다.
 - 보관: 쓰는 동안 남는다(30일 정리 대상 아님). 처리방침의 "PC 허용 기록 30일" 문구와 다르다(PR #64, 메인이 고친다).

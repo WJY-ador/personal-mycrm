@@ -12,6 +12,7 @@ import asyncio
 import http.client
 import json
 import os
+import secrets
 import socket
 import sys
 import threading
@@ -56,7 +57,7 @@ from agent import chat as agent_chat  # noqa: E402
 from agent import wsclient  # noqa: E402
 
 EMAILS = ("wc-a@example.com", "wc-b@example.com", "wc-rate@example.com", "wc-del@example.com", "wc-rev@example.com",
-          "wc-permit@example.com", "wc-permit-b@example.com")
+          "wc-permit@example.com", "wc-permit-b@example.com", "wc-link@example.com")
 N = 0
 
 
@@ -331,7 +332,7 @@ def test_v2_capabilities(srv, ua, tok_a, dev_a):
             assert body["devices"] == [{"device_id": dev_a, "connected": True, "agent_version": "test",
                                          "capabilities_version": 2,
                                          "capabilities": [{"provider": "fake", "models": [None, "fake-test"]}],
-                                         "allowed_providers": []}], body
+                                         "allowed_providers": [], "ai_links": None}], body
             assert body["setup"] == "ready", body
         ok("v2 capability: 인증된 사용자 live 장치만 no-store 로 모델 capability 제공")
     finally:
@@ -2119,6 +2120,190 @@ def test_standing_permit(srv):
             db.user_delete(uid)
 
 
+def test_ai_links(srv):
+    """앱 하나 1.3(2026-11-13) — 새 앱은 hello.ai_links 로 공급자 인증 상태를 알린다. linked = grant, 허용 창, 서명 없이 서 있는 허용(basis device),
+    그 밖 = 허용을 지우고 열린 세션을 닫는다. capabilities 에 ai_links 와 setup no_link. launch-authorization 의 binding 꼴은 그대로(id = 허용 행).
+    장치 토큰 폐기 = 허용 끝. 옛 앱(ai_links 없음)은 지금 consent 흐름 그대로(위 시험들)."""
+    uid = db.user_by_email("wc-link@example.com")["id"]
+    a = imports.device_connect(uid, "link pc")
+    dev, tok = a["device"]["id"], a["token"]
+    caps = [{"provider": "claude", "models": ["sonnet"]}]
+
+    def permits():
+        return rows("SELECT provider, basis, installation_id, key_id, grant_id, challenge_id FROM chat_provider_permits WHERE user_id=%s ORDER BY provider", (uid,))
+
+    def wait_for(pred, timeout=5.0):
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            if pred():
+                return True
+            time.sleep(0.05)
+        return False
+
+    assert webchat.normalize_ai_links(None) is None
+    assert webchat.normalize_ai_links({"claude": "linked", "codex": "hacked", "x": "linked"}) == {"claude": "linked", "codex": "missing"}
+    assert webchat.normalize_ai_links("linked") == {"claude": "missing", "codex": "missing"}
+    pc = PC(srv, tok, capabilities=caps)
+    try:
+        pc.send({"type": "hello", "agent_version": "0.1.7", "providers": ["claude"], "capabilities_version": 2, "capabilities": caps,
+                 "ai_links": {"claude": "signed_out"}})
+        time.sleep(0.2)
+        with web(srv, uid) as h:
+            body = h.get("/api/chat/capabilities").json()
+            assert body["setup"] == "no_link" and body["devices"][0]["ai_links"] == {"claude": "signed_out", "codex": "missing"}, body
+            r = h.post("/api/chat/sessions", json={"operation": "new", "device_id": dev, "provider": "claude", "model": "sonnet",
+                                                   "client_session_id": "link-denied"})
+            assert r.status_code == 409 and r.json()["code"] == "CONSENT_REQUIRED", r.text
+        assert permits() == []
+        ok("앱 하나 1.3: 새 앱 + 로그인 안 됨 = setup no_link, 세션 거절(CONSENT_REQUIRED), 허용 없음")
+
+        pc.send({"type": "hello", "agent_version": "0.1.7", "providers": ["claude"], "capabilities_version": 2, "capabilities": caps,
+                 "ai_links": {"claude": "linked"}})
+        assert wait_for(lambda: len(permits()) == 1), permits()
+        p = permits()[0]
+        assert (p["provider"], p["basis"], p["installation_id"], p["key_id"], p["grant_id"], p["challenge_id"]) == ("claude", "device", None, None, None, None)
+        with web(srv, uid) as h:
+            body = h.get("/api/chat/capabilities").json()
+            assert body["setup"] == "ready" and body["devices"][0]["allowed_providers"] == ["claude"], body
+            r = h.post("/api/chat/sessions", json={"operation": "new", "device_id": dev, "provider": "claude", "model": "sonnet",
+                                                   "client_session_id": "link-ok"})
+            assert r.status_code in (200, 201), r.text
+            sid = r.json()["session_id"]
+        assert rows("SELECT count(*) AS n FROM chat_provider_grants WHERE user_id=%s", (uid,))[0]["n"] == 0, "grant 없이"
+        assert rows("SELECT count(*) AS n FROM chat_consent_challenges WHERE user_id=%s", (uid,))[0]["n"] == 0, "서명 없이"
+        # 같은 linked 를 다시 알려도 허용 행은 그대로(세션이 묶인 id 가 바뀌지 않는다)
+        before = rows("SELECT id FROM chat_provider_permits WHERE user_id=%s", (uid,))[0]["id"]
+        pc.send({"type": "hello", "agent_version": "0.1.7", "providers": ["claude"], "capabilities_version": 2, "capabilities": caps,
+                 "ai_links": {"claude": "linked"}})
+        time.sleep(0.2)
+        assert rows("SELECT id FROM chat_provider_permits WHERE user_id=%s", (uid,))[0]["id"] == before
+        ok("앱 하나 1.3: linked = 허용 행(basis device, 서명 근거 넷 NULL) · grant, challenge 0 으로 세션 · 다시 알려도 같은 행")
+
+        turn = "ct_" + secrets.token_hex(12)
+        with db.tx() as c:
+            c.execute("INSERT INTO chat_turns (id,session_id,client_turn_id) VALUES (%s,%s,'link-launch')", (turn, sid))
+        out = webchat._chat_launch_authorization(imports.authenticate("Bearer " + tok), "Bearer " + tok, sid, turn)
+        assert out["authorized"] is True and out["binding"]["grant_id"] == before == out["binding"]["consent_challenge_id"], out["binding"]
+        assert out["binding"]["provider"] == "claude" and out["binding"]["model"] == "sonnet"
+        ok("앱 하나 1.3: launch-authorization binding 꼴 그대로 — grant_id, consent_challenge_id = 허용 행 id(비지 않은 문자열)")
+
+        pc.send({"type": "hello", "agent_version": "0.1.7", "providers": ["claude"], "capabilities_version": 2, "capabilities": caps,
+                 "ai_links": {"claude": "off"}})
+        stop = pc.wait(lambda m: m.get("type") == "turn.stop" and m.get("turn_id") == turn)
+        assert stop, "끊기 = 실행 중 턴에 turn.stop"
+        assert wait_for(lambda: permits() == [])
+        assert rows("SELECT status FROM chat_sessions WHERE id=%s", (sid,))[0]["status"] != "active"
+        with web(srv, uid) as h:
+            assert h.get("/api/chat/capabilities").json()["setup"] == "no_link"
+        ok("앱 하나 1.3: off(연결 끊기) = 허용 지움, 열린 세션 닫힘, 실행 중 턴 turn.stop, setup no_link")
+
+        pc.send({"type": "hello", "agent_version": "0.1.7", "providers": ["claude"], "capabilities_version": 2, "capabilities": caps,
+                 "ai_links": {"claude": "linked"}})
+        assert wait_for(lambda: len(permits()) == 1)
+    finally:
+        pc.close()
+    old_app = PC(srv, tok, capabilities=caps)   # 옛 앱이 같은 장치로 붙음(ai_links 없는 hello) = device 근거 허용을 지운다(열린 쪽으로 남지 않게)
+    try:
+        assert wait_for(lambda: permits() == []), permits()
+        with web(srv, uid) as h:
+            r = h.post("/api/chat/sessions", json={"operation": "new", "device_id": dev, "provider": "claude", "model": "sonnet",
+                                                   "client_session_id": "link-legacy"})
+            assert r.status_code == 409 and r.json()["code"] == "CONSENT_REQUIRED", r.text
+    finally:
+        old_app.close()
+    ok("앱 하나 1.3: ai_links 없는 hello(옛 앱) = device 근거 허용 지움 → 옛 consent 흐름(CONSENT_REQUIRED)")
+    pc = PC(srv, tok, capabilities=caps)
+    try:
+        pc.send({"type": "hello", "agent_version": "0.1.7", "providers": ["claude"], "capabilities_version": 2, "capabilities": caps,
+                 "ai_links": {"claude": "linked"}})
+        assert wait_for(lambda: len(permits()) == 1)
+    finally:
+        pc.close()
+    imports.device_revoke(uid, dev)
+    with db.tx() as c:
+        assert webchat._permit_live(c, uid, dev, "claude", lock=False) is None
+    ok("앱 하나 1.3: 장치 해제 = device 근거 허용도 끝(판정 하나 _permit_live)")
+
+
+class _FakeWS:
+    """_reader 를 직접 돌리는 가짜 WS — 받은 메시지 목록을 차례로 내고, 보낸 것과 닫힘을 한 줄로 기록한다."""
+
+    def __init__(self, msgs):
+        self.msgs, self.log = list(msgs), []
+
+    async def receive(self):
+        if self.msgs:
+            return {"type": "websocket.receive", "text": json.dumps(self.msgs.pop(0))}
+        return {"type": "websocket.disconnect"}
+
+    async def send_text(self, text):
+        self.log.append(("send", json.loads(text)))
+
+    async def close(self, code=1000):
+        self.log.append(("close", code))
+
+
+def test_ai_links_stale_and_partial():
+    """보안 검토 F3, F4(2026-11-13). F3 = 밀려난 연결(새 연결이 대체)의 hello 는 허용을 건드리지 않는다.
+    F4 = 공급자 하나가 실패해도 다른 공급자의 닫힘(SSE, turn.stop)을 1011 로 닫기 전에 보낸다."""
+    uid = db.user_by_email("wc-link@example.com")["id"]
+    a = imports.device_connect(uid, "stale pc")
+    did = a["device"]["id"]
+    dev = {"user_id": uid, "id": did}
+    hello = {"type": "hello", "agent_version": "0.1.7", "providers": ["claude"], "capabilities_version": 2,
+             "capabilities": [{"provider": "claude", "models": ["sonnet"]}]}
+    routes = webchat.Routes(None, None)
+
+    def permits():
+        return rows("SELECT provider, basis FROM chat_provider_permits WHERE user_id=%s AND device_id=%s ORDER BY provider", (uid, did))
+
+    key = (uid, did)
+    stale_ws, new_ws = _FakeWS([{**hello, "ai_links": {"claude": "linked", "codex": "linked"}}]), _FakeWS([])
+    stale, fresh = webchat._Dev(stale_ws, dict(a["device"], user_id=uid)), webchat._Dev(new_ws, dict(a["device"], user_id=uid))
+    webchat.hub.devs[key] = fresh   # 새 연결이 옛 연결을 대체한 뒤 옛 연결에 hello 가 늦게 닿음
+    try:
+        calls = []
+        real = webchat.ai_links_apply
+        with patch.object(webchat, "ai_links_apply", lambda *x, **k: calls.append(x) or real(*x, **k)):
+            asyncio.run(routes._reader(stale))
+        assert calls == [] and permits() == [], (calls, permits())
+        # 처리 중에 밀려남(current 가 False) = 쓰지 않는다
+        assert webchat.ai_links_apply(dev, {"claude": "linked", "codex": "linked"}, None, lambda: False) == [] and permits() == []
+    finally:
+        webchat.hub.devs.pop(key, None)
+    ok("F3: 밀려난 연결의 hello 는 버린다(허용 그대로) · 처리 중 밀려나면 더 쓰지 않는다")
+
+    # F4 — claude 는 끊기(off, 열린 세션과 실행 중 턴 닫힘), codex 는 linked 처리 중 DB 오류
+    sid, turn = webchat._id("cs"), "ct_" + secrets.token_hex(12)
+    with db.tx() as c:
+        c.execute("INSERT INTO chat_provider_permits (id,user_id,device_id,provider,basis) VALUES (%s,%s,%s,'claude','device')",
+                  (webchat._id("cp"), uid, did))
+        c.execute("UPDATE chat_sessions SET status='closed' WHERE user_id=%s AND status='active'", (uid,))
+        c.execute("INSERT INTO chat_sessions (id,user_id,device_id,provider,model,client_session_id,binding_version) "
+                  "VALUES (%s,%s,%s,'claude','sonnet','stale-partial',2)", (sid, uid, did))
+        c.execute("INSERT INTO chat_turns (id,session_id,client_turn_id) VALUES (%s,%s,'stale-partial')", (turn, sid))
+    ws = _FakeWS([{**hello, "ai_links": {"claude": "off", "codex": "linked"}}])
+    d = webchat._Dev(ws, dict(a["device"], user_id=uid))
+    webchat.hub.devs[key] = d
+    real_live = webchat._permit_live
+
+    def boom(c, u, device_id, provider, *x, **k):
+        if provider == "codex":
+            raise RuntimeError("db down")
+        return real_live(c, u, device_id, provider, *x, **k)
+    try:
+        with patch.object(webchat, "_permit_live", boom):
+            asyncio.run(routes._reader(d))
+    finally:
+        webchat.hub.devs.pop(key, None)
+    stop_at = next((i for i, x in enumerate(ws.log) if x[0] == "send" and x[1] == {"type": "turn.stop", "turn_id": turn}), None)
+    close_at = next((i for i, x in enumerate(ws.log) if x == ("close", 1011)), None)
+    assert stop_at is not None and close_at is not None and stop_at < close_at, ws.log
+    assert permits() == [] and rows("SELECT status FROM chat_sessions WHERE id=%s", (sid,))[0]["status"] != "active"
+    imports.device_revoke(uid, did)
+    ok("F4: 공급자 하나 실패해도 다른 공급자 닫힘은 커밋, turn.stop 을 1011 보다 먼저 보낸다")
+
+
 def test_unapproved_keeps_active(srv, ua, tok_a, dev_a):
     """회귀: 승인 없는 실제 공급자 새 대화 요청은 기존 active 세션을 닫지 않는다(grant 요청이 있어도)."""
     sid = webchat._id("cs")
@@ -2698,6 +2883,8 @@ def main_():
         test_consent_result(srv, ua, ub, tok_a, dev_a)
         test_consent_bind_empty_device(srv, ua, ub)
         test_standing_permit(srv)
+        test_ai_links(srv)
+        test_ai_links_stale_and_partial()
         sid_a, sid_b = test_sessions(srv, ua, ub, tok_a, dev_a, b2["device"]["id"])
         tid_a = test_turns(srv, ua, tok_a, sid_a)
         test_foreign(srv, ub, b1["token"], sid_a, tid_a)

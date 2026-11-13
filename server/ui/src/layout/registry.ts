@@ -12,7 +12,7 @@ export const LOADERS: Record<string, () => Promise<Screen>> = {
   trash: one(() => import("../features/trash/TrashScreen"), "TrashScreen"),
   review: one(() => import("../features/review/ReviewScreen"), "ReviewScreen"),
   migration: one(() => import("../features/migration/MigrationScreen"), "MigrationScreen"),
-  devices: one(() => import("../features/devices/DevicesScreen"), "DevicesScreen"),
+  pc: one(() => import("../features/pc/PcScreen"), "PcScreen"),                            // 설정 「이 PC」(앱 다리 한 줄 — 연결 장치 화면 대신)
   activity: one(() => import("../features/activity/ActivityScreen"), "ActivityScreen"),   // 활동 목록·하나·축 하나(args = [activity|axis, …])
   objects: one(() => import("../features/objects/ObjectsScreen"), "ObjectsScreen"),        // 자료 종류 색인·사람·출처·읽고 든 생각(args = [a, b, c])
   today: one(() => import("../features/today/TodayScreen"), "TodayScreen"),                // 오늘·저장 승인 대기(args = [today, a, b] | [inbox, 상태])

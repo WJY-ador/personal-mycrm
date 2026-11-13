@@ -3,8 +3,9 @@
 계약(서버 server/webchat.py 와 같은 값, notes 구현계획 §2):
 - 연결: wss://<서버>/api/device/chat/ws · Authorization: Bearer <장치 토큰>. 장치당 1연결(새 연결이 옛 연결을 대체).
 - 서버→PC turn.start{session_id, turn_id, text, cli_session_ref?, approval_outcomes?} · turn.stop{turn_id} · ack{turn_id, seq} · ping
-- PC→서버 hello{agent_version, providers[]} · event{turn_id, seq, kind, data} · session_ref{session_id, cli_session_ref} · pong
-  · consent.result{request_id, outcome} — PC 앱 동의 창이 거절·실패했을 때만, outcome ∈ declined·locked·failed. 보내기 실패는 무시한다.
+- PC→서버 hello{agent_version, providers[], ai_links?} · event{turn_id, seq, kind, data} · session_ref{session_id, cli_session_ref} · pong
+  · ai_links = 이 PC 의 AI 연결 {claude|codex: linked|signed_out|off|missing}(명세 2026-11-13 1.3, 장치가 보고한 값).
+    서버는 linked 를 허용으로 세운다. 상태가 바뀌면 같은 연결에서 hello 를 다시 보낸다.
 - kind = delta{text} · tool_call{name, input?} · tool_result{name, ok, summary?} · done{} · error{code}. 중지 = error{code:"STOPPED"}.
 - seq 는 턴 안에서 1부터. delta 는 최대 COALESCE_SEC(0.5초) 묶음. ack(누적) 전 이벤트만 턴당 BUFFER_MAX(256KB) 보유,
   재연결 때 그대로 다시 보낸다(서버가 (turn_id, seq) 중복을 무시). 버퍼가 차면 공급자를 멈추고 error{code:"BUFFER-LIMIT"} 로 끝낸다.
@@ -44,8 +45,10 @@ RECV_TICK = 1.0
 SEEN_MAX = 1000
 KINDS = ("delta", "tool_call", "tool_result", "done", "error")
 TERMINAL = ("done", "error")
-# PC→서버 consent.result{request_id, outcome} 의 outcome 고정 목록(agent/consent_bridge.REASONS 와 같다). 거절일 때만 보낸다.
-CONSENT_OUTCOMES = frozenset({"declined", "locked", "failed"})
+# hello 에 AI 연결 상태를 싣는 필드 이름(계약, 서버 S 정본 2026-11-13).
+HELLO_AI_KEY = "ai_links"
+# 이 PC 에서 그 공급자가 linked 가 아니라 턴을 거절할 때의 오류 코드.
+AI_REFUSALS = {"off": "AI-OFF", "signed_out": "AI-SIGNED-OUT", "missing": "AI-MISSING"}
 
 
 def ws_url(server_url: str) -> str:
@@ -168,7 +171,7 @@ class ChatAgent:
 
     def __init__(self, url: str, token, provider=None, *, registry=None, ref_store=None, agent_version: str = "", connect=wsclient.connect,
                  backoff: wsclient.Backoff | None = None, stopping: threading.Event | None = None, log=None,
-                 coalesce: float = COALESCE_SEC, buffer_max: int = BUFFER_MAX, recv_tick: float = RECV_TICK, consent_request=None,
+                 coalesce: float = COALESCE_SEC, buffer_max: int = BUFFER_MAX, recv_tick: float = RECV_TICK, ai_status=None, ai_check=None, ai_refresh=None,
                  ws_max: int = WS_MESSAGE_MAX, silence_max: float = SILENCE_MAX, claude_factory=None,
                  codex_factory=None):
         """token = 글자 또는 공급 함수(호출할 때마다 키 저장소를 다시 읽는다)."""
@@ -189,9 +192,11 @@ class ChatAgent:
         self.ws_max, self.silence_max = ws_max, silence_max
         self.agent_version = agent_version
         self.connect = connect
-        self.consent_request = consent_request
-        self.consent_lock = threading.Lock()
-        self.consent_pending = set()
+        # ai_status = hello.ai_links {공급자: 상태 낱말}. 그 밖의 값은 hello 에 싣지 않는다.
+        # ai_check(provider) -> 상태 낱말: 턴마다 이 PC 의 끊기 표시와 CLI 로그인을 다시 본다(None 이면 보지 않는다 — --fake).
+        # ai_refresh() -> (ai_links, claude_factory, codex_factory): 앱이 연결을 바꿨을 때(desktop control ai-refresh).
+        self.ai_status = self._clean_links(ai_status)
+        self.ai_check, self.ai_refresh = ai_check, ai_refresh
         self.backoff = backoff or wsclient.Backoff()
         self.stopping = stopping or threading.Event()
         self.log = log or (lambda rec: None)
@@ -208,6 +213,53 @@ class ChatAgent:
         self.threads: list = []
         self.connects = 0
         self.session_bindings = {}  # session_id -> (provider, model)
+
+    @staticmethod
+    def _clean_links(value):
+        from .ai_connection import PROVIDERS, STATES
+        return {k: v for k, v in value.items() if k in PROVIDERS and v in STATES} if isinstance(value, dict) else None
+
+    def _hello(self) -> str:
+        caps = self.registry.capabilities()
+        if self.claude_factory is not None:
+            caps.append({"provider": "claude", "models": list(self.claude_factory.models)})
+        if self.codex_factory is not None:
+            caps.append({"provider": "codex", "models": list(self.codex_factory.models)})
+        hello = {"type": "hello", "agent_version": self.agent_version,
+                 "providers": [c["provider"] for c in caps], "capabilities_version": 2, "capabilities": caps}
+        if self.ai_status is not None:
+            hello[HELLO_AI_KEY] = dict(self.ai_status)
+        return _dumps(hello)
+
+    def _resend_hello(self) -> None:
+        """같은 연결에서 hello 를 다시 보낸다(AI 연결이 바뀌었을 때). 연결이 없으면 다음 연결의 hello 가 싣는다."""
+        with self.out_lock:
+            self._send(self._hello())
+
+    def refresh_ai(self) -> None:
+        """앱이 AI 연결을 바꿨다(ai:connect, ai:disconnect): 다시 확인하고 factory 를 바꾼 뒤 hello 를 다시 보낸다."""
+        if not callable(self.ai_refresh):
+            return
+        try:
+            links, claude_factory, codex_factory = self.ai_refresh()
+        except Exception:
+            self.log({"event": "ai-refresh", "error": "failed"})
+            return
+        from .chat_claude import ClaudeProviderFactory
+        from .chat_codex import CodexProviderFactory
+        self.claude_factory = claude_factory if type(claude_factory) is ClaudeProviderFactory else None
+        self.codex_factory = codex_factory if type(codex_factory) is CodexProviderFactory else None
+        self.ai_status = self._clean_links(links)
+        self.log({"event": "ai-refresh", "ok": True})
+        self._resend_hello()
+
+    def _ai_state(self, provider_name):
+        try:
+            state = self.ai_check(provider_name)
+        except Exception:
+            state = "missing"
+        from .ai_connection import STATES
+        return state if state in STATES else "missing"
 
     # ── 보내기 ──
     def _send(self, msg: str) -> bool:
@@ -340,43 +392,6 @@ class ChatAgent:
         typ = m.get("type")
         if typ == "ping":
             self._send(_dumps({"type": "pong"}))
-        elif typ == "consent.request":
-            request_id = m.get("request_id")
-            if (not callable(self.consent_request) or not isinstance(request_id, str)
-                    or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", request_id)):
-                return
-            with self.consent_lock:
-                if request_id in self.consent_pending:
-                    return
-                self.consent_pending.add(request_id)
-
-            def forward():
-                # Only a refusal is reported. An approval is already known to the server through the
-                # signed challenge verification, so (True, None) sends nothing. A lost report is
-                # harmless: the server still closes the grant on its own timeout.
-                outcome = "failed"
-                try:
-                    token = self.token_fn()
-                    if isinstance(token, str) and token:
-                        result = self.consent_request(request_id, "Bearer " + token)
-                        if type(result) is tuple and len(result) == 2 and result[0] is True and result[1] is None:
-                            outcome = None
-                        elif (type(result) is tuple and len(result) == 2 and result[0] is False
-                              and isinstance(result[1], str) and result[1] in CONSENT_OUTCOMES):
-                            outcome = result[1]
-                except Exception:
-                    outcome = "failed"
-                try:
-                    if outcome is not None:
-                        self._send(_dumps({"type": "consent.result", "request_id": request_id,
-                                           "outcome": outcome}))
-                except Exception:
-                    pass
-                finally:
-                    with self.consent_lock:
-                        self.consent_pending.discard(request_id)
-
-            threading.Thread(target=forward, name="chat-consent-bridge", daemon=True).start()
         elif typ == "ack":
             b = self.buffers.get(m.get("turn_id"))
             if b and isinstance(m.get("seq"), int):
@@ -420,6 +435,17 @@ class ChatAgent:
                     provider = self.registry.validate_turn(provider_name, model, m.get("binding_version"))
                 except ProviderUnavailable:
                     provider = None
+            if factory is not None and callable(self.ai_check):
+                # 대화 시작 때 AI 연결을 다시 본다(명세 1.3): 끊기 표시나 로그아웃은 앱이 알리기 전에도 지켜진다.
+                state = self._ai_state(provider_name)
+                if self.ai_status is not None and self.ai_status.get(provider_name) != state:
+                    self.ai_status[provider_name] = state
+                    self._resend_hello()
+                if state != "linked":
+                    b = self.buffers[tid] = TurnBuffer(tid, self.buffer_max)
+                    self.seen[tid] = True
+                    self._send(b.add("error", {"code": AI_REFUSALS[state]}, force=True))
+                    return
             if provider is None and factory is None:
                 b = self.buffers[tid] = TurnBuffer(tid, self.buffer_max)
                 self.seen[tid] = True
@@ -484,14 +510,7 @@ class ChatAgent:
         with self.out_lock:   # hello·재전송이 끝날 때까지 턴 스레드의 새 이벤트를 붙든다(seq 순서 보장)
             with self.ws_lock:
                 self.ws = ws
-            caps = self.registry.capabilities()
-            if self.claude_factory is not None:
-                caps.append({"provider": "claude", "models": list(self.claude_factory.models)})
-            if self.codex_factory is not None:
-                caps.append({"provider": "codex", "models": list(self.codex_factory.models)})
-            self._send(_dumps({"type": "hello", "agent_version": self.agent_version,
-                               "providers": [c["provider"] for c in caps], "capabilities_version": 2,
-                               "capabilities": caps}))
+            self._send(self._hello())
             self._resend()
         try:
             while not self.stopping.is_set():

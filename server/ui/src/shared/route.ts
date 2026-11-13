@@ -29,7 +29,7 @@ const NAVTAB: Record<string, TabDef> = {
   _me: { id: "_me", label: "나", view: "me", blocks: [] },
   _obj: { id: "_obj", label: "자료 종류", view: "objects", blocks: [] },
   _settings: { id: "_settings", label: "내 구조 설정", view: "settings", blocks: [] },
-  _devices: { id: "_devices", label: "연결 장치", view: "devices", blocks: [] },
+  _devices: { id: "_devices", label: "이 PC", view: "devices", blocks: [] },   // 옛 주소(#_devices) — 「이 PC」로 돌린다
   _inbox: { id: "_inbox", label: "저장 승인 대기", view: "inbox", blocks: [] },
   _today: { id: "_today", label: "오늘", view: "today2", blocks: [] },
   _setup: { id: "_setup", label: "설정", view: "setup", blocks: [] },
@@ -58,7 +58,7 @@ export function meTabOf(S: AppState, it: Item): "principle" | "decision" | "axis
 function navReplace(R: Route, S: AppState): string {
   if (R.tab === "_obj" && !R.a) return "#_setup/objects";
   if (R.tab === "_settings") return "#_setup/structure";
-  if (R.tab === "_devices") return "#_setup/devices";
+  if (R.tab === "_devices") return "#_setup/pc";
   if (R.tab === "map" && R.a !== "review") return "#_setup/map";   // 지도의 [대조](#map/review/…)는 판단 검토로
   if (R.tab === "_inbox" && !R.a) return "#_today";
   if (R.tab === "_inbox" && !["pending", "applied", "excluded", "expired", "all"].includes(R.a)) return "#_today/inbox/" + encodeURIComponent(R.a);   // 대기 글 하나 — 같은 상세를 오늘 안에서
@@ -74,10 +74,11 @@ function navReplace(R: Route, S: AppState): string {
 }
 
 // Setup 페이지 줄 — 휴지통은 스위치 켜짐일 때만. 꺼짐이면 #_setup/trash 는 레이아웃으로 돌린다
-const SETUP_PAGES: [string, string][] = [["layout", "페이지 레이아웃"], ["structure", "내 구조 설정"], ["objects", "자료 종류"], ["devices", "연결 장치"],
+// 「연결 장치」는 사용자 화면에서 없앴다(2026-11-13 앱 하나 자동 연결) — 「이 PC」 한 줄. 옛 주소 #_setup/devices 는 이 PC 로
+const SETUP_PAGES: [string, string][] = [["layout", "페이지 레이아웃"], ["structure", "내 구조 설정"], ["objects", "자료 종류"], ["pc", "이 PC"],
   ["map", "지도"], ["help", "문의 및 개인정보"], ["migration", "이관"]];
 export const setupPages = (S: AppState) => (S.switches?.trash ? SETUP_PAGES.concat([["trash", "휴지통"]]) : SETUP_PAGES);
-const SETUP_SCREEN: Record<string, string> = { layout: "layout", structure: "defs", devices: "devices", map: "map", trash: "trash", migration: "migration", help: "help" };
+const SETUP_SCREEN: Record<string, string> = { layout: "layout", structure: "defs", pc: "pc", map: "map", trash: "trash", migration: "migration", help: "help" };
 
 // 자료 종류 — 활동·축 상세는 「활동」 화면, 그 밖(색인·사람·출처·읽고 든 생각)은 「자료 종류」 화면
 const objScreen = (a: string, b: string, c: string): [string, string[]] => (a === "activity" || a === "axis" ? ["activity", [a, b, c]] : ["objects", [a, b, c]]);
@@ -115,9 +116,10 @@ export function resolve(hash: string, S: AppState, lastView: Record<string, stri
     case "today2": return v("today", ["today", R.a, R.b]);
     case "objects": { const [s, a] = objScreen(R.a, R.b, R.c); return v(s, a, inSetup); }
     case "settings": return v("defs", [], inSetup);
-    case "devices": return v("devices", [], inSetup);
+    case "devices": return { replace: "#_setup/pc" };
     case "inbox": return v("today", ["inbox", R.a]);   // 지난 승인 대기(오늘과 같은 화면 묶음)
     case "setup": {
+      if (R.a === "devices") return { replace: "#_setup/pc" };   // 옛 「연결 장치」 주소
       const page = setupPages(S).some(p => p[0] === R.a) ? R.a : "layout";
       if (R.a && page !== R.a) return { replace: "#_setup/" + page };
       if (page === "objects") { const [s, a] = objScreen(R.b, R.c, R.d); return v(s, a, page); }

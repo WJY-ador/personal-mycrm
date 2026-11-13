@@ -556,10 +556,14 @@ def _init_schema(c):
         _migrate_decision_owner(c)   # 세션 정리 → 판단 확정(2026-11-04) — records.decision_owner 열·CHECK
         _migrate_migration_path(c)   # 이관 경로(2026-11-02) — records.date_kind · 가안 X(plan reverted·via · 항목 created · 접수 reverted). 새 표 3개는 schema.sql
         _migrate_collected(c)   # 수집 글(2026-11-12) — import_entries.raw_id 열·인덱스. 종류 CHECK 는 _WIDEN_CHECKS
+        _migrate_auto_cases(c)   # 오류 자동 Case(2026-11-13) — tickets auto_* 열·CHECK·묶음 UNIQUE. 경로 CHECK 는 _WIDEN_CHECKS
+        _migrate_device_permits(c)   # 앱 하나 1.3(2026-11-13) — 서 있는 허용의 근거 basis(consent|device) · device 행은 서명 근거 넷 NULL
         _init_tmp(c)   # PR ②-a 임시 보관 — schema.sql 의 jobs 뒤(FK 대상). 위치는 current_schema() 로 정한다
         _migrate_classify_roles(c)
         import features   # 관리자 프로필(2026-11-12) — 기본 프로필·권한 시드·users.profile_id·role 거울. 표는 schema.sql
         features.migrate(c)
+        import imports   # 앱 하나 자동 연결(2026-11-13) — 기존 장치 허용 규칙 = 전부(표식 한 번)
+        imports.migrate_device_policy(c)
         _backfill_template_slots(c)   # 매번 돈다 — 시드가 적용 뒤 표시 전에 끊긴 경우도 여기서 채운다
         # 처리방침 v2 전환 — v2 시행 전에 모은 이용 기록(usage_daily)을 1회 전부 지운다. 표식이 있으면 건너뛴다.
         if _one(c, "INSERT INTO schema_marks (key) VALUES (%s) ON CONFLICT (key) DO NOTHING RETURNING key", (USAGE_RESET_MARK,)):
@@ -586,14 +590,16 @@ _WIDEN_CHECKS = (
     ("admin_audit", "admin_audit_action_check", "action",
      ("bootstrap", "recover", "role_grant", "role_revoke", "web_signout", "block", "unblock", "delete_notify", "delete_run", "delete_cancel",
       "device_connect", "device_reissue", "device_revoke", "device_policy", "migration_apply", "migration_extend", "migration_close",
-      "migration_token", "token_grant", "token_grant_redeem", "pc_forget", "device_rotate")),
+      "migration_token", "token_grant", "token_grant_redeem", "pc_forget", "device_rotate", "auto_case_cap")),
     ("ticket_history", "ticket_history_kind_check", "kind", ("status", "reply", "note", "reclassify", "deleted")),
     ("field_defs", "field_defs_target_kind_check", "target_kind", ("item", "record", "candidate", "person", "source", "activity")),
     # 수집 글(2026-11-12) — 접수 종류 collected_post
     ("import_entries", "import_entries_kind_check", "kind",
      ("self_text", "self_summary", "activity", "migration_object", "migration_item", "migration_record", "collected_post")),
     # 받는 즉시 승인(2026-11-13) — 접수 처리 주체 auto(NULL 은 IN 검사에서 통과한다)
-    ("import_entries", "import_entries_resolved_by_check", "resolved_by", ("user", "expiry", "superseded", "system", "migration", "auto")))
+    ("import_entries", "import_entries_resolved_by_check", "resolved_by", ("user", "expiry", "superseded", "system", "migration", "auto")),
+    # 오류 자동 Case(2026-11-13) — 문의 경로 auto
+    ("tickets", "tickets_via_check", "via", ("web", "mcp", "auto")))
 
 # board 이전(2026-10-20) — 옛 DB 에 더할 열(schema.sql 최종형과 같은 모양). received_at·ingest_kind 는 옛 행 값이 다르다(아래 함수)
 _IMPORT_PROV_COLS = (("source_created_at", "timestamptz"), ("source_date", "date"),
@@ -813,6 +819,43 @@ def _migrate_migration_path(c):
     for r in c.execute("SELECT conname FROM pg_constraint WHERE conrelid = 'import_entries'::regclass AND contype = 'u' "
                        "AND pg_get_constraintdef(oid) = 'UNIQUE (user_id, stream_id, original_id, source_revision)'").fetchall():
         c.execute(f'ALTER TABLE import_entries DROP CONSTRAINT "{r["conname"]}"')
+
+
+_TICKETS_AUTO_COLS = (("auto_key", "text CHECK (auto_key IS NULL OR char_length(auto_key) <= 160)"), ("auto_day", "date"),
+                      ("auto_count", "integer CHECK (auto_count IS NULL OR auto_count >= 1)"), ("auto_first", "timestamptz"),
+                      ("auto_last", "timestamptz"), ("auto_meta", "jsonb"))
+_TICKETS_AUTO_CHECK = ("CHECK ((via = 'auto') = (auto_key IS NOT NULL AND auto_day IS NOT NULL AND auto_count IS NOT NULL "
+                       "AND auto_first IS NOT NULL AND auto_last IS NOT NULL AND auto_meta IS NOT NULL))")
+
+
+def _migrate_auto_cases(c):
+    """오류 자동 Case(2026-11-13 명세 1.4) — tickets 에 묶음 열 6개(옛 행 NULL = 사람이 쓴 문의) + 이름 붙은 CHECK + 묶음 부분 UNIQUE.
+    새 DB 도 같은 길(schema.sql 은 열만 만든다). 매번 돌아도 된다. 경로 CHECK(via auto)는 _WIDEN_CHECKS 가 먼저 넓힌다."""
+    for n, ddl in _TICKETS_AUTO_COLS:
+        if not _has_col(c, "tickets", n):
+            c.execute(f"ALTER TABLE tickets ADD COLUMN {n} {ddl}")
+    if not _has_constraint(c, "tickets", "ck_tickets_auto"):
+        c.execute(f"ALTER TABLE tickets ADD CONSTRAINT ck_tickets_auto {_TICKETS_AUTO_CHECK}")
+    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_tickets_auto ON tickets (user_id, auto_day, auto_key) WHERE auto_key IS NOT NULL")
+
+
+_PERMIT_BASIS_CHECK = ("CHECK ((basis = 'consent' AND installation_id IS NOT NULL AND key_id IS NOT NULL AND grant_id IS NOT NULL "
+                       "AND challenge_id IS NOT NULL) OR (basis = 'device' AND installation_id IS NULL AND key_id IS NULL "
+                       "AND grant_id IS NULL AND challenge_id IS NULL))")
+
+
+def _migrate_device_permits(c):
+    """앱 하나 1.3(2026-11-13) — chat_provider_permits 에 basis 열(옛 행 = consent) + 서명 근거 넷의 NOT NULL 을 푼다 + 이름 붙은 CHECK.
+    NOT NULL 을 푸는 것은 제약을 넓히는 것뿐이다(데이터, 표는 그대로). 새 DB 도 같은 길(schema.sql 은 이미 넓은 꼴). 매번 돌아도 된다."""
+    if not _has_col(c, "chat_provider_permits", "basis"):
+        c.execute("ALTER TABLE chat_provider_permits ADD COLUMN basis text NOT NULL DEFAULT 'consent' CHECK (basis IN ('consent','device'))")
+    for n in ("installation_id", "key_id", "grant_id", "challenge_id"):
+        r = _one(c, "SELECT is_nullable FROM information_schema.columns WHERE table_schema=current_schema() "
+                    "AND table_name='chat_provider_permits' AND column_name=%s", (n,))
+        if r and r["is_nullable"] == "NO":
+            c.execute(f"ALTER TABLE chat_provider_permits ALTER COLUMN {n} DROP NOT NULL")
+    if not _has_constraint(c, "chat_provider_permits", "ck_chat_provider_permits_basis"):
+        c.execute(f"ALTER TABLE chat_provider_permits ADD CONSTRAINT ck_chat_provider_permits_basis {_PERMIT_BASIS_CHECK}")
 
 
 _STREAM_PENDING_COLS = (("pending_token_id", "text"), ("pending_secret_hash", "bytea"), ("pending_expires_at", "timestamptz"))
@@ -3300,10 +3343,11 @@ def ticket_add(uid, kind, text, via, page="other", tool="", ua_family=""):
     tid = new_id("tk")
     with tx() as c:
         _user_lock(c, uid)   # PR B — 삭제 CLI 와 직렬화(삭제 뒤 자료 생성 0). 잠금 순서 = users 행 → tickets(한도 COUNT 는 여전히 전역 잠금 없음)
-        n_me = _one(c, f"SELECT count(*) AS n FROM tickets WHERE user_id=%s AND created >= {_KST_TODAY}", (uid,))["n"]
+        # 자동 오류 보고(via auto)는 사람이 쓰는 문의 한도에 넣지 않는다 — 자동 Case 가 사용자의 문의를 막지 않게
+        n_me = _one(c, f"SELECT count(*) AS n FROM tickets WHERE user_id=%s AND via <> 'auto' AND created >= {_KST_TODAY}", (uid,))["n"]
         if n_me >= TICKET_DAILY_USER:
             raise CrmError("RATE-LIMIT", f"오늘 문의는 {TICKET_DAILY_USER}건까지예요.", "내일 다시 보내 주세요.")
-        n_all = _one(c, f"SELECT count(*) AS n FROM tickets WHERE created >= {_KST_TODAY}")["n"]
+        n_all = _one(c, f"SELECT count(*) AS n FROM tickets WHERE via <> 'auto' AND created >= {_KST_TODAY}")["n"]
         if n_all >= TICKET_DAILY_ALL:
             raise CrmError("RATE-LIMIT", "오늘은 문의가 많아 더 받을 수 없어요.", "내일 다시 보내 주세요.")
         c.execute("INSERT INTO tickets (id,user_id,kind,text,via,page,tool,ua_family,hint) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
@@ -3314,19 +3358,60 @@ def ticket_add(uid, kind, text, via, page="other", tool="", ua_family=""):
         return _iso(_one(c, "SELECT id,kind,status,created FROM tickets WHERE id=%s", (tid,)))
 
 
+AUTO_SOURCES = ("app", "agent", "web")
+AUTO_SOURCE_LABEL = {"app": "앱", "agent": "PC 에이전트", "web": "웹"}
+AUTO_DAILY_USER = 20      # 사용자 하루(KST) 자동 Case 20건 — 넘치면 버리고 집계만(명세 1.4)
+AUTO_DAILY_ALL = 1000     # 전역 하루 자동 Case 상한(폭주 방어). 넘치면 버리고 집계만
+AUTO_COUNT_MAX = 1_000_000
+AUTO_CAP_MARK = "auto_case_cap"   # schema_marks 키 앞부분 — 뒤에 KST 날짜. 전역 상한 첫 도달 감사를 하루 한 번만
+
+
+def ticket_auto(uid, source, stage, code, app_version, os_kind, occurred_at, n=1) -> str:
+    """오류 자동 Case(명세 1.4) — 값은 호출자(auto_cases.parse)가 검사한 코드와 고정 낱말뿐이다(본문, 경로, URL, 이메일, 토큰, 오류 문장 없음).
+    묶음 = (사용자, KST 오늘(서버 시각), 출처|단계|코드). 있으면 횟수 +n, 마지막 시각과 마지막 보고 값(meta)만 바꾼다(상태, 답변 그대로).
+    없으면 새 Case(kind bug, via auto). 사용자 하루 AUTO_DAILY_USER, 전역 AUTO_DAILY_ALL 을 넘으면 만들지 않는다.
+    사용자 잠금 안에서 묶음 찾기와 만들기가 직렬이다(ux_tickets_auto 는 마지막 방어). 반환 created | counted | capped."""
+    key = f"{source}|{stage}|{code}"
+    meta = Jsonb({"source": source, "stage": stage, "code": code, "app_version": app_version, "os": os_kind,
+                  "occurred_at": occurred_at})
+    with tx() as c:
+        _user_lock(c, uid)
+        day = _one(c, "SELECT (now() AT TIME ZONE 'Asia/Seoul')::date AS d")["d"]
+        hit = _one(c, "UPDATE tickets SET auto_count = LEAST(auto_count + %s, %s), auto_last = now(), auto_meta = %s, updated = now() "
+                      "WHERE user_id=%s AND via='auto' AND auto_day=%s AND auto_key=%s RETURNING id",
+                   (n, AUTO_COUNT_MAX, meta, uid, day, key))
+        if hit:
+            return "counted"
+        if _one(c, "SELECT count(*) AS n FROM tickets WHERE user_id=%s AND via='auto' AND auto_day=%s", (uid, day))["n"] >= AUTO_DAILY_USER:
+            return "capped"
+        if _one(c, "SELECT count(*) AS n FROM tickets WHERE via='auto' AND auto_day=%s", (day,))["n"] >= AUTO_DAILY_ALL:
+            # 그날 처음 걸린 순간만 감사 한 줄(운영 콘솔 Administration 감사 로그). 표식 INSERT 가 원자적이라 동시 요청도 한 줄
+            if _one(c, "INSERT INTO schema_marks (key) VALUES (%s) ON CONFLICT (key) DO NOTHING RETURNING key",
+                    (f"{AUTO_CAP_MARK}:{day.isoformat()}",)):
+                _audit(c, "auto_case_cap", None, None, {"day": day.isoformat(), "limit": AUTO_DAILY_ALL})
+            return "capped"
+        text = (f"자동 오류 보고\n출처: {AUTO_SOURCE_LABEL[source]}\n단계: {stage}\n오류 코드: {code}\n"
+                f"앱 버전: {app_version or '없음'}\nOS: {os_kind}")
+        c.execute("INSERT INTO tickets (id,user_id,kind,text,via,page,auto_key,auto_day,auto_count,auto_first,auto_last,auto_meta) "
+                  "VALUES (%s,%s,'bug',%s,'auto','other',%s,%s,%s,now(),now(),%s)",
+                  (new_id("tk"), uid, text, key, day, n, meta))
+        return "created"
+
+
 def tickets_mine(uid, limit=50):
     """「내 문의」 — 본인 글·상태·답변 유무·공개 갱신 시각. admin_note·hint·답변 본문은 넣지 않는다(본문은 ticket_get_mine).
     정렬 = 최근 공개 갱신순(공개 갱신이 없으면 접수 시각) — 웹 표와 MCP ticket_list_mine 이 같은 순서. 50건."""
     with tx() as c:
         return [_iso(r) for r in _all(c, "SELECT id,kind,text,status,via,created,updated,(reply IS NOT NULL) AS has_reply,reply_at,"
-                                         "public_updated FROM tickets WHERE user_id=%s "
+                                         "public_updated,auto_count,auto_first,auto_last FROM tickets WHERE user_id=%s "
                                          "ORDER BY COALESCE(public_updated, created) DESC, created DESC, id LIMIT %s", (uid, limit))]
 
 
 def ticket_get_mine(uid, tid):
     """본인 문의 하나 — 글·답변·공개 이력만. 다른 사람 문의·없는 id 는 NOT-FOUND(같은 모양). internal 사건·admin_note·hint 는 없다."""
     with tx() as c:
-        t = _one(c, "SELECT id,kind,text,status,via,created,updated,reply,reply_at,public_updated FROM tickets WHERE id=%s AND user_id=%s",
+        t = _one(c, "SELECT id,kind,text,status,via,created,updated,reply,reply_at,public_updated,auto_count,auto_first,auto_last "
+                    "FROM tickets WHERE id=%s AND user_id=%s",
                  (str(tid), uid))
         if not t:
             raise CrmError(*_TICKET_NF)
@@ -3468,7 +3553,8 @@ ADMIN_ACTIONS = ("bootstrap", "recover", "role_grant", "role_revoke", "web_signo
                  "device_connect", "device_reissue", "device_revoke", "device_policy",   # board 이전: 장치 토큰(actor = 사용자 본인)
                  "migration_apply", "migration_extend", "migration_close",              # board 이전 CLI — detail 은 열거 키·건수·해시 앞자리만
                  "migration_token",                                                     # 이관 토큰 발급(2026-11-02)
-                 "token_grant", "token_grant_redeem", "pc_forget", "device_rotate")    # PC 연결(2026-11-02) — detail 은 id·scope·via·장치 이름만(토큰 값 없음)
+                 "token_grant", "token_grant_redeem", "pc_forget", "device_rotate",    # PC 연결(2026-11-02) — detail 은 id·scope·via·장치 이름만(토큰 값 없음)
+                 "auto_case_cap")   # 오류 자동 Case 전역 하루 상한 첫 도달(2026-11-13) — 실행자, 대상 없음. detail = day, limit
 _iat_missing_logged = False
 
 
@@ -5118,7 +5204,7 @@ def job_create(uid, kind, text, session_id=None, input_kind=None, restack=None):
             raise CrmError("NOT-FOUND", "그 대화 세션을 찾을 수 없어요.")
         # 연결 장치(연결 해제 안 된 device) 0 = 접수 거절 — 받을 PC 가 없어 queued 로 24시간 남는다. 오프라인 장치는 대기로 접수
         if not _one(c, "SELECT 1 AS x FROM import_streams WHERE user_id=%s AND channel='device' AND revoked_at IS NULL LIMIT 1", (uid,)):
-            raise CrmError("NO-DEVICE", JOB_NO_DEVICE_MSG, "Setup › 연결 장치에서 PC 를 연결하세요.")
+            raise CrmError("NO-DEVICE", JOB_NO_DEVICE_MSG, "MyCRM 앱을 열고 로그인하면 이 PC 가 자동으로 연결돼요.")
         n_open = _one(c, "SELECT count(*) AS n FROM jobs WHERE user_id=%s AND status = ANY(%s)", (uid, list(JOB_LIVE)))["n"]
         if n_open >= imports.JOBS_OPEN_MAX:
             raise CrmError("JOB-LIMIT", f"진행 중인 작업이 너무 많아요(최대 {imports.JOBS_OPEN_MAX}).", "끝나거나 취소된 뒤 다시 보내세요.")
