@@ -25,13 +25,13 @@ python3 -m agent [--home 경로] <명령>
 | `status` | 연결·토큰·키 유무, 켜진 어댑터, 무인 요약, 예약, 건수(이벤트·대기·접수·멈춤·충돌·거절·삭제됨·격리·사람), 오늘 요약 시도, 멈춤 범위 |
 | `configure-cli --path <절대경로>` | 무인 요약이 부를 구독 CLI 실행 파일 경로를 `config.json` 에 저장합니다. 절대 경로·있는 파일·실행 가능해야 하고(Windows 는 `.exe`), 아니면 아무것도 바꾸지 않고 종료 코드 1로 끝납니다. 무인 요약을 켜지 않습니다 |
 | `configure-cli --clear` | 저장된 CLI 경로만 지웁니다. 다른 설정은 그대로입니다 |
-| `ai-status` | AI 연결 상태를 JSON 한 줄 `{"ai": {"claude": 상태, "codex": 상태}}` 로 냅니다. 상태 = `ready`(구독 로그인 됨), `signed-out`, `missing`(실행 파일 없음), `off`(이 PC 에서 끊음), `unsupported`(API 키 등 구독이 아닌 인증), `error`. 공급자 CLI 의 `claude auth status --json`·`codex login status` 를 대화(`chat`)와 같은 환경으로 부르고, 계정 정보는 내지 않습니다. 저장된 Claude 경로가 없으면 PATH 와 표준 설치 위치(`~/.local/bin` 등)에서 찾아 `summary.cli_path` 에 저장합니다 |
-| `ai-connect --provider claude\|codex` | 끊기 표시를 지우고, 로그인이 없으면 공급자 로그인(`claude auth login --claudeai`, `codex login`, 브라우저 인증, 최대 10분)을 띄운 뒤 상태 한 줄을 냅니다. 인증은 공급자 CLI 가 보관합니다 |
+| `ai-status` | AI 연결 상태를 JSON 한 줄 `{"ai": {"claude": {"state": 상태, "code": 이유}, "codex": {…}}}` 로 냅니다. 상태 = `linked`(CLI 로그인 됨, 끊기 표시 없음), `signed_out`(CLI 있음, 로그인 안 됨 — API 키 같은 구독 아닌 인증은 code `unsupported-auth`), `off`(이 PC 에서 끊음), `missing`(CLI 없음, 또는 대화가 실행을 거절할 파일 — code `untrusted-cli`). 공급자 CLI 의 `claude auth status --json`·`codex login status` 를 대화(`chat`)와 같은 환경으로 부르고, 계정 정보는 내지 않습니다. 저장된 경로가 없으면 PATH 와 표준 설치 위치(`~/.local/bin` 등)에서 찾아 `summary.cli_path`·`summary.codex_cli_path` 에 저장합니다 |
+| `ai-connect --provider claude\|codex` | 끊기 표시를 지우고, 로그인이 없으면 공급자 로그인(`claude auth login --claudeai`, `codex login`)을 띄웁니다. 3초마다 상태를 보며 최대 5분 기다립니다. 로그인 프로세스가 10초 안에 실패로 끝나면(TTY 가 필요한 경우) 같은 명령을 시스템 터미널로 띄웁니다(macOS `open -a Terminal`, Windows `cmd /c start`). 인증은 공급자 CLI 가 보관합니다 |
 | `ai-disconnect --provider claude\|codex` | 이 PC 에서 MyCRM 이 그 공급자를 쓰지 않게 표시합니다(`ai-connection.json`). 공급자 로그아웃은 하지 않습니다 |
 | `schedule install` · `schedule remove` | 현재 사용자 예약 등록(1시간마다)·해제. macOS 는 launchd, Windows 는 Task Scheduler. 둘 다 여러 번 해도 같습니다. 해제는 원문·대응표를 지우지 않습니다 |
 | `serve [--port N]` | 원문 보기(127.0.0.1 전용, 기본 포트 8790). Ctrl+C 로 끕니다 |
 | `serve --jobs` | 작업 실행 상주(11절, 준비 중 · 기본 꺼짐). 끝내기 = Ctrl+C·SIGTERM, 실행 중 작업은 최대 30초 기다립니다 |
-| `chat --fake` | 웹 「대화」 연결 상주(준비 중 · 서버 스위치 기본 꺼짐). 서버에 WebSocket 하나로 붙어 받은 턴을 실행해 출력을 올립니다. 지금은 가짜 대본(`--fake`)만 — 실 CLI 는 다음 단계. 끊기면 1초부터 최대 60초까지 늘려 다시 붙고, 서버가 확인하지 않은 출력만 다시 보냅니다(턴을 다시 실행하지 않음). 서버 신호가 50초 동안 없으면(잠자기·네트워크 전환 — 메시지를 반쯤 받다 멈춘 경우 포함) 연결을 닫고 다시 붙습니다. 메시지 하나는 64KB 를 넘지 않게 나눕니다(긴 답은 쪼개고, 큰 도구 데이터는 줄여 표시). 토큰이 거절되면 Keychain 을 한 번 다시 읽어 바뀌었으면(자동 교체·재발급) 새 토큰으로 이어 가고, 같으면 종료 코드 3 으로 멈춥니다. 시작 때 `ai-status` 와 같은 AI 연결 상태를 보고, `ready` 인 공급자의 모델만 알리며 상태를 hello 로 서버에 보고합니다(PC 앱 허용 창은 없습니다) |
+| `chat --fake` | 웹 「대화」 연결 상주(준비 중 · 서버 스위치 기본 꺼짐). 서버에 WebSocket 하나로 붙어 받은 턴을 실행해 출력을 올립니다. 지금은 가짜 대본(`--fake`)만 — 실 CLI 는 다음 단계. 끊기면 1초부터 최대 60초까지 늘려 다시 붙고, 서버가 확인하지 않은 출력만 다시 보냅니다(턴을 다시 실행하지 않음). 서버 신호가 50초 동안 없으면(잠자기·네트워크 전환 — 메시지를 반쯤 받다 멈춘 경우 포함) 연결을 닫고 다시 붙습니다. 메시지 하나는 64KB 를 넘지 않게 나눕니다(긴 답은 쪼개고, 큰 도구 데이터는 줄여 표시). 토큰이 거절되면 Keychain 을 한 번 다시 읽어 바뀌었으면(자동 교체·재발급) 새 토큰으로 이어 가고, 같으면 종료 코드 3 으로 멈춥니다. 시작 때 `ai-status` 와 같은 AI 연결 상태를 보고, `linked` 인 공급자의 모델만 알리며 상태를 hello 의 `ai_links` 로 서버에 보고합니다(PC 앱 허용 창은 없습니다). 대화가 시작될 때마다 다시 보고 `linked` 가 아니면 그 턴을 `AI-OFF`·`AI-SIGNED-OUT`·`AI-MISSING` 으로 거절합니다. 앱이 연결을 바꾸면(제어 줄 `{"command":"ai-refresh"}`) 다시 보고 같은 연결에서 hello 를 다시 보냅니다 |
 | `disconnect` | 순서대로 ① 서버 토큰 폐기(`POST /api/imports/device/revoke`) ② 로컬 업로드 토큰 제거. 서버가 장애·네트워크 오류면 로컬 토큰을 그대로 두고 종료 코드 1로 멈춥니다(다시 시도). 토큰이 이미 폐기·만료됐으면 서버는 「이미 무효」로 보고 로컬만 지웁니다. 결과는 서버·로컬·HMAC 키를 따로 보여 줍니다. HMAC 키는 지우지 않습니다 |
 | `disconnect --local-only` | 서버를 건너뛰고 로컬 토큰만 지웁니다 — 웹 「연결 장치」에서 이미 해제했을 때 |
 | `disconnect --forget-hmac-key` | 그 키 공간의 HMAC 키도 지웁니다. **지우면 같은 사람 연결이 끊깁니다** — 다시 연결해도 전에 본 사람을 같은 사람으로 잇지 못하고, 서버의 HMAC 으로 되살릴 수 없습니다. 백업 없이 쓰지 마세요 |
@@ -39,7 +39,9 @@ python3 -m agent [--home 경로] <명령>
 종료 코드: 0 성공 · 1 오류 · 2 쓰는 법 · 3 멈춤(사용자 조치 필요 — 출력 마지막 줄의 안내 뒤 `--resume`).
 출력에는 토큰·HMAC 키·원문·실명·URL 을 쓰지 않습니다.
 
-오류 자동 보고: `run-once` 가 멈추거나(종료 코드 3, `auth` 제외) 실행에 실패하면(종료 코드 1) 장치 토큰으로 운영자에게 한 번 보고합니다. 담는 것은 출처(`agent`), 단계(`run-once/halt`·`run-once/failed`), 고정 오류 코드(`halt-policy`, `run-error` 등), 앱 버전, OS 종류, 시각뿐입니다. 본문, 경로, URL, 토큰, 오류 문장은 담지 않습니다. 보내기 실패는 무시합니다.
+오류 자동 보고: `run-once` 가 멈추거나(종료 코드 3, `auth` 제외) 실행에 실패하면(종료 코드 1) 장치 토큰으로 운영자에게 보고합니다(`POST /api/device/error-reports`). 담는 것은 출처(`agent`), 단계(`run-once/halt`·`run-once/failed`), 고정 오류 코드(`halt-policy`, `run-error` 등, 꼴이 어긋나면 `unknown`), 앱 버전, OS 종류(`mac`·`win`·`other`), 시각, 횟수뿐입니다. 본문, 경로, URL, 토큰, 오류 문장은 담지 않습니다. 네트워크 실패나 5xx 면 한 번만 다시 보내고, 그 밖의 실패는 무시합니다.
+
+미확인(2026-11-13): `claude auth login` 이 TTY 없이 끝까지 되는지(그래서 터미널 대체 경로를 둡니다), `codex login status` 의 종료 코드(0 = `linked`, 1 = `signed_out` 으로 둡니다).
 
 ## 2. 처음 연결하기 (macOS)
 
