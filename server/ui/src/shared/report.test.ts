@@ -1,7 +1,7 @@
 // 오류 자동 보고(shared/report) — 단계 = 주소의 낱말 조각만(id 없음) · 같은 (단계, 코드)는 횟수로 한 번 · 5xx 만 보낸다 · 꼴이 틀린 단계는 보내지 않는다
 import { afterEach, expect, test, vi } from "vitest";
 import { ApiFail, getJSON } from "./api";
-import { _flushNow, osKind, reportError, stageOf } from "./report";
+import { _flushNow, osKind, ownError, reportError, stageOf } from "./report";
 
 afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -35,4 +35,12 @@ test("API 5xx 는 자동 보고, 4xx 는 보내지 않는다", async () => {
   await expect(getJSON("/api/bad")).rejects.toBeInstanceOf(ApiFail);
   _flushNow();
   expect(sent).toEqual(["HTTP-503"]);
+});
+
+test("잡히지 않은 오류 — 우리 화면 묶음(/app/assets/)에서 난 것만, ResizeObserver 경고와 다른 출처는 뺀다", () => {
+  const o = "https://crm.test";
+  expect(ownError({ message: "x is undefined", filename: o + "/app/assets/index-1.js" }, o)).toBe(true);
+  expect(ownError({ message: "ResizeObserver loop completed with undelivered notifications.", filename: o + "/app/assets/a.js" }, o)).toBe(false);
+  expect(ownError({ message: "Script error.", filename: "" }, o)).toBe(false);
+  expect(ownError({ message: "boom", filename: "chrome-extension://abc/x.js" }, o)).toBe(false);
 });

@@ -51,8 +51,20 @@ export function reportError(stage: string, code: string) {
 // 시험용 — 모은 것을 바로 보내고 상태를 비운다
 export function _flushNow() { if (timer) clearTimeout(timer); flush(); sent = 0; }
 
-// 화면 전체의 알 수 없는 오류(잡히지 않은 예외, 거절된 약속). 오류 문장은 싣지 않는다
+// 우리 화면 스크립트(같은 출처의 /app/assets/)에서 난 오류인가 — 확장 프로그램, 자동화 도구, 다른 출처 스크립트, ResizeObserver 경고는 빼서
+// 사용자 탓이 아닌 잡음 Case 를 만들지 않는다. 문장과 파일 이름은 판정에만 쓰고 보내지 않는다
+export function ownError(e: { message?: unknown; filename?: unknown }, origin = typeof location === "undefined" ? "" : location.origin) {
+  const msg = typeof e.message === "string" ? e.message : "", file = typeof e.filename === "string" ? e.filename : "";
+  return !!origin && file.startsWith(origin + "/app/assets/") && !/ResizeObserver loop/.test(msg);
+}
+
+// 화면 전체의 알 수 없는 오류(잡히지 않은 예외, 거절된 약속). 오류 문장은 싣지 않는다. 거절된 약속 중 API 실패(ApiFail)는 call 이 이미 5xx 만 보냈다
 export function installGlobalReport(w: Window = window) {
-  w.addEventListener("error", () => reportError("ui/error", "unknown"));
-  w.addEventListener("unhandledrejection", () => reportError("ui/promise", "unknown"));
+  w.addEventListener("error", e => { if (ownError(e)) reportError("ui/error", "unknown"); });
+  w.addEventListener("unhandledrejection", e => {
+    const r = (e as PromiseRejectionEvent).reason;
+    if (!(r instanceof Error) || "err" in r) return;   // ApiFail(err 필드) = API 실패는 call 이 맡는다(빌드는 이름을 줄여 이름으로 못 가린다)
+    if (typeof r.stack === "string" && !r.stack.includes("/app/assets/")) return;
+    reportError("ui/promise", "unknown");
+  });
 }
