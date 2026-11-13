@@ -15,11 +15,16 @@ function parseLast(raw) {
 }
 
 // deps: store {load() -> string|null, save(record)} · connected() -> bool · syncing() -> bool · now()
+//       blocked() -> null | login | revoked | name | limit | failed   why this PC is not connected (connector.blockReason)
 //       version · changed()
-function createPcState({store, connected, syncing, version, now = Date.now, changed = () => {}}) {
+const BLOCKS = new Set(['login', 'revoked', 'name', 'limit', 'failed']);
+function createPcState({store, connected, syncing, blocked = () => null, version, now = Date.now, changed = () => {}}) {
   let last = parseLast(store.load());
   return Object.freeze({
-    view: () => ({version, connected: !!connected(), syncing: !!syncing(), lastSync: last ? {...last} : null}),
+    view: () => {
+      const b = blocked();
+      return {version, connected: !!connected(), blocked: BLOCKS.has(b) ? b : null, syncing: !!syncing(), lastSync: last ? {...last} : null};
+    },
     record({kind, code}) {
       last = {at: new Date(now()).toISOString(), kind: KINDS.includes(kind) ? kind : 'unknown',
         code: typeof code === 'string' && CODE.test(code) ? code : null};

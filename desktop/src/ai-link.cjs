@@ -40,13 +40,18 @@ function createAiLink({run, restartChat = async () => {}, report = () => {}, log
     catch { return null; }
   }
   // At app start and when the dashboard asks (maxAgeMs: a check younger than this is reused). One at a time.
+  // A provider that became ready or stopped being ready since the last check (a login or logout in a terminal) reaches
+  // the chat agent through a restart, as a change made here does. The first check after start restarts nothing.
   function refresh(maxAgeMs = 0) {
     if (refreshing) return refreshing;
     if (maxAgeMs > 0 && checkedAt !== null && now() - checkedAt < maxAgeMs) return Promise.resolve(view());
     refreshing = (async () => {
+      const before = {...states};
       const parsed = await call(['ai-status'], STATUS_TIMEOUT_MS);
       if (!parsed) { log('ai', 'status-failed'); report('ai/status', 'unavailable'); }
       apply(parsed, PROVIDERS);
+      const crossed = parsed && PROVIDERS.find(p => before[p] !== 'unknown' && (before[p] === 'ready') !== (states[p] === 'ready'));
+      if (crossed) await afterChange(crossed, 'changed');
       return view();
     })().finally(() => { refreshing = null; });
     return refreshing;

@@ -757,8 +757,9 @@ def _remember_claude_path(ctx: Ctx, cfg: dict) -> dict:
     """설정에 Claude 실행 파일이 없거나 사라졌으면 찾은 경로를 저장한다(명세 1.1 — 실행 파일 선택 화면 대신)."""
     if ai_connection.configured_path("claude", cfg):
         return cfg
-    found = ai_connection.discover("claude", **{k: v for k, v in ctx.ai_kw.items() if k in ("path_value", "platform", "user_home")})
-    if not found or (osutil.IS_WINDOWS and not found.lower().endswith(".exe")):
+    found = ai_connection.discover("claude", **_discover_kw(ctx))
+    if (not found or (osutil.IS_WINDOWS and not found.lower().endswith(".exe"))
+            or not ai_connection.trusted("claude", found)):
         return cfg
     try:
         with osutil.FileLock(ctx.paths.lock("config")):
@@ -768,6 +769,10 @@ def _remember_claude_path(ctx: Ctx, cfg: dict) -> dict:
     except (osutil.LockBusy, _config.ConfigError, OSError):
         pass
     return cfg
+
+
+def _discover_kw(ctx: Ctx) -> dict:
+    return {k: v for k, v in ctx.ai_kw.items() if k in ("path_value", "platform", "user_home")}
 
 
 def _ai_kw(ctx: Ctx, *names) -> dict:
@@ -1035,7 +1040,7 @@ def _run_chat(ctx: Ctx, a, cfg, sid, server, log) -> int:
             ai_status = ai_connection.statuses(cfg, ctx.paths.home, **_ai_kw(ctx, "run"))
             kw.setdefault("ai_status", ai_status)
         if live and claude_factory is None and CHAT_CLAUDE_PROVIDER_READY:
-            cli_path = ai_connection.cli_path("claude", cfg, **_ai_kw(ctx))
+            cli_path = ai_connection.cli_path("claude", cfg, **_discover_kw(ctx))
             if ai_status.get("claude") != "ready" or not cli_path:
                 # Claude 를 끊었거나, CLI 가 없거나, 로그인이 없다. Claude 모델을 알리지 않고 계속 돈다(다른 공급자는 된다).
                 log({"event": "start", "why": "claude-" + str(ai_status.get("claude"))})
@@ -1073,6 +1078,7 @@ def _run_chat(ctx: Ctx, a, cfg, sid, server, log) -> int:
                 except Exception:
                     log({"event": "start", "stopped": "codex-runtime"})
                     return EXIT_ERR
+        kw.setdefault("ai_home", ctx.paths.home)
         agent = chat.ChatAgent(chat.ws_url(server), token_now, provider, ref_store=ref_store,
                                agent_version=AGENT_VERSION, stopping=stopping, log=log,
                                claude_factory=claude_factory, codex_factory=codex_factory, **kw)

@@ -4,7 +4,8 @@
 // dash-preload.cjs cannot require local files (sandboxed preload) and repeats DASH; a test keeps the two equal.
 
 // Dashboard page ↔ app IPC. The page reads with *:get and is told to read again by an empty *:changed signal.
-//   pc:get                -> PcView     (pc-state.cjs view(): connected, syncing, lastSync {at, kind, code})
+//   pc:get                -> PcView     (pc-state.cjs view(): version, connected, blocked: null|login|revoked|name|limit|failed,
+//                                        syncing, lastSync {at, kind, code})
 //   pc:sync               -> SyncResult {kind: ok|busy|disconnected|login|rejected|unknown, code: string|null}
 //   ai:get                -> AiView     (ai-link.cjs view(): {providers: {claude, codex}, connecting, checkedAt})
 //   ai:connect  provider  -> AiView     provider ∈ PROVIDERS. Starts the provider's own login when it is signed out.

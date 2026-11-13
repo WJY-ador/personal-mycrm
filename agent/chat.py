@@ -168,7 +168,7 @@ class ChatAgent:
 
     def __init__(self, url: str, token, provider=None, *, registry=None, ref_store=None, agent_version: str = "", connect=wsclient.connect,
                  backoff: wsclient.Backoff | None = None, stopping: threading.Event | None = None, log=None,
-                 coalesce: float = COALESCE_SEC, buffer_max: int = BUFFER_MAX, recv_tick: float = RECV_TICK, ai_status=None,
+                 coalesce: float = COALESCE_SEC, buffer_max: int = BUFFER_MAX, recv_tick: float = RECV_TICK, ai_status=None, ai_home=None,
                  ws_max: int = WS_MESSAGE_MAX, silence_max: float = SILENCE_MAX, claude_factory=None,
                  codex_factory=None):
         """token = 글자 또는 공급 함수(호출할 때마다 키 저장소를 다시 읽는다)."""
@@ -193,6 +193,9 @@ class ChatAgent:
         from .ai_connection import PROVIDERS, STATES
         self.ai_status = ({k: v for k, v in ai_status.items() if k in PROVIDERS and v in STATES}
                           if isinstance(ai_status, dict) else None)
+        # 이 PC 의 끊기 표시(ai_connection.USE_FILE)를 턴마다 다시 본다. 앱이 chat 을 다시 시작하지 못해도 끊은 공급자는
+        # 바로 돌지 않는다. None 이면 보지 않는다(시험, --fake).
+        self.ai_home = ai_home
         self.backoff = backoff or wsclient.Backoff()
         self.stopping = stopping or threading.Event()
         self.log = log or (lambda rec: None)
@@ -384,6 +387,13 @@ class ChatAgent:
                     provider = self.registry.validate_turn(provider_name, model, m.get("binding_version"))
                 except ProviderUnavailable:
                     provider = None
+            if factory is not None and self.ai_home is not None:
+                from .ai_connection import read_off
+                if provider_name in read_off(self.ai_home):
+                    b = self.buffers[tid] = TurnBuffer(tid, self.buffer_max)
+                    self.seen[tid] = True
+                    self._send(b.add("error", {"code": "AI-OFF"}, force=True))
+                    return
             if provider is None and factory is None:
                 b = self.buffers[tid] = TurnBuffer(tid, self.buffer_max)
                 self.seen[tid] = True

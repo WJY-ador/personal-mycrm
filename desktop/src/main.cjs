@@ -148,7 +148,7 @@ function createDashboard(){
   // Subframes (captcha, provider widgets) are not gated; only top-level navigation is.
   wc.on('will-redirect',(e,url,_inPlace,isMainFrame)=>{if(e.isMainFrame??isMainFrame)guard(e,e.url||url);});
   dash.on('close',event=>{if(!quitting&&!installing){event.preventDefault();dash.hide();}});
-  dash.on('focus',()=>{connector?.poll('focus');autorun?.nudge('focus');});
+  dash.on('focus',()=>{connector?.poll('focus').then(()=>autoDevice('timer'));autorun?.nudge('focus');});
   // A login callback that launched the app loads its claim (deepLink); anything else loads the dashboard.
   const link=queuedLink;queuedLink=null;
   if(link&&!handoff.parseSetupLink(link))deepLink(link);else dash.loadURL(DASHBOARD).catch(()=>{});
@@ -212,6 +212,8 @@ async function chatAfterAiChange(){
     try{await exclusively(()=>restartChat(startDeps));return;}
     catch(e){if(e?.message!=='busy')throw e;await new Promise(resolve=>setTimeout(resolve,5000));}
   }
+  // The agent still reads the local mark on every turn, so a disconnect holds without this restart.
+  log('chat','restart-gave-up');
 }
 // The user's stop and start (tray). A stop is recorded first so the automatic start cannot bring it back in this run.
 async function userStop(){autorun?.userStopped();await stopProcesses();}
@@ -339,7 +341,7 @@ async function initialize(){
   connector=new Connector({hosted:HOSTED,request,store:jsonStore(path.join(userData,'desktop-connection.json')),install,forgetLocal,
     exclusive:exclusively,canDeliver:()=>ready&&!busy&&!quitting,connection,notify,log,client:grants.clientInfo(os.hostname(),process.platform),changed});
   pcState=createPcState({store:jsonStore(path.join(userData,'desktop-sync.json')),connected:()=>connection().connected,
-    syncing:()=>busy,version:app.getVersion(),changed:()=>signal(DASH.pcChanged)});
+    syncing:()=>busy,blocked:()=>connector.blockReason(),version:app.getVersion(),changed:()=>signal(DASH.pcChanged)});
   aiLink=createAiLink({run:(args,{timeoutMs})=>ready?command(args,undefined,{},timeoutMs):Promise.reject(new Error('agent-unavailable')),
     restartChat:chatAfterAiChange,report:(stage,code)=>reporter.report(stage,code),log,changed:()=>signal(DASH.aiChanged)});
   // Opening the app starts the processes, unless the user stopped them last time.

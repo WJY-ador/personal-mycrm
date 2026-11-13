@@ -62,6 +62,17 @@ test('disconnect sets the local mark and restarts chat; signed-out stays signed-
   assert.equal(h.restarts(),1,'not ready: no restart');
 });
 
+test('a login or logout made outside the app restarts chat once the check sees it cross ready',async()=>{
+  const h=link([{code:0,last:'{"ai":{"claude":"signed-out","codex":"missing"}}'},
+    {code:0,last:'{"ai":{"claude":"ready","codex":"missing"}}'},{code:0,last:'{"ai":{"claude":"ready","codex":"missing"}}'},
+    {code:0,last:'{"ai":{"claude":"signed-out","codex":"missing"}}'},new Error('agent-unavailable')]);
+  await h.ai.refresh();assert.equal(h.restarts(),0,'the first check after start restarts nothing');
+  await h.ai.refresh();assert.equal(h.restarts(),1,'signed-out -> ready');
+  await h.ai.refresh();assert.equal(h.restarts(),1,'no change');
+  await h.ai.refresh();assert.equal(h.restarts(),2,'ready -> signed-out');
+  await h.ai.refresh();assert.equal(h.restarts(),2,'a failed check changes nothing in chat');
+});
+
 test('a chat restart that fails is logged, not thrown',async()=>{
   const ai=createAiLink({run:async()=>({code:0,last:'{"ai":{"claude":"ready"}}'}),restartChat:async()=>{throw new Error('busy');},
     log:()=>{},changed:()=>{}});
@@ -71,12 +82,14 @@ test('a chat restart that fails is logged, not thrown',async()=>{
 test('the "이 PC" line keeps the last sync (time, kind, code) across a restart and drops anything else',()=>{
   let saved=null,changes=0;const store={load:()=>saved,save:r=>{saved=JSON.stringify(r);}};
   const pc=createPcState({store,connected:()=>true,syncing:()=>false,version:'0.1.7',now:()=>Date.parse('2026-11-13T00:00:00Z'),changed:()=>{changes++;}});
-  assert.deepEqual(pc.view(),{version:'0.1.7',connected:true,syncing:false,lastSync:null});
+  assert.deepEqual(pc.view(),{version:'0.1.7',connected:true,blocked:null,syncing:false,lastSync:null});
   pc.record({kind:'rejected',code:'halt-policy',detail:'/Users/someone'});
   assert.deepEqual(pc.view().lastSync,{at:'2026-11-13T00:00:00.000Z',kind:'rejected',code:'halt-policy'});
   assert.equal(changes,1);assert.ok(!saved.includes('someone'));
-  const again=createPcState({store,connected:()=>false,syncing:()=>true,version:'0.1.7'});
-  assert.deepEqual(again.view(),{version:'0.1.7',connected:false,syncing:true,lastSync:{at:'2026-11-13T00:00:00.000Z',kind:'rejected',code:'halt-policy'}});
+  let why='name';
+  const again=createPcState({store,connected:()=>false,syncing:()=>true,blocked:()=>why,version:'0.1.7'});
+  assert.deepEqual(again.view(),{version:'0.1.7',connected:false,blocked:'name',syncing:true,lastSync:{at:'2026-11-13T00:00:00.000Z',kind:'rejected',code:'halt-policy'}});
+  why='/Users/x';assert.equal(again.view().blocked,null);
   assert.equal(parseLast('{"at":"x","kind":"ok"}'),null);
   assert.equal(parseLast('{"at":"2026-11-13T00:00:00Z","kind":"weird"}'),null);
   assert.deepEqual(parseLast('{"at":"2026-11-13T00:00:00Z","kind":"ok","code":"a b"}'),{at:'2026-11-13T00:00:00Z',kind:'ok',code:null});

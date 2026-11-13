@@ -13,10 +13,14 @@ const g = require('./grants.cjs');
 class ConnectError extends Error { constructor(message, code = null) { super(message); this.code = code; } }
 const RESET = new Set(['NOT-OWNER', 'INSTALLATION-UNKNOWN']);
 const NOT_LINKED_RETRY_MS = 24 * 60 * 60 * 1000;   // rotate NOT-FOUND: this installation has no device (token pasted by hand)
-// Automatic connection (spec 2026-11-13 §1.2) is tried again no sooner than this after a failure; a refusal the person
-// has to fix on the web (device limit, display name) waits longer. A login or a sync tries at once.
+// Automatic connection (spec 2026-11-13 §1.2) is tried again no sooner than this after a failure. A missing display name
+// is fixed by the person on the web right after login, so it is tried again soon; a full device list waits longer.
+// A login or a sync tries at once.
 const AUTO_RETRY_MS = 10 * 60 * 1000;
+const AUTO_NAME_MS = 2 * 60 * 1000;
 const AUTO_LONG_MS = 60 * 60 * 1000;
+// Why this PC has no usable connection, for the dashboard's "이 PC" line: null | login | revoked | name | limit | failed.
+const BLOCKS = new Set(['login', 'revoked', 'name', 'limit', 'failed']);
 
 class Connector {
   // request(method, url, body?) -> {status, body, retryAfter}   session cookies + X-MyCRM-Desktop (main: net.request)
@@ -38,7 +42,15 @@ class Connector {
     this.poller = {lastAt: -Infinity, backoffUntil: 0, inFlight: false};
     this.nextRotateAt = 0;
     this.nextAutoAt = 0;
+    this.blocked = null;
   }
+  blockReason() {
+    if (this.record.revoked) return 'revoked';
+    if (!this.needsAuto()) return null;
+    if (this.session === 'none') return 'login';
+    return this.blocked;
+  }
+  setBlocked(value) { const v = BLOCKS.has(value) ? value : null; if (v !== this.blocked) { this.blocked = v; this.changed(); } }
   // Renderer-safe view. No ids, no tokens. A release reported by the server is always shown (the local token is dead).
   view() {
     return {session: this.session, revoked: this.record.revoked, registered: this.registered};
@@ -202,7 +214,7 @@ class Connector {
   // 'revoked', 'login' (no session: the dashboard shows its login screen), 'waiting' (spaced after a failure) or 'busy'.
   // Throws the ConnectError of a failed attempt.
   async ensureDevice(reason = 'timer') {
-    if (!this.needsAuto()) return 'connected';
+    if (!this.needsAuto()) { this.setBlocked(null); return 'connected'; }
     if (this.record.revoked) return 'revoked';
     if (this.session === 'none' && reason !== 'login') return 'login';
     const now = this.now();
@@ -210,14 +222,17 @@ class Connector {
     try {
       await this.exclusive(() => this.autoConnect());
     } catch (e) {
-      if (e?.message === 'busy' || e?.message === 'closing') return 'busy';
-      this.nextAutoAt = now + (e?.message === 'limit' || e?.message === 'name' ? AUTO_LONG_MS : AUTO_RETRY_MS);
-      if (e?.message === 'login') return 'login';
+      const m = e?.message;
+      if (m === 'busy' || m === 'closing') return 'busy';
+      this.nextAutoAt = now + (m === 'name' ? AUTO_NAME_MS : m === 'limit' ? AUTO_LONG_MS : AUTO_RETRY_MS);
+      this.setBlocked(m);
+      if (m === 'login') return 'login';
       throw e;
     }
     this.nextAutoAt = 0;
+    this.setBlocked(null);
     this.log('connect', 'auto-' + reason);
     return 'issued';
   }
 }
-module.exports = {Connector, ConnectError, AUTO_RETRY_MS, AUTO_LONG_MS};
+module.exports = {Connector, ConnectError, AUTO_RETRY_MS, AUTO_NAME_MS, AUTO_LONG_MS};

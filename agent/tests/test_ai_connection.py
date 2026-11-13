@@ -101,6 +101,20 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(self.status(0, b'{"authMethod":"claude.ai"}'), "off")
         self.assertEqual(self.calls, [])
 
+    def test_a_cli_chat_would_refuse_is_not_ready_and_never_runs(self):
+        # A group-writable folder fails chat_claude.resolve_cli_path; status must agree with chat instead of saying ready.
+        loose = os.path.join(self.root, "loose")
+        os.makedirs(loose)
+        os.chmod(loose, 0o777)
+        cli = fake_cli(loose)
+        os.chmod(os.path.dirname(cli), 0o777)
+        cfg = {"summary": {"cli_path": cli}}
+        self.assertEqual(ai_connection.status("claude", cfg, self.home, run=self.run_with(0, b'{"authMethod":"claude.ai"}'),
+                                              env={}, path_value="", platform="win32", user_home=self.root), "error")
+        self.assertEqual(self.calls, [])
+        self.assertFalse(ai_connection.trusted("claude", cli))
+        self.assertTrue(ai_connection.trusted("claude", self.cli))
+
     def test_env_is_the_chat_allow_list_without_api_keys(self):
         env = ai_connection.clean_env({"HOME": "/h", "PATH": "/p", "ANTHROPIC_API_KEY": "k", "OPENAI_API_KEY": "k",
                                        "SOMETHING": "x"})

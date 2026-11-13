@@ -95,6 +95,19 @@ def cli_path(provider: str, cfg: dict, **discover_kw) -> str | None:
     return configured_path(provider, cfg) or discover(provider, **discover_kw)
 
 
+def trusted(provider: str, path: str) -> bool:
+    """chat 이 실행 전에 거는 같은 검사(Claude: 링크, 파일, 폴더 소유자와 쓰기 권한). 통과 못 하면 연결로 치지 않는다.
+    여기서 거르지 않으면 상태는 ready 인데 chat 이 시작 때 claude-runtime 으로 통째로 멈춘다."""
+    if provider != "claude":
+        return True
+    from .chat_claude import ClaudeProviderUnavailable, resolve_cli_path
+    try:
+        resolve_cli_path(path)
+        return True
+    except ClaudeProviderUnavailable:
+        return False
+
+
 def clean_env(source=None) -> dict:
     """chat 이 공급자 CLI 를 돌리는 환경과 같은 것(허용 목록만, API 키 없음)."""
     from .chat_claude import ClaudeProviderFactory
@@ -167,6 +180,8 @@ def status(provider: str, cfg: dict, home: str, *, run=subprocess.run, env=None,
     path = cli_path(provider, cfg, **discover_kw)
     if path is None:
         return "missing"
+    if not trusted(provider, path):
+        return "error"
     spec = PROVIDERS[provider]
     try:
         done = run([path, *spec["status"]], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -189,6 +204,8 @@ def login(provider: str, cfg: dict, home: str, *, popen=subprocess.Popen, env=No
     path = cli_path(provider, cfg, **discover_kw)
     if path is None:
         return "missing"
+    if not trusted(provider, path):
+        return "error"
     use_env = clean_env() if env is None else env
     try:
         child = popen([path, *PROVIDERS[provider]["login"]], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,

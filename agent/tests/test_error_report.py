@@ -17,7 +17,7 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(body, {"source": "agent", "stage": "run-once/halt", "code": "halt-policy",
                                 "app_version": AGENT_VERSION, "os": "mac", "occurred_at": "2026-11-13T03:04:05Z"})
         self.assertEqual(error_report.build("run-once/failed", "run-error", platform="win32")["os"], "win")
-        for stage, code in (("other/stage", "x"), ("run-once/halt", "/Users/someone/file"), ("run-once/halt", "A B"),
+        for stage, code in (("other/stage", "x"), ("run-once/halt", "/srv/someone/file"), ("run-once/halt", "A B"),
                             ("run-once/halt", "x" * 41), ("run-once/halt", None)):
             with self.subTest(stage=stage, code=code):
                 self.assertIsNone(error_report.build(stage, code))
@@ -73,7 +73,7 @@ class RunOnceReportTest(unittest.TestCase):
         from agent import runner
         orig = runner.run_once
         def boom(*a, **k):
-            raise runner.RunError("/Users/someone/secret-path.jsonl 를 읽지 못했어요")
+            raise runner.RunError("/srv/someone/secret-path.jsonl 를 읽지 못했어요")
         runner.run_once = boom
         try:
             code, out = self.cli("run-once")

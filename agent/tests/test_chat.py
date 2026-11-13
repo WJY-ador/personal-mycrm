@@ -216,6 +216,39 @@ class AgentTest(unittest.TestCase):
         self.assertEqual(sent[-1]["data"], {"code": "PROVIDER-BINDING"})
         self.assertIsNone(agent.current_provider)
 
+    @patch.object(chat_claude, "sys", types.SimpleNamespace(platform="darwin", executable=sys.executable))
+    def test_a_provider_disconnected_on_this_pc_refuses_turns_without_a_chat_restart(self):
+        # Spec 2026-11-13 1.3: the local mark is read on every turn, so "연결 끊기" holds even before the app restarts chat.
+        from agent import ai_connection
+        calls = []
+        class Opener:
+            def open(self, *_args, **_kwargs):
+                calls.append(1)
+                raise AssertionError("no launch authorization for a disconnected provider")
+        with tempfile.TemporaryDirectory(prefix="chat-agent-off-") as home:
+            cli = os.path.join(home, "fake-claude")
+            with open(cli, "w") as f:
+                f.write("#!/bin/sh\nexit 0\n")
+            os.chmod(cli, 0o700)
+            client = LaunchAuthorizationClient("https://synthetic.invalid", lambda: "synthetic-device-token")
+            client._opener = Opener()
+            factory = chat_claude.ClaudeProviderFactory(client, cli_path=cli, server_url="https://synthetic.invalid",
+                agent_home=home, expected_device_id="is_" + "a" * 24, env={"HOME": home, "PATH": "/usr/bin"},
+                temp_parent=home, models=("claude-synthetic",))
+            sent = []
+            class Socket:
+                def send_text(self, message): sent.append(json.loads(message)); return True
+            agent = chat.ChatAgent("wss://synthetic.invalid/api/device/chat/ws", "token", claude_factory=factory,
+                                   stopping=threading.Event(), ai_home=home)
+            agent.ws = Socket()
+            ai_connection.set_off(home, "claude", True)
+            agent._on({"type": "turn.start", "session_id": "cs_off", "turn_id": "ct_off",
+                       "text": "synthetic", "provider": "claude", "model": "claude-synthetic",
+                       "binding_version": 2, "launch_authorization_path": "/api/chat/launch-authorization"})
+        self.assertEqual(sent[-1]["data"], {"code": "AI-OFF"})
+        self.assertEqual(calls, [])
+        self.assertIsNone(agent.current_provider)
+
     def test_rejects_missing_or_changed_provider_binding_without_fallback(self):
         got = {}
 
