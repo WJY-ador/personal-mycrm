@@ -99,7 +99,7 @@ function deliveredNotice(scope, accountLabel, deviceLabel) {
 function failedNotice(scope) {
   return scope === 'migration'
     ? {title: '이관 토큰을 저장하지 못했어요', body: '앱을 최신 버전으로 업데이트한 뒤 대화에서 다시 요청해 주세요.'}
-    : {title: '이 PC를 연결하지 못했어요', body: '연결 장치 창에서 상태를 확인한 뒤 대화에서 다시 요청해 주세요.'};
+    : {title: '이 PC를 연결하지 못했어요', body: '대시보드 설정의 이 PC 칸에서 상태를 확인한 뒤 대화에서 다시 요청해 주세요.'};
 }
 // Saved installation record (userData). Anything malformed reads as "not registered".
 function parseRecord(raw) {

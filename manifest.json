@@ -92,6 +92,10 @@
       "required": false
     },
     {
+      "path": "agent/ai_connection.py",
+      "required": false
+    },
+    {
       "path": "agent/board_manifest.py",
       "required": false
     },
@@ -144,11 +148,11 @@
       "required": false
     },
     {
-      "path": "agent/consent_bridge.py",
+      "path": "agent/contract.py",
       "required": false
     },
     {
-      "path": "agent/contract.py",
+      "path": "agent/error_report.py",
       "required": false
     },
     {

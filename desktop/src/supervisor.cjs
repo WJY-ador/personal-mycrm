@@ -45,6 +45,12 @@ class Supervisor {
       this.changed();
     });
   }
+  // One small control record to a running child's stdin (chat: {"command":"ai-refresh"}). False when it is not running.
+  send(name,record) {
+    const child=this.entries.get(name)?.child;
+    if(!child?.stdin||child.stdin.destroyed||child.stdin.writableEnded)return false;
+    try{child.stdin.write(JSON.stringify(record)+'\n');return true;}catch{return false;}
+  }
   async stop(name) {
     const e=this.entries.get(name);if(!e)return;
     e.intent=false;if(e.timer){clearTimeout(e.timer);e.timer=null;}

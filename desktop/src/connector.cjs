@@ -8,9 +8,19 @@
 // to the renderer or put into an Error. log() takes fixed event names and integer codes only.
 const g = require('./grants.cjs');
 
-class ConnectError extends Error {}   // message: login | revoked | limit | name | failed — main maps it to fixed text
+// message: login | revoked | limit | name | failed — main maps it to fixed text (failures.cjs).
+// code: the server's classified code (grants.CODES or FAILED / RATE-LIMIT) for a 'failed' — a fixed word, safe to report.
+class ConnectError extends Error { constructor(message, code = null) { super(message); this.code = code; } }
 const RESET = new Set(['NOT-OWNER', 'INSTALLATION-UNKNOWN']);
 const NOT_LINKED_RETRY_MS = 24 * 60 * 60 * 1000;   // rotate NOT-FOUND: this installation has no device (token pasted by hand)
+// Automatic connection (spec 2026-11-13 §1.2) is tried again no sooner than this after a failure. A missing display name
+// is fixed by the person on the web right after login, so it is tried again soon; a full device list waits longer.
+// A login or a sync tries at once.
+const AUTO_RETRY_MS = 10 * 60 * 1000;
+const AUTO_NAME_MS = 2 * 60 * 1000;
+const AUTO_LONG_MS = 60 * 60 * 1000;
+// Why this PC has no usable connection, for the dashboard's "이 PC" line: null | login | revoked | name | limit | failed.
+const BLOCKS = new Set(['login', 'revoked', 'name', 'limit', 'failed']);
 
 class Connector {
   // request(method, url, body?) -> {status, body, retryAfter}   session cookies + X-MyCRM-Desktop (main: net.request)
@@ -23,19 +33,27 @@ class Connector {
   constructor({hosted, request, store, install, forgetLocal, exclusive, canDeliver, connection, notify = () => {}, log = () => {},
     client, now = Date.now, changed = () => {}}) {
     Object.assign(this, {hosted, request, store, install, forgetLocal, exclusive, canDeliver, connection, notify, log, client, now, changed});
-    // revoked: the server says this PC (or its device) was released · released: disconnected in this app
+    // revoked: the server says this PC (or its device) was released · released: disconnected in an app before 0.1.7
+    // (read and cleared, no longer set: the app has no disconnect button)
     // forget: the local device token belongs to another account and is to be removed (M3)
     this.record = g.parseRecord(store.load());
     this.registered = false;    // upserted in this run (app start, after login, after an account change)
     this.session = 'unknown';   // 'unknown' | 'ok' | 'none'
     this.poller = {lastAt: -Infinity, backoffUntil: 0, inFlight: false};
     this.nextRotateAt = 0;
+    this.nextAutoAt = 0;
+    this.blocked = null;
   }
-  // Renderer-safe view. No ids, no tokens. A release reported by the server is always shown (the local token is dead);
-  // a disconnect made in this app only while this PC has no connection (a pasted token reconnects it).
+  blockReason() {
+    if (this.record.revoked) return 'revoked';
+    if (!this.needsAuto()) return null;
+    if (this.session === 'none') return 'login';
+    return this.blocked;
+  }
+  setBlocked(value) { const v = BLOCKS.has(value) ? value : null; if (v !== this.blocked) { this.blocked = v; this.changed(); } }
+  // Renderer-safe view. No ids, no tokens. A release reported by the server is always shown (the local token is dead).
   view() {
-    const blocked = this.record.revoked || (this.record.released && !this.connection().connected);
-    return {session: this.session, revoked: blocked, registered: this.registered};
+    return {session: this.session, revoked: this.record.revoked, registered: this.registered};
   }
   save(patch) { this.record = {...this.record, ...patch}; this.store.save(this.record); this.changed(); }
   setSession(value) { if (this.session !== value) { this.session = value; this.changed(); } }
@@ -169,8 +187,10 @@ class Connector {
   }
   // Collection is being turned on ([지금 동기화]) and this PC has no usable device token: ask for one with the app session.
   // The server answers with the installation's own device (lost token) or a new one. Called while the app lock is held.
+  // A release the server reports (revoked: the person disconnected this PC, e.g. in a conversation) stays: only a
+  // connection the person asks for (a grant) brings it back. A release made in an older app (released) no longer blocks.
   async autoConnect() {
-    if (this.record.revoked || this.record.released) throw new ConnectError('revoked');
+    if (this.record.revoked) throw new ConnectError('revoked');
     let res;
     for (let attempt = 0; attempt < 2; attempt++) {
       const id = await this.installation();
@@ -181,7 +201,7 @@ class Connector {
       if (res.status === 200) break;
       const code = this.rejected(res, 'auto');
       if (RESET.has(code) && attempt === 0) continue;
-      throw new ConnectError({'NO-SESSION': 'login', 'DEVICE-REVOKED': 'revoked', 'DEVICE-LIMIT': 'limit', 'NAME-REQUIRED': 'name'}[code] || 'failed');
+      throw new ConnectError({'NO-SESSION': 'login', 'DEVICE-REVOKED': 'revoked', 'DEVICE-LIMIT': 'limit', 'NAME-REQUIRED': 'name'}[code] || 'failed', code);
     }
     const issued = g.parseIssued(res.body, 'device');
     if (!issued) { this.log('connect', 'auto-invalid'); throw new ConnectError('failed'); }
@@ -189,8 +209,30 @@ class Connector {
   }
   // Before collection runs: connect automatically when there is no device, or when the local one belongs to another account.
   needsAuto() { return !this.connection().connected || this.record.forget; }
-  // The user pasted a token or disconnected in this app.
-  manualConnected() { this.save({released: false, forget: false}); }
-  released() { this.save({released: true, forget: false}); }
+  // Automatic connection outside a sync (spec §1.2): at app start, after a login and on the poll timer. Takes the app lock.
+  // reason: 'startup' | 'login' | 'timer'. Returns 'connected' (nothing to do), 'issued' (a token was installed),
+  // 'revoked', 'login' (no session: the dashboard shows its login screen), 'waiting' (spaced after a failure) or 'busy'.
+  // Throws the ConnectError of a failed attempt.
+  async ensureDevice(reason = 'timer') {
+    if (!this.needsAuto()) { this.setBlocked(null); return 'connected'; }
+    if (this.record.revoked) return 'revoked';
+    if (this.session === 'none' && reason !== 'login') return 'login';
+    const now = this.now();
+    if (reason !== 'login' && now < this.nextAutoAt) return 'waiting';
+    try {
+      await this.exclusive(() => this.autoConnect());
+    } catch (e) {
+      const m = e?.message;
+      if (m === 'busy' || m === 'closing') return 'busy';
+      this.nextAutoAt = now + (m === 'name' ? AUTO_NAME_MS : m === 'limit' ? AUTO_LONG_MS : AUTO_RETRY_MS);
+      this.setBlocked(m);
+      if (m === 'login') return 'login';
+      throw e;
+    }
+    this.nextAutoAt = 0;
+    this.setBlocked(null);
+    this.log('connect', 'auto-' + reason);
+    return 'issued';
+  }
 }
-module.exports = {Connector, ConnectError};
+module.exports = {Connector, ConnectError, AUTO_RETRY_MS, AUTO_NAME_MS, AUTO_LONG_MS};
