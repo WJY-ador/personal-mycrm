@@ -787,6 +787,13 @@ def _ai_kw(ctx: Ctx, *names) -> dict:
     return {k: v for k, v in ctx.ai_kw.items() if k in names + ("path_value", "platform", "user_home", "env")}
 
 
+def auto_probe() -> tuple:
+    """자동 확인(앱의 ai-status, chat 시작, 턴마다, 앱 알림 뒤 다시 확인)에서 CLI 를 실행해 볼 공급자.
+    Codex 는 CHAT_CODEX_PROVIDER_READY 가 False 인 동안 빠진다 — 사용자가 ai-connect --provider codex 를 누를 때만 실행한다(보안 검토 F7).
+    플래그는 부를 때 읽는다(시험이 patch 한다)."""
+    return tuple(p for p in ai_connection.PROVIDERS if p != "codex" or CHAT_CODEX_PROVIDER_READY)
+
+
 def _say_ai(ctx: Ctx, states: dict) -> None:
     ctx.say(json.dumps({"ai": states}, sort_keys=True))
 
@@ -801,7 +808,7 @@ def cmd_ai_status(ctx: Ctx, a) -> int:
         return EXIT_ERR
     cfg = _remember_paths(ctx, cfg)
     ctx.paths.ensure()
-    _say_ai(ctx, ai_connection.statuses(cfg, ctx.paths.home, **_ai_kw(ctx, "run")))
+    _say_ai(ctx, ai_connection.statuses(cfg, ctx.paths.home, probe=auto_probe(), **_ai_kw(ctx, "run")))
     return EXIT_OK
 
 
@@ -1097,7 +1104,7 @@ def _run_chat(ctx: Ctx, a, cfg, sid, server, log) -> int:
 
         if live:
             # 시작 때 한 번 보고 hello 로 서버에 보고한다(장치가 보고한 값이 서버 grant 를 대신한다).
-            ai_states = ai_connection.statuses(cfg, home, **_ai_kw(ctx, "run"))
+            ai_states = ai_connection.statuses(cfg, home, probe=auto_probe(), **_ai_kw(ctx, "run"))
             kw.setdefault("ai_status", ai_connection.links(ai_states))
             if claude_factory is None and codex_factory is None:
                 claude_factory, codex_factory, stopped = build_factories(ai_states)
@@ -1105,11 +1112,11 @@ def _run_chat(ctx: Ctx, a, cfg, sid, server, log) -> int:
                     log({"event": "start", "stopped": stopped})
                     return EXIT_ERR
             # 턴마다 같은 상태를 다시 본다(끊기 표시, 로그인). 앱이 연결을 바꾸면 다시 확인하고 factory 를 새로 만든다.
-            kw.setdefault("ai_check", lambda p: ai_connection.status(p, _config.load(ctx.paths), home,
+            kw.setdefault("ai_check", lambda p: ai_connection.status(p, _config.load(ctx.paths), home, probe=p in auto_probe(),
                                                                      **_ai_kw(ctx, "run"))["state"])
 
             def ai_refresh():
-                states = ai_connection.statuses(_config.load(ctx.paths), home, **_ai_kw(ctx, "run"))
+                states = ai_connection.statuses(_config.load(ctx.paths), home, probe=auto_probe(), **_ai_kw(ctx, "run"))
                 made_claude, made_codex, stopped = build_factories(states)
                 if stopped:
                     log({"event": "ai-refresh", "error": stopped})

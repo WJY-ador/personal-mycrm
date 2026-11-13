@@ -36,10 +36,12 @@ PROVIDERS = {
     "codex": {"binary": "codex", "status": ("login", "status"), "login": ("login",)},
 }
 # 로그인 프로세스가 TTY 없이 곧바로 실패하면 같은 명령을 띄울 시스템 터미널. {script}: 명령을 담은 .command 파일.
+# Windows 는 cmd 를 거치지 않고 공급자 실행 파일(.exe)을 새 콘솔 창으로 바로 띄운다({path} {args}, CREATE_NEW_CONSOLE).
 TERMINAL = {
     "darwin": ("/usr/bin/open", "-a", "Terminal", "{script}"),
-    "win32": ("cmd", "/c", "start", "", "{path}", "{args}"),
+    "win32": ("{path}", "{args}"),
 }
+CREATE_NEW_CONSOLE = getattr(subprocess, "CREATE_NEW_CONSOLE", 0x10)
 # 구독 인증만 연결로 본다. API 키, 클라우드 공급자 인증은 종량제라 연결로 치지 않는다(signed_out, code unsupported-auth).
 READY_METHODS = frozenset({"claude.ai", "oauth_token"})
 # 상태 낱말(서버 계약 hello.ai_links, 앱, 화면이 같은 낱말을 쓴다).
@@ -112,10 +114,10 @@ def cli_path(provider: str, cfg: dict, **discover_kw) -> str | None:
 
 
 def trusted(provider: str, path: str) -> bool:
-    """chat 이 실행 전에 거는 같은 검사(Claude: 링크, 파일, 폴더 소유자와 쓰기 권한). 통과 못 하면 연결로 치지 않는다.
-    여기서 거르지 않으면 상태는 ready 인데 chat 이 시작 때 claude-runtime 으로 통째로 멈춘다."""
-    if provider != "claude":
-        return True
+    """chat 이 실행 전에 거는 같은 검사(링크, 파일, 폴더 소유자와 쓰기 권한 — chat_claude.resolve_cli_path). Claude, Codex 둘 다.
+    통과 못 하면 연결로 치지 않고 실행하지 않는다. 여기서 거르지 않으면 상태는 ready 인데 chat 이 시작 때 claude-runtime 으로 통째로 멈춘다."""
+    if provider not in PROVIDERS:
+        return False
     from .chat_claude import ClaudeProviderUnavailable, resolve_cli_path
     try:
         resolve_cli_path(path)
@@ -191,8 +193,10 @@ def _classify(provider: str, rc: int, output: bytes) -> dict:
     return link("signed_out", "unsupported-auth" if isinstance(method, str) else "status-unreadable")
 
 
-def status(provider: str, cfg: dict, home: str, *, run=subprocess.run, env=None, off=None, **discover_kw) -> dict:
-    """한 공급자의 AI 연결 {"state": STATES 낱말, "code": 이유 또는 None}. 예외를 내지 않는다."""
+def status(provider: str, cfg: dict, home: str, *, run=subprocess.run, env=None, off=None, probe=True, **discover_kw) -> dict:
+    """한 공급자의 AI 연결 {"state": STATES 낱말, "code": 이유 또는 None}. 예외를 내지 않는다.
+    probe=False = 공급자 CLI 를 실행하지 않는다(파일 찾기와 신뢰 검사만). CLI 가 있으면 signed_out, code unchecked
+    (Codex 가 아직 준비되지 않은 동안의 자동 확인 — 사용자가 ai-connect 를 누를 때만 실행한다, cli.auto_probe)."""
     if provider not in PROVIDERS:
         return link("missing", "unknown-provider")
     if provider in (read_off(home) if off is None else off):
@@ -202,6 +206,8 @@ def status(provider: str, cfg: dict, home: str, *, run=subprocess.run, env=None,
         return link("missing")
     if not trusted(provider, path):
         return link("missing", "untrusted-cli")
+    if not probe:
+        return link("signed_out", "unchecked")
     try:
         done = run([path, *PROVIDERS[provider]["status"]], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                    stderr=subprocess.DEVNULL, env=clean_env() if env is None else env, cwd=home,
@@ -214,9 +220,10 @@ def status(provider: str, cfg: dict, home: str, *, run=subprocess.run, env=None,
         return link("signed_out", "status-failed")
 
 
-def statuses(cfg: dict, home: str, **kw) -> dict:
+def statuses(cfg: dict, home: str, *, probe=PROVIDERS, **kw) -> dict:
+    """모든 공급자 상태. probe = CLI 를 실행해 확인할 공급자(나머지는 실행하지 않는다, status probe=False)."""
     off = read_off(home)
-    return {p: status(p, cfg, home, off=off, **kw) for p in PROVIDERS}
+    return {p: status(p, cfg, home, off=off, probe=p in probe, **kw) for p in PROVIDERS}
 
 
 def links(states: dict) -> dict:
@@ -224,12 +231,24 @@ def links(states: dict) -> dict:
     return {p: v["state"] for p, v in states.items() if p in PROVIDERS and isinstance(v, dict) and v.get("state") in STATES}
 
 
-def _open_terminal(provider: str, path: str, home: str, platform: str, popen) -> bool:
+def _open_terminal(provider: str, path: str, home: str, platform: str, popen, env=None) -> bool:
     """같은 로그인 명령을 시스템 터미널에 띄운다(TTY 가 필요한 CLI). 띄웠으면 True."""
     form = TERMINAL.get(platform)
     if form is None:
         return False
     args = list(PROVIDERS[provider]["login"])
+    if platform == "win32":
+        # cmd 를 거치지 않는다(.cmd, .bat 는 CreateProcess 가 다시 cmd 로 돌리므로 띄우지 않는다). 새 콘솔이 입출력을 쓰도록 표준 입출력을 막지 않는다
+        if not path.lower().endswith(".exe"):
+            return False
+        argv = []
+        for x in form:
+            argv.extend(args if x == "{args}" else [path] if x == "{path}" else [x])
+        try:
+            popen(argv, env=env, cwd=home, shell=False, close_fds=True, creationflags=CREATE_NEW_CONSOLE)
+            return True
+        except (OSError, ValueError):
+            return False
     if platform == "darwin":
         script = os.path.join(home, f"ai-login-{provider}.command")
         body = "#!/bin/sh\nexec " + " ".join(shlex.quote(x) for x in [path, *args]) + "\n"
@@ -237,9 +256,7 @@ def _open_terminal(provider: str, path: str, home: str, platform: str, popen) ->
         os.chmod(script, 0o700)
         argv = [x.replace("{script}", script) for x in form]
     else:
-        argv = []
-        for x in form:
-            argv.extend(args if x == "{args}" else [path] if x == "{path}" else [x])
+        argv = [x for x in form]
     try:
         popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False,
               close_fds=True)
@@ -276,7 +293,7 @@ def login(provider: str, cfg: dict, home: str, *, popen=subprocess.Popen, env=No
             if rc is None:
                 continue
             if rc != 0 and not in_terminal and clock() - start <= LOGIN_QUICK_FAIL:
-                in_terminal = _open_terminal(provider, path, home, _platform(platform), popen)
+                in_terminal = _open_terminal(provider, path, home, _platform(platform), popen, use_env)
                 child = None
                 if in_terminal:
                     continue

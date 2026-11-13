@@ -124,6 +124,33 @@ class StatusTest(unittest.TestCase):
         self.assertFalse(ai_connection.trusted("claude", cli))
         self.assertTrue(ai_connection.trusted("claude", self.cli))
 
+    def test_codex_gets_the_same_trust_check_and_an_untrusted_codex_never_runs(self):
+        loose = os.path.join(self.root, "loose-codex")
+        os.makedirs(loose)
+        codex = fake_cli(loose, "codex")
+        os.chmod(os.path.dirname(codex), 0o777)
+        self.assertFalse(ai_connection.trusted("codex", codex))
+        self.assertFalse(ai_connection.trusted("other", self.cli))
+        self.assertEqual(self.status(0, provider="codex", cfg={"summary": {"codex_cli_path": codex}}),
+                         {"state": "missing", "code": "untrusted-cli"})
+        self.assertEqual(self.calls, [])
+        self.assertTrue(ai_connection.trusted("codex", fake_cli(self.root, "codex")))
+
+    def test_probe_false_finds_and_checks_the_file_but_does_not_run_it(self):
+        codex = fake_cli(self.root, "codex")
+        cfg = {"summary": {"cli_path": self.cli, "codex_cli_path": codex}}
+        states = ai_connection.statuses(cfg, self.home, probe=("claude",), run=self.run_with(0, b'{"authMethod":"claude.ai"}'),
+                                        env={}, path_value="", platform="win32", user_home=self.root)
+        self.assertEqual(states, {"claude": LINKED, "codex": {"state": "signed_out", "code": "unchecked"}})
+        self.assertEqual([c[0][0] for c in self.calls], [self.cli], "codex was not run")
+        ai_connection.set_off(self.home, "codex", True)
+        self.assertEqual(ai_connection.status("codex", cfg, self.home, probe=False, run=self.run_with(0), env={}, path_value="",
+                                              platform="win32", user_home=self.root), {"state": "off", "code": None})
+        self.assertEqual(ai_connection.status("codex", {"summary": {}}, self.home, probe=False, off=frozenset(), run=self.run_with(0),
+                                              env={}, path_value="", platform="win32", user_home=self.root),
+                         {"state": "missing", "code": None})
+        self.assertEqual(len(self.calls), 1)
+
     def test_links_keep_only_provider_names_and_state_words(self):
         self.assertEqual(ai_connection.links({"claude": LINKED, "codex": {"state": "weird"}, "other": LINKED}),
                          {"claude": "linked"})
@@ -236,10 +263,25 @@ class LoginTest(unittest.TestCase):
             self.assertEqual(f.read(), f"#!/bin/sh\nexec {self.cli} auth login --claudeai\n")
         self.assertEqual(os.stat(script).st_mode & 0o777, 0o700)
 
-    def test_windows_terminal_uses_cmd_start_and_linux_has_no_terminal(self):
+    def test_windows_terminal_runs_the_exe_in_a_new_console_without_cmd_and_linux_has_no_terminal(self):
+        exe = fake_cli(self.root, "claude.exe")
+        self.cli, self.cfg = exe, {"summary": {"cli_path": exe}}
         self.login([Done(1), Done(1), Done(0, b'{"authMethod":"claude.ai"}')], self.child(exits_at=1, rc=1),
                    platform="win32")
-        self.assertEqual(self.started[1][0], ["cmd", "/c", "start", "", self.cli, "auth", "login", "--claudeai"])
+        argv, kw = self.started[1]
+        self.assertEqual(argv, [exe, "auth", "login", "--claudeai"])
+        self.assertNotIn("cmd", argv)
+        self.assertEqual(kw["creationflags"], ai_connection.CREATE_NEW_CONSOLE)
+        self.assertEqual((kw["shell"], kw["cwd"], kw["env"]), (False, self.root, {"HOME": self.root}))
+        self.assertNotIn("stdin", kw, "the new console keeps its own input for the login")
+        self.started.clear()
+        self.clock.t = 0
+        # A .cmd/.bat would go through cmd again: no terminal, the login stays unfinished
+        bat = fake_cli(self.root, "claude.cmd")
+        self.cli, self.cfg = bat, {"summary": {"cli_path": bat}}
+        state = self.login([Done(1)], self.child(exits_at=1, rc=1), platform="win32")
+        self.assertEqual(state, {"state": "signed_out", "code": "login-unfinished"})
+        self.assertEqual(len(self.started), 1)
         self.started.clear()
         self.clock.t = 0
         state = self.login([Done(1)], self.child(exits_at=1, rc=1), platform="linux")
@@ -303,6 +345,26 @@ class CliCommandTest(unittest.TestCase):
                                                      popen=Child))
         self.assertEqual(json.loads(out), {"ai": {"claude": LINKED}})
         self.assertEqual(len(logins), 1)
+
+    def test_codex_is_run_only_when_the_user_connects_it_while_not_ready(self):
+        from agent import cli
+        codex = fake_cli(os.path.dirname(os.path.dirname(self.cli)), "codex")
+        runs = []
+        def run(argv, **kw):
+            runs.append(argv)
+            return Done(0, b'{"authMethod":"claude.ai"}')
+        self.assertFalse(cli.CHAT_CODEX_PROVIDER_READY)
+        self.assertEqual(cli.auto_probe(), ("claude",))
+        code, out = helpers.run_cli(["--home", self.th.home, "ai-status"], ai_kw=self.ai_kw(run=run))
+        self.assertEqual(json.loads(out)["ai"]["codex"], {"state": "signed_out", "code": "unchecked"})
+        self.assertEqual(runs, [[self.cli, "auth", "status", "--json"]], "ai-status did not run codex")
+        runs.clear()
+        code, out = helpers.run_cli(["--home", self.th.home, "ai-connect", "--provider", "codex"], ai_kw=self.ai_kw(run=run))
+        self.assertEqual((code, json.loads(out)), (0, {"ai": {"codex": LINKED}}))
+        self.assertEqual(runs, [[codex, "login", "status"]], "the user press runs codex login status")
+        from unittest.mock import patch
+        with patch.object(cli, "CHAT_CODEX_PROVIDER_READY", True):
+            self.assertEqual(cli.auto_probe(), ("claude", "codex"))
 
     def test_ai_disconnect_marks_off_without_running_the_cli(self):
         def run(argv, **kw):
