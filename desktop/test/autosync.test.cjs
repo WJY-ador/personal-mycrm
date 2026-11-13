@@ -94,7 +94,7 @@ test('main wires the automatic sync to the same sync as the dashboard and tray, 
  assert.match(main,/wanted:\(\)=>prefs\.autoRun!==false,connected:\(\)=>ready&&!connector\.view\(\)\.revoked/);
  assert.match(main,/idle:\(\)=>!busy&&!quitting&&!installing/);
  assert.match(main,/if\(connector\.needsAuto\(\)\)await connector\.autoConnect\(\);/);
- assert.match(main,/if\(code===3&&\/--resume auth\/\.test\(detail\|\|''\)\)\{\n    await connector\.autoConnect\(\);/);
+ assert.match(main,/if\(code===3&&\/--resume auth\/\.test\(detail\|\|''\)\)\{\r?\n    await connector\.autoConnect\(\);/);
  assert.match(main,/log\('sync','completed',code\)/);
  assert.match(main,/autosync\.start\(\);/);
  assert.match(main,/clearInterval\(pollTimer\);autosync\?\.dispose\(\);/);

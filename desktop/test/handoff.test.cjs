@@ -88,7 +88,7 @@ test('R-J5: main.cjs raises the dashboard for setup and login links only through
  assert.match(main,/const linkRaise=handoff\.focusLimiter\(\);/);
  assert.match(body('raiseForLink'),/if\(!linkRaise\(\)\)return;showWindow\(\);app\.focus\(\{steal:true\}\);/);
  assert.doesNotMatch(body('deepLink'),/steal|showDashboard\(\);/,'deepLink does not raise by itself');
- assert.match(body('deepLink'),/raiseForLink\(showDashboard\);\n  if\(handoff\.parseSetupLink\(raw\)\)return;[\s\S]*handoff\.accept/);
+ assert.match(body('deepLink'),/raiseForLink\(showDashboard\);\r?\n  if\(handoff\.parseSetupLink\(raw\)\)return;[\s\S]*handoff\.accept/);
  // One window (spec 2026-11-13 §1.1): an old mycrm://connection?step=… link shows the dashboard and nothing else.
  assert.match(body('guard'),/if\(handoff\.parseSetupLink\(url\)\)\{event\.preventDefault\(\);raiseForLink\(showDashboard\);return;\}/);
  assert.doesNotMatch(main,/setup-step|setupLink|function show\(\)/);

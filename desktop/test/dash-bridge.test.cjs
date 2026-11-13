@@ -194,7 +194,7 @@ test('the window lets an install quit it; the install path never uses userStop o
   assert.ok(prepare,'prepareInstall exists');
   assert.doesNotMatch(prepare,/userStop|autorun|savePreferences|prefs\.|quitting=true/);
   assert.match(prepare,/await stopProcesses\(\);/);
-  assert.match(prepare,/abortLogins\(\);\n    await Promise\.all\(\[\.\.\.commands\.keys\(\)\]/,'ends a provider login and waits for running commands');
+  assert.match(prepare,/abortLogins\(\);\r?\n    await Promise\.all\(\[\.\.\.commands\.keys\(\)\]/,'ends a provider login and waits for running commands');
   // before-quit keeps its own cleanup; the install does not set quitting, so that cleanup still runs.
   assert.match(main,/Promise\.all\(\[stopProcesses\(\{closing:true\}\),\.\.\.pending\]\)\.finally\(\(\)=>\{tray\?\.destroy\(\);app\.quit\(\);\}\);/);
 });
