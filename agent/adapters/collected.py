@@ -520,10 +520,21 @@ def _plan_write_back(data: bytes, changes: dict):
         row["status"], row["decided_at"] = state, decided_at
         line = lines[i]
         eol = line[len(line.rstrip(b"\r\n")):]
-        lines[i] = json.dumps(row, ensure_ascii=False).encode("utf-8") + eol
+        lines[i] = _dump_like(row, line) + eol
         applied += 1
     missing = len(changes) - len(last)
     return (b"".join(lines) if applied else None), applied, skipped, missing
+
+
+def _dump_like(row: dict, original: bytes) -> bytes:
+    """바꾼 행을 원래 줄의 꼴대로 — 원래 줄이 ASCII 뿐이면 \\u 이스케이프(ensure_ascii), 아니면 UTF-8 그대로.
+    짝 없는 서로게이트(수집기가 이모지 중간에서 자른 글)는 UTF-8 로 쓸 수 없어 이스케이프로 쓴다."""
+    if original.isascii():
+        return json.dumps(row).encode("ascii")
+    try:
+        return json.dumps(row, ensure_ascii=False).encode("utf-8")
+    except UnicodeEncodeError:
+        return json.dumps(row).encode("ascii")
 
 
 def _replace_keep_mode(path: str, data: bytes, mode: int) -> None:

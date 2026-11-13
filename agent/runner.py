@@ -326,10 +326,14 @@ def write_back(st, cfg: dict, up) -> dict | None:
             for k in ("applied", "skipped_not_pending", "missing", "retried"):
                 out[k] += r[k]
         nxt = page.get("next_cursor")
+        if isinstance(nxt, int) and not isinstance(nxt, bool):
+            nxt = str(nxt)
         if isinstance(nxt, str) and 1 <= len(nxt) <= 512 and nxt != since:
             st.cursor_set(name, nxt)
             since = nxt
         else:
+            if page["decisions"]:
+                out["stopped"] = "no-cursor"     # 판별은 받았는데 이어 받을 커서가 없다 — 다음 실행이 같은 쪽을 다시 받는다
             break
         if not page["decisions"]:
             break
@@ -396,7 +400,10 @@ def run_once(paths, *, ks: keystore.KeyStore, uploader_factory=None, summarizer=
                                         min_interval=float(cfg["upload"]["min_interval_sec"]))
                 result["upload"] = res_up
                 if (res_up.get("stopped") or "").replace("-halted", "") not in _NO_WRITE_BACK_AFTER:
-                    wb = write_back(st, cfg, up)
+                    try:
+                        wb = write_back(st, cfg, up)
+                    except Exception:     # 되돌림의 뜻밖 오류가 이미 끝난 업로드 결과·종료 코드를 바꾸지 않게(값 없이 표시만)
+                        wb = {"applied": 0, "skipped_not_pending": 0, "missing": 0, "retried": 0, "stopped": "error"}
                     if wb is not None:
                         result["write_back"] = wb
             result["state"] = st.counts()

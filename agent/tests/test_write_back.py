@@ -52,7 +52,21 @@ class WriteBackFeedFileTest(unittest.TestCase):
         want = dict(feed_row(1), status="kept", decided_at=AT)
         self.assertEqual(r1, want)                                                    # 다른 필드 그대로
         self.assertEqual(list(r1)[:len(feed_row(1))], list(feed_row(1)))              # 키 순서 그대로
-        self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode), 0o644)             # 권한 유지
+        if os.name != "nt":
+            self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode), 0o644)         # 권한 유지
+
+    def test_line_style_kept_and_lone_surrogate(self):
+        ascii_line = json.dumps(feed_row(1)).encode() + b"\n"                         # \\u 이스케이프 꼴
+        cut = b'{"id": "FEED0002", "status": "pending", "text": "\\ud83d \xec\x9e\x98\xeb\xa6\xb0 \xea\xb8\x80"}\n'
+        self.write([ascii_line, cut])
+        r = C.write_back_feed(self.path, {"FEED0001": ("kept", AT), "FEED0002": ("dropped", AT)})
+        self.assertEqual(r["applied"], 2)
+        with open(self.path, "rb") as f:
+            got = f.read().splitlines(keepends=True)
+        self.assertTrue(got[0].isascii())
+        self.assertEqual(json.loads(got[0]), dict(feed_row(1), status="kept", decided_at=AT))
+        self.assertEqual(json.loads(got[1])["status"], "dropped")
+        self.assertEqual(json.loads(got[1])["text"], json.loads(cut)["text"])        # 짝 없는 서로게이트 그대로
 
     def test_duplicate_id_changes_last_row_only(self):
         a = json.dumps(feed_row(1, summary="옛 요약"), ensure_ascii=False).encode() + b"\n"
@@ -215,6 +229,34 @@ class WriteBackRunTest(unittest.TestCase):
             st.close()
         res = self.run_once()
         self.assertEqual(res["write_back"]["applied"], 1)
+
+    def test_cursor_shapes(self):
+        self.run_once()
+        iid = self.item_of(1)
+        self.srv.decisions_script = [(200, {"decisions": [{"item_id": iid, "state": "kept", "decided_at": AT}],
+                                            "next_cursor": None})]
+        res = self.run_once()
+        self.assertEqual((res["write_back"]["applied"], res["write_back"]["stopped"]), (1, "no-cursor"))
+        self.assertEqual(self.cursor(), "0")
+        self.srv.decisions_script = [(200, {"decisions": [], "next_cursor": 7}), (200, {"decisions": [], "next_cursor": 7})]
+        res = self.run_once()
+        self.assertEqual((res["write_back"]["stopped"], self.cursor()), (None, "7"))     # 숫자 커서도 받는다
+
+    def test_unexpected_error_contained(self):
+        self.run_once()
+        self.srv.decisions = [{"item_id": self.item_of(1), "state": "kept", "decided_at": AT}]
+        orig = C.write_back_feed
+
+        def boom(*a, **k):
+            raise RuntimeError("synthetic")
+        C.write_back_feed = boom
+        try:
+            res = self.run_once()
+        finally:
+            C.write_back_feed = orig
+        self.assertEqual(res["write_back"]["stopped"], "error")
+        self.assertIn("upload", res)
+        self.assertEqual(self.cursor(), "0")
 
     def test_feed_off_keeps_cursor(self):
         self.run_once()

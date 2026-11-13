@@ -16,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from agent import config as _config
 from agent import keystore
+from agent.uploader import DECISIONS_PATH
 
 STREAM_ID = "is_5a5a5a5a5a5a5a5a5a5a5a5a"
 TOKEN = "imp_" + STREAM_ID + ".tok_Synth01." + "S" * 43
@@ -250,10 +251,7 @@ class FakeImportServer:
                 return self._json(400, {"code": "ARG-INVALID"})
 
             def _decisions(self):
-                from agent.uploader import DECISIONS_PATH
                 u = urllib.parse.urlsplit(self.path)
-                if u.path != DECISIONS_PATH:
-                    return self._json(404, {"code": "NOT-FOUND"})
                 since = dict(urllib.parse.parse_qsl(u.query)).get("since")
                 with outer.lock:
                     outer.decision_calls.append(since)
@@ -267,7 +265,7 @@ class FakeImportServer:
                 return self._json(200, {"decisions": page, "next_cursor": str(start + len(page))})
 
             def do_GET(self):
-                if self.path.startswith("/api/imports/decisions"):
+                if urllib.parse.urlsplit(self.path).path == DECISIONS_PATH:
                     return self._decisions()
                 if self.path.startswith("/desktop/login?"):
                     return self._desktop_login()
