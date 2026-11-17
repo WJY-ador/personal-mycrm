@@ -75,8 +75,8 @@ PING_SECONDS = 25                   # 장치 WS ping + 토큰 재확인(철회·
 TURN_IDLE_SECONDS = 600             # 이벤트 없는 running 턴 → 다음 입력 때 failed(TURN-TIMEOUT)
 PROVIDER_LAUNCH_READY = True        # 2026-11-12 K: 원작자 실사용, 독립 검토 I와 J 반영 뒤 켬, Codex는 꺼짐
 LAUNCH_AUTHORIZATION_PATH = "/api/chat/launch-authorization"
-# 장치 agent(0.1.7 까지)는 expires_at 이 PC 시각 + 16초를 넘으면 거절하고, 5초마다 갱신한다. 15초면 PC 시계가 1초만 느려도
-# 모든 턴이 PROVIDER-BINDING 이었다(2026-11-18). 12초 = PC 가 느린 쪽 4초, 빠른 쪽 약 6초(갱신 5초 + 왕복 1초를 뺀 값)까지 견딘다.
+# 장치 agent(0.1.7 까지)는 expires_at 이 PC 시각 + 16초를 넘으면 거절하고(턴 = PROVIDER-BINDING), 5초마다 갱신한다.
+# 15초면 PC 시계가 1초만 느려도 거절된다. 12초 = PC 가 느린 쪽 4초, 빠른 쪽 약 6초(갱신 5초 + 왕복 1초를 뺀 값)까지 견딘다.
 LAUNCH_AUTHORIZATION_TTL_SECONDS = 12
 CLIENT_TURN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 CLI_REF_RE = re.compile(r"^[A-Za-z0-9._:-]{1,200}$")

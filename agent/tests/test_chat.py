@@ -218,9 +218,9 @@ class AgentTest(unittest.TestCase):
 
     @patch.object(chat_claude, "sys", types.SimpleNamespace(platform="darwin", executable=sys.executable))
     def test_a_lease_beyond_the_pc_clock_window_is_refused_as_provider_binding(self):
-        # 2026-11-18 incident: the server's clock ran 1.5 s ahead of the PC and the server gave a 15 s lease, so
-        # expires_at landed 16.5 s after the PC clock and the client's 16 s ceiling refused it. create_turn raised and the
-        # turn ended with PROVIDER-BINDING (chat.py create_turn branch). The server lease must leave room for that skew.
+        # With the server clock 1.5 s ahead of the PC and a 15 s lease, expires_at lands 16.5 s after the PC clock and the
+        # client's 16 s ceiling refuses it. create_turn raises and the turn ends with PROVIDER-BINDING (chat.py create_turn
+        # branch). The server lease must leave room for that skew.
         from datetime import datetime, timedelta, timezone
         def run(lease_seconds, server_ahead):
             class Reply:

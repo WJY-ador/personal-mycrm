@@ -2187,8 +2187,8 @@ def test_ai_links(srv):
         assert out["binding"]["provider"] == "claude" and out["binding"]["model"] == "sonnet"
         ok("앱 하나 1.3: launch-authorization binding 꼴 그대로 — grant_id, consent_challenge_id = 허용 행 id(비지 않은 문자열)")
 
-        # 2026-11-18 사고: 서버 시계가 PC 보다 1.5초 빨랐고 lease 15초는 PC 시계로 16.5초 뒤라, 설치된 agent(0.1.7)의 상한
-        # (PC 시각 + 16초)에 걸려 거절됐다(턴 = PROVIDER-BINDING). 서버 응답을 실제 agent 파서에 PC 시각을 옮겨 넣어 본다.
+        # 설치된 agent(0.1.7)는 expires_at 이 PC 시각 + 16초를 넘으면 거절한다(턴 = PROVIDER-BINDING). lease 15초면 서버 시계가
+        # PC 보다 1초 넘게 빠를 때 거절된다. 서버 응답을 실제 agent 파서에 PC 시각을 옮겨 넣어 본다.
         # PC 가 느림 = 상한 쪽 여유, PC 가 빠름 = 갱신(5초마다, 왕복 포함 6초) 전에 lease 가 끝나지 않는 쪽 여유.
         from datetime import datetime as _dt, timedelta as _td
         from agent import chat_launch_authority as lauth
