@@ -217,6 +217,55 @@ class AgentTest(unittest.TestCase):
         self.assertIsNone(agent.current_provider)
 
     @patch.object(chat_claude, "sys", types.SimpleNamespace(platform="darwin", executable=sys.executable))
+    def test_a_lease_beyond_the_pc_clock_window_is_refused_as_provider_binding(self):
+        # 2026-11-18 incident: the server's clock ran 1.5 s ahead of the PC and the server gave a 15 s lease, so
+        # expires_at landed 16.5 s after the PC clock and the client's 16 s ceiling refused it. create_turn raised and the
+        # turn ended with PROVIDER-BINDING (chat.py create_turn branch). The server lease must leave room for that skew.
+        from datetime import datetime, timedelta, timezone
+        def run(lease_seconds, server_ahead):
+            class Reply:
+                status = 200
+                def read(self, *_args):
+                    expiry = (datetime.now(timezone.utc) + timedelta(seconds=server_ahead + lease_seconds))
+                    return json.dumps({"authorized": True, "binding": {
+                        "user_id": "u-synthetic", "device_id": "is_" + "a" * 24,
+                        "session_id": "cs_skew", "turn_id": "ct_skew", "provider": "claude",
+                        "model": "claude-synthetic", "grant_id": "g_synthetic",
+                        "consent_challenge_id": "ch_synthetic",
+                        "expires_at": expiry.isoformat().replace("+00:00", "Z")},
+                        "tools": {"mcp__my-crm__record_get": "read"}}).encode()
+                def __enter__(self): return self
+                def __exit__(self, *_): pass
+            class Opener:
+                def open(self, *_args, **_kwargs): return Reply()
+            with tempfile.TemporaryDirectory(prefix="chat-agent-skew-") as home:
+                cli = os.path.join(home, "fake-claude")
+                with open(cli, "w") as f:
+                    f.write("#!/bin/sh\nexit 0\n")
+                os.chmod(cli, 0o700)
+                client = LaunchAuthorizationClient("https://synthetic.invalid", lambda: "synthetic-device-token")
+                client._opener = Opener()
+                factory = chat_claude.ClaudeProviderFactory(client, cli_path=cli, server_url="https://synthetic.invalid",
+                    agent_home=home, expected_device_id="is_" + "a" * 24, env={"HOME": home, "PATH": "/usr/bin"},
+                    temp_parent=home, models=("claude-synthetic",))
+                sent = []
+                class Socket:
+                    def send_text(self, message): sent.append(json.loads(message)); return True
+                agent = chat.ChatAgent("wss://synthetic.invalid/api/device/chat/ws", "token",
+                                       claude_factory=factory, stopping=threading.Event(), coalesce=0)
+                agent.ws = Socket()
+                agent._on({"type": "turn.start", "session_id": "cs_skew", "turn_id": "ct_skew",
+                           "text": "synthetic", "provider": "claude", "model": "claude-synthetic",
+                           "binding_version": 2, "launch_authorization_path": "/api/chat/launch-authorization"})
+                for th in agent.threads:
+                    th.join(5)
+                return [m for m in sent if m.get("type") == "event"]
+        refused = run(15, 1.5)
+        self.assertEqual(refused[-1]["data"], {"code": "PROVIDER-BINDING"})
+        started = run(12, 1.5)
+        self.assertNotIn({"code": "PROVIDER-BINDING"}, [m.get("data") for m in started])
+
+    @patch.object(chat_claude, "sys", types.SimpleNamespace(platform="darwin", executable=sys.executable))
     def test_a_provider_not_linked_at_turn_start_is_refused_and_hello_is_sent_again(self):
         # Spec 2026-11-13 1.3: the AI connection is checked again when a conversation starts, so "연결 끊기" or a logout
         # holds before the app tells chat; the new state goes to the server in a hello on the same connection.
