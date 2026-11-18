@@ -7,8 +7,12 @@
       ai_* 필드는 어디에도 싣지 않는다(related_posts 는 키를 하나씩 꺼낸다).
 검색: 서버가 결정적으로 한다(확장 pg_trgm, FTS, 임베딩 없음). 호출자가 준 terms 는 찾는 열쇠일 뿐 답에 들어가지 않는다.
       같은 입력이면 assembled_at 을 뺀 응답이 같다.
+점수(2026-11-18): 남기는 기준은 맞은 서로 다른 검색어 수 ≥ min(2, 검색어 수). 정렬은 맞은 검색어 가중치 합 — 가중치 = log(전체 문장 수 /
+      (1 + 그 낱말 든 문장 수)), 0 아래면 0. 문장 수는 그 사용자의 훑는 범위 안 적격 기록에서 센다. 흔한 낱말만 맞은 문장이 아래로 간다.
+인용 후보에서 빼는 줄: markdown 소제목 줄, 굵게만 있는 줄, 표 줄, 같은 글에서 목록 머리표만 다른 같은 문장(확정 후보 quote 는 빼지 않는다).
 """
 import datetime as _dt
+import math
 import re
 import unicodedata
 from zoneinfo import ZoneInfo
@@ -19,7 +23,7 @@ import export_forms
 KST = ZoneInfo("Asia/Seoul")
 SCAN_LIMIT = 2000                     # 훑는 범위: 적격 기록 최신 2,000편, 읽고 든 생각 최신 2,000건(시험은 작은 값으로 바꾼다)
 DRAFT_MAX, DRAFT_PER_REF = 8, 2       # 답변 초안 최대 8개, 한 기록에서 최대 2개
-EVIDENCE_MAX, QUOTES_MAX = 20, 3      # 근거 최대 20편, 편당 인용 최대 3개
+EVIDENCE_MAX, QUOTES_MAX = 10, 3      # 근거 최대 10편(넘친 편수는 부족한 곳 more_evidence), 편당 인용 최대 3개
 POSTS_MAX = 5                         # 관련 수집 글 최대 5개
 QUESTION_MAX, TERMS_MAX, TERM_MAX = 300, 12, 30
 STALE_DAYS = 180
@@ -33,7 +37,11 @@ _TOKEN = re.compile(r"[0-9A-Za-z가-힣]+")
 _LINE = re.compile(r"[^\r\n]+")         # 줄 끝 = \r\n, \r, \n
 _LINE_SPLIT = re.compile(r"\r\n|\r|\n")
 _CUT = re.compile(r"(?<=[.?!。])\s+")   # 문장 끝 부호 뒤 공백에서 나눈다
-_CTRL = ("Cc", "Cf", "Zl", "Zp")        # 거절할 범주: 제어 문자, 보이지 않는 서식 문자(U+202E, U+200B 등), 줄과 문단 구분
+_CTRL = ("Cc", "Cf", "Zl", "Zp")
+# 인용 후보에서 빼는 줄 — markdown 소제목(ATX), 굵게만 있는 줄(끝 쌍점 허용), 표 줄. 목록 머리표는 같은 문장 비교 때만 뗀다
+_HEADING_LINE = re.compile(r" {0,3}#{1,6}(?:[ \t]|$)")
+_BOLD_LINE = re.compile(r"(\*\*|__)(?:(?!\1).)+\1[:：]?")
+_LIST_MARK = re.compile(r"(?:[-*+]|\d{1,9}[.)])[ \t]+")        # 거절할 범주: 제어 문자, 보이지 않는 서식 문자(U+202E, U+200B 등), 줄과 문단 구분
 
 NOTICE = "내 기록 원문만 모았어요. 문장을 새로 쓰지 않았어요. 글로 다듬으면 그건 내 판단이 아니에요."
 # markdown 근거 줄 셋째 칸 — 읽고 든 생각(source_reflections)은 출처 표시도 text_process 도 없어 kind 로 고정 낱말을 쓴다
@@ -48,6 +56,7 @@ GAPS = (
     ("ineligible_excluded", "맞는 글 {n}편은 내 원문이 아니라서 넣지 않았어요."),
     ("posts_without_thought", "관련 수집 글은 있지만 내 생각이 없어요. 읽고 든 생각을 남기면 근거가 돼요."),
     ("stale", "가장 새 근거가 {date}예요. 지금도 같은지 확인하세요."),
+    ("more_evidence", "같은 질문으로 찾은 기록이 {n}편 더 있어요."),
     ("truncated", "기록이 많아 최근 2,000편까지만 봤어요."),
 )
 GAP_TEXT = dict(GAPS)
@@ -118,15 +127,27 @@ def merge_terms(given, from_question):
 
 # ── 문장, 점수 ──────────────────────────────────────────
 
+def _skip_line(line):
+    """인용 후보에서 빼는 줄인가 — markdown 소제목, 굵게만 있는 줄, 표 줄. 줄 하나를 통째로 판정한다('# 제목. 둘째 문장' 의 둘째 조각도 뺀다)."""
+    s = line.strip()
+    return bool(_HEADING_LINE.match(line) or _BOLD_LINE.fullmatch(s) or s.startswith("|"))
+
+
 def sentences(body):
-    """본문 → (start, end, 문장). 줄 끝(\r\n, \r, \n), 또는 . ? ! 。 뒤 공백에서 나눈다. 문장 = 앞뒤 공백을 뺀 연속 구간(body[start:end] 와 같다)."""
+    """본문 → (start, end, 문장). 줄 끝(\r\n, \r, \n), 또는 . ? ! 。 뒤 공백에서 나눈다. 문장 = 앞뒤 공백을 뺀 연속 구간(body[start:end] 와 같다).
+    인용 후보에서 빼는 줄(_skip_line)은 건너뛰고, 같은 글 안에서 목록 머리표를 뗀 글자가 앞 문장과 같으면 뒤 문장은 건너뛴다."""
+    seen = set()
     for m in _LINE.finditer(body):
         line, base, pos = m.group(), m.start(), 0
+        if _skip_line(line):
+            continue
         cuts = [(c.start(), c.end()) for c in _CUT.finditer(line)] + [(len(line), len(line))]
         for a, b in cuts:
             seg = line[pos:a]
             s = seg.strip()
-            if s:
+            norm = _LIST_MARK.sub("", s, count=1) if _LIST_MARK.match(s) else s
+            if s and norm not in seen:
+                seen.add(norm)
                 st = base + pos + (len(seg) - len(seg.lstrip()))
                 yield st, st + len(s), s
             pos = b
@@ -138,6 +159,27 @@ def score(text, keys):
     return sum(1 for k in keys if k in low)
 
 
+def term_weights(bodies, keys):
+    """검색어별 가중치 = log(전체 문장 수 / (1 + 그 낱말 든 문장 수)), 0 아래면 0, 소수 여섯째 자리 반올림. bodies = 적격 기록 본문.
+    문장은 sentences() 그대로 센다(인용 후보와 같은 문장). 문장이 없으면 모두 0."""
+    n, df = 0, dict.fromkeys(keys, 0)
+    for body in bodies:
+        for _, _, s in sentences(body):
+            n += 1
+            low = s.lower()
+            for k in keys:
+                if k in low:
+                    df[k] += 1
+    return {k: round(max(0.0, math.log(n / (1 + df[k]))), 6) if n else 0.0 for k in keys}
+
+
+def weigh(text, keys, weights):
+    """문장 → (맞은 서로 다른 검색어 수, 맞은 검색어 가중치 합). 합은 keys 순서로 더해 반올림한다(결정적)."""
+    low = text.lower()
+    hit = [k for k in keys if k in low]
+    return len(hit), round(sum(weights[k] for k in hit), 6)
+
+
 # ── 조회 ──────────────────────────────────────────────
 
 _REC_COLS = (f"r.id, r.title, r.body, r.source, r.revision, r.text_process, r.generation_kind, r.decision_owner, r.created, "
@@ -146,13 +188,15 @@ _REC_ORDER = "ORDER BY d DESC, r.created DESC, r.id DESC"
 
 
 def _records(c, uid, pats, eligible):
-    """최신 SCAN_LIMIT 편(정렬 = db.RECORD_SORT) 안에서 검색어 하나라도 든 기록. eligible=False = 지우지 않은 비적격 내 기록."""
+    """최신 SCAN_LIMIT 편(정렬 = db.RECORD_SORT) 안에서 검색어 하나라도 든 기록. eligible=False = 지우지 않은 비적격 내 기록.
+    pats=None 이면 거르지 않고 훑는 범위 전부(가중치의 문장 수를 세려고 적격 기록 본문 전체가 필요하다)."""
     cond = db._ELIGIBLE_SQL if eligible else \
         f"r.deleted_at IS NULL AND r.trashed_at IS NULL AND NOT COALESCE({db._ELIGIBLE_SQL}, false)"
+    where = "" if pats is None else "WHERE x.body ILIKE ANY(%(pats)s)"
     return db._all(c, f"SELECT x.*, EXISTS (SELECT 1 FROM candidates k WHERE k.user_id=%(uid)s AND k.record_id=x.id "
                       f"AND k.decision='confirmed') AS confirmed "
                       f"FROM (SELECT {_REC_COLS} FROM records r WHERE r.user_id=%(uid)s AND {cond} {_REC_ORDER} LIMIT %(lim)s) x "
-                      f"WHERE x.body ILIKE ANY(%(pats)s)", {"uid": uid, "lim": SCAN_LIMIT, "pats": pats})
+                      f"{where}", {"uid": uid, "lim": SCAN_LIMIT, "pats": pats})
 
 
 def _over(c, uid):
@@ -203,17 +247,21 @@ def _ref(kind, row):
 _HEAD_CHARS = tuple("#>-*+_=`~<[")    # 줄 머리에 오면 구조(소제목, 인용, 목록, 가로줄, setext 밑줄, 코드 울타리, HTML, 링크 정의)가 될 수 있는 글자
 _ORDERED = re.compile(r"\d{1,9}(?=[.)])")   # 정렬 목록 꼴 '1. ', '1) '
 _INDENT = re.compile(r"[ \t]*")
+_THEMATIC = re.compile(r"(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,}")   # 가로줄 꼴(같은 글자 3개 이상과 공백만)
 
 
 def _md_escape(line):
     """markdown 줄 하나를 글자 그대로 보이게 한다(값은 그대로, markdown 만). 4칸 이상 들여쓰기(탭 포함)는 들여쓴 코드가 되므로
-    첫 공백을 &#32; 로 바꾼다. 3칸 이하는 첫 글자 앞에 백슬래시(정렬 목록은 숫자 뒤 '.' ')' 앞). 백슬래시 + ASCII 문장 부호는 그 글자로 보인다."""
+    첫 공백을 &#32; 로 바꾼다. 3칸 이하는 첫 글자 앞에 백슬래시(정렬 목록은 숫자 뒤 '.' ')' 앞). 백슬래시 + ASCII 문장 부호는 그 글자로 보인다.
+    줄머리 '**', '__'(굵게)는 구조를 깨지 않아 이스케이프하지 않는다(대화 화면에 백슬래시가 남던 것) — 가로줄 꼴('***', '___')만 이스케이프한다."""
     ws = _INDENT.match(line).group()
     body = line[len(ws):]
     if not body:
         return line
     if len(ws.expandtabs(4)) >= 4:
         return "&#32;" + line[1:]
+    if body.startswith(("**", "__")) and not _THEMATIC.fullmatch(body):
+        return line
     m = _ORDERED.match(body)
     if m:
         return ws + body[:m.end()] + "\\" + body[m.end():]
@@ -250,7 +298,7 @@ def _markdown(question, draft, evidence, gaps, labels):
 
 
 def _group(groups, labels, kind, r, sws):
-    """근거 기록 하나(처음 볼 때 만든다, 20편 넘으면 None). labels = 근거 줄 셋째 칸(출력에 싣지 않는다). sws = 세션 정리 출처 문자열."""
+    """근거 기록 하나(처음 볼 때 만든다, EVIDENCE_MAX 편 넘으면 None). labels = 근거 줄 셋째 칸(출력에 싣지 않는다). sws = 세션 정리 출처 문자열."""
     g = groups.get(r["id"])
     if g is None and len(groups) < EVIDENCE_MAX:
         is_rec = kind == "record"
@@ -288,22 +336,24 @@ def assemble(uid, question="", question_id="", terms=None, now=None):
         pats = [db._like(t) for t in keys_terms]
         pinned = _pinned(c, uid, qid) if qid else []
         if keys:
-            recs, refls = _records(c, uid, pats, True), _reflections(c, uid, pats)
+            scanned, refls = _records(c, uid, None, True), _reflections(c, uid, pats)
             others, posts = _records(c, uid, pats, False), _posts(c, uid, pats)
         else:   # 검색어가 없으면 아무것도 남기지 않는다(min(2, 0) = 0 이라 모든 문장이 통과하는 것을 막는다)
-            recs = refls = others = posts = []
+            scanned = refls = others = posts = []
         over = _over(c, uid)
+        weights = term_weights((r["body"] for r in scanned), keys)
+        recs = [r for r in scanned if any(k in r["body"].lower() for k in keys)]
 
-        # 문장 → 남긴 문장(점수 ≥ need). 정렬 = 점수 ↓ → 확정 후보 있는 기록 먼저 → 날짜 ↓ → id → 문장 위치
+        # 문장 → 남긴 문장(맞은 서로 다른 검색어 수 ≥ need). 정렬 = 가중치 합 ↓ → 맞은 수 ↓ → 확정 후보 있는 기록 먼저 → 날짜 ↓ → id → 문장 위치
         kept = []
         for kind, rows in (("record", recs), ("reflection", refls)):
             for r in rows:
                 for st, en, s in sentences(r["body"]):
-                    n = score(s, keys)
+                    n, w = weigh(s, keys, weights)
                     if n >= need:
-                        kept.append({"kind": kind, "row": r, "start": st, "end": en, "text": s, "score": n,
+                        kept.append({"kind": kind, "row": r, "start": st, "end": en, "text": s, "hits": n, "score": w,
                                      "confirmed": bool(r.get("confirmed"))})
-        kept.sort(key=lambda x: (-x["score"], not x["confirmed"], -x["row"]["d"].toordinal(), x["row"]["id"], x["start"]))
+        kept.sort(key=lambda x: (-x["score"], -x["hits"], not x["confirmed"], -x["row"]["d"].toordinal(), x["row"]["id"], x["start"]))
         ineligible = sum(1 for r in others if any(score(s, keys) >= need for _, _, s in sentences(r["body"])))
 
         # 답변 초안 — 질문에 묶인 확정 후보 quote 가 맨 앞(점수 무관). 그 quote 와 글자까지 같은 같은 기록의 문장은 거듭 싣지 않는다
@@ -326,14 +376,16 @@ def assemble(uid, question="", question_id="", terms=None, now=None):
         draft = [{"n": i, **d} for i, d in enumerate(draft, 1)]
 
         # 근거 — 질문에 묶인 확정 후보의 기록이 먼저(점수 무관, 그 quote 를 인용으로), 이어서 남긴 문장을 기록별로(정렬 순서, 처음 나온 순).
-        # 같은 구간(start, end)은 한 번만
-        groups, labels = {}, {}
+        # 같은 구간(start, end)은 한 번만. 근거는 EVIDENCE_MAX 편까지, 넘친 서로 다른 기록 수는 more_evidence
+        groups, labels, extra = {}, {}, set()
         sws = imports.SESSION_WRAP_SOURCE
-        quotes = [("record", p["rec"], p["quote_start"], p["quote_end"], p["quote"], score(p["quote"], keys)) for p in pinned] + \
+        quotes = [("record", p["rec"], p["quote_start"], p["quote_end"], p["quote"], weigh(p["quote"], keys, weights)[1]) for p in pinned] + \
                  [(k["kind"], k["row"], k["start"], k["end"], k["text"], k["score"]) for k in kept]
         for kind, r, st, en, text, n in quotes:
             g = _group(groups, labels, kind, r, sws)
-            if g is not None and len(g["quotes"]) < QUOTES_MAX and all((q["start"], q["end"]) != (st, en) for q in g["quotes"]):
+            if g is None:
+                extra.add(r["id"])
+            elif len(g["quotes"]) < QUOTES_MAX and all((q["start"], q["end"]) != (st, en) for q in g["quotes"]):
                 g["quotes"].append({"text": text, "start": st, "end": en, "score": n})
         dates += [g.pop("_d") for g in groups.values()]   # stale = 초안과 근거 전체에서 가장 새 날짜
         evidence = list(groups.values())
@@ -363,6 +415,8 @@ def assemble(uid, question="", question_id="", terms=None, now=None):
         age = (local.date() - newest).days
         if age > STALE_DAYS:
             gaps.append(_gap("stale", age, date=newest.isoformat()))
+    if extra:
+        gaps.append(_gap("more_evidence", len(extra), n=len(extra)))
     if over:
         gaps.append(_gap("truncated", SCAN_LIMIT))
 
