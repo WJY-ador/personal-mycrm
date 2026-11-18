@@ -14,7 +14,12 @@ import css from "./Obj.module.css";
 
 type Props = { W: World; def: Def; vq: ObjQuery; setVq: (q: ObjQuery) => void };
 const STATE_COL: ObjCol = { key: "state", label: OBJ_TEXT.state, value_type: "select", options: OBJ_STATE.map(([value, label]) => ({ value, label })) };
-const cell = (c: ObjCol, r: ObjRow) => (c.key === "state" ? fieldText(STATE_COL, r.state) : fieldText(c, r.data[c.key]));
+// URL 꼴 글자 필드(url, *_url) = 열에선 「원문」 한 낱말 링크(긴 주소를 늘어놓지 않는다). http(s) 아닌 값은 링크로 만들지 않는다
+const isUrl = (c: ObjCol) => c.value_type === "text" && (c.key === "url" || c.key.endsWith("_url"));
+const href = (v: unknown) => (typeof v === "string" && /^https?:\/\//.test(v) ? v : "");
+const cell = (c: ObjCol, r: ObjRow) => (c.key === "state" ? fieldText(STATE_COL, r.state) : isUrl(c) ? (href(r.data[c.key]) ? OBJ_TEXT.link : "") : fieldText(c, r.data[c.key]));
+const td = (c: ObjCol, r: ObjRow) => (isUrl(c) && href(r.data[c.key])
+  ? <a href={href(r.data[c.key])} target="_blank" rel="noopener noreferrer">{OBJ_TEXT.link}</a> : cell(c, r));
 const firstDir = (c: ObjCol | null) => (c && (c.value_type === "date" || c.value_type === "number") ? "desc" : "asc");
 
 function Chips({ label, vals, cur, pick }: { label: string; vals: { value: string; label: string; n: number }[]; cur: string; pick: (v: string) => void }) {
@@ -75,7 +80,7 @@ export function ObjList({ W, def, vq, setVq }: Props) {
           <thead><tr>{th("title", OBJ_TEXT.title, null)}{cols.map(c => th(c.key, c.label, c))}</tr></thead>
           <tbody>{rows.map(r => <tr key={r.id} onClick={e => { if (!(e.target as Element).closest("a")) { go(); location.hash = objHref(def.key, r.id); } }}>
             <td className={css.tt}><a href={objHref(def.key, r.id)} onClick={go}>{r.code && <span className={css.cd}>{r.code} </span>}{r.title || "(제목 없음)"}</a></td>
-            {cols.map(c => <td key={c.key}>{cell(c, r)}</td>)}</tr>)}</tbody>
+            {cols.map(c => <td key={c.key}>{td(c, r)}</td>)}</tr>)}</tbody>
         </table></div>
       )}
       {L.hasNextPage && <p className={css.more}><button type="button" className="secondary" disabled={L.isFetchingNextPage} onClick={() => void L.fetchNextPage()}>{OBJ_TEXT.more}</button></p>}

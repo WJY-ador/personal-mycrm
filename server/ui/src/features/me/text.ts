@@ -35,7 +35,7 @@ export const URL_KINDS = ["journal", "q", "cand", "item", "refl"];
 // 오브젝트 탭 목록 보기 문구 — 판별 상태(수집 글, collected_states)는 오늘 탭 수집 인박스와 같은 낱말
 export const OBJ_STATE: [string, string][] = [["pending", "대기"], ["kept", "보관"], ["dropped", "버림"]];
 export const OBJ_TEXT = {
-  search: "제목 검색", state: "상태", title: "제목", more: "더 보기", none: "조건에 맞는 항목이 없어요.",
+  search: "제목 검색", state: "상태", title: "제목", link: "원문", more: "더 보기", none: "조건에 맞는 항목이 없어요.",
   fail: "목록을 불러오지 못했어요.", retry: "다시 불러오기", back: "목록으로", gone: "이 오브젝트 탭은 없어요. 보관했거나 이름이 바뀌었을 수 있어요.",
 };
 
