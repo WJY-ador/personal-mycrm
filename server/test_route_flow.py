@@ -9,6 +9,7 @@
 3. 휴지통 이동과 복원, 빼기와 되돌리기, 예외는 다시 안 들어온다, ROUTE-LOCKED
 4. budget 넘침과 이어 하기(매일 정리), 옛 개정 기록 제외(같은 판 재전송 noop 은 그대로)
 5. structure_profile_get 꼴, 초안 버리기, 훅 실패 격리, 옛 DB 이전(items.ingest_kind route), 사용자 격리
+6. 명세 6.14 — heading_like "*" + skip_body_like + from unit_body 정의 적용: 항목 수 = 머리 줄 - 피벗 가리키는 줄, content == 원문 구간
 """
 import asyncio
 import json
@@ -46,6 +47,7 @@ import main  # noqa: E402
 import route  # noqa: E402
 
 MAIN, OTHER, HINT, FIT = "route-main@example.com", "route-other@example.com", "route-hint@example.com", "route-fit@example.com"
+COMM = "route-comm@example.com"
 SRC = "세션 정리"
 LABELS = ["어디서", "전에 가던 방향", "내가 설명한 것", "결정", "바뀐 것", "맞았나"]
 SECRET_LINE = "이 문장은 profile 응답에 나오면 안 되는 가짜 본문 표식이다"
@@ -66,7 +68,7 @@ def expect(code, fn, *a, **k):
 
 def cleanup():
     with db.tx() as c:
-        ids = [r["id"] for r in c.execute("SELECT id FROM users WHERE email = ANY(%s)", ([MAIN, OTHER, HINT, FIT],)).fetchall()]
+        ids = [r["id"] for r in c.execute("SELECT id FROM users WHERE email = ANY(%s)", ([MAIN, OTHER, HINT, FIT, COMM],)).fetchall()]
     for uid in ids:
         db.user_delete(uid)
 
@@ -731,6 +733,67 @@ def test_isolation_and_migration(uid, oid):
     ok("사용자 격리, 옛 DB 이전(items CHECK 에 route, records 그대로, 멱등), 계정 삭제 표 순서")
 
 
+COMM_DEF = {"key": "comm_decisions", "label": "소통과 결정", "semantic_kind": "event",
+            "fields": [{"key": "happened_on", "label": "날짜", "value_type": "date", "required": True},
+                       {"key": "content", "label": "내용", "value_type": "text", "required": True}],
+            "policy": {"route": {"v": 1, "unit": "heading",
+                                 "match": {"source": SRC, "title_like": "오늘의 소통과 결정", "heading_like": "*", "skip_body_like": "→ P#"},
+                                 "title": {"from": "heading"},
+                                 "fields": {"happened_on": {"from": "record_date"}, "content": {"from": "unit_body"}}}}}
+COMM_BODY = "### 첫 결정\n문장 하나.\n\n### 둘째\n→ P3\n\n### 셋째\n문장 둘.\n"
+
+
+def _heads_and_pivots(body):
+    """기대값을 route 밖에서 센다 — 머리 줄(# 2~4개 + 공백 + 글자) 수, 그 가운데 본문이 "→ P숫자" 한 줄뿐인 절 수."""
+    parts = re.split(r"(?m)^#{2,4}[ \t]+\S.*$", body)
+    return len(parts) - 1, sum(1 for x in parts[1:] if re.fullmatch(r"→ P\d+", x.strip()))
+
+
+def test_comm_decisions():
+    """6.14 — 사용자 따로(다른 시험의 건수에 섞이지 않게). 적용 backfill, 새 기록 훅, 본문 수정으로 절이 → P 가 되면 항목이 빠진다."""
+    uid = db.user_by_email(COMM)["id"]
+    db.display_name_set(uid, "가짜 소통")
+    long_line = "가짜 긴 결정 문장이다. " * 60   # UTF-8 1024 바이트를 넘는 내용 — 제목 상한(LIMIT_TEXT)과 별개로 항목이 된다
+    assert len(long_line.encode("utf-8")) > 1024
+    bodies = [COMM_BODY,
+              "## 오전\r\n가짜 오전 소통.\r\n\r\n## 오후\r\n→ P12\r\n## 저녁\r\n" + long_line + "\r\n가짜 둘째 줄.\r\n",
+              "### 가짜 하나\n\n  앞 공백 줄 뒤 내용.\n\n### 가짜 둘\n   → P7   \n### 가짜 셋\n→ P8 덧붙인 설명\n"]
+    rids = [add(uid, "오늘의 소통과 결정", b) for b in bodies]
+    other = add(uid, "그 외 결정", "- 가짜 목록 결정\n### 머리 있음\n가짜.\n")             # 제목 꼴 다름
+    oid, out = apply_def(uid, COMM_DEF)
+    want = sum(h - p for h, p in map(_heads_and_pivots, bodies))
+    assert want == 6, want
+    assert out["route_sync"] == {"created": want, "updated": 0, "removed": 0, "partial": 0, "left": 0}, out["route_sync"]
+    rs = routes(uid, oid)
+    assert all(v["state"] == "routed" for v in rs.values()) and len(rs) == want and not any(k[0] == other for k in rs), rs
+    # content == 원문 구간(spans), 날짜 = 기록 날짜, 제목 = 머리 글자, 피벗 가리키는 절은 행도 없다
+    for (rid, key), row in rs.items():
+        body = db.record_get(uid, rid)["body"]
+        it = db.item_get(uid, row["item_id"])
+        s, e = row["spans"]["content"]
+        assert it["data"]["content"] == body[s:e] and it["title"] == key and it["data"]["happened_on"], (key, it["data"])
+        assert body[row["start_pos"]:row["end_pos"]].lstrip("#").strip().startswith(key)
+    by_key = {k[1]: rs[k] for k in rs}
+    assert sorted(rs) == sorted([(rids[0], "첫 결정"), (rids[0], "셋째"), (rids[1], "오전"), (rids[1], "저녁"),
+                                 (rids[2], "가짜 하나"), (rids[2], "가짜 셋")]), sorted(rs)
+    long_item = db.item_get(uid, by_key["저녁"]["item_id"])
+    assert long_item["data"]["content"] == long_line + "\r\n가짜 둘째 줄." and len(long_item["data"]["content"].encode("utf-8")) > 1024
+    assert db.item_get(uid, by_key["가짜 셋"]["item_id"])["data"]["content"] == "→ P8 덧붙인 설명", "덧붙은 글이 있으면 건너뛰지 않는다"
+    # 새 기록 훅 — 머리 셋 가운데 → P 하나
+    r_new = add(uid, "오늘의 소통과 결정", "### 새 하나\n가짜 새 내용.\n### 새 둘\n→ P1\n### 새 셋\n가짜 셋째 내용.\n")
+    assert {k[1] for k in routes(uid, oid) if k[0] == r_new} == {"새 하나", "새 셋"}
+    # 본문 수정으로 절이 → P 한 줄이 되면 항목이 빠지고(행도 없음), 되돌리면 다시 들어온다
+    rev = db.record_get(uid, r_new)["revision"]
+    db.record_edit(uid, r_new, rev, "가짜 셋째 내용.", "→ P2")
+    assert {k[1] for k in routes(uid, oid) if k[0] == r_new} == {"새 하나"}
+    db.record_edit(uid, r_new, rev + 1, "→ P2", "가짜 셋째 내용 고침.")
+    got = {k[1]: v for k, v in routes(uid, oid).items() if k[0] == r_new}
+    assert set(got) == {"새 하나", "새 셋"} and db.item_get(uid, got["새 셋"]["item_id"])["data"]["content"] == "가짜 셋째 내용 고침."
+    d = next(x for x in db.definitions(uid) if x["id"] == oid)
+    assert d["route_counts"] == {"routed": want + 2, "partial": 0, "excluded": 0}, d["route_counts"]
+    ok(f"소통과 결정 — 항목 {want} = 머리 줄 - 피벗 가리키는 줄, content == 원문 구간(\\r\\n, 1KiB 넘는 내용), 훅, 수정으로 → P 되면 빠짐")
+
+
 async def run():
     db.init_schema()
     cleanup()
@@ -750,6 +813,7 @@ async def run():
         await test_released_rules(uid)
         test_hint()
         test_isolation_and_migration(uid, oid)
+        test_comm_decisions()
     finally:
         cleanup()
         db.close()

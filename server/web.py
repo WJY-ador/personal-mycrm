@@ -1223,8 +1223,19 @@ def _like_text(s: str) -> tuple[str, str]:
     return (f"{t} 로 시작하고", f"{t} 로 시작하는") if tail else (f"{t} 와 같고", f"{t} 와 같은")
 
 
-def _rule_from(rule: dict) -> str:
+def _like_is(s: str) -> tuple[str, str]:
+    """제목, 건너뛸 본문 꼴 → 사람 말. 맨 끝 * 가 있으면 _like_text(로 시작하는), 없으면 글자 그대로 같다(인)."""
+    if s.endswith("*"):
+        return _like_text(s)
+    t = s.replace("#", "숫자").strip()
+    return f"{t}이고", f"{t}인"
+
+
+def _rule_from(rule: dict, unit: str = "heading") -> str:
+    """추출 규칙 → 사람 말. route.FROMS 전부를 풀어 쓴다(글자 그대로 새지 않게, 시험이 FROMS 전체를 본다)."""
     src = rule.get("from", "")
+    if src == "unit_body":
+        return "본문 전체" if unit == "record" else "머리 줄 아래 글"
     if src == "label":
         return f"라벨 {rule.get('label', '')}"
     if src == "section":
@@ -1243,7 +1254,7 @@ def route_rule_text(route) -> str:
     if m.get("source"):
         conds.append((f"출처가 {m['source']}이고", f"출처가 {m['source']}인"))
     if m.get("title_like"):
-        go, end = _like_text(m["title_like"])
+        go, end = _like_is(m["title_like"])
         conds.append((f"제목이 {go}", f"제목이 {end}"))
     for k, word in (("labels", "라벨"), ("headings", "머리"), ("keys", "키")):
         ws = req.get(k) or []
@@ -1252,7 +1263,10 @@ def route_rule_text(route) -> str:
             conds.append((f"{t} 있고", f"{t} 있는"))
     who = " ".join([c[0] for c in conds[:-1]] + [conds[-1][1]]) + " 기록" if conds else "모든 기록"
     if route["unit"] == "heading":
-        return f"{who} 안에서 머리 줄이 {_like_text(m.get('heading_like', ''))[1]} 절 하나가 항목 하나"
+        hl = m.get("heading_like", "")
+        head = "머리 줄 하나가" if hl == "*" else f"머리 줄이 {_like_text(hl)[1]} 절 하나가"
+        skip = f", 본문이 {_like_is(m['skip_body_like'])[1]} 절은 담지 않아요" if m.get("skip_body_like") else ""
+        return f"{who} 안에서 {head} 항목 하나{skip}"
     return f"{who}, 기록 하나가 항목 하나"
 
 
@@ -1274,7 +1288,7 @@ def structure_reco(uid) -> dict:
         out.append({"object_id": d["object_id"], "proposal_id": d["proposal_id"], "base_revision": p.get("base_revision") or 0,
                     "key": doc.get("key") or d["key"], "label": doc.get("label") or d["label"], "semantic_kind": doc.get("semantic_kind"),
                     "fields": [{"key": f.get("key"), "label": f.get("label"), "value_type": f.get("value_type"),
-                                "from": _rule_from(rules[f["key"]]) if f.get("key") in rules else ""} for f in doc.get("fields") or []],
+                                "from": _rule_from(rules[f["key"]], (rt or {}).get("unit", "heading")) if f.get("key") in rules else ""} for f in doc.get("fields") or []],
                     "has_route": d["has_route"], "rule": route_rule_text(rt) if rt else "",
                     "would_fill": d["would_fill"], "partial": d["partial"], "samples": d["samples"]})
     return {"drafts": out, "suggest": prof["suggest"], "unattached": prof["unattached"]["count"], "ask": RECO_ASK}

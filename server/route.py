@@ -28,15 +28,15 @@ LIMIT_TEXT = 1024             # db.LIMIT_TEXT 와 같다(제목, UTF-8 바이트
 LIMIT_JSON = 32 * 1024        # db.LIMIT_JSON 과 같다(data 직렬화, UTF-8 바이트)
 
 UNITS = ("record", "heading")
-FROMS = ("record_date", "title", "heading", "label", "section", "key")
+FROMS = ("record_date", "title", "heading", "label", "section", "key", "unit_body")
 REASONS = ("require", "required_field", "too_long", "title", "invalid", "duplicate_heading")   # invalid = 서버 항목 검사(item_propose)가 거절
 STATES = ("routed", "partial", "excluded")    # 건수(counts, route_counts, profile)에 싣는 행 상태
 ROW_STATES = STATES + ("released",)           # released = route 를 뺀 적용으로 놓아 준 항목(item_id 유지, 자동 분류 아님, 잠금 없음, 표시 없음)
 _ROUTE_KEYS = frozenset({"v", "unit", "match", "require", "title", "fields"})
-_MATCH_KEYS = frozenset({"source", "title_like", "heading_like"})
+_MATCH_KEYS = frozenset({"source", "title_like", "heading_like", "skip_body_like"})
 _REQUIRE_KEYS = ("labels", "headings", "keys")
 _RULE_ARG = {"label": "label", "section": "heading", "key": "key"}   # from → 함께 받는 키
-_TEXT_FROMS = ("title", "heading", "label", "section", "key")
+_TEXT_FROMS = ("title", "heading", "label", "section", "key", "unit_body")
 _BAD_LIKE = re.compile(r"[\\\[\]|^$]|\.\*|\.\+|\(\?")   # 정규식 꼴 — 글자 그대로로 받지 않고 거절한다
 
 _HEAD_RE = re.compile(r"(#{2,4})[ \t]+(\S.*)")       # 머리 줄: # 2~4개 + 공백 + 글자
@@ -49,16 +49,20 @@ _LEAD_TOKEN = re.compile(r"(\S{0,30}#\S{0,30})\s+\S")  # 꼴의 앞 토큰에 # 
 
 ROUTE_GUIDE = (
     "route JSON(오브젝트 정의 policy.route): {\"v\": 1, \"unit\": \"record\"|\"heading\", "
-    "\"match\": {\"source\": 출처 글자 그대로, \"title_like\": 제목 꼴, \"heading_like\": 머리 꼴(heading 단위만, 필수)}, "
+    "\"match\": {\"source\": 출처 글자 그대로, \"title_like\": 제목 꼴, \"heading_like\": 머리 꼴(heading 단위만, 필수), "
+    "\"skip_body_like\": 건너뛸 본문 꼴(heading 단위만)}, "
     "\"require\": {\"labels\": [줄 처음 **라벨**], \"headings\": [머리 글자 앞부분], \"keys\": [줄 처음 \"- 키:\"]}, "
     "\"title\": {\"from\": \"title\"|\"heading\"}, "
     "\"fields\": {필드 key: {\"from\": \"record_date\"} | {\"from\": \"title\"} | {\"from\": \"heading\"} | "
-    "{\"from\": \"label\", \"label\": 라벨} | {\"from\": \"section\", \"heading\": 머리 글자 앞부분} | {\"from\": \"key\", \"key\": 키}}}. "
+    "{\"from\": \"label\", \"label\": 라벨} | {\"from\": \"section\", \"heading\": 머리 글자 앞부분} | {\"from\": \"key\", \"key\": 키} | "
+    "{\"from\": \"unit_body\"}}}. "
     "*_like 는 정규식이 아니다: 글자 그대로 + # = 숫자 한 개 이상 + 맨 끝 * = 나머지 아무 글자, 처음부터 끝까지 맞춘다(80자 이내). "
-    "# 바로 뒤에 # 이나 숫자는 쓸 수 없다. "
+    "# 바로 뒤에 # 이나 숫자는 쓸 수 없다. heading_like \"*\" = 모든 머리 줄. "
     "unit record = 기록 하나가 항목 하나. unit heading = heading_like 에 맞는 머리 줄 하나가 항목 하나(그 머리 줄부터 같은 수준 이하 다음 머리, "
     "또는 heading_like 에 맞는 다음 머리 앞까지. 같은 기록에 같은 머리 글자가 또 나오면 첫째만 항목). "
-    "날짜 필드에는 record_date 만, 글자 필드에는 title, heading, label, section, key, 글자 목록 필드에는 key(쉼표로 나눔)만. "
+    "unit_body = heading 단위면 머리 줄 다음 줄부터 단위 끝까지, record 단위면 본문 전체(앞뒤 공백 뺀 원문, 글자 필드만). "
+    "skip_body_like = heading 단위의 unit_body 가 이 꼴에 처음부터 끝까지 맞으면 그 머리 줄은 항목이 아니다(분류 못 함으로도 세지 않는다). "
+    "날짜 필드에는 record_date 만, 글자 필드에는 title, heading, label, section, key, unit_body, 글자 목록 필드에는 key(쉼표로 나눔)만. "
     "선택, 숫자, 참/거짓, 관계 필드에는 규칙을 둘 수 없다. 기준(principle) 오브젝트와 수집 글 오브젝트에는 route 를 둘 수 없다. "
     "require 가 다 있고 필수 필드가 다 채워진 단위만 항목이 된다. 일부만 맞으면 분류 못 함으로 센다.")
 
@@ -174,6 +178,10 @@ def check_route(route, fields, object_key=None, semantic_kind=None):
         if unit != "heading":
             raise RouteInvalid("match.heading_like 는 unit heading 에서만 써요.")
         m["heading_like"] = like_check(match["heading_like"], "match.heading_like")
+    if match.get("skip_body_like") is not None:
+        if unit != "heading":
+            raise RouteInvalid("match.skip_body_like 는 unit heading 에서만 써요.")
+        m["skip_body_like"] = like_check(match["skip_body_like"], "match.skip_body_like")
     if unit == "heading" and "heading_like" not in m:
         raise RouteInvalid("unit heading 은 match.heading_like 가 필요해요.")
     req = route.get("require") or {}
@@ -282,10 +290,11 @@ def _label_of(t):
 class _Unit:
     """단위 하나의 줄과 머리 — 추출과 require 검사가 같이 쓴다."""
 
-    def __init__(self, body, lines, heads, us, ue, li, lj):
+    def __init__(self, body, lines, heads, us, ue, li, lj, head=None):
         self.body, self.lines, self.us, self.ue = body, lines, us, ue
         self.idx = range(li, lj)                      # 단위 안 줄 번호
         self.heads = [h for h in heads if li <= h[0] < lj]
+        self.head = head                              # heading 단위의 머리 줄(record 단위는 None)
 
     def has_label(self, label):
         return any(_label_of(self.lines[i][2])[1] == label for i in self.idx)
@@ -342,6 +351,12 @@ class _Unit:
         k = self._key_line(key)
         return _strip(self.body, k[1], self.lines[k[0]][1]) if k else None
 
+    def unit_body(self):
+        """단위 본문 — heading 단위는 머리 줄 다음 줄부터 단위 끝까지, record 단위는 단위 전체(본문 전체). 앞뒤 공백 뺀 구간, 비면 None.
+        필드 추출(from unit_body)과 match.skip_body_like 판정이 이것 하나를 쓴다."""
+        s = self._next_start(self.head[0]) if self.head else self.us
+        return _strip(self.body, s, max(s, self.ue))
+
 
 def _pieces(body, s, e):
     """text_list 조각 — 쉼표로 나눠 앞뒤 공백을 뺀 원문 조각 목록."""
@@ -375,20 +390,27 @@ def evaluate(record, route, fields):
     else:
         hits = [k for k, h in enumerate(heads) if like_match(m["heading_like"], h[2])]
         hit_set = set(hits)
+        skip = m.get("skip_body_like")
         seen = {}
         for k in hits:
             h = heads[k]
             # 구간 끝 = 같은 수준 이하 다음 머리, 또는 heading_like 에 맞는 다음 머리(수준 무관) 가운데 먼저 오는 곳.
-            # 겹친 머리에서 바깥 단위가 안쪽 단위의 줄을 가져가지 않는다
+            # 겹친 머리에서 바깥 단위가 안쪽 단위의 줄을 가져가지 않는다. 건너뛴(skip_body_like) 머리도 구간 끝이다(hit_set 에 남긴다)
             nxt = next((j for j in range(k + 1, len(heads)) if heads[j][1] <= h[1] or j in hit_set), None)
             ue = lines[heads[nxt][0]][0] if nxt is not None else len(body)
             lj = heads[nxt][0] if nxt is not None else len(lines)
+            u = _Unit(body, lines, heads, lines[h[0]][0], ue, h[0], lj, h)
+            if skip:
+                # unit_body(앞뒤 공백 뺀 것, 비면 "")가 꼴에 처음부터 끝까지 맞으면 단위가 아니다 — partial 도 아니고 중복 수에도 안 든다
+                sp = u.unit_body()
+                if like_match(skip, body[sp[0]:sp[1]] if sp else ""):
+                    continue
             # unit_key = 머리 글자 그대로. 같은 기록에서 같은 머리가 또 나오면 첫째만 단위, 둘째부터는 partial(duplicate_heading)이고
             # key = 머리 글자 + "\n" + 순번(머리 글자에는 줄바꿈이 없어 겹치지 않는다). 그래서 key 는 기록 안에서 유일하다
             key = h[2][:UNIT_KEY_MAX]
             seen[key] = seen.get(key, 0) + 1
             dup = seen[key] > 1
-            spans_units.append((f"{key}\n{seen[key]}" if dup else key, _Unit(body, lines, heads, lines[h[0]][0], ue, h[0], lj), h, dup))
+            spans_units.append((f"{key}\n{seen[key]}" if dup else key, u, h, dup))
     req = route.get("require") or {}
     checks = (("labels", "has_label"), ("headings", "has_heading"), ("keys", "has_key"))
     byk = {f["key"]: f for f in fields}
@@ -415,6 +437,8 @@ def evaluate(record, route, fields):
                 sp = u.label(rule["label"])
             elif src == "section":
                 sp = u.section(rule["heading"])
+            elif src == "unit_body":
+                sp = u.unit_body()
             else:
                 sp = u.key(rule["key"])
             if not sp:

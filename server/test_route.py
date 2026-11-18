@@ -9,6 +9,7 @@
 4. 불변식 — exact 단위의 text 값 == body[span], text_list 조각은 그 구간 안, 서버가 만든 문장 없음
 5. 정의 검증 거절(모르는 키, 모르는 from, 없는 필드, 타입 안 맞음, 정규식, principle, 수집 글)
 6. 접은 줄(문장 중간 줄바꿈)과 \\r\\n, unit_key 중복 #2
+7. 명세 6.14 — from unit_body(heading, record 단위), match.skip_body_like(heading 단위만), heading_like "*"
 """
 import json
 import sys
@@ -346,6 +347,89 @@ def test_review_fixes():
     ok("unit_key 유일(글자 그대로 #2, 같은 머리 둘째 partial), 겹친 머리 구간, \\r 줄 끝, 키 판정 정규식 하나")
 
 
+COMM_FIELDS = [F("happened_on", "date", True), F("content", "text", True)]
+COMM_ROUTE = {"v": 1, "unit": "heading",
+              "match": {"source": "세션 정리", "title_like": "오늘의 소통과 결정", "heading_like": "*", "skip_body_like": "→ P#"},
+              "title": {"from": "heading"}, "fields": {"happened_on": {"from": "record_date"}, "content": {"from": "unit_body"}}}
+COMM_BODY = "### 첫 결정\n문장 하나.\n\n### 둘째\n→ P3\n\n### 셋째\n문장 둘.\n"
+
+
+def test_unit_body_and_skip():
+    """6.14 — unit_body 는 머리 다음 줄부터 단위 끝(앞뒤 공백 뺀 원문), skip_body_like 에 맞는 절은 단위가 아니다."""
+    r = norm(COMM_ROUTE, COMM_FIELDS)
+    assert r["match"]["skip_body_like"] == "→ P#" and r["fields"]["content"] == {"from": "unit_body"}
+    assert route.check_route(r, COMM_FIELDS) == r, "정규화 꼴을 다시 넣어도 같다(sync 가 저장된 route 를 다시 검사한다)"
+    rc = rec("오늘의 소통과 결정", COMM_BODY)
+    us = route.evaluate(rc, r, COMM_FIELDS)
+    assert [(u["unit_key"], u["state"], u["data"]["content"]) for u in us] == [("첫 결정", "exact", "문장 하나."), ("셋째", "exact", "문장 둘.")], us
+    assert us[0]["data"]["happened_on"] == "2026-01-02" and us[0]["title"] == "첫 결정"
+    assert COMM_BODY[us[0]["start"]:us[0]["end"]] == "### 첫 결정\n문장 하나.\n\n", "건너뛴 머리도 앞 단위의 구간 끝이다"
+    invariant(rc, us)
+    # 제목, 출처가 안 맞으면 단위 없음
+    assert route.evaluate(rec("그 외 결정", COMM_BODY), r, COMM_FIELDS) == []
+    # 머리 다음 빈 줄, 단위 끝 공백, 여러 줄 본문 — 앞뒤 공백만 빼고 가운데 빈 줄은 그대로
+    body = "## 가짜 머리\n\n  첫 줄.\n\n둘째 줄.  \n\t\n## 다음\n끝.   "
+    us = route.evaluate(rec("오늘의 소통과 결정", body), r, COMM_FIELDS)
+    assert [u["data"]["content"] for u in us] == ["첫 줄.\n\n둘째 줄.", "끝."], us
+    invariant(rec("오늘의 소통과 결정", body), us)
+    # \r\n 본문 — 같은 단위, 줄 끝 \r 는 값 끝에 남지 않는다(가운데 \r\n 은 원문 그대로)
+    crlf = COMM_BODY.replace("\n", "\r\n") + "### 넷째\r\n가짜 한 줄.\r\n가짜 둘째 줄.\r\n"
+    us = route.evaluate(rec("오늘의 소통과 결정", crlf), r, COMM_FIELDS)
+    assert [(u["unit_key"], u["data"]["content"]) for u in us] == [
+        ("첫 결정", "문장 하나."), ("셋째", "문장 둘."), ("넷째", "가짜 한 줄.\r\n가짜 둘째 줄.")], us
+    invariant(rec("오늘의 소통과 결정", crlf), us)
+    # 본문 없는 머리(머리 줄이 마지막 줄, 머리 바로 뒤 다음 머리) — unit_body 빔 = 필수 필드 빔 partial(skip 꼴에 안 맞음)
+    us = route.evaluate(rec("오늘의 소통과 결정", "### 빈 절\n### 찬 절\n가짜.\n### 끝 머리"), r, COMM_FIELDS)
+    assert [(u["unit_key"], u["state"], u["reason"]) for u in us] == [
+        ("빈 절", "partial", "required_field"), ("찬 절", "exact", None), ("끝 머리", "partial", "required_field")], us
+    # skip 꼴: 공백 둘레는 맞고(앞뒤 공백 뺀 것으로 판정), 덧붙은 글이 있거나 숫자가 없으면 안 맞는다(그 절은 exact)
+    for b, skipped in (("\n   → P12  \n\n", True), ("\r\n→ P7\r\n", True), ("\n→ P3 덧붙임\n", False), ("\n→ P3\n가짜 설명.\n", False),
+                       ("\n→ P\n", False), ("\n가짜 → P3\n", False)):
+        us = route.evaluate(rec("오늘의 소통과 결정", "### 가짜" + b), r, COMM_FIELDS)
+        assert (us == []) is skipped and (skipped or us[0]["state"] == "exact"), (b, us)
+    # 같은 머리 글자 둘, 첫째가 건너뜀 — 둘째는 중복이 아니다(exact, unit_key 에 순번 없음)
+    us = route.evaluate(rec("오늘의 소통과 결정", "### 같은 머리\n→ P1\n### 같은 머리\n가짜 내용.\n"), r, COMM_FIELDS)
+    assert [(u["unit_key"], u["state"]) for u in us] == [("같은 머리", "exact")], us
+    # 건너뛰지 않은 같은 머리 둘 — 둘째는 여전히 duplicate_heading
+    us = route.evaluate(rec("오늘의 소통과 결정", "### 같은 머리\n가짜 1.\n### 같은 머리\n→ P2\n### 같은 머리\n가짜 3.\n"), r, COMM_FIELDS)
+    assert [(u["unit_key"], u["state"], u["reason"]) for u in us] == [("같은 머리", "exact", None), ("같은 머리\n2", "partial", "duplicate_heading")], us
+    # skip_body_like 없으면 → P 절도 단위
+    r2 = norm({**COMM_ROUTE, "match": {k: v for k, v in COMM_ROUTE["match"].items() if k != "skip_body_like"}}, COMM_FIELDS)
+    us = route.evaluate(rec("오늘의 소통과 결정", COMM_BODY), r2, COMM_FIELDS)
+    assert [(u["unit_key"], u["data"]["content"]) for u in us] == [("첫 결정", "문장 하나."), ("둘째", "→ P3"), ("셋째", "문장 둘.")], us
+    # record 단위의 unit_body = 본문 전체(앞뒤 공백 뺌)
+    fr = [F("content", "text", True)]
+    rr = norm({"v": 1, "unit": "record", "match": {"title_like": "가짜 *"}, "fields": {"content": {"from": "unit_body"}}}, fr)
+    rb = "\n\n  가짜 본문 첫 줄.\r\n## 가짜 머리\r\n둘째.\n \n"
+    us = route.evaluate(rec("가짜 기록", rb), rr, fr)
+    assert us[0]["state"] == "exact" and us[0]["data"]["content"] == "가짜 본문 첫 줄.\r\n## 가짜 머리\r\n둘째." and us[0]["unit_key"] == "", us
+    invariant(rec("가짜 기록", rb), us)
+    us = route.evaluate(rec("가짜 기록", " \n\t"), rr, fr)
+    assert us[0]["state"] == "partial" and us[0]["reason"] == "required_field" and "content" not in us[0]["data"], us
+    ok("unit_body(heading, record, 머리 다음 빈 줄, 끝 공백, \\r\\n, 빈 절), skip_body_like(맞으면 단위 없음, 안 맞으면 exact, 공백 둘레, 중복 수에서 뺌)")
+
+
+def test_heading_star_and_rejects():
+    """heading_like "*" = 모든 머리 줄(수준 2~4), 거절: record 단위의 skip_body_like, 날짜, 글자 목록 필드의 unit_body, 모르는 키."""
+    assert route.like_check("*", "x") == "*" and route.like_check(" * ", "x") == "*" and route.like_tokens("*") == (("rest",),)
+    assert all(route.like_match("*", t) for t in ("", "가", "P1. 가짜", "# 가짜 *"))
+    fs = [F("content", "text", True)]
+    r = norm({"v": 1, "unit": "heading", "match": {"heading_like": "*"}, "fields": {"content": {"from": "unit_body"}}}, fs)
+    body = "앞 글.\n## 둘\n가짜 a.\n### 셋\n가짜 b.\n#### 넷\n가짜 c.\n##### 다섯은 머리 아님\n# 하나도 머리 아님\n"
+    us = route.evaluate(rec("t", body), r, fs)
+    assert [(u["unit_key"], u["data"]["content"]) for u in us] == [
+        ("둘", "가짜 a."), ("셋", "가짜 b."), ("넷", "가짜 c.\n##### 다섯은 머리 아님\n# 하나도 머리 아님")], us
+    invariant(rec("t", body), us)
+    rec_r = {"v": 1, "unit": "record", "match": {"title_like": "가짜 *", "skip_body_like": "→ P#"}, "fields": {}}
+    rejects(rec_r, fs, "skip_body_like")
+    rejects({"v": 1, "unit": "heading", "match": {"heading_like": "*", "skip_body_like": "a.*"}}, fs, "정규식")
+    rejects({"v": 1, "unit": "heading", "match": {"heading_like": "*", "skip_body_like": "  "}}, fs, "skip_body_like")
+    rejects({"v": 1, "unit": "heading", "match": {"heading_like": "*"}, "fields": {"d": {"from": "unit_body"}}}, [F("d", "date")], "date")
+    rejects({"v": 1, "unit": "heading", "match": {"heading_like": "*"}, "fields": {"t": {"from": "unit_body"}}}, [F("t", "text_list")], "text_list")
+    rejects({"v": 1, "unit": "heading", "match": {"heading_like": "*"}, "fields": {"content": {"from": "unit_body", "heading": "x"}}}, fs, "모르는 키")
+    ok("heading_like \"*\" = 수준 2~4 머리 줄 전부, 거절(record 단위 skip_body_like, 정규식, 빈 꼴, 날짜, 글자 목록, 덧붙은 키)")
+
+
 def test_shape_and_limits():
     assert route.shape("P12. 가짜 제목") == "P#. *" and route.shape("CE-2026-01-02-1. 가짜") == "CE-#-#-#-#. *"
     assert route.shape("상황 (문제)") == "상황 (문제)" and route.shape("가짜 정리 2026-01-02") == "가짜 정리 #-#-#"
@@ -358,6 +442,7 @@ def test_shape_and_limits():
 
 if __name__ == "__main__":
     for fn in (test_like, test_like_linear, test_exact_three_shapes, test_partial_and_mismatch, test_invariant_no_server_text,
-               test_check_rejects, test_folded_crlf_dup, test_review_fixes, test_shape_and_limits):
+               test_check_rejects, test_folded_crlf_dup, test_review_fixes, test_unit_body_and_skip, test_heading_star_and_rejects,
+               test_shape_and_limits):
         fn()
     print("test_route: 전부 통과")

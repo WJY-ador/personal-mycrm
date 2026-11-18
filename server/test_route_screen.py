@@ -104,10 +104,26 @@ def test_rule_text():
     ce = route.check_route({"v": 1, "unit": "heading", "match": {"source": SRC, "heading_like": "CE-#-#-#-#. *"}, "title": {"from": "heading"}}, [])
     assert web.route_rule_text(ce) == "출처가 세션 정리인 기록 안에서 머리 줄이 CE-숫자-숫자-숫자-숫자. 로 시작하는 절 하나가 항목 하나", web.route_rule_text(ce)
     hd = route.check_route({"v": 1, "unit": "record", "match": {"title_like": "주간 회고"}, "require": {"headings": ["상황", "내 판단"]}}, [])
-    assert web.route_rule_text(hd) == "제목이 주간 회고 와 같고 머리 2개(상황, 내 판단)가 다 있는 기록, 기록 하나가 항목 하나", web.route_rule_text(hd)
+    assert web.route_rule_text(hd) == "제목이 주간 회고이고 머리 2개(상황, 내 판단)가 다 있는 기록, 기록 하나가 항목 하나", web.route_rule_text(hd)
+    # title_like 의 * — 있으면 로 시작하는, 없으면 글자 그대로 같은(인)
+    star = route.check_route({"v": 1, "unit": "record", "match": {"title_like": "주간 회고 *"}}, [])
+    assert web.route_rule_text(star) == "제목이 주간 회고 로 시작하는 기록, 기록 하나가 항목 하나", web.route_rule_text(star)
+    exact = route.check_route({"v": 1, "unit": "record", "match": {"title_like": "주간 회고 #"}}, [])
+    assert web.route_rule_text(exact) == "제목이 주간 회고 숫자인 기록, 기록 하나가 항목 하나", web.route_rule_text(exact)
+    # 명세 6.14 route — heading_like "*" 는 빈 글자 없이, skip_body_like 는 담지 않는 절 한 마디
+    cf = [{"key": "happened_on", "label": "날짜", "value_type": "date", "required": True},
+          {"key": "content", "label": "내용", "value_type": "text", "required": True}]
+    comm = route.check_route({"v": 1, "unit": "heading",
+                              "match": {"source": SRC, "title_like": "오늘의 소통과 결정", "heading_like": "*", "skip_body_like": "→ P#"},
+                              "title": {"from": "heading"}, "fields": {"happened_on": {"from": "record_date"}, "content": {"from": "unit_body"}}}, cf)
+    assert web.route_rule_text(comm) == ("출처가 세션 정리이고 제목이 오늘의 소통과 결정인 기록 안에서 머리 줄 하나가 항목 하나, "
+                                         "본문이 → P숫자인 절은 담지 않아요"), web.route_rule_text(comm)
     assert web.route_rule_text(None) == "" and web.route_rule_text({"unit": "x"}) == ""
     assert web._rule_from({"from": "section", "heading": "상황"}) == "머리 상황 아래 글" and web._rule_from({"from": "key", "key": "내 선택"}) == "키 내 선택"
-    ok("규칙 문장(record 단위 = 명세 예문 꼴, heading 단위, 머리 조건, 꼴 아님 = 빈 글)")
+    assert web._rule_from({"from": "unit_body"}) == "머리 줄 아래 글" and web._rule_from({"from": "unit_body"}, "record") == "본문 전체"
+    for src in route.FROMS:   # 글자 그대로 새는 from 이 없다
+        assert web._rule_from({"from": src, "label": "x", "heading": "x", "key": "x"}) not in ("", src), src
+    ok("규칙 문장(record 단위 = 명세 예문 꼴, heading 단위, 머리 조건, 제목 * 있음과 없음, 6.14 route, from 전부 사람 말, 꼴 아님 = 빈 글)")
 
 
 # ── 2~4 ──
