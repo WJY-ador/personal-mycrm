@@ -77,6 +77,7 @@ imports(3단계)가 기대는 저장 계약을 코어에 먼저 넣었다. 기�
 | items | 항목. `code`(적용 뒤 변경·재사용 금지) · title · body · `data`(일반 필드만) · `decision`(principle 만) · revision · draft_* | object_defs 보호 Lookup |
 | item_links | 관계. 출발은 item(필드 key) 또는 record(`attach_to`·`axes`) 중 하나 → 대상 item/record/candidate/person/source/activity 중 정확히 하나(`ck_item_links_target`). 값은 data 가 아니라 여기. record 출발 `axes` 의 대상 오브젝트는 `user_roles`(classify)가 정한다(PR #20) | 출발 M-D · 대상 보호 Lookup |
 | item_history | 항목 이력. `prev_state`(title·body·data·decision·code·schema_revision·links·archived) + `prev_revision` | items M-D |
+| item_routes | 자동 분류(2026-11-18) — 담을 규칙(route)이 원문 단위 하나를 어떻게 판정했나. 아래 구조 추천 자동 분류 절 | records M-D, object_defs M-D, items M-D(routed 행만) |
 
 기존 테이블 변경: `records.notes jsonb`(「어디에 붙나」 중 쓸 자리·아직 안 붙는 것) · `candidates.question_id` NULL 허용(질문 없는 후보 — 화면은 기록별 묶음). `init_schema` 가 상태를 보고 멱등 ALTER.
 
@@ -191,6 +192,29 @@ Postgres 전환은 끝났다(2026-10-18, `db.py` psycopg 판). 후보 revision �
 - 그대로인 것: 출처 판정(self·verbatim 적격 유지) · notes(「어디에 붙나」)·색인 재계산 없음 · 일일 기록 한도(새 기록이 아니다) · 「오타만」 범주 없음(서버가 판정하지 못한다).
 - 출처 정정 이력(`provenance_history`) 한 줄에도 `via`(web/mcp).
 - 항목(기준·결정·축·커스텀) 웹 인라인 편집: `POST /api/item/edit` = `db.item_edit` = `item_propose` + `item_decide(apply)` 한 트랜잭션(`tx_scope`) — expected_revision·code 불변·관계 검증 그대로, `item_history` 한 줄. 확정 기준의 문장을 고쳐도 확정 유지. 대화는 새 op 없이 `item_propose` → `item_decide(apply)`.
+
+## 구조 추천 자동 분류 (2026-11-18)
+계약 문장: **원문은 한 곳에 쌓고, 오브젝트 항목은 원문 아래 자동 색인이다. 담을 규칙에 정확히 맞는 원문은 승인 없이 항목이 되고, 사람은 틀린 것만 뺀다.** 운영 설명은 `README.md` 의 구조 추천, 자동 분류 절.
+
+| 대상 | 컬럼 | 뜻 |
+|---|---|---|
+| object_defs | `policy.route`(JSON) | 담을 규칙. 꼴은 `route.check_route` 가 정의 제안 때 검사하고 정규화한 꼴로 저장한다(정규식 없음, `*_like` 만) |
+| item_routes | PK `(user_id, object_id, record_id, unit_key)` | 원문 단위 하나. `unit_key` = `''`(1기록 1항목) 또는 머리 글자(머리 줄 분할). 같은 머리가 또 나오면 둘째부터 머리 글자 + 줄바꿈 + 순번(partial duplicate_heading) |
+| item_routes | `state` routed/partial/excluded/released, `item_id` | routed = 항목을 만들었다, partial = 규칙에 일부만 맞아 분류 못 함, excluded = 사용자가 뺐다(다시 들어오지 않는다, 같은 원본의 새 판 기록에도 옮겨 적는다), released = route 를 뺀 적용이 놓아 준 항목(자동 분류 아님, 다시 넣으면 sync 가 다시 가져간다). routed, released 만 `item_id` 필수(`ck_item_routes_item`) |
+| item_routes | `start_pos`, `end_pos`, `spans` jsonb, `record_revision`, `reason` | 단위 구간(Python str 인덱스, `body[start:end]`), 필드별 원문 구간, 맞춘 때의 기록 revision, partial 이유 |
+| items | `ingest_kind = 'route'` | 자동 분류로 만든 항목(옛 DB 는 `db._migrate_route` 가 CHECK 를 넓힌다). records 의 CHECK 는 그대로 |
+
+- 자동 분류 표시(`auto_routed`), 건수, `ROUTE-LOCKED` = `item_routes` 에 routed 행이 있는 항목만(released 는 보통 항목). 자동 분류 항목을 가리키는 연결(item_links 항목 대상, activity_links 축)은 만들 수 없다(`ROUTE-LOCKED`). items 에 열을 더하지 않는다. 기록이 지워지면 행은 CASCADE, 항목은 `db._purge_record` 가 먼저 지운다(표시 잃은 항목이 남지 않게). 항목이 지워지면 행도 CASCADE. 계정 삭제 = `db.DELETE_TABLES`(items, records 보다 앞).
+- 항목 값은 원문 조각이거나 결정적 값(날짜, 제목 줄, 머리 글자)뿐이다. 항목 body 는 비우고 관계는 없다. 자동 분류 항목은 사용자의 판단이 아니고 근거로 인용하지 않는다(근거는 원문 기록).
+- 잠금 순서: users 행 → object_defs → items. 원문 쓰기 훅은 savepoint 안이라 route 가 실패해도 원문 저장은 남는다.
+
+### 판단 로그
+- 판정은 하나(`route.evaluate`). 채워질 건수, backfill, 새 원문 훅, 분류 못 함, 초안 견본이 같은 함수를 쓴다. 저장은 하나(`route.sync`).
+- 옛 개정 = 그 기록을 가리키는 접수 행이 있고 그 가운데 지금 적용인 행이 하나도 없음. 같은 판 재전송(noop)은 옛 행(false)과 새 행(true)이 같은 기록을 가리키므로, false 행 하나로 빼면 살아 있는 기록이 빠진다.
+- 장치의 새 판 = 새 기록에 새 항목. 같은 기록 id 의 본문, 제목 수정은 같은 항목을 갱신한다(revision +1).
+- route 를 뺀 정의 적용 = routed 행은 released(항목 유지), partial 행 삭제, excluded 행 유지. 다시 넣으면 released 항목을 다시 가져간다 — 처음 판(행 전부 삭제)은 뺐다 넣으면 같은 단위가 항목 둘이 되고 뺀 단위가 다시 들어와 고쳤다(2026-11-18 독립 검토). 보관은 행과 잠금을 남기고 복구 때 다시 맞춘다.
+- `*_like` 는 정규식으로 바꾸지 않는다. `#` 연속을 정규식으로 바꾸면 지수 시간 역추적이 난다(검토 재현) — 선형 매처와 꼴 제한(`#` 뒤 `#`, 숫자 금지)으로 막는다.
+- 빼기, 되돌리기, 초안 버리기는 decide 등급(웹 대화 확인 카드). write 카드는 op 마다 지금 상태 읽기 함수가 필요해서다.
 
 ## 레이아웃 계약 v2 (2026-11-03)
 - 정본 = `server/layout_registry.json` 한 곳: `components`(id → label·허용 영역 `regions`·`props` 모양 `{type: string|integer|boolean, enum?, max?}`) · `pages`(페이지 → 영역 목록·`default`). `db.DEFAULT_LAYOUT` 은 이 파일에서 만든다(사본 없음). 화면(TS)도 같은 파일을 읽는다.
