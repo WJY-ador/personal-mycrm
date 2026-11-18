@@ -2,3 +2,4 @@
 export const LOADING = "불러오는 중이에요…";
 export const REFL_KIND: Record<string, string> = { summary: "내 요약", reaction: "내 반응" };
 export const ME_EMPTY = "아직 표시할 데이터가 없어요. 데이터가 들어오면 여기서 볼 수 있어요.";   // 「나」·오늘 빈 목록
+export const AI_MARK = "AI 요약";   // AI 가 만든 값 표시(수집 인박스 카드, 「나」 항목 필드) — 사용자의 말이 아니다

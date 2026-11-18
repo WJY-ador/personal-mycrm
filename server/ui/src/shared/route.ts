@@ -47,11 +47,12 @@ const navOn = (t: TabDef) => ({ _inbox: "_today", structure: "_setup", _obj: "_s
   (t.view === "question" || t.view === "record" ? "_setup" : t.id);
 
 // 「나」 의 탭(기본 종류 = 표준 정의 std_id) — 항목 하나를 어느 탭에서 여는지. features/me 도 이것을 쓴다
+// 표준 아닌 오브젝트 = 그 오브젝트의 탭(obj/<key>, 2026-11-18 오브젝트 탭). 서버 db.ME_STD_IDS 와 같은 값
 export const ME_STD: Record<string, string> = { principle: "std:principles", decision: "std:decision_events", axis: "std:axes" };
-export function meTabOf(S: AppState, it: Item): "principle" | "decision" | "axis" | "custom" {
+export function meTabOf(S: AppState, it: Item): string {
   const d = (S.definitions || []).find(x => x.id === it.object_id);
   for (const t of ["principle", "decision", "axis"] as const) if (d && d.std_id === ME_STD[t]) return t;
-  return "custom";
+  return "obj/" + encodeURIComponent(d?.key || "");
 }
 
 // 옛 묶음 주소 → 새 주소(replace). 없으면 ""
@@ -112,7 +113,7 @@ export function resolve(hash: string, S: AppState, lastView: Record<string, stri
     case "structure": return v("structure", [R.a, R.b], inSetup);
     case "map": return v("map", [tab.id], inSetup);
     case "record": return sheet("record");
-    case "me": return v("me", [R.a, R.b]);
+    case "me": return v("me", [R.a, R.b, R.c]);
     case "today2": return v("today", ["today", R.a, R.b]);
     case "objects": { const [s, a] = objScreen(R.a, R.b, R.c); return v(s, a, inSetup); }
     case "settings": return v("defs", [], inSetup);

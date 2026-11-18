@@ -2544,6 +2544,13 @@ class Web:
             resp.status_code = 409   # _crm_err 공용 매핑은 그대로 두고 여기서만 409
         return resp
 
+    async def api_me_object_list(self, request):
+        """GET ?sort=&dir=asc|desc&q=&state=&cursor=&f.<select 필드 key>=<값> — 오브젝트 탭 목록 보기(50행씩). 모양은 db.object_list."""
+        qp, key = request.query_params, request.path_params["key"]
+        filters = {k[2:]: v for k, v in qp.items() if k.startswith("f.") and v}
+        return await self._core_read(request, lambda uid: db.object_list(uid, key, qp.get("sort", ""), qp.get("dir", ""), qp.get("q", ""),
+                                                                         filters, qp.get("state", ""), qp.get("cursor", "")))
+
     async def api_me_stats(self, request):
         """GET — 「나」 통계(축 띠·히트맵·종류별·기다리는 결정). 전체 범위, 읽기만. 모양은 db.me_stats."""
         return await self._core_read(request, db.me_stats)
@@ -3497,6 +3504,7 @@ class Web:
             Route("/api/me/aggregate", u("web:me_aggregate", self.api_me_aggregate)),
             Route("/api/me/layout", u("web:me_layout", self.api_me_layout), methods=["GET", "PUT", "DELETE"]),   # PR ①-b 쓰기 예외(이 라우트만)
             Route("/api/me/stats", u("web:me_stats", self.api_me_stats)),   # PR ①-b — 읽기만
+            Route("/api/me/objects/{key}", u("web:me_object_list", self.api_me_object_list)),   # 오브젝트 탭 목록 보기 — 읽기만
             Route("/api/trash", u("web:trash", self.api_trash)),   # 휴지통 PR-1 — 목록 · 상세 · 이동/복원/영구 삭제(경로 순서: 쓰기 먼저)
             Route("/api/trash/{op}", u("web:trash_op", self.api_trash_op), methods=["POST"]),
             Route("/api/trash/{kind}/{tid}", u("web:trash_get", self.api_trash_one)),

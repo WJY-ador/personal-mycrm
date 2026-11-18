@@ -8422,7 +8422,7 @@ async def test_pr1b_layout_stats():
             r.json()["layout"]["pages"]["me"]["tabs"].reverse()
             def v2(tabs, summary):
                 return {"v": 2, "pages": {"me": {"tabs": tabs, "regions": {"summary": [{"c": b, "p": {}} for b in summary]}}}}
-            lay = v2(["person", "summary", "principle", "decision", "axis", "custom", "source"], ["recent", "heatmap", "kinds", "waiting"])
+            lay = v2(["person", "summary", "principle", "decision", "axis", "source"], ["recent", "heatmap", "kinds", "waiting"])
             assert (await h.put("/api/me/layout", json={"layout": lay, "version": 0}, headers={"origin": "https://evil.example"})).status_code == 403
             assert (await h.delete("/api/me/layout", headers={"origin": "https://evil.example"})).status_code == 403
             r = await h.put("/api/me/layout", json={"layout": lay, "version": 0}, headers=origin)
@@ -8437,7 +8437,8 @@ async def test_pr1b_layout_stats():
             t7 = D0["pages"]["me"]["tabs"]
             S4 = ["heatmap", "kinds", "waiting", "recent"]
             me = lay["pages"]["me"]
-            bad = [v2(t7[:6], S4), v2(t7[:6] + [t7[0]], S4), v2(t7 + ["inbox"], S4), v2(t7[:6] + ["inbox"], S4), v2(t7, ["heatmap", "pie"]),
+            bad = [v2(t7[:-1], S4), v2(t7[:-1] + [t7[0]], S4), v2(t7 + ["inbox"], S4), v2(t7[:-1] + ["inbox"], S4), v2(t7, ["heatmap", "pie"]),
+                   v2(t7 + ["custom"], S4), v2(t7 + ["obj:none_such"], S4), v2(t7 + ["obj:Bad-Key"], S4),
                    v2(t7, ["heatmap", "heatmap"]), {"v": 2, "pages": {"me": {**me, "regions": {"today": []}}}},
                    {"v": 2, "pages": {"me": {**me, "regions": {}}}}, {**lay, "extra": 1}, {**lay, "v": 1}, {**lay, "v": True},
                    {"v": 2, "pages": {"me": {**me, "regions": {"summary": [{"c": "heatmap"}]}}}},
@@ -8480,11 +8481,11 @@ async def test_pr1b_layout_stats():
             # v2 — 정본 = layout_registry.json(DEFAULT_LAYOUT 은 그 파일에서) · v1 행은 읽을 때 v2 로(쓰기 없음), 다음 PUT 부터 v2
             reg = json.loads((Path(__file__).parent / "layout_registry.json").read_text(encoding="utf-8"))
             assert D0 == {"v": 2, "pages": {k: p["default"] for k, p in reg["pages"].items()}} and db.layout_components() == list(reg["components"])
-            v1 = {"v": 1, "tabs": ["source"] + t7[:6], "blocks": {"summary": ["kinds", "recent"]}}
+            v1 = {"v": 1, "tabs": ["source"] + t7[:-1], "blocks": {"summary": ["kinds", "recent"]}}
             with db.tx() as c:
                 c.execute("UPDATE page_layouts SET layout=%s WHERE user_id=%s", (db.Jsonb(v1), U))
             got = (await h.get("/api/me/layout")).json()
-            assert got == {"layout": v2(["source"] + t7[:6], ["kinds", "recent"]), "version": 4}, got
+            assert got == {"layout": v2(["source"] + t7[:-1], ["kinds", "recent"]), "version": 4}, got
             with db.tx() as c:
                 assert c.execute("SELECT layout FROM page_layouts WHERE user_id=%s", (U,)).fetchone()["layout"] == v1, "읽기는 쓰지 않는다"
                 c.execute("UPDATE page_layouts SET layout=%s WHERE user_id=%s", (db.Jsonb({"v": 1, "tabs": t7, "blocks": {}}), U))

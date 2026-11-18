@@ -1,0 +1,32 @@
+/* 오브젝트 탭 목록 보기 — 기존 토큰만(고동색 주색 한 색). 표 = 넓은 화면, 카드 = 좁은 화면 */
+.wrap { min-width: 0; }
+.count { font-family: var(--mono); font-size: var(--fs-1); color: var(--muted); }
+.bar { display: flex; flex-direction: column; gap: var(--sp-3); margin: 0 0 var(--sp-5); }
+.q { max-width: 320px; width: 100%; font: inherit; font-size: var(--fs-2); padding: var(--sp-2) var(--sp-4); border: 1px solid var(--line); border-radius: var(--r-3);
+  background: var(--card); color: var(--ink); }
+.chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+.cl { font-size: var(--fs-1); color: var(--muted); font-weight: 600; min-width: 3.5em; }
+button.chip { min-height: 28px; padding: var(--sp-1) var(--sp-4); background: var(--card); color: var(--ink); border-radius: var(--r-pill); }
+button.chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.n { font-family: var(--mono); color: var(--muted); }
+button.chip[aria-pressed="true"] .n { color: var(--accent); }
+.tw { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.tbl { border-collapse: collapse; width: 100%; font-size: var(--fs-2); }
+.tbl th, .tbl td { text-align: left; padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--line); vertical-align: top; }
+.tbl td { white-space: nowrap; max-width: 16em; overflow: hidden; text-overflow: ellipsis; }
+.tbl td.tt { white-space: normal; max-width: 28em; min-width: 14em; }
+.tbl tbody tr { cursor: pointer; }
+.tbl tbody tr:hover { background: var(--accent-soft); }
+.tt a { color: var(--ink); text-decoration: none; font-weight: 500; }
+.tt a:hover { color: var(--accent); text-decoration: underline; }
+button.sort { border: 0; background: none; padding: 0; min-height: 0; font: inherit; font-size: var(--fs-1); font-weight: 600; color: var(--muted); }
+button.sort:hover { color: var(--accent); background: none; }
+th[aria-sort] button.sort { color: var(--ink); }
+.cd { font-family: var(--mono); font-size: var(--fs-1); font-weight: 600; color: var(--muted); }
+.cards { list-style: none; margin: 0; padding: 0; }
+.cards li + li { border-top: 1px solid var(--line); }
+.cards a { display: flex; flex-direction: column; gap: var(--sp-1); padding: var(--sp-4) 0; color: var(--ink); text-decoration: none; }
+.ct { font-weight: 500; }
+.cm { font-size: var(--fs-1); color: var(--muted); }
+.more { margin: var(--sp-5) 0 0; text-align: center; }
+@media (max-width: 767px) { .q { max-width: none; font-size: 16px; } }

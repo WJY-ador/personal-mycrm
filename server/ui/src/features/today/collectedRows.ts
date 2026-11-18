@@ -4,7 +4,7 @@ import type { Post } from "./collectedApi";
 export const GRADES: [string, string][] = [["signal", "신호"], ["news", "소식"], ["noise", "노이즈"], ["", "등급 없음"]];
 export const BULK_GRADES = new Set(["news", "noise"]);   // 묶음 머리에 「전부 버림」
 export const CHANNEL: Record<string, string> = { linkedin: "LinkedIn", reddit: "Reddit", kakao: "카카오톡", threads: "Threads", blog: "블로그", web: "웹" };
-export const AI_MARK = "AI 요약";
+export { AI_MARK } from "../../shared/words";
 export const NO_BODY = "원문 본문은 서버에 없어요. 원문은 원문 링크나 PC의 대시보드에서 봐요.";
 export const UNDO_MS = 5000;
 

@@ -44,7 +44,7 @@ test("서버 배치 그대로 · 탭 이름·자물쇠(기본 종류) · 블록 
   const el = await show();
   expect(text(el, "h2")).toEqual(["페이지 레이아웃: 나"]);
   expect(keys(el, 0)).toEqual(SWAP);
-  expect(lis(el, 0).map(li => li.children[0].textContent + li.children[1].textContent)).toEqual(["⠿기준 ", "⠿요약", "⠿결정 ", "⠿축 ", "⠿커스텀", "⠿사람 ", "⠿출처 "]);
+  expect(lis(el, 0).map(li => li.children[0].textContent + li.children[1].textContent)).toEqual(["⠿기준 ", "⠿요약", "⠿결정 ", "⠿축 ", "⠿사람 ", "⠿출처 "]);
   expect(lis(el, 0)[0].getAttribute("aria-label")).toBe("기준, 1번째");
   expect(lis(el, 1).map(li => li.children[1].textContent)).toEqual(DEF.regions.summary.map(s => reg.components[s.c as keyof typeof reg.components].label));
   expect(resetBtn(el).disabled).toBe(false);

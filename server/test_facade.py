@@ -653,7 +653,11 @@ async def test_layout(S):
         assert "layout_set" in [m["op"] for m in val(await c.call_tool("find", {"query": "화면 배치"}))["matches"]]
         assert "화면 배치를 바꿔 달라고 말할 때만 layout_set" in main.INSTRUCTIONS
         g = val(await c.call_tool("read", {"op": "layout_get"}))
-        assert g == db.layout_get(S["uid"]) and g["version"] == 0 and g["layout"] == db.DEFAULT_LAYOUT
+        with db.tx() as cx:   # 기본 배치 + 이 사용자 오브젝트 탭(사람·출처 앞) — 오브젝트 탭 명세 2026-11-18
+            dflt = json.loads(json.dumps(db.DEFAULT_LAYOUT))
+            dflt["pages"]["me"]["tabs"] = db.me_tabs_fit(dflt["pages"]["me"]["tabs"], db.me_object_keys(cx, S["uid"]))
+        assert any(t.startswith("obj:") for t in dflt["pages"]["me"]["tabs"])
+        assert g == db.layout_get(S["uid"]) and g["version"] == 0 and g["layout"] == dflt
         me = json.loads(json.dumps(g["layout"]["pages"]["me"]))
         me["tabs"].reverse()
         me["regions"]["summary"] = me["regions"]["summary"][:2]
@@ -668,7 +672,7 @@ async def test_layout(S):
         assert r.is_error and code(r) in ("ARG-INVALID", None), r
         assert db.layout_get(S["uid"])["version"] == 1, "거절은 저장하지 않는다"
         r = val(await c.call_tool("write", {"op": "layout_reset", "params": {"page": "me"}}))
-        assert r == {"layout": db.DEFAULT_LAYOUT, "version": 2}, r
+        assert r == {"layout": dflt, "version": 2}, r
         with db.tx() as cx:
             assert cx.execute("SELECT layout FROM page_layouts WHERE user_id=%s", (S["uid"],)).fetchone()["layout"] is None
         r = await c.call_tool("decide", {"op": "layout_set", "params": {}})
