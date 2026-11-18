@@ -993,7 +993,7 @@ def layout_reset(page: LayoutPage, ctx: Context) -> dict:
 layout_get.__doc__ = ("화면 배치 읽기 — {layout, version}. layout = 계약 v2 {v:2, pages:{페이지:{tabs(하위 탭 순서), regions:{자리:[{c:컴포넌트, p:{}}]}}}}. "
                       "저장한 적 없으면 기본 배치 + version 0. 놓을 수 있는 컴포넌트: " + _layout_names())
 layout_set.__doc__ = ("화면 배치 저장 — 사용자가 화면 배치를 바꿔 달라고 말할 때만 부른다. 페이지 하나({tabs, regions})를 통째로 보낸다(다른 페이지는 그대로). "
-                      "탭은 순서만 바꾼다(빼기·더하기 없음). 자리마다 허용된 컴포넌트만·중복 없이, 빼면 그 자리에서 안 보인다. 아래 목록 밖 이름을 만들지 않는다. "
+                      "탭은 순서만 바꾼다. 사용자 오브젝트 탭(obj:<key>)은 오브젝트 적용, 보관에 따라 서버가 넣고 뺀다. 자리마다 허용된 컴포넌트만·중복 없이, 빼면 그 자리에서 안 보인다. 아래 목록 밖 이름을 만들지 않는다. "
                       "version 은 layout_get 이 준 값 그대로 — 그 사이 다른 화면이 바꿨으면 LAYOUT-STALE(다시 읽고 사용자에게 확인). 컴포넌트: " + _layout_names())
 layout_reset.__doc__ = ("화면 배치를 기본으로 되돌린다(그 페이지만) — 사용자가 기본으로 되돌려 달라고 말할 때만 부른다. 반환 {layout, version}.")
 _me_default = db.DEFAULT_LAYOUT["pages"]["me"]
@@ -1101,8 +1101,9 @@ def answer_get(ctx: Context,
                                                                    "찾는 열쇠일 뿐 답에 넣지 않는다")] = None) -> dict:
     """질문 하나에 내 기록 원문으로 답할 재료를 낸다(읽기, 저장 없음) — 사용자가 질문에 내 기록으로 답해 달라고 할 때 부른다.
     반환 draft(답변 초안 = 원문 구간 quote 와 ref, 최대 8개) · evidence(근거 기록과 인용 구간) · related_posts(관련 수집 글 제목 줄과 URL, 근거 아님) ·
-    gaps(부족한 곳 고정 문구) · markdown · notice. 서버는 문장을 새로 쓰지 않는다. markdown 은 고치지 않고 그대로 보여 준다.
-    초안 사이에 문장을 더하거나 요약하지 않는다. 재료 = 인용 적격인 내 글과 읽고 든 생각뿐(AI 요약, 수집 글, 항목은 근거가 아니다).
+    gaps(부족한 곳 고정 문구) · markdown · notice · display_rule. 서버는 문장을 새로 쓰지 않는다.
+    markdown 을 처음부터 끝까지 그대로 보여 준다. 줄을 빼거나 묶거나 요약하지 않는다. markdown 앞뒤에 네 문장을 덧붙이지 않는다. 부족한 점은 markdown 의 부족한 곳 절만 쓴다. 사용자가 따로 묻기 전에는 해석하지 않는다.
+    재료 = 인용 적격인 내 글과 읽고 든 생각뿐(AI 요약, 수집 글, 항목은 근거가 아니다).
     question 과 question_id 를 둘 다 주거나 둘 다 비우면 ARG-INVALID. 내 질문 목록에 없는 question_id 는 NOT-FOUND."""
     return answer.assemble(uid_of(ctx), question, question_id, terms)
 

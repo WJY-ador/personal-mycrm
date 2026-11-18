@@ -224,11 +224,11 @@ def codes(res):
 def test_shape_and_determinism(S):
     a = answer.assemble(S["A"], question=Q_MAIN)
     b = answer.assemble(S["A"], question=Q_MAIN)
-    assert list(a) == ["kind", "question", "terms", "draft", "evidence", "related_posts", "gaps", "markdown", "notice", "assembled_at"], list(a)
+    assert list(a) == ["kind", "question", "terms", "draft", "evidence", "related_posts", "gaps", "markdown", "notice", "display_rule", "assembled_at"], list(a)
     a.pop("assembled_at")
     b.pop("assembled_at")
     assert a == b
-    assert a["kind"] == "answer_material" and a["question"] == {"text": Q_MAIN, "id": None} and a["notice"] == answer.NOTICE
+    assert a["kind"] == "answer_material" and a["question"] == {"text": Q_MAIN, "id": None} and a["notice"] == answer.NOTICE and a["display_rule"] == answer.DISPLAY_RULE
     assert a["terms"] == ["알파도구", "베타검증"], a["terms"]
     # 정렬: 점수 같으면 확정 후보 있는 기록(10일 전)이 오늘 기록보다 먼저 · 한 기록에서 초안 2개까지
     ids = draft_ids(a)
@@ -509,9 +509,13 @@ async def test_catalog(S):
     assert (o.tier, o.family, o.direct, o.bind) == ("read", "question", False, None)
     for ex in o.examples:
         facade.validate(o, ex)
-    assert ("answer_get 을 부른다. markdown 을 처음부터 끝까지 그대로 보여 준다. 줄을 빼거나 묶거나 요약하지 않는다. "
-            "markdown 앞뒤에 네 문장을 덧붙이지 않는다. 부족한 점은 markdown 의 부족한 곳 절만 쓴다. "
-            "사용자가 따로 묻기 전에는 해석하지 않는다.") in main.INSTRUCTIONS
+    # 보여 주기 규칙 한 문구 — 응답 display_rule, INSTRUCTIONS, docstring(웹 대화 find 설명), 카탈로그 rule(find 의 rule)
+    assert answer.DISPLAY_RULE == ("markdown 을 처음부터 끝까지 그대로 보여 준다. 줄을 빼거나 묶거나 요약하지 않는다. "
+                                   "markdown 앞뒤에 네 문장을 덧붙이지 않는다. 부족한 점은 markdown 의 부족한 곳 절만 쓴다. "
+                                   "사용자가 따로 묻기 전에는 해석하지 않는다.")
+    assert f"answer_get 을 부른다. {answer.DISPLAY_RULE}" in main.INSTRUCTIONS
+    assert answer.DISPLAY_RULE in " ".join(o.doc.split()) and spec["rule"] == answer.DISPLAY_RULE
+    assert answer.DISPLAY_RULE in facade.rule_of(o)
     assert "읽고 든 생각은 내 글이라 근거에 들어간다. 검토 완료 표시는 판단 확정이 아니다." in main.INSTRUCTIONS
     async with Client(main.mcp) as c:
         tools = {t.name for t in (await c.list_tools()).tools}
@@ -531,9 +535,11 @@ async def test_catalog(S):
         assert bad.is_error and CODE.search(bad.content[0].text).group(1) == "ARG-INVALID", bad.content[0].text
         nf = await c.call_tool("read", {"op": "answer_get", "params": {"question_id": S["qb"]}})
         assert nf.is_error and CODE.search(nf.content[0].text).group(1) == "NOT-FOUND", nf.content[0].text
+        det = await c.call_tool("find", {"op": "answer_get"})
+        assert not det.is_error and answer.DISPLAY_RULE in det.content[0].text, det.content[0].text[:300]
         wrong = await c.call_tool("write", {"op": "answer_get", "params": {"question": Q_MAIN}})
         assert wrong.is_error and CODE.search(wrong.content[0].text).group(1) == "TIER-MISMATCH"
-    ok("14) 카탈로그: answer_get tier read, family question, facade 전용 = chat_mcp 고정 목록 · read 겉면 호출 = 조립 결과 · ARG-INVALID·NOT-FOUND·TIER-MISMATCH")
+    ok("14) 카탈로그: answer_get tier read, family question, facade 전용 = chat_mcp 고정 목록 · 보여 주기 규칙 한 문구(응답, INSTRUCTIONS, docstring, rule, find) · read 겉면 호출 = 조립 결과 · ARG-INVALID·NOT-FOUND·TIER-MISMATCH")
 
 
 async def run():

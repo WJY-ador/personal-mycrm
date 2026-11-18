@@ -43,6 +43,9 @@ _HEADING_LINE = re.compile(r" {0,3}#{1,6}(?:[ \t]|$)")
 _BOLD_LINE = re.compile(r"(\*\*|__)(?:(?!\1).)+\1[:：]?")
 _LIST_MARK = re.compile(r"(?:[-*+]|\d{1,9}[.)])[ \t]+")
 
+# 보여 주기 규칙 — 응답 display_rule, INSTRUCTIONS, answer_get docstring, 카탈로그 rule 이 같은 문구(시험이 본다)
+DISPLAY_RULE = ("markdown 을 처음부터 끝까지 그대로 보여 준다. 줄을 빼거나 묶거나 요약하지 않는다. markdown 앞뒤에 네 문장을 덧붙이지 않는다. "
+                "부족한 점은 markdown 의 부족한 곳 절만 쓴다. 사용자가 따로 묻기 전에는 해석하지 않는다.")
 NOTICE = "내 기록 원문만 모았어요. 문장을 새로 쓰지 않았어요. 글로 다듬으면 그건 내 판단이 아니에요."
 # markdown 근거 줄 셋째 칸 — 읽고 든 생각(source_reflections)은 출처 표시도 text_process 도 없어 kind 로 고정 낱말을 쓴다
 REFLECTION_LABELS = {"reaction": "읽고 든 생각", "summary": "읽고 쓴 요약"}
@@ -423,4 +426,4 @@ def assemble(uid, question="", question_id="", terms=None, now=None):
     return {"kind": "answer_material", "question": {"text": q, "id": qid or None}, "terms": keys_terms,
             "draft": draft, "evidence": evidence, "related_posts": related, "gaps": gaps,
             "markdown": _markdown(q, draft, evidence, gaps, labels), "notice": NOTICE,
-            "assembled_at": local.isoformat(timespec="seconds")}
+            "display_rule": DISPLAY_RULE, "assembled_at": local.isoformat(timespec="seconds")}
