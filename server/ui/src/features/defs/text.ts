@@ -37,3 +37,17 @@ export const STD_ERR: Record<string, string> = {
 };
 export { FIXHINT } from "../../shared/Tech";
 export { josa, roJosa } from "../../shared/LoadFail";
+
+// 구조 추천 칸(2026-11-18 구조추천 명세 6.5) — 해요체, 짧게. RECO_ASK = 서버 web.RECO_ASK 와 같은 요청(웹 AI 대화 입력칸에 채운다)
+export const RECO_ASK = "내 기록을 보고 구조를 추천해 줘";
+export const RECO_TEXT = {
+  title: "추천", lead: "AI가 내 기록을 보고 만든 구조 초안이에요. 적용하면 규칙에 맞는 기록이 그 자료 종류에 저절로 담겨요.",
+  ask: "구조 추천 받기", askOff: `연결한 AI 대화에서 "${RECO_ASK}"라고 말해 보세요.`,
+  none: "아직 추천 초안이 없어요.", suggest: (n: number) => `어느 자료 종류에도 안 붙은 기록이 ${n}편 있어요.`,
+  fields: "필드", noFields: "필드가 없어요.", rule: "담을 규칙", noRule: "담을 규칙이 없어요. 적용해도 저절로 담기지 않아요.", samples: "견본",
+  change: "고치는 초안", fill: (n: number, m: number) => `적용하면 ${n}건이 채워져요, ${m}건은 분류 못 해요.`,
+  apply: "적용", rename: "이름 고치기", discard: "빼기", newName: "새 이름", save: "저장", cancel: "취소",
+  discardAsk: "이 추천 초안을 뺄까요? 지금 자료 종류와 항목은 그대로예요.",
+  busy: "저장하고 있어요…", applied: (n: number, left: number) => `적용했어요. ${n}건을 채웠어요.${left ? ` 남은 ${left}건은 다음 날 이어서 채워요.` : ""}`, appliedPlain: "적용했어요.", renamed: "이름을 고쳤어요.", discarded: "추천을 뺐어요.",
+  conflict: "다른 곳에서 먼저 바뀌었어요. 추천을 다시 불러왔어요.", fail: "저장하지 못했어요. 다시 해 보세요.", offline: "서버에 연결하지 못했어요. 잠시 뒤 다시 해 보세요.",
+};

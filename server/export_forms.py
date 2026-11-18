@@ -313,7 +313,8 @@ def _period_report(c, uid, form, period, days, today, at):
     # 결정 — event 항목의 happened_on 이 YYYY-MM-DD 꼴이고 기간 안. 없거나 꼴이 아니면 뺀다(오류 아님). ISO 날짜라 글자 비교 = 날짜 비교
     dcond = "" if frm is None else " AND i.data->>'happened_on' BETWEEN %(frm_s)s AND %(to_s)s"
     decisions = db._all(c, "SELECT i.id, i.title, i.body, i.revision, i.current_version_id, i.data->>'happened_on' AS happened_on " + _LIVE_ITEM +
-                        "AND o.semantic_kind='event' AND jsonb_typeof(i.data->'happened_on') = 'string' "
+                        f"AND o.semantic_kind='event' AND NOT {db._routed_item('i')} "   # 자동 분류 항목은 판단이 아니라 재료 밖(근거는 원문 기록)
+                        "AND jsonb_typeof(i.data->'happened_on') = 'string' "
                         f"AND i.data->>'happened_on' ~ '{_DATE_RE}'{dcond} ORDER BY happened_on, i.id",
                         {**a, "frm_s": frm.isoformat() if frm else None, "to_s": today.isoformat()})
     pending = db._one(c, _PENDING, a)["n"]

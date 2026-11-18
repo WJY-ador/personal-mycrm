@@ -317,7 +317,8 @@ CREATE TABLE IF NOT EXISTS items (
   PRIMARY KEY (user_id, id),
   CONSTRAINT ck_items_trash CHECK ((trashed_at IS NULL) = (purge_at IS NULL) AND (trashed_at IS NULL OR last_trashed_at IS NOT NULL)),
   UNIQUE (user_id, id, object_id),                  -- item_links 복합 FK 대상
-  CONSTRAINT ck_items_ingest_kind CHECK (ingest_kind IN ('legacy','interactive','inbox','board_migration')),
+  -- route = 자동 분류 항목(2026-11-18 구조추천, 일반 제안 한도에 세지 않는다). 옛 DB 는 db._migrate_route 가 넓힌다. records CHECK 는 그대로
+  CONSTRAINT ck_items_ingest_kind CHECK (ingest_kind IN ('legacy','interactive','inbox','board_migration','route')),
   CONSTRAINT ck_items_generation_kind CHECK (generation_kind IN ('unknown','human','ai','mixed','conversation','routine')),
   CONSTRAINT ck_items_generation_meta CHECK (jsonb_typeof(generation_meta) = 'object'),
   CONSTRAINT ck_items_source_when CHECK (source_created_at IS NULL OR source_date IS NULL),
@@ -536,6 +537,39 @@ CREATE TABLE IF NOT EXISTS collected_states (
   CHECK (decided_by = 'device' OR seq IS NOT NULL)
 );
 CREATE INDEX IF NOT EXISTS ix_collected_states_seq ON collected_states (user_id, seq) WHERE decided_by = 'user';
+
+-- 자동 분류(2026-11-18 구조추천 명세 6.2) — 담을 규칙(object_defs.policy.route)이 원문 단위 하나를 어떻게 판정했나. 판정 = route.evaluate, 반영 = route.sync.
+-- state routed = 항목을 만들었다(item_id 필수), partial = 규칙에 일부만 맞아 분류 못 함(항목 없음), excluded = 사용자가 뺐다(다시 들어오지 않는다),
+-- released = route 를 뺀 적용이 놓아 준 항목(item_id 유지, 자동 분류 아님, 잠금 없음. route 가 다시 들어오면 sync 가 다시 가져간다).
+-- 자동 분류 표시 = 이 표에 routed 행이 있는 항목(items 에 열을 더하지 않는다). unit_key = '' (1기록 1항목) 또는 머리 글자(### 분할).
+-- start_pos, end_pos = 단위 구간(Python str 인덱스, body[start:end]), spans = 필드별 원문 구간. 기록, 항목이 지워지면 행도 지운다.
+CREATE TABLE IF NOT EXISTS item_routes (
+  user_id          text NOT NULL,
+  object_id        text NOT NULL,
+  record_id        text NOT NULL,
+  unit_key         text NOT NULL DEFAULT '' CHECK (char_length(unit_key) <= 220),
+  state            text NOT NULL,
+  item_id          text,
+  start_pos        integer,
+  end_pos          integer,
+  spans            jsonb NOT NULL DEFAULT '{}',
+  record_revision  integer,
+  released_revision integer,   -- released 로 놓아 줄 때의 항목 revision. 같을 때만(사용자가 손대지 않았을 때만) 서버가 다시 가져간다
+  reason           text,
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  updated_at       timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, object_id, record_id, unit_key),
+  FOREIGN KEY (user_id, record_id) REFERENCES records(user_id, id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id, object_id) REFERENCES object_defs(user_id, id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id, item_id) REFERENCES items(user_id, id) ON DELETE CASCADE,
+  CONSTRAINT ck_item_routes_state CHECK (state IN ('routed','partial','excluded','released')),
+  CONSTRAINT ck_item_routes_item CHECK ((state IN ('routed','released')) = (item_id IS NOT NULL)),
+  CHECK (jsonb_typeof(spans) = 'object')
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_item_routes_item ON item_routes (user_id, item_id) WHERE item_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS ix_item_routes_record ON item_routes (user_id, record_id);
+-- 옛 개정 판정(route._OLD_SQL)이 기록마다 접수 행을 찾는다
+CREATE INDEX IF NOT EXISTS ix_import_target_record ON import_entries (user_id, target_record_id) WHERE target_record_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS ix_import_target_activity ON import_entries (user_id, target_activity_id) WHERE target_activity_id IS NOT NULL;
 
 -- 원자적 접수·요청 한도. scope_key = 'user' 또는 장치(입력원) ID, bucket = 서버 고정 열거(imports.BUCKETS). 클라이언트 입력을 그대로 쓰지 않는다.

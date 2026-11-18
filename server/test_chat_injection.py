@@ -729,7 +729,7 @@ class ChatInjectionTests(unittest.TestCase):
         block = re.search(r"export const OP_NAME: Record<string, string> = \{(.*?)\};", text_ts, re.S)
         self.assertIsNotNone(block)
         ui_ops = set(re.findall(r"(?:^|[\s,{])([a-z_]+):\s*\"", block.group(1)))
-        self.assertEqual(len(webchat.CHAT_CARD_OPS), 36)
+        self.assertEqual(len(webchat.CHAT_CARD_OPS), 39)   # 구조 추천(2026-11-18) decide 3 더함
         self.assertEqual(ui_ops, set(webchat.CHAT_CARD_OPS))
         self.assertEqual(agent_ops, set(webchat.CHAT_CARD_OPS))
 

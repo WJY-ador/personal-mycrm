@@ -326,6 +326,36 @@ jobs:
           PY
           python server/test_object_tabs.py
 
+      # 구조 추천 자동 분류 판정(2026-11-18) — route.evaluate 순수 판정(세 꼴 exact, partial, 불일치, 불변식, *_like, 정의 검증, 접은 줄과 \r\n). DB 없음
+      - name: "④-v3 자동 분류 판정 시험 (test_route.py)"
+        run: python server/test_route.py
+
+      # 구조 추천 자동 분류 흐름(2026-11-18) — 적용 backfill, 훅(기록, 수정, 장치 승인), 휴지통, 빼기와 되돌리기, budget, ROUTE-LOCKED, 옛 개정, profile(합성 PG).
+      # 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
+      - name: "④-v4 자동 분류 흐름 시험 (test_route_flow.py)"
+        env:
+          DATABASE_URL: postgresql://postgres:crm@localhost:5432/crm_test_route
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:crm@localhost:5432/crm", autocommit=True) as c:
+              c.execute("CREATE DATABASE crm_test_route")
+          PY
+          python server/test_route_flow.py
+
+      # 구조 추천 화면 API(2026-11-18) — 추천 칸(카드, 규칙 문장, 적용, 이름 고치기, 빼기), 항목 근거 원문과 빼기, 나 탭 추천 한 줄(합성 PG).
+      # 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
+      - name: "④-v5 구조 추천 화면 시험 (test_route_screen.py)"
+        env:
+          DATABASE_URL: postgresql://postgres:crm@localhost:5432/crm_test_route_screen
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:crm@localhost:5432/crm", autocommit=True) as c:
+              c.execute("CREATE DATABASE crm_test_route_screen")
+          PY
+          python server/test_route_screen.py
+
       # 받는 즉시 승인(2026-11-13) — 장치 내 글 = 받는 즉시 기록(출처 판정 = 승인과 같다) · 기록 한도·스위치 꺼짐 = 대기 → auto_approve_pending(합성 PG).
       # 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
       - name: "④-w 받는 즉시 승인 시험 (test_inbox_auto.py)"

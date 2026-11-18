@@ -46,7 +46,9 @@ export function ObjList({ W, def, vq, setVq }: Props) {
     initialPageParam: "", getNextPageParam: (p: List) => p.next_cursor ?? undefined, placeholderData: keepPreviousData,
   });
   const first = L.data?.pages[0];
-  const head = <div className="htools"><h3 id="obj-list-h">{def.label}</h3><span className={css.count}>{first ? first.total : ""}</span></div>;
+  const rc = def.policy?.route ? def.route_counts : undefined;   // 자동 분류 한 줄 — 담을 규칙이 있는 오브젝트만(건수 = /api/state definitions 그대로)
+  const head = <><div className="htools"><h3 id="obj-list-h">{def.label}</h3><span className={css.count}>{first ? first.total : ""}</span></div>
+    {rc ? <p className="hint" id="obj-route">{OBJ_TEXT.routed(rc.routed, rc.partial)}</p> : null}</>;
   if (!first) return (
     <section className={`paper hlist ${css.wrap}`} aria-labelledby="obj-list-h">{head}
       {L.isError ? <div className="empty">{OBJ_TEXT.fail} <button type="button" className="tertiary" onClick={() => void L.refetch()}>{OBJ_TEXT.retry}</button></div>

@@ -39,6 +39,8 @@ _PINNED_TIERS = {
     "candidates_propose": "write", "definition_propose": "write", "item_propose": "write",
     "person_save": "write", "source_create": "write", "source_reflection_save": "write", "pc_connect": "write",
     "collected_post_decide": "write",
+    "structure_profile_get": "read",   # 구조 추천(2026-11-18) — 빼기, 되돌리기, 초안 버리기는 확인 카드(decide)
+    "item_route_exclude": "decide", "item_route_include": "decide", "definition_draft_discard": "decide",
     "record_edit": "decide", "record_provenance_set": "decide", "candidate_decide": "decide",
     "definition_apply": "decide", "definition_archive": "decide", "definition_restore": "decide",
     "item_decide": "decide", "person_delete": "decide", "source_reflection_review": "decide",

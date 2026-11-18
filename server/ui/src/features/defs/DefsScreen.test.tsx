@@ -49,7 +49,7 @@ test("목록 — 자료 종류 카드(출처 칩 = 서버 라벨 · 보호 · �
   expect(text(el, "#dmo-o1 tbody td")[2]).toBe("참조 → 검토할 판단 N:N");
   expect(el.querySelector("#dmo-r1")!.textContent).toContain("기준근거 → 검토할 판단");
   expect(el.querySelector("#dmo-core-candidate")!.textContent).toBe("검토할 판단");
-  expect(el.querySelector(".srel + .hint, .sec .hint")!.textContent).toContain("검토할 판단을 가리키는 관계가 있어요.");
+  expect(el.querySelector(".srel + .hint, #dlist .sec .hint")!.textContent).toContain("검토할 판단을 가리키는 관계가 있어요.");
 });
 
 test("이름 공유 — 껍데기 메뉴(사용자 구간)가 있을 때만 · 문구는 메뉴에서 · 켜기 = 같은 API", async () => {

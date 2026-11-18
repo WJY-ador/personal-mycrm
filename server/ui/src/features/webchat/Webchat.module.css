@@ -21,7 +21,16 @@
 .turn { display: flex; flex-direction: column; gap: var(--sp-3); }
 .user { align-self: flex-end; max-width: 88%; margin: 0; font-size: var(--fs-2); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere;
   background: var(--paper); border: 1px solid var(--line); border-radius: var(--r-5) var(--r-5) var(--r-1) var(--r-5); padding: var(--sp-3) var(--sp-5); }
-.answer { margin: 0; font-size: var(--fs-2); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
+.answer { margin: 0; font-size: var(--fs-2); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); min-width: 0; }
+.answer > * { margin: 0; }
+.answer > * + * { margin-top: var(--sp-5); }
+.answer h3 { font-size: var(--fs-4); font-weight: 700; line-height: 1.4; }
+.answer h4 { font-size: var(--fs-3); font-weight: 700; line-height: 1.4; }
+.answer > * + :is(h3, h4) { margin-top: var(--sp-7); }
+.answer > :is(h3, h4) + * { margin-top: var(--sp-3); }   /* 소제목 바로 뒤(소제목 둘 연속 포함)는 좁게 — 위 규칙보다 뒤에 둔다 */
+.answer blockquote { border-left: 3px solid var(--line); padding-left: var(--sp-5); }
+.answer ul { padding-left: var(--sp-7); }
+.answer li + li { margin-top: var(--sp-2); }
 .wait, .note { margin: 0; font-size: var(--fs-2); color: var(--muted); }
 .note { color: var(--fail); }
 .tools { font-size: var(--fs-1); color: var(--muted); border-left: 2px solid var(--line); padding-left: var(--sp-4); }

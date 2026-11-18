@@ -113,6 +113,10 @@ CHAT_CARD_OPS = CHAT_APPROVABLE_OPS | CHAT_WRITE_CARD_OPS
 APPROVAL_TTL_SECONDS = 600
 APPROVAL_PENDING_LIMIT = 20
 APPROVAL_SESSION_LIMIT = 100
+# 구조 추천(2026-11-18) op 3개의 카드 결과는 다음 턴 approval_outcomes 에 싣지 않는다(버전 분기 없이 항상). PC 앱 0.1.7 이하의
+# agent/chat.py normalize_approval_outcomes 가 모르는 op 를 받으면 턴이 APPROVAL-OUTCOMES 로 실패해, 그 세션의 다음 턴이 전부 막힌다.
+# 카드 생성, 확정, 취소는 서버 쪽이라 그대로다. 지우는 때: 이 op 들을 아는 앱이 최소 지원 버전이 된 뒤.
+OUTCOME_SKIP_OPS = frozenset({"item_route_exclude", "item_route_include", "definition_draft_discard"})
 # F8: /api/chat/mcp 본문(바이트). 기록 쓰기 상한 64 KiB(db.py) + JSON 봉투, 이스케이프 여유. 실제 글 상한은 db 쓰기 상한이 정한다.
 # 바깥 main.BodyLimit(256 KiB)과 PC 브리지 한 줄(256 KiB) 안이다. grant, 동의 경로는 CONSENT_BODY_MAX(4 KiB) 그대로
 CHAT_MCP_BODY_MAX = 96 * 1024
@@ -1679,8 +1683,8 @@ def _turn_create(uid, sid, text, client_turn_id, connected, capable=None):
         c.execute("INSERT INTO chat_messages (id,session_id,turn_id,role,body) VALUES (%s,%s,%s,'user',%s)", (_id("cm"), sid, t["id"], text))
         c.execute("UPDATE chat_sessions SET last_at=now() WHERE id=%s", (sid,))
         outcomes = _all(c, "SELECT id,op,state,kind,result FROM chat_approvals WHERE user_id=%s AND session_id=%s "
-                           "AND state IN ('confirmed','cancelled') ORDER BY finished_at DESC,id DESC LIMIT %s",
-                        (uid, sid, APPROVAL_SESSION_LIMIT))
+                           "AND state IN ('confirmed','cancelled') AND op <> ALL(%s) ORDER BY finished_at DESC,id DESC LIMIT %s",
+                        (uid, sid, sorted(OUTCOME_SKIP_OPS), APPROVAL_SESSION_LIMIT))   # 뺀 op 는 SQL 에서 걸러 100개, 13 KiB 자리를 차지하지 않는다
         safe_outcomes, size = [], 2   # 최신부터(F13). size = agent 꼴 JSON 배열 바이트([] + 항목 + 쉼표)
         for row in outcomes:   # 승인 가능 집합 35개(decide 20 + purge 1 + write 14). 종류와 op 등급이 맞는 행만
             if not ((row["kind"] == "decide" and row["op"] in CHAT_APPROVABLE_OPS)

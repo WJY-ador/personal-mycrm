@@ -60,14 +60,14 @@ class ApprovalOutcomesContextTest(unittest.TestCase):
                   "record_add", "record_attach", "record_title_set", "candidates_propose", "definition_propose",
                   "item_propose", "person_save", "source_create", "source_reflection_save"}
         self.assertEqual(c._CREATED_OPS, writes)
-        self.assertEqual(len(c._APPROVABLE_OPS), 36)
+        self.assertEqual(len(c._APPROVABLE_OPS), 39)
         self.assertIn("collected_post_decide", c._APPROVABLE_OPS)   # write 카드(만든 id 없음 — _CREATED_OPS 밖)
         self.assertEqual(c._APPROVABLE_OPS - writes - {"collected_post_decide"}, {
             "record_edit", "record_provenance_set", "candidate_decide", "definition_apply", "definition_archive",
             "definition_restore", "item_decide", "person_delete", "source_reflection_review",
             "source_reflection_delete", "inbox_decide", "trash_move", "trash_restore", "feedback_send",
             "migration_apply", "migration_cancel", "migration_revert", "migration_token_send", "pc_forget",
-            "token_revoke", "trash_purge"})
+            "token_revoke", "trash_purge", "item_route_exclude", "item_route_include", "definition_draft_discard"})
         self.assertNotIn("pc_connect", c._APPROVABLE_OPS)
         for op in sorted(writes):
             with self.subTest(op=op):

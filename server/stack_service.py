@@ -669,6 +669,7 @@ def _snap_state(title, body, data, decision, code, schema_revision, links, archi
 
 def _bump(c, uid, item_id, prev_rev, snap, act, sets, args, meta):
     """item_decide 의 이력 한 줄 + revision+1 과 같은 꼴. 낙관 잠금(prev_rev) — 어긋나면 충돌."""
+    db._route_locked(c, uid, item_id)   # 자동 분류 항목은 원문을 따라서만 바뀐다(ROUTE-LOCKED, 확정 전체가 되돌아간다)
     c.execute("INSERT INTO item_history (user_id,item_id,action,prev_revision,prev_state,event_meta) VALUES (%s,%s,%s,%s,%s,%s)",
               (uid, item_id, act, prev_rev, db.Jsonb(snap), db.Jsonb(meta)))
     n = c.execute("UPDATE items SET " + sets + ", revision=revision+1, updated_at=now() WHERE user_id=%s AND id=%s AND revision=%s",
@@ -882,6 +883,7 @@ def confirm(uid, job_id, body):
                 db._insert_link(c, uid, {"field_key": fk, "target_kind": "item", "target_id": iid}, source_record=srid)
         for iid, _o in touched:
             stage_refresh(c, uid, iid)
+        db._route_hook(c, uid, recs)   # 자동 분류(2026-11-18) — 정리 글(+원문)이 담을 규칙에 맞으면 항목으로(savepoint 안, 실패해도 확정은 그대로)
         _confirm_fault(9)
         # ⑨ 세션·작업 확정 · 다른 작업 취소 · 임시 삭제 · 응답 저장
         c.execute("UPDATE jobs SET status='confirmed', terminal_at=now() WHERE user_id=%s AND id=%s", (uid, jid))

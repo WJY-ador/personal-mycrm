@@ -352,6 +352,11 @@ dialog .db { padding: var(--sp-6) var(--sp-8); max-height: 72vh; overflow: auto;
 .spvc .pstatus, .spvc .perror, #std-msg { font-size: var(--fs-2); margin: var(--sp-3) 0 0; }
 .spvc .pstatus:empty, .spvc .perror:empty, #std-msg:empty { margin: 0; }
 .spvc .perror { color: var(--fail); font-weight: 600; }
+/* 구조 추천 카드 견본, 자동 분류 근거 원문(2026-11-18) — 웹 대화 확인 카드 인용(.kv blockquote)과 같은 꼴. 원문 줄바꿈은 그대로 */
+.reco-quote { margin: var(--sp-1) 0 var(--sp-3); padding: var(--sp-2) var(--sp-4); border-left: 3px solid var(--mark); background: var(--paper);
+  border-radius: 0 var(--r-2) var(--r-2) 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 16rem; overflow: auto; }
+.spvc .reco-name input { width: 100%; margin-top: var(--sp-2); }
+#reco { margin-bottom: var(--sp-9); }   /* 내 구조 설정 맨 위 — 아래 목록, 그래프 전환과 떨어뜨린다 */
 #std-dlg ul { margin: var(--sp-1) 0 var(--sp-5); padding-left: var(--sp-7); font-size: var(--fs-3); }
 #std-dlg h3 { font-size: var(--fs-2); font-weight: 600; color: var(--muted); margin: var(--sp-6) 0 var(--sp-2); }
 #std-dlg .stdok { display: flex; gap: var(--sp-4); align-items: flex-start; font-size: var(--fs-3); font-weight: 600; margin: var(--sp-6) 0; }

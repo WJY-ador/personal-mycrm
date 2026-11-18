@@ -37,6 +37,13 @@ export const OBJ_STATE: [string, string][] = [["pending", "대기"], ["kept", "�
 export const OBJ_TEXT = {
   search: "제목 검색", state: "상태", title: "제목", link: "원문", more: "더 보기", none: "조건에 맞는 항목이 없어요.",
   fail: "목록을 불러오지 못했어요.", retry: "다시 불러오기", back: "목록으로", gone: "이 오브젝트 탭은 없어요. 보관했거나 이름이 바뀌었을 수 있어요.",
+  routed: (n: number, m: number) => `자동 분류 ${n}건, 분류 못 함 ${m}건`,   // 담을 규칙이 있는 오브젝트만(2026-11-18 구조추천)
+};
+// 자동 분류 항목 페이지(2026-11-18 구조추천 명세 6.5) — 표시, 근거 원문, 빼기
+export const ROUTE_TEXT = {
+  mark: "자동 분류", src: "근거 원문", gone: "원문이 휴지통에 있어요.", loading: "원문을 불러오는 중이에요…", fail: "원문을 불러오지 못했어요.",
+  exclude: "빼기", ask: "이 항목을 자동 분류에서 뺄까요? 같은 원문은 다시 들어오지 않아요. 원문 기록은 그대로예요.",
+  done: "뺐어요. 원문 기록은 그대로예요.",
 };
 
 export { ME_EMPTY } from "../../shared/words";

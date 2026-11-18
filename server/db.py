@@ -133,11 +133,12 @@ _DAILY_SOURCES = {
     "candidates": (("candidates", "created"),),
     # 수집 글(2026-11-12 명세 2절): 장치 수집 항목(ingest_kind inbox · 이력 ingest device)도 제안·결정 한도에 세지 않는다
     # 수집 글 판별(2026-11-13, action collected_decide)은 인박스 정리라 판단 결정 한도에 세지 않는다(묶음 버림 200건)
+    # 자동 분류(2026-11-18 구조추천 명세 6.2): route 가 만든 항목(ingest_kind route, 이력 ingest route)도 제안, 결정 한도에 세지 않는다
     "decisions": (("candidate_history", "at"),
-                  ("item_history", "at", "COALESCE(event_meta->>'ingest', '') NOT IN ('board_migration','device')",
+                  ("item_history", "at", "COALESCE(event_meta->>'ingest', '') NOT IN ('board_migration','device','route')",
                    "action <> 'collected_decide'")),
     "proposals": (("object_defs", "created_at", "std_id IS NULL"),   # 표준 정의(시드·편입)는 사용자 제안이 아니다
-                  ("items", "COALESCE(received_at, created_at)", "ingest_kind NOT IN ('board_migration','inbox')")),
+                  ("items", "COALESCE(received_at, created_at)", "ingest_kind NOT IN ('board_migration','inbox','route')")),
     # 이관 반영 행 = 이전 입력원 대응표의 적용 행(기록·항목, 받은 시각) + 이관 plan 의 출처 적용(반영 시각). noop·중복은 세지 않는다
     # 되돌린 행(reverted, MCP migration_revert)도 센다 — 되돌리기가 일일 한도를 돌려주지 않는다(가안 X §5 revert d)
     "migration": (("import_entries", "received_at", "kind IN ('migration_item','migration_record') AND state IN ('applied','reverted')"),
@@ -366,11 +367,53 @@ def in_device_ingest() -> bool:
     return bool(_dev_ingest().get())
 
 
+# 자동 분류 모드(2026-11-18 구조추천 명세 6.2) — route.sync 안의 항목 제안, 결정은 일반 한도를 보지 않고(잠금만),
+# 항목 이력 event_meta 에 ingest=route 표식을 단다. 자동 분류 항목의 고치기 잠금(ROUTE-LOCKED)도 이 구간만 통과한다(서버 내부 갱신).
+_route_mode_var: "contextvars.ContextVar" = None
+
+
+def _route_mode():
+    global _route_mode_var
+    if _route_mode_var is None:
+        import contextvars
+        _route_mode_var = contextvars.ContextVar("crm_route_mode", default=False)
+    return _route_mode_var
+
+
+@contextmanager
+def route_mode():
+    """자동 분류 반영 구간(route.sync 만 쓴다)."""
+    token = _route_mode().set(True)
+    try:
+        yield
+    finally:
+        _route_mode().reset(token)
+
+
+def in_route_mode() -> bool:
+    return bool(_route_mode().get())
+
+
+def _route_locked(c, uid, item_id):
+    """자동 분류 항목이면 ROUTE-LOCKED — 원문을 고치면 따라 바뀐다. route.sync(route_mode) 안의 서버 갱신만 통과한다."""
+    if in_route_mode():
+        return
+    import route
+    if route.is_routed(c, uid, item_id):
+        raise CrmError(contract.ROUTE_LOCKED, contract.ROUTE_LOCKED_MSG, contract.ROUTE_LOCKED_ACT)
+
+
+def _route_hook(c, uid, record_ids):
+    """원문 쓰기 훅 — 적용된 route 로 그 기록을 다시 맞춘다(savepoint 안, 실패해도 원문 쓰기는 그대로). 본체 = route.hook."""
+    import route
+    route.hook(c, uid, record_ids)
+
+
 def _daily_gate(c, uid, kind, adding=1):
     """일일 한도 — users 행을 잠근 뒤 KST 오늘 0시 이후 행을 센다. n + adding > 상한이면 RATE-LIMIT.
-    같은 트랜잭션에서 다시 잠가도 된다(이미 잡은 잠금). migration_mode()·device_ingest_mode() 안에선 records·proposals·decisions 를 세지 않는다."""
+    같은 트랜잭션에서 다시 잠가도 된다(이미 잡은 잠금). migration_mode(), device_ingest_mode(), route_mode() 안에선 records, proposals, decisions 를 세지 않는다."""
     _user_lock(c, uid)
-    if kind in _MIGRATION_BYPASS and (in_migration_mode() or in_device_ingest()):
+    if kind in _MIGRATION_BYPASS and (in_migration_mode() or in_device_ingest() or in_route_mode()):
         return
     n = 0
     for table, col, *extra in _DAILY_SOURCES[kind]:
@@ -556,6 +599,7 @@ def _init_schema(c):
         _migrate_decision_owner(c)   # 세션 정리 → 판단 확정(2026-11-04) — records.decision_owner 열·CHECK
         _migrate_migration_path(c)   # 이관 경로(2026-11-02) — records.date_kind · 가안 X(plan reverted·via · 항목 created · 접수 reverted). 새 표 3개는 schema.sql
         _migrate_collected(c)   # 수집 글(2026-11-12) — import_entries.raw_id 열·인덱스. 종류 CHECK 는 _WIDEN_CHECKS
+        _migrate_route(c)   # 자동 분류(2026-11-18) — items.ingest_kind 에 route. item_routes 표는 schema.sql
         _migrate_auto_cases(c)   # 오류 자동 Case(2026-11-13) — tickets auto_* 열·CHECK·묶음 UNIQUE. 경로 CHECK 는 _WIDEN_CHECKS
         _migrate_device_permits(c)   # 앱 하나 1.3(2026-11-13) — 서 있는 허용의 근거 basis(consent|device) · device 행은 서명 근거 넷 NULL
         _init_tmp(c)   # PR ②-a 임시 보관 — schema.sql 의 jobs 뒤(FK 대상). 위치는 current_schema() 로 정한다
@@ -782,6 +826,24 @@ def _migrate_collected(c):
                   "(kind = 'collected_post' AND raw_id ~ '^[0-9a-f]{48}$'))")
     if not c.execute("SELECT 1 FROM pg_class WHERE relname = 'ix_import_raw' AND relnamespace = current_schema()::regnamespace").fetchone():
         c.execute("CREATE INDEX ix_import_raw ON import_entries (user_id, stream_id, raw_id) WHERE raw_id IS NOT NULL")
+
+
+ITEM_INGEST_KINDS = ("legacy", "interactive", "inbox", "board_migration", "route")   # items.ingest_kind(route = 자동 분류 항목)
+
+
+def _migrate_route(c):
+    """자동 분류(2026-11-18 구조추천 명세 6.2) — 옛 DB 의 ck_items_ingest_kind 에 route 를 더한다(records CHECK 는 그대로).
+    _migrate_board_import 뒤에 돈다(그 함수가 옛 값 CHECK 를 먼저 만든다). 이미 넓으면 손대지 않는다."""
+    _widen_check(c, "items", "ck_items_ingest_kind", "ingest_kind", ITEM_INGEST_KINDS)
+    # item_routes 첫 판(같은 PR 안, 운영 배포 전)의 이름 없는 state, item_id CHECK 를 released 를 받는 이름 붙은 CHECK 로(정의로 찾는다)
+    if not _has_constraint(c, "item_routes", "ck_item_routes_item"):
+        for r in c.execute("SELECT conname FROM pg_constraint WHERE conrelid = 'item_routes'::regclass AND contype = 'c' "
+                           "AND conname NOT LIKE 'ck_item_routes_%%' AND pg_get_constraintdef(oid) LIKE '%%routed%%'").fetchall():
+            c.execute(f'ALTER TABLE item_routes DROP CONSTRAINT "{r["conname"]}"')
+        c.execute("ALTER TABLE item_routes ADD CONSTRAINT ck_item_routes_state CHECK (state IN ('routed','partial','excluded','released'))")
+        c.execute("ALTER TABLE item_routes ADD CONSTRAINT ck_item_routes_item CHECK ((state IN ('routed','released')) = (item_id IS NOT NULL))")
+    if not _has_col(c, "item_routes", "released_revision"):   # 재검토 15 — 놓아 줄 때의 항목 revision(옛 행 NULL = 다시 가져가지 않는다)
+        c.execute("ALTER TABLE item_routes ADD COLUMN released_revision integer")
 
 
 def _migrate_migration_path(c):
@@ -1087,6 +1149,21 @@ def tx_scope():
                 var.reset(token)
 
 
+@contextmanager
+def scope_bind(c):
+    """이미 연 트랜잭션의 연결 c 를 tx_scope 로 삼는다 — 안에서 부르는 db 함수(각자 tx())가 c 의 savepoint 로 합쳐진다.
+    tx() 안에서 users 행을 잠근 뒤 item_propose 같은 함수를 부를 때 쓴다(새 연결이면 같은 잠금을 기다리며 멈춘다). 이미 scope 면 그대로."""
+    var = _scope()
+    if var.get() is not None:
+        yield c
+        return
+    token = var.set(c)
+    try:
+        yield c
+    finally:
+        var.reset(token)
+
+
 def _one(c, sql, args=()):
     return c.execute(sql, args).fetchone()
 
@@ -1345,6 +1422,7 @@ def record_add(uid, title, body, question_id=None, source="대화에서 입력",
         c.execute("INSERT INTO records (id,user_id,title,body,source,source_id,question_id,author_kind,text_process,provenance_history,"
                   "decision_owner) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                   (rid, uid, title, body, source, sid, question_id or None, author_kind, text_process, Jsonb(hist), decision_owner))
+        _route_hook(c, uid, [rid])   # 자동 분류 — savepoint 안(실패해도 기록 저장은 그대로)
         out = _iso(_one(c, f"SELECT {_REC_COLS} FROM records WHERE id=%s", (rid,)))
     out["source_linked"] = None if source_ref is None else sid is not None
     return out
@@ -1381,6 +1459,7 @@ def record_provenance_set(uid, rid, author_kind, text_process, reason, by="user"
         raise CrmError("ARG-INVALID", "출처를 고치는 사유가 비었어요.")
     check_len("reason", reason, LIMIT_TEXT)   # α1 ② — provenance_history 에 그대로 쌓인다
     with tx() as c:
+        _user_lock(c, uid)   # 잠금 순서 = users → records(아래 자동 분류 훅이 users 행을 잡는다 — 기록을 먼저 잠그면 거꾸로)
         r = _one(c, f"SELECT r.id,r.author_kind,r.text_process,r.decision_owner,r.deleted_at,r.trashed_at,r.generation_kind,r.ingest_kind,"
                     f"({_ELIGIBLE_SQL}) AS eligible FROM records r WHERE r.user_id=%s AND r.id=%s AND r.deleted_at IS NULL FOR UPDATE OF r",
                  (uid, rid))
@@ -1414,6 +1493,7 @@ def record_provenance_set(uid, rid, author_kind, text_process, reason, by="user"
             line["decision_owner"] = owner
         c.execute("UPDATE records SET author_kind=%s, text_process=%s, decision_owner=%s, provenance_history = provenance_history || %s "
                   "WHERE user_id=%s AND id=%s", (author_kind, text_process, owner, Jsonb([line]), uid, rid))
+        _route_hook(c, uid, [rid])   # 적격이 바뀌면 자동 분류 항목이 생기거나 빠진다
         return _record_in(c, uid, rid)
 
 
@@ -1579,6 +1659,7 @@ def _edit_apply(uid, rid, expected_revision, via, old=None, new=None, new_body=N
         c.execute("INSERT INTO record_history (user_id,record_id,action,prev_revision,change,via) VALUES (%s,%s,'edit',%s,%s,%s)",
                   (uid, rid, r["revision"], Jsonb({"start": p["start"], "old": p["old"], "new": p["new"],
                                                    "deleted_candidates": len(p["drop"]), "moved_candidates": len(p["move"])}), via))
+        _route_hook(c, uid, [rid])   # 같은 기록의 자동 분류 항목을 고친 원문대로 갱신
         out = _iso(_one(c, f"SELECT {_REC_COLS} FROM records WHERE user_id=%s AND id=%s", (uid, rid)))
     out["deleted_candidates"], out["moved_candidates"] = len(p["drop"]), len(p["move"])
     return out
@@ -1630,6 +1711,7 @@ def record_title_set(uid, rid, title, expected_revision, via="mcp"):
             c.execute("INSERT INTO record_history (user_id,record_id,action,prev_revision,change,via) VALUES (%s,%s,'title',%s,%s,%s)",
                       (uid, rid, r["revision"], Jsonb({"old": r["title"], "new": title}), via))
             c.execute("UPDATE records SET title=%s, revision=revision+1 WHERE user_id=%s AND id=%s", (title, uid, rid))
+            _route_hook(c, uid, [rid])   # 제목 꼴(title_like)과 제목 필드가 바뀔 수 있다
         return _iso(_one(c, f"SELECT {_REC_COLS} FROM records WHERE user_id=%s AND id=%s", (uid, rid)))
 
 
@@ -2057,7 +2139,8 @@ def _norm_options(raw, fkey):
 # 정의 JSON 이 받는 키. 읽기 전용 키(definitions_get 응답을 그대로 되돌려 보낸 것)는 받되 무시한다 — archived_at 은 비어 있을 때만.
 # 그 밖의 키(예 "archived")는 조용히 무시하지 않고 ARG-INVALID(R5 결함 R-5). 보관은 definition_archive.
 DEF_KEYS = frozenset({"id", "key", "label", "semantic_kind", "policy", "fields"})
-DEF_READONLY = frozenset({"revision", "created_at", "updated_at", "template_slot", "std_id", "proposal", "draft", "archived_at"})
+DEF_READONLY = frozenset({"revision", "created_at", "updated_at", "template_slot", "std_id", "proposal", "draft", "archived_at",
+                          "route_counts"})   # route_counts = 자동 분류 건수(definitions 응답, 되돌려 보내도 무시)
 FIELD_KEYS = frozenset({"key", "label", "value_type", "required", "options", "target_kind", "target_object_id", "multiple"})
 FIELD_READONLY = frozenset({"position", "template_slot", "std_id", "archived_at"})
 
@@ -2145,6 +2228,15 @@ def normalize_definition(d):
         keys = policy["exactly_one_reference"]
         if not isinstance(keys, list) or not keys or any((byk.get(k) or {}).get("value_type") != "reference" for k in keys):
             raise _bad_def("policy.exactly_one_reference 는 reference 필드 key 목록이에요.")
+    if "route" in policy:   # 자동 분류 담을 규칙(2026-11-18 구조추천 명세 6.1) — 꼴 오류는 ARG-INVALID. 정규화한 꼴로 저장한다
+        import route
+        if policy["route"] is None:
+            policy.pop("route")
+        else:
+            try:
+                policy["route"] = route.check_route(policy["route"], fields, key, kind)
+            except route.RouteInvalid as e:
+                raise CrmError("ARG-INVALID", str(e), "route 꼴은 structure_profile_get 의 route_guide 를 보세요.") from None
     out = {"key": key, "label": label, "semantic_kind": kind, "policy": policy, "fields": fields}
     if d.get("id") is not None:
         out["id"] = d["id"]
@@ -2262,12 +2354,16 @@ def definitions(uid, object_ids=None, include_archived=False):
     if object_ids:
         sql += " AND id = ANY(%s)"
         args.append(list(object_ids))
+    import route
     with tx() as c:
         out = []
+        rc = route.object_counts(c, uid)
         for r in _all(c, sql + " ORDER BY created_at, id", args):
             d = _def_out(c, uid, r, include_archived)
             if r["revision"] == 0:
                 d["draft"] = True
+            if "route" in (r["policy"] or {}) or r["id"] in rc:   # 자동 분류 건수 — route 가 있거나 행이 남은 오브젝트만(다른 오브젝트 응답 꼴은 그대로)
+                d["route_counts"] = rc.get(r["id"]) or {s: 0 for s in route.STATES}
             out.append(d)
         return out
 
@@ -2302,7 +2398,11 @@ def definition_archive(uid, object_id):
 
 
 def definition_restore(uid, object_id):
-    return _def_archive_set(uid, object_id, False)
+    """보관 풀기. 담을 규칙(route)이 있으면 복구 뒤 그 오브젝트를 다시 맞춘다(보관 동안 행과 잠금은 그대로 남아 있었다)."""
+    out = _def_archive_set(uid, object_id, False)
+    if out["changed"] and "route" in (out.get("policy") or {}):
+        out["route_sync"] = _route_apply_sync(uid, out["id"])
+    return out
 
 
 def _check_definition(c, uid, oid, row, nd, given=None):
@@ -2310,6 +2410,10 @@ def _check_definition(c, uid, oid, row, nd, given=None):
     propose·apply 둘 다 부른다 — apply 는 FOR UPDATE 로 다시 읽은 최신 행으로 재검증한다.
     given = 제안 JSON 에 사용자가 실제로 보낸 필드 key(propose 만). 정규화가 되살린 필드(근거 판단 evidence_claims)는 빼고 본다."""
     _std_lock_check(c, uid, oid, row, nd, given)
+    if "route" in (nd.get("policy") or {}):   # 축(분류 역할) 오브젝트에는 담을 규칙을 둘 수 없다(2026-11-18 메인 결정 14)
+        ax = _axis_object(c, uid)
+        if oid == ax or (ax is None and nd["key"] == "axes"):
+            raise CrmError("ARG-INVALID", "축 오브젝트에는 담을 규칙을 둘 수 없어요.", "policy.route 를 빼고 다시 제안하세요.")
     for f in nd["fields"]:
         to = f["target_object_id"]
         if to and to != oid:
@@ -2392,6 +2496,12 @@ def definition_apply(uid, object_id, proposal_id, expected_revision):
         if not row["draft_id"] or row["draft_id"] != proposal_id or row["draft_base_revision"] != row["revision"]:
             raise _conflict("제안이 없거나 바뀌었어요")
         nd = row["draft_doc"]
+        if "route" in (nd.get("policy") or {}):   # 저장된 초안의 담을 규칙을 적용 직전에 다시 검사(초안이 검증을 거치지 않았을 수 있다)
+            import route
+            try:
+                route.check_route(nd["policy"]["route"], nd["fields"], nd["key"], nd["semantic_kind"])
+            except route.RouteInvalid as e:
+                raise CrmError("ARG-INVALID", str(e), "route 꼴을 고쳐 다시 제안하세요(structure_profile_get 의 route_guide).") from None
         _check_definition(c, uid, object_id, row, nd)
         rev = row["revision"] + 1
         keep = []
@@ -2413,8 +2523,34 @@ def definition_apply(uid, object_id, proposal_id, expected_revision):
         # PR ②-b — 필수 칸·종류가 바뀌면 항목은 그대로여도 stage 가 바뀐다. 이 오브젝트 항목의 stage 를 지워 다음 읽기에서 다시 계산(lazy)
         c.execute("DELETE FROM item_stage s USING items i WHERE s.user_id=i.user_id AND s.item_id=i.id AND i.user_id=%s AND i.object_id=%s",
                   (uid, object_id))
+        released = None
+        if "route" in (row["policy"] or {}) and "route" not in (nd["policy"] or {}):
+            # 자동 분류(2026-11-18 메인 결정, 검토 반영) — 담을 규칙을 뺀 적용: routed 행은 released 로(item_id 유지, 자동 분류 아님,
+            # 잠금 풀림, 표시 없음), partial 행은 지우고, excluded 행은 그대로 둔다. route 가 다시 들어오면 sync 가 released 항목을
+            # 다시 가져가므로 같은 단위가 항목 둘이 되지 않고, 뺀 단위도 다시 들어오지 않는다. 같은 트랜잭션이라 적용과 함께 되돌아간다
+            # released_revision = 놓아 줄 때의 항목 revision — 사용자가 고치면 revision 이 올라 서버가 다시 가져가지 않는다(재검토 15)
+            released = c.execute("UPDATE item_routes r SET state='released', reason=NULL, released_revision=i.revision, updated_at=now() "
+                                 "FROM items i WHERE i.user_id=r.user_id AND i.id=r.item_id AND r.user_id=%s AND r.object_id=%s "
+                                 "AND r.state='routed'", (uid, object_id)).rowcount
+            c.execute("DELETE FROM item_routes WHERE user_id=%s AND object_id=%s AND state='partial'", (uid, object_id))
         out = _def_out(c, uid, _one(c, f"SELECT {_DEF_COLS} FROM object_defs WHERE user_id=%s AND id=%s", (uid, object_id)))
+    if "route" in (out.get("policy") or {}):   # 자동 분류 — 정의 적용이 커밋된 뒤 따로 그 오브젝트 전체를 맞춘다(넘치면 매일 정리가 잇는다)
+        out["route_sync"] = _route_apply_sync(uid, object_id)
+    elif released is not None:
+        out["route_sync"] = {"created": 0, "updated": 0, "removed": 0, "partial": 0, "left": 0, "released": released}
     return out
+
+
+def _route_apply_sync(uid, object_id):
+    """definition_apply, 복구 뒤 맞추기 — 반환 route.sync_all 결과(기록 200편씩 트랜잭션을 나눈다). 실패해도 적용은 그대로(이미 커밋),
+    {error: 코드} 를 싣고 매일 정리가 다시 맞춘다."""
+    import route
+    try:
+        return route.sync_all(uid, object_ids=[object_id], budget=route.BUDGET)
+    except Exception as e:   # noqa: BLE001 — 적용 결과를 되돌리지 않는다
+        code = getattr(e, "code", None) or type(e).__name__
+        print(f"[route] 적용 뒤 맞추기 실패 — user={uid} object={object_id} code={code}", flush=True)
+        return {"error": code}
 
 
 def template_slot_mark(uid, object_id, slot, field_slots):
@@ -2887,8 +3023,18 @@ def _norm_links(c, uid, fields, links):
     return out
 
 
+def _route_link_guard(c, uid, item_id):
+    """자동 분류 항목을 가리키는 연결은 만들지 않는다(ROUTE-LOCKED) — 원문이 바뀌면 그 항목이 지워질 수 있어 사용자 연결이 함께 사라진다.
+    item_links 의 항목 대상(기록, 다른 항목에서 오는 것, record_attach 포함)과 activity_links 의 축 지정이 이것을 지난다."""
+    import route
+    if not in_route_mode() and route.is_routed(c, uid, item_id):
+        raise CrmError(contract.ROUTE_LOCKED, contract.ROUTE_LINK_MSG, contract.ROUTE_LINK_ACT)
+
+
 def _insert_link(c, uid, link, source_item=None, source_object=None, source_record=None):
     col = LINK_TARGET_COLS[link["target_kind"]]
+    if link["target_kind"] == "item":
+        _route_link_guard(c, uid, link["target_id"])
     c.execute(f"INSERT INTO item_links (user_id,source_item_id,source_object_id,source_record_id,field_key,{col}) "
               "VALUES (%s,%s,%s,%s,%s,%s)", (uid, source_item, source_object, source_record, link["field_key"], link["target_id"]))
 
@@ -3045,6 +3191,7 @@ def item_propose(uid, object_id, schema_revision, item_id, expected_revision, co
                 raise CrmError("ARG-INVALID", f"항목을 찾을 수 없어요: {item_id}")
             if row["trashed_at"] is not None:
                 raise _in_trash("그 항목")
+            _route_locked(c, uid, item_id)   # 자동 분류 항목 = 원문을 따라 바뀐다(item_edit 도 여기를 지난다)
             if row["object_id"] != object_id:
                 raise CrmError("ARG-INVALID", "항목의 오브젝트가 달라요.")
             if row["revision"] != expected_revision:
@@ -3128,7 +3275,8 @@ def _items_query(c, uid, where, args):
     rows = _all(c, f"SELECT {_ITEM_COLS} FROM items WHERE user_id=%s AND {where} ORDER BY updated_at DESC, id", [uid, *args])
     links = _links_by_item(c, uid, [r["id"] for r in rows])
     ods = {r["id"]: r for r in _all(c, f"SELECT {_DEF_COLS} FROM object_defs WHERE user_id=%s", (uid,))}
-    return [_item_out(c, uid, r, links.get(r["id"], []), ods[r["object_id"]]) for r in rows]
+    import route
+    return route.mark_items(c, uid, [_item_out(c, uid, r, links.get(r["id"], []), ods[r["object_id"]]) for r in rows])   # 자동 분류 표시
 
 
 def items(uid, object_id=None):
@@ -3216,6 +3364,8 @@ def object_list(uid, key, sort="", direction="", q="", filters=None, state="", c
         rows = _all(c, f"SELECT i.id, i.code, i.title, i.revision, i.updated_at, i.data, COALESCE(s.state,'pending') AS state {base}{where} "
                        f"ORDER BY {order[0]} {D} NULLS LAST, i.id {D} LIMIT %s OFFSET %s",
                     [*args, *wargs, *order[1], OBJ_LIST_PAGE + 1, off])
+        import route
+        routed = route.item_sources(c, uid, [r["id"] for r in rows[:OBJ_LIST_PAGE]])   # 자동 분류 표시
     more, rows = len(rows) > OBJ_LIST_PAGE, rows[:OBJ_LIST_PAGE]
     ck = [f["key"] for f in cols]
     out = []
@@ -3225,6 +3375,8 @@ def object_list(uid, key, sort="", direction="", q="", filters=None, state="", c
                "data": {k: d[k] for k in ck if k in d}}
         if has_state:
             row["state"] = r["state"]
+        if r["id"] in routed:
+            row["auto_routed"], row["route_source"] = True, routed[r["id"]]
         out.append(row)
     return {"object": {"id": od["id"], "key": od["key"], "label": od["label"]},
             "columns": [{"key": f["key"], "label": f["label"], "value_type": f["value_type"], "options": f["options"] or []} for f in cols],
@@ -3246,6 +3398,8 @@ def item_get(uid, item_id):
             raise CrmError("ARG-INVALID", f"항목을 찾을 수 없어요: {item_id}")
         od = _object_row(c, uid, row["object_id"], applied=False)
         out = _item_out(c, uid, row, _links_by_item(c, uid, [item_id]).get(item_id, []), od)
+        import route
+        route.mark_items(c, uid, [out])   # 자동 분류 항목 = auto_routed, route_source(근거 원문 구간)
         out["object"] = {"id": od["id"], "key": od["key"], "label": od["label"], "semantic_kind": od["semantic_kind"], "revision": od["revision"]}
         out["fields"] = _fields(c, uid, od["id"])
         tg = {}
@@ -3300,6 +3454,8 @@ def item_decide(uid, item_id, expected_revision, proposal_id, action, history_id
             raise _in_trash("그 항목")
         if row["revision"] != expected_revision:
             raise _conflict(f"지금 revision {row['revision']}")
+        if action in ("archive", "restore"):
+            _route_locked(c, uid, item_id)   # 자동 분류 항목은 보관, 되돌리기 대신 빼기(item_route_exclude)
         od = _object_row(c, uid, row["object_id"], applied=False)
         kind = od["semantic_kind"]
         cur_links = _links_by_item(c, uid, [item_id]).get(item_id, [])
@@ -3307,7 +3463,9 @@ def item_decide(uid, item_id, expected_revision, proposal_id, action, history_id
 
         def bump(act, sets, args, meta=None):
             meta = dict(meta or {})
-            if in_migration_mode():   # 이관 반영이 만든 이력 — 일반 결정 한도에서 뺀다(_DAILY_SOURCES decisions)
+            if in_route_mode():   # 자동 분류가 만든 이력 — 일반 결정 한도에서 뺀다(_DAILY_SOURCES decisions)
+                meta["ingest"] = "route"
+            elif in_migration_mode():   # 이관 반영이 만든 이력 — 일반 결정 한도에서 뺀다(_DAILY_SOURCES decisions)
                 meta["ingest"] = "board_migration"
                 if migration_via():   # 가안 X 감사 — 반영 경로(web·mcp)
                     meta["via"] = migration_via()
@@ -3836,7 +3994,7 @@ DELETE_NOTICE = ("7일 뒤 자료를 모두 지우고 계정을 닫습니다. �
 # tickets 는 보존 문의 1건을 빼고 지운다(ticket_history 는 cascade). 시험이 「이 목록 = schema 의 user_id 테이블 − 예외」를 정적으로 본다.
 # board 이전(2026-10-20): 관계(activity_links) → 접수 대응표(import_entries) → 업무 자료(activities) → 한도·입력원(import_counters·import_streams).
 # PR ②-b: 판·stage(items 자식, 확인 이벤트를 가리킨다) → 확인 이벤트 → items.
-DELETE_TABLES = ("chat_approvals", "chat_sessions", "chat_provider_permits", "chat_consent_challenges", "chat_provider_grants", "desktop_consent_keys", "record_history", "token_grants", "desktop_installations", "desktop_handoffs", "page_layouts", "stack_sessions", "jobs", "item_links", "activity_links", "collected_states", "import_entries", "activities", "import_counters",
+DELETE_TABLES = ("chat_approvals", "chat_sessions", "chat_provider_permits", "chat_consent_challenges", "chat_provider_grants", "desktop_consent_keys", "record_history", "token_grants", "desktop_installations", "desktop_handoffs", "page_layouts", "stack_sessions", "jobs", "item_links", "activity_links", "collected_states", "item_routes", "import_entries", "activities", "import_counters",
                  "import_streams", "migration_plan_items", "migration_plans", "migration_tokens", "item_stage", "item_versions", "confirm_events", "item_history", "items", "user_roles", "field_defs",
                  "object_defs", "std_choices", "std_marks",
                  "candidate_history", "candidates", "source_reflections", "records", "sources", "questions", "profile", "tabs",
@@ -4107,9 +4265,17 @@ def display_name_set(uid, display_name):
     return {"display_name": name}
 
 
+def _routed_item(alias):
+    """그 항목(별칭 alias)이 자동 분류(item_routes state routed)인가 — SQL 조각 하나. 자동 분류 항목은 사용자의 판단이 아니라
+    결정, 기준 건수(me_home, me_stats)에서 뺀다(2026-11-18 메인 결정 13, 21)."""
+    return (f"EXISTS (SELECT 1 FROM item_routes ir WHERE ir.user_id={alias}.user_id AND ir.item_id={alias}.id "
+            "AND ir.state='routed')")
+
+
 def me_home(uid):
     """「나」 홈 데이터 — 표시 이름 · nav(항상 "new" — 옛 탐색은 2026-11-03 삭제, 응답 모양만 유지) · 개수. 기존 조회로 센다(따로 저장하지 않는다).
-    판단 = 확정 후보(지워지지 않은 기록) · 기준 = principle 오브젝트의 적용·미보관·확정 항목 · 결정 = event 오브젝트의 적용·미보관 항목."""
+    판단 = 확정 후보(지워지지 않은 기록), 기준 = principle 오브젝트의 적용, 미보관, 확정 항목, 결정 = event 오브젝트의 적용, 미보관 항목.
+    기준과 결정에서 자동 분류 항목(_routed_item)은 뺀다(me_stats 와 같은 기준, 2026-11-18)."""
     with tx() as c:
         u = _one(c, "SELECT display_name FROM users WHERE id=%s", (uid,))
         if not u:
@@ -4120,10 +4286,10 @@ def me_home(uid):
                         "AND r.deleted_at IS NULL AND r.trashed_at IS NULL WHERE c.user_id=%s AND c.decision='confirmed'"),
             "principles": n("SELECT count(*) AS n FROM items i JOIN object_defs o ON o.user_id=i.user_id AND o.id=i.object_id "
                             "WHERE i.user_id=%s AND o.semantic_kind='principle' AND i.revision > 0 AND i.archived_at IS NULL "
-                            "AND i.trashed_at IS NULL AND i.decision='confirmed'"),
+                            f"AND i.trashed_at IS NULL AND i.decision='confirmed' AND NOT {_routed_item('i')}"),
             "decisions": n("SELECT count(*) AS n FROM items i JOIN object_defs o ON o.user_id=i.user_id AND o.id=i.object_id "
                            "WHERE i.user_id=%s AND o.semantic_kind='event' AND i.revision > 0 AND i.archived_at IS NULL "
-                           "AND i.trashed_at IS NULL"),
+                           f"AND i.trashed_at IS NULL AND NOT {_routed_item('i')}"),
             "people": n("SELECT count(*) AS n FROM people WHERE user_id=%s AND trashed_at IS NULL"),   # 휴지통·표식 제외
             "sources": n("SELECT count(*) AS n FROM sources WHERE user_id=%s"),
             "reflections": n("SELECT count(*) AS n FROM source_reflections WHERE user_id=%s AND trashed_at IS NULL"),
@@ -4400,12 +4566,15 @@ def me_stats(uid):
     축 건수 = 그 축에 **직접** 연결된 고유 항목(자기 자신 제외·적용·미보관) + 고유 기록(record_attach axes, 지운 기록 제외) + 읽기 자료(②-d 전 0).
     한 글이 두 축에 붙으면 각 축에서 1. 활동은 축 건수에 넣지 않는다.
     히트맵 날짜 = 기록 COALESCE(source_date, kst(source_created_at)) · 활동 occurred_on(현재 판·active). 둘 다 없는 기록은 빠진다(created 대체 없음).
-    kinds: principle·decision = semantic_kind principle·event 의 적용·미보관 항목 전체 · axis = 분류 역할 오브젝트 항목 ·
-    custom = 그 밖의 적용·미보관 항목 · records = 지우지 않은 기록 · readings = 0(②-d 전) · people·sources = 행 수."""
+    kinds: principle, decision = semantic_kind principle, event 의 적용, 미보관 항목(자동 분류 항목 제외, item_routes routed, 2026-11-18),
+    axis = 분류 역할 오브젝트 항목, custom = 그 밖의 적용, 미보관 항목 + 자동 분류 항목, records = 지우지 않은 기록, readings = 0(②-d 전),
+    people, sources = 행 수."""
     import activity, imports   # 둘 다 db 를 가져다 쓴다 — 모듈 맨 위에서 가져오면 순환
     with tx() as c:
         ax_obj = _axis_object(c, uid)
-        live = ("SELECT i.id, i.object_id, o.semantic_kind FROM items i JOIN object_defs o ON o.user_id=i.user_id AND o.id=i.object_id "
+        # routed = 자동 분류 항목(2026-11-18) — 사용자의 판단이 아니라 결정, 기준 건수에서 빼고 커스텀에 센다
+        live = (f"SELECT i.id, i.object_id, o.semantic_kind, {_routed_item('i')} AS routed FROM items i JOIN object_defs o "
+                "ON o.user_id=i.user_id AND o.id=i.object_id "
                 "WHERE i.user_id=%(uid)s AND i.revision > 0 AND i.archived_at IS NULL AND i.trashed_at IS NULL")
         a = {"uid": uid, "ax": ax_obj}
         axes = [] if ax_obj is None else [dict(r) for r in _all(c, f"""
@@ -4434,10 +4603,10 @@ def me_stats(uid):
             d = frm + _dt.timedelta(days=i)
             cells.append({"d": d.isoformat(), "records": rec.get(d, 0), "activities": act.get(d, 0)})
         k = _one(c, f"""WITH live AS ({live}) SELECT
-            (SELECT count(*) FROM live WHERE semantic_kind='principle' AND object_id IS DISTINCT FROM %(ax)s) AS principle,
-            (SELECT count(*) FROM live WHERE semantic_kind='event' AND object_id IS DISTINCT FROM %(ax)s) AS decision,
+            (SELECT count(*) FROM live WHERE semantic_kind='principle' AND NOT routed AND object_id IS DISTINCT FROM %(ax)s) AS principle,
+            (SELECT count(*) FROM live WHERE semantic_kind='event' AND NOT routed AND object_id IS DISTINCT FROM %(ax)s) AS decision,
             (SELECT count(*) FROM live WHERE object_id = %(ax)s) AS axis,
-            (SELECT count(*) FROM live WHERE semantic_kind NOT IN ('principle','event') AND object_id IS DISTINCT FROM %(ax)s) AS custom,
+            (SELECT count(*) FROM live WHERE (semantic_kind NOT IN ('principle','event') OR routed) AND object_id IS DISTINCT FROM %(ax)s) AS custom,
             (SELECT count(*) FROM records WHERE user_id=%(uid)s AND deleted_at IS NULL AND trashed_at IS NULL) AS records,
             (SELECT count(*) FROM people WHERE user_id=%(uid)s AND trashed_at IS NULL) AS people,
             (SELECT count(*) FROM sources WHERE user_id=%(uid)s) AS sources,
@@ -4838,6 +5007,7 @@ def _trash_do(uid, kind, tid, op, expected_revision=None, gate=True):
                 return {"kind": kind, "id": r["id"], "trashed_at": _iso_v(r["trashed_at"]), "purge_at": _iso_v(r["purge_at"]),
                         "changed": False, "restorable": _trash_restorable(r)}
             if kind == "item":
+                _route_locked(c, uid, r["id"])   # 자동 분류 항목은 삭제 대신 빼기(item_route_exclude)
                 _axis_policy_check(c, uid, r["id"])
         else:
             _trash_rev(kind, r, expected_revision, False)
@@ -4848,6 +5018,8 @@ def _trash_do(uid, kind, tid, op, expected_revision=None, gate=True):
                     return {"kind": kind, "id": r["id"], "purge_requested": True, "changed": False}
                 raise _trash_expired()
         _trash_rows(c, uid, t, [r["id"]], op)
+        if kind == "record" and op in ("move", "restore"):
+            _route_hook(c, uid, [r["id"]])   # 휴지통 기록 = 대상 밖(자동 분류 항목을 지운다), 복원 = 다시 맞춘다
         if op == "restore":
             return {"kind": kind, "id": r["id"], "restored": True, "changed": True}
         if op == "purge":
@@ -4987,6 +5159,8 @@ _ENTRY_DELETED = ("UPDATE import_entries SET state=CASE WHEN state='reverted' TH
 
 
 def _purge_record(c, uid, rid):
+    for r in _all(c, "SELECT item_id FROM item_routes WHERE user_id=%s AND record_id=%s AND state='routed'", (uid, rid)):
+        _purge_item(c, uid, r["item_id"])   # 자동 분류 항목이 남아 있으면 함께(행만 CASCADE 로 지우면 표시 잃은 항목이 남는다)
     c.execute("DELETE FROM item_links WHERE user_id=%s AND (target_record_id=%s OR target_candidate_id IN "
               "(SELECT id FROM candidates WHERE user_id=%s AND record_id=%s))", (uid, rid, uid, rid))
     c.execute("DELETE FROM activity_links WHERE user_id=%s AND record_id=%s", (uid, rid))
@@ -5050,6 +5224,8 @@ def trash_purge_due(seconds=None, limit=None) -> dict:
                 try:
                     with tx() as c:
                         c.execute(f"SET LOCAL statement_timeout = '{TRASH_STMT_TIMEOUT}'")
+                        if t == "records":   # 기록 정리는 남은 자동 분류 항목도 지운다 — 잠금 순서 users 행 → 기록 → 항목(상태 무관, 삭제 중 계정도)
+                            _one(c, "SELECT id FROM users WHERE id=%s FOR NO KEY UPDATE", (r["user_id"],))
                         ok = _one(c, f"SELECT id FROM {t} WHERE user_id=%(uid)s AND id=%(id)s AND {_TRASH_DUE}{extra} "
                                      "FOR UPDATE SKIP LOCKED", {"now": TRASH_CLOCK, "uid": r["user_id"], "id": r["id"]})
                         if ok:   # 그사이 복원됐거나 다른 회차가 잡았으면 건너뛴다

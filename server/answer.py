@@ -10,6 +10,7 @@
 점수(2026-11-18): 남기는 기준은 맞은 서로 다른 검색어 수 ≥ min(2, 검색어 수). 정렬은 맞은 검색어 가중치 합 — 가중치 = log(전체 문장 수 /
       (1 + 그 낱말 든 문장 수)), 0 아래면 0. 문장 수는 그 사용자의 훑는 범위 안 적격 기록에서 센다. 흔한 낱말만 맞은 문장이 아래로 간다.
 인용 후보에서 빼는 줄: markdown 소제목 줄, 굵게만 있는 줄, 표 줄, 같은 글에서 목록 머리표만 다른 같은 문장(확정 후보 quote 는 빼지 않는다).
+접힌 줄(2026-11-18): 약 80칸에서 접어 쓴 글은 줄 끝에서 문장이 끊기지 않게 앞 줄에 잇는다(_joins). 인용 text 는 원문 그대로라 줄바꿈이 남는다.
 """
 import datetime as _dt
 import math
@@ -37,6 +38,13 @@ _TOKEN = re.compile(r"[0-9A-Za-z가-힣]+")
 _LINE = re.compile(r"[^\r\n]+")         # 줄 끝 = \r\n, \r, \n
 _LINE_SPLIT = re.compile(r"\r\n|\r|\n")
 _CUT = re.compile(r"(?<=[.?!。])\s+")   # 문장 끝 부호 뒤 공백에서 나눈다
+# 접힌 줄 잇기 — 앞 줄이 FOLD_MIN 자 이상이고 문장 끝 글자로 끝나지 않으면 다음 줄을 잇는다
+FOLD_MIN = 40
+_SENT_END = re.compile(r"(?:[.?!。][\"'”’)\]}」』》〉）]*|[:：])$")   # 문장 끝 부호(뒤 닫는 따옴표, 괄호 허용) 또는 쌍점
+_FOLD_WS = re.compile(r"[ \t]*(?:\r\n|\r|\n)[ \t]*")   # 줄 끝을 품은 공백 묶음 — 비교용 사본에서 공백 하나로
+FOLD_MAX = 400                          # 이은 결과로 줄 끝을 넘는 문장이 이 글자 수를 넘으면 그 덩어리는 잇지 않는다(한 줄 문장은 상한 없음)
+_FENCE = re.compile(r"`{3,}|~{3,}")     # 코드 울타리 줄 머리(들여쓰기 뺀 뒤) — 울타리 줄과 울타리 안 줄은 잇지 않는다
+_RULE_LINE = re.compile(r"[-=*_][-=*_ \t]{2,}")   # 가로줄, setext 밑줄 꼴 — 앞뒤 공백 뺀 줄이 - = * _ 와 공백만으로 3자 이상
 _CTRL = ("Cc", "Cf", "Zl", "Zp")        # 거절할 범주: 제어 문자, 보이지 않는 서식 문자(U+202E, U+200B 등), 줄과 문단 구분
 # 인용 후보에서 빼는 줄 — markdown 소제목(ATX), 굵게만 있는 줄(끝 쌍점 허용), 표 줄. 목록 머리표는 같은 문장 비교 때만 뗀다
 _HEADING_LINE = re.compile(r" {0,3}#{1,6}(?:[ \t]|$)")
@@ -136,29 +144,88 @@ def _skip_line(line):
     return bool(_HEADING_LINE.match(line) or _BOLD_LINE.fullmatch(s) or s.startswith("|"))
 
 
+def _flat(text):
+    """비교용 사본 — 줄 끝을 품은 공백 묶음만 공백 하나로. 한 줄 글은 그대로다(반환 text 에는 쓰지 않는다)."""
+    return _FOLD_WS.sub(" ", text)
+
+
+def _indent(line):
+    """줄 머리 들여쓰기 칸 수(탭 = 4칸)."""
+    return len(_INDENT.match(line).group().expandtabs(4))
+
+
+def _joins(prev, nxt, list_item=False):
+    """접힌 줄인가 — 다음 줄을 앞 줄에 이어 한 덩어리로 볼지. 조건을 전부 만족할 때만 잇는다: 앞 줄이 문장 끝 글자로 끝나지 않는다,
+    앞 줄 길이(앞뒤 공백 뺀 글자 수) FOLD_MIN 이상, 다음 줄이 비지 않았다, 다음 줄(들여쓰기 뺀)이 목록 머리표, #, >, |, ** 로 시작하지 않는다,
+    두 줄 다 _skip_line 이 아니다. 목록 항목의 들여쓴 이어지는 줄도 같은 조건으로 잇는다.
+    두 줄 다 코드 울타리 줄(``` ~~~)과 가로줄, 밑줄 꼴(_RULE_LINE)이 아니다. 4칸 이상 들여쓴 줄은 list_item(덩어리 첫 줄이 목록 항목)일 때만 잇는다."""
+    p, n = prev.strip(), nxt.lstrip()
+    return bool(len(p) >= FOLD_MIN and not _SENT_END.search(p) and n.strip()
+                and not _LIST_MARK.match(n) and not n.startswith(("#", ">", "|", "**"))
+                and not _skip_line(prev) and not _skip_line(nxt)
+                and not _FENCE.match(p) and not _FENCE.match(n)
+                and not _RULE_LINE.fullmatch(p) and not _RULE_LINE.fullmatch(n.strip())
+                and (list_item or (_indent(prev) < 4 and _indent(nxt) < 4)))
+
+
+def _pieces(text):
+    """덩어리 → (덩어리 안 시작 위치, 문장). . ? ! 。 뒤 공백에서 나누고 앞뒤 공백을 뺀다. 빈 조각은 내지 않는다."""
+    pos = 0
+    for a, b in [(c.start(), c.end()) for c in _CUT.finditer(text)] + [(len(text), len(text))]:
+        seg = text[pos:a]
+        s = seg.strip()
+        if s:
+            yield pos + (len(seg) - len(seg.lstrip())), s
+        pos = b
+
+
+def _blocks(body):
+    """본문 → 문장을 나눌 덩어리 (start, end). 줄 끝 = \r\n, \r, \n. 접힌 줄(_joins)은 한 덩어리로 잇고, 빈 줄이 사이에 있으면 잇지 않는다.
+    _skip_line 줄은 덩어리가 아니다. 코드 울타리(``` ~~~) 열림과 닫힘을 따라가 울타리 줄과 울타리 안 줄은 줄마다 따로 둔다.
+    이은 덩어리 안에 줄 끝을 넘는 문장이 FOLD_MAX 자를 넘으면 그 덩어리는 잇지 않고 줄마다 나눈다."""
+    lines = list(_LINE.finditer(body))
+    i, fence = 0, None
+    while i < len(lines):
+        m = lines[i]
+        head = m.group().lstrip()
+        if fence is not None or _FENCE.match(head) or _skip_line(m.group()):
+            if fence is None and _FENCE.match(head):   # 울타리 열림 — 같은 글자 3개로 시작하는 줄이 닫는다
+                fence = head[:3]
+            elif fence is not None and head.startswith(fence):
+                fence = None
+            if not _skip_line(m.group()):   # 울타리 줄, 울타리 안 줄 — 기존처럼 줄 하나가 덩어리
+                yield m.start(), m.end()
+            i += 1
+            continue
+        j, item = i, bool(_LIST_MARK.match(head))
+        while j + 1 < len(lines) and _LINE_SPLIT.fullmatch(body, lines[j].end(), lines[j + 1].start()) \
+                and _joins(lines[j].group(), lines[j + 1].group(), item):
+            j += 1
+        a, b = m.start(), lines[j].end()
+        if j > i and any(len(t) > FOLD_MAX and _LINE_SPLIT.search(t) for _, t in _pieces(body[a:b])):
+            yield from ((x.start(), x.end()) for x in lines[i:j + 1])   # 상한 넘침 — 잇지 않고 줄마다(다시 잇지도 않는다)
+        else:
+            yield a, b
+        i = j + 1
+
+
 def sentences(body):
     """본문 → (start, end, 문장). 줄 끝(\r\n, \r, \n), 또는 . ? ! 。 뒤 공백에서 나눈다. 문장 = 앞뒤 공백을 뺀 연속 구간(body[start:end] 와 같다).
-    인용 후보에서 빼는 줄(_skip_line)은 건너뛰고, 같은 글 안에서 목록 머리표를 뗀 글자가 앞 문장과 같으면 뒤 문장은 건너뛴다."""
+    접힌 줄(_joins)은 줄 끝에서 나누지 않고 한 덩어리로 이은 뒤 그 안에서 . ? ! 。 뒤 공백(줄바꿈 포함)에서 나눈다 — 문장에 줄바꿈과 다음 줄 들여쓰기가 남는다.
+    인용 후보에서 빼는 줄(_skip_line)은 건너뛰고, 같은 글 안에서 목록 머리표를 뗀 글자가 앞 문장과 같으면 뒤 문장은 건너뛴다(비교는 _flat 사본)."""
     seen = set()
-    for m in _LINE.finditer(body):
-        line, base, pos = m.group(), m.start(), 0
-        if _skip_line(line):
-            continue
-        cuts = [(c.start(), c.end()) for c in _CUT.finditer(line)] + [(len(line), len(line))]
-        for a, b in cuts:
-            seg = line[pos:a]
-            s = seg.strip()
-            norm = _LIST_MARK.sub("", s, count=1) if _LIST_MARK.match(s) else s
-            if s and norm not in seen:
+    for base, end in _blocks(body):
+        for off, s in _pieces(body[base:end]):
+            norm = _flat(_LIST_MARK.sub("", s, count=1) if _LIST_MARK.match(s) else s)
+            if norm not in seen:
                 seen.add(norm)
-                st = base + pos + (len(seg) - len(seg.lstrip()))
+                st = base + off
                 yield st, st + len(s), s
-            pos = b
 
 
 def score(text, keys):
-    """문장에 들어 있는 서로 다른 검색어 수(keys = 소문자 검색어)."""
-    low = text.lower()
+    """문장에 들어 있는 서로 다른 검색어 수(keys = 소문자 검색어). 접힌 줄바꿈은 공백으로 본다(_flat)."""
+    low = _flat(text).lower()
     return sum(1 for k in keys if k in low)
 
 
@@ -169,7 +236,7 @@ def term_weights(bodies, keys):
     for body in bodies:
         for _, _, s in sentences(body):
             n += 1
-            low = s.lower()
+            low = _flat(s).lower()
             for k in keys:
                 if k in low:
                     df[k] += 1
@@ -177,8 +244,8 @@ def term_weights(bodies, keys):
 
 
 def weigh(text, keys, weights):
-    """문장 → (맞은 서로 다른 검색어 수, 맞은 검색어 가중치 합). 합은 keys 순서로 더해 반올림한다(결정적)."""
-    low = text.lower()
+    """문장 → (맞은 서로 다른 검색어 수, 맞은 검색어 가중치 합). 합은 keys 순서로 더해 반올림한다(결정적). 접힌 줄바꿈은 공백으로 본다(_flat)."""
+    low = _flat(text).lower()
     hit = [k for k in keys if k in low]
     return len(hit), round(sum(weights[k] for k in hit), 6)
 

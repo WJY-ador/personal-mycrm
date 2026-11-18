@@ -21,9 +21,9 @@ function CardView({ S, c }: { S: AppState; c: Card }) {
   );
 }
 
-function Group({ S, title, cards, empty }: { S: AppState; title: ReactNode; cards: Card[]; empty: string }) {
+function Group({ S, title, note, cards, empty }: { S: AppState; title: ReactNode; note?: string; cards: Card[]; empty: string }) {
   return (
-    <section className={css.grp}><h3>{title}<span className="count">{cards.length}</span></h3>
+    <section className={css.grp}><h3>{title}<span className="count">{cards.length}</span></h3>{note ? <p className="hint">{note}</p> : null}
       {cards.length ? <div className={css.grid}>{cards.map((c, i) => <CardView key={i} S={S} c={c} />)}</div> : <div className="empty">{empty}</div>}</section>
   );
 }
@@ -47,11 +47,14 @@ export function Index({ S, msg }: P) {
   const nItems = (id: string) => (S.items || []).filter(it => it.object_id === id).length;
   const def = (o: (typeof st)[number], oc = ""): Card => ({ label: o.label, href: `#structure/${o.id}`, n: `항목 ${nItems(o.id)}`, oc });
   const tabs = userTabs(S);
+  // 표준, 커스텀 두 묶음(2026-11-18 메인 결정 B) — 출처 칩, 그래프 범례와 같은 판정(서버 structure_svg.ORIGIN_CATEGORY = /api/state origin_labels.category).
+  // 표준 = 범주 standard, 커스텀 = 그 밖 내가 만든 것 전체(템플릿 계보 포함). 범주 표가 없으면(옛 서버) origin standard 만 표준
+  const std = (o: (typeof st)[number]) => (S.origin_labels ? S.origin_labels.category[o.origin] === "standard" : o.origin === "standard");
   return (
     <div className="paper">{msg}<h2 className="title">자료 종류</h2>
-      <Group S={S} title={<>표준 <Lock label="표준 정의 보호" /></>} cards={[...core, ...st.filter(o => o.origin === "standard").map(o => def(o))]} empty="" />
+      <Group S={S} title={<>표준 <Lock label="표준 정의 보호" /></>} cards={[...core, ...st.filter(std).map(o => def(o))]} empty="" />
       {tabs.length ? <Group S={S} title="내 탭" cards={tabs.map(t => ({ label: t.label, api: t.view === "record" ? "글 탭" : "질문 탭", href: `#${t.id}`, n: "열기" }))} empty="" /> : null}
-      <Group S={S} title="커스텀" cards={st.filter(o => o.origin !== "standard").map(o => def(o, o.origin))} empty="아직 내가 만든 자료 종류가 없어요." />
+      <Group S={S} title="커스텀" note="내가 만든 자료 종류 전체예요." cards={st.filter(o => !std(o)).map(o => def(o, o.origin))} empty="아직 내가 만든 자료 종류가 없어요." />
     </div>
   );
 }

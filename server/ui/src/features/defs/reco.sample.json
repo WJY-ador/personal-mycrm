@@ -1,0 +1,42 @@
+{
+  "drafts": [
+    {
+      "object_id": "od_sample0001",
+      "proposal_id": "dp_sample0001",
+      "base_revision": 0,
+      "key": "pivots",
+      "label": "피벗",
+      "semantic_kind": "event",
+      "fields": [
+        { "key": "happened_on", "label": "날짜", "value_type": "date", "from": "기록 날짜" },
+        { "key": "where_", "label": "어디서", "value_type": "text", "from": "라벨 어디서" },
+        { "key": "decision", "label": "결정", "value_type": "text", "from": "라벨 결정" }
+      ],
+      "has_route": true,
+      "rule": "출처가 세션 정리이고 제목이 P숫자. 로 시작하고 라벨 2개(어디서, 결정)가 다 있는 기록, 기록 하나가 항목 하나",
+      "would_fill": 4,
+      "partial": 1,
+      "samples": [
+        { "record_id": "r_sample0001", "unit_key": "", "title": "P1. 가짜 피벗 1", "quote": "**어디서** — 가짜 팀 회의 1\n**결정** — 입력 담당부터 정한다" },
+        { "record_id": "r_sample0002", "unit_key": "", "title": "P2. 가짜 피벗 2", "quote": "**어디서** — <img src=x onerror=alert(1)>\n**결정** — <script>alert(2)</script>" }
+      ]
+    },
+    {
+      "object_id": "od_sample0002",
+      "proposal_id": "dp_sample0002",
+      "base_revision": 0,
+      "key": "reading_notes",
+      "label": "읽은 메모",
+      "semantic_kind": "collection",
+      "fields": [],
+      "has_route": false,
+      "rule": "",
+      "would_fill": 0,
+      "partial": 0,
+      "samples": []
+    }
+  ],
+  "suggest": true,
+  "unattached": 31,
+  "ask": "내 기록을 보고 구조를 추천해 줘"
+}

@@ -24,10 +24,14 @@ export type Item = {
   id: string; object_id: string; code: string | null; title: string | null; body: string | null;
   data: Record<string, unknown> | null; decision: string | null; revision: number; semantic_kind: string;
   proposal: Proposal | null; links: Link[]; created_at: string; updated_at: string; promotion?: Promotion | null;
+  auto_routed?: boolean; route_source?: RouteSource;   // 자동 분류 항목만(2026-11-18 구조추천) — 근거 원문 기록, 단위 구간. 고치기, 삭제 대신 빼기
 };
+export type RouteSource = { record_id: string; record_title: string; unit_key: string; start: number; end: number };
+export type RouteCounts = { routed: number; partial: number; excluded: number };
 export type Field = { key: string; label: string; value_type: string; options: { value: string; label: string }[]; target_object_id?: string | null };
 export type Def = { id: string; key: string; label: string; semantic_kind: string; std_id: string | null; template_slot?: string | null; archived_at: string | null; fields: Field[];
-  policy?: { promotion?: { claim_field?: string; event_field?: string } | null } | null };
+  policy?: { promotion?: { claim_field?: string; event_field?: string } | null; route?: unknown } | null;
+  route_counts?: RouteCounts };   // 담을 규칙(policy.route)이 있거나 자동 분류 행이 남은 오브젝트만 — 자동 분류, 분류 못 함, 뺀 건수
 export type Person = { id: string; alias: string; revision: number; created: string; updated: string };
 export type Refl = { id: string; source_id: string; kind: string; body: string; review: string; revision: number; created: string; updated: string; reviewed_at: string | null };
 export type Source = { id: string; kind: string; name: string; location: string | null };

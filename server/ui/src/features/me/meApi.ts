@@ -70,4 +70,9 @@ export const meApi = {
     postJSON<BodyPreview>(`/api/records/${enc(id)}/body/preview`, { expected_revision, body }),
   itemEdit: (item_id: string, expected_revision: number, title: string, body: string) =>
     postJSON("/api/item/edit", { item_id, expected_revision, title, body }),
+  // 자동 분류(2026-11-18 구조추천) — 근거 원문(읽기, text = 서버가 자른 단위 구간 그대로) · 빼기(항목을 지우고 그 원문 단위를 예외로)
+  routeItem: (id: string) => getJSON<{ item: RouteInfo | null }>(`/api/route/item?id=${enc(id)}`),
+  routeExclude: (item_id: string, expected_revision: number) => postJSON("/api/route/exclude", { item_id, expected_revision }),
+  hint: () => getJSON<{ show: boolean }>("/api/structure/hint"),   // 나 탭 요약 추천 한 줄(서버가 건수만 싸게 센다)
 };
+export type RouteInfo = { item_id: string; object_id: string; record_id: string; record_title: string | null; unit_key: string; start: number; end: number; text: string | null };
