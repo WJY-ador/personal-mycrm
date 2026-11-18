@@ -49,12 +49,18 @@ TRANSFORMS = {
     "board-feed/1": {"kind": "activity", "actions": ("save",), "providers": ("sns", "web", "kakao")},
     "board-reactions/1": {"kind": "activity", "actions": ("like", "comment", "repost", "reply"), "providers": ("sns", "web")},
     "board-mail/1": {"kind": "activity", "actions": ("read", "save", "send", "reply"), "providers": ("mail",)},
+    # 축 한 장(2026-11-18 축 잇기 명세 2.2) — AI 가 이은 축별 한 장. 받는 즉시 기록(unknown·generated·ai, 인용 비적격)·그 축 항목에 axes 연결
+    "axis-page/1": {"kind": "self_text"},
 }
 # 앱 하나 자동 연결(2026-11-13 명세 1.2): 허용 규칙은 사용자가 고르지 않는다 — 제품이 지원하는 모든 행동과 변환, 축 0개.
 # 무엇을 모을지는 PC 수집기 설정이 정한다. 비상 끄기는 조직 기능 스위치(imports, activity_imports 등) 그대로
 DEFAULT_POLICY = {"actions": list(ACTIONS), "transform_versions": list(TRANSFORMS), "axes": []}
 # 기존 장치를 DEFAULT_POLICY 로 맞추는 이관 표식(고정 키) — 한 번만 돈다. 행동, 변환 목록이 늘어도 키는 그대로다(migrate_device_policy)
 POLICY_ALL_MARK = "device-policy-all-v1"
+# 그 뒤 늘어난 변환을 「전부 허용」 장치에 더하는 이관(2026-11-18 축 한 장). v1 이 돈 뒤의 전부 = ALL_BEFORE_V2 를 모두 가진 장치만
+POLICY_ALL_V2_MARK = "device-policy-all-v2"
+ALL_BEFORE_V2 = ("board-likes/1", "self-text/1", "self-summary/1", "session-wrap/1", "collected-post/1", "board-feed/1",
+                 "board-reactions/1", "board-mail/1")
 # 이관 대상 = 옛 제품 기본값 그대로인 장치(사용자가 고른 값이 아니다). 2026-11-04(22e373e) 전 기본값과 그 뒤 기본값.
 # 사용자가 바꾼 정책(축, 행동, 변환이 이 둘과 다름)은 그대로 둔다. 비교는 집합(배열 순서 무관), 축은 0개
 OLD_DEFAULT_POLICIES = (
@@ -66,6 +72,13 @@ SESSION_WRAP = "session-wrap/1"
 SESSION_WRAP_SOURCE = "세션 정리"
 # 세션 정리 묶음의 경로 가림 표기 — PC(agent/sessionwrap.py PATH_MASK)가 넣고, 서버는 승인 때 개수만 센다(기록 메타 redacted_paths)
 SESSION_WRAP_PATH_MASK = "‹경로›"
+# 축 한 장(axis-page/1) = AI 가 쓴 초안(author unknown·generated·ai, 인용 비적격). axis_code 로 그 사용자의 축 항목(분류 오브젝트, items.code)에 붙는다
+AXIS_PAGE = "axis-page/1"
+AXIS_PAGE_SOURCE = "축 한 장"
+AXIS_PAGE_NOTICE = "AI 가 쓴 초안이에요. 판단 근거가 아니에요."
+AXIS_CODE_RE = re.compile(r"^[A-Z0-9-]{1,10}$")   # 축 코드(A, B-1 …) — 수집 글 axis_codes·한 장 axis_code 공용
+MAX_AXIS_CODES = 10
+SERVER_FEATURES = ("axis_codes",)   # 장치 GET /api/imports/device 의 features — 그 사용자에게 코드 있는 축 항목이 있을 때만 싣는다
 # 수집 글(collected_post) — 서버가 담는 자리 = 사용자 계정의 커스텀 오브젝트 key collected_posts(S2, 자동으로 만들지 않는다).
 # 장치가 덮는 필드 키(DEVICE_FIELDS)만 쓴다. 사용자가 지웠거나 꼴이 다른 필드는 건너뛰고, 필수 둘(COLLECTED_REQUIRED)이 없으면 OBJECT-MISSING.
 COLLECTED_OBJECT_KEY = "collected_posts"
@@ -154,10 +167,11 @@ COMMON = ("contract", "schema_revision", "source_instance_id", "original_id", "r
           "transform_version", "policy_revision")
 # 종류별 (필수, 선택) 추가 키
 KIND_KEYS = {
-    "self_text": (("body",), ("title", "source_created_at", "source_date", "activity_ref", "generation")),
+    "self_text": (("body",), ("title", "source_created_at", "source_date", "activity_ref", "generation", "axis_code")),   # axis_code = axis-page/1 만
     "activity": (("action", "state", "occurred_on", "observed_on", "provider", "raw_id"), ("people", "axes")),   # observed_on = 필수 키·null 허용
     "self_summary": (("body", "generation"), ("title", "source_created_at", "source_date")),
-    "collected_post": (("raw_id", "channel", "collected_on", "title", "state"), ("post_url", "author_display", "posted_on", "axes", "ai")),
+    "collected_post": (("raw_id", "channel", "collected_on", "title", "state"),
+                       ("post_url", "author_display", "posted_on", "axes", "ai", "axis_codes")),   # axis_codes = 축 코드(2026-11-18)
 }
 
 _HTTP = {"AUTH-INVALID": 401, "TOKEN-EXPIRED": 401, "TOKEN-REVOKED": 401, "AUTH-BLOCKED": 403,
@@ -303,6 +317,17 @@ def _axes(axes):
         raise _bad("axes", "duplicate")
 
 
+def _axis_codes(codes):
+    """수집 글 축 코드 목록(2026-11-18) — 0~10개, 각 [A-Z0-9-] 1~10자, 중복 금지. 항목 id 가 아니라 코드라 장치 정책 축과 대조하지 않는다."""
+    if not isinstance(codes, list) or len(codes) > MAX_AXIS_CODES:
+        raise _bad("axis_codes", "list_max_10")
+    for i, a in enumerate(codes):
+        if not isinstance(a, str) or not AXIS_CODE_RE.match(a):
+            raise _bad(f"axis_codes[{i}]", "format")
+    if len(set(codes)) != len(codes):
+        raise _bad("axis_codes", "duplicate")
+
+
 def _collected(req):
     """collected_post 종류 필드(명세 2절). 제목은 원문 첫 줄에서 잘라 낸 글자(요약 아님)·한 줄. ai 는 전부 선택."""
     if not isinstance(req["raw_id"], str) or not _RAW_RE.match(req["raw_id"]):
@@ -319,6 +344,8 @@ def _collected(req):
         _text(req["author_display"], "author_display", COLLECTED_AUTHOR_CP)
     _date(req.get("posted_on"), "posted_on")
     _axes(req.get("axes", []))
+    if "axis_codes" in req:
+        _axis_codes(req["axis_codes"])
     if "ai" in req:
         ai = req["ai"]
         _exact_keys(ai, "ai", (), ("grade",) + tuple(COLLECTED_AI_TEXT) + ("points",))
@@ -482,6 +509,16 @@ def validate(req: dict) -> dict:
             raise _bad("activity_ref", "format")
         if "generation" in req:
             _generation(kind, req["generation"])
+        if tv == AXIS_PAGE:   # 축 한 장 — 축 코드 필수, 활동 연결·생성 신고 없음(서버가 AI 초안으로 판정한다)
+            if "axis_code" not in req:
+                raise _bad("axis_code", "required")
+            if not isinstance(req["axis_code"], str) or not AXIS_CODE_RE.match(req["axis_code"]):
+                raise _bad("axis_code", "format")
+            for k in ("activity_ref", "generation"):
+                if k in req:
+                    raise _bad(k, "unknown_field")
+        elif "axis_code" in req:
+            raise _bad("axis_code", "unknown_field")
     else:
         _generation(kind, req["generation"])
     return req
@@ -498,11 +535,14 @@ def projection(req: dict) -> dict:
         return {"kind": "collected_post", "raw_id": req["raw_id"], "channel": req["channel"], "collected_on": req["collected_on"],
                 "title": req["title"], "state": req["state"], "post_url": req.get("post_url"),
                 "author_display": req.get("author_display"), "posted_on": req.get("posted_on"),
-                "axes": sorted(req["axes"]) if "axes" in req else None, "ai": req.get("ai")}
+                "axes": sorted(req["axes"]) if "axes" in req else None, "ai": req.get("ai"),
+                **({"axis_codes": sorted(req["axis_codes"])} if "axis_codes" in req else {})}   # 키가 없으면 옛 해시 그대로
     out = {"kind": req["kind"], "title": req.get("title"), "body": req["body"], "source_created_at": req.get("source_created_at"),
            "source_date": req.get("source_date")}
     if req["kind"] == "self_text":
         out["activity_ref"] = req.get("activity_ref")
+        if "axis_code" in req:
+            out["axis_code"] = req["axis_code"]
     else:
         out["generation"] = req["generation"]
     return out
@@ -513,6 +553,8 @@ def _pending_payload(req: dict) -> dict:
          "source_date": req.get("source_date"), "execution": req["execution"], "transform_version": req["transform_version"]}
     if req["kind"] == "self_text":
         p["activity_ref"] = req.get("activity_ref")
+        if "axis_code" in req:
+            p["axis_code"] = req["axis_code"]
     else:
         p["generation"] = req["generation"]
     return p
@@ -614,13 +656,27 @@ def _norm_policy(c, uid, policy):
     return {"actions": list(acts), "transform_versions": list(tvs), "axes": list(axes)}
 
 
+def _migrate_policy_v2(c) -> int:
+    """v1 뒤에 늘어난 변환(axis-page/1)을 「전부 허용」 장치(ALL_BEFORE_V2 를 모두 가진 장치)에 더한다. POLICY_ALL_V2_MARK 가 없을 때 한 번.
+    v1 이 아직 안 돈 DB(새 DB·시험)는 v1 이 DEFAULT_POLICY 로 맞추므로 여기서 건너뛴 장치도 결국 같다. 바뀐 장치는 policy_revision +1."""
+    if not _one(c, "INSERT INTO schema_marks (key) VALUES (%s) ON CONFLICT (key) DO NOTHING RETURNING key", (POLICY_ALL_V2_MARK,)):
+        return 0
+    new = [t for t in TRANSFORMS if t not in ALL_BEFORE_V2]
+    return len(_all(c, "UPDATE import_streams SET policy = jsonb_set(policy, '{transform_versions}', "
+                       "(policy->'transform_versions') || (SELECT COALESCE(jsonb_agg(t), '[]'::jsonb) FROM jsonb_array_elements_text(%s) t "
+                       "WHERE NOT (policy->'transform_versions') ? t)), policy_revision=policy_revision+1 "
+                       "WHERE channel='device' AND policy->'transform_versions' @> %s "
+                       "AND NOT (policy->'transform_versions') @> %s RETURNING id",
+                    (Jsonb(new), Jsonb(list(ALL_BEFORE_V2)), Jsonb(new))))
+
+
 def migrate_device_policy(c) -> int:
     """옛 기본 허용 규칙(OLD_DEFAULT_POLICIES) 그대로인 장치를 DEFAULT_POLICY 로 맞춘다(명세 1.2). POLICY_ALL_MARK 가 없을 때 한 번.
     사용자가 바꾼 규칙은 그대로 둔다. 바뀐 장치는 policy_revision +1(에이전트는 다음 업로드의 POLICY-STALE 에서 새 규칙을 받아
     다시 보낸다, agent/runner.py). 반환 = 바꾼 장치 수."""
+    n = _migrate_policy_v2(c)
     if not _one(c, "INSERT INTO schema_marks (key) VALUES (%s) ON CONFLICT (key) DO NOTHING RETURNING key", (POLICY_ALL_MARK,)):
-        return 0
-    n = 0
+        return n
     for old in OLD_DEFAULT_POLICIES:   # 집합 비교 = 서로 포함(@> 와 <@), 축 0개
         acts, tvs = Jsonb(old["actions"]), Jsonb(old["transform_versions"])
         n += len(_all(c, "UPDATE import_streams SET policy=%s, policy_revision=policy_revision+1 "
@@ -1033,17 +1089,26 @@ def _collected_values(req, byk):
 
 
 def _collected_axes(c, uid, req, byk):
-    """axes → 그 필드의 links(None = 이번 전송은 축을 건드리지 않음). axes 필드가 없거나 꼴이 다르면(관계 아님·항목 아님·하나만) None.
-    분류 항목이 아닌 id = POLICY-DENIED(활동과 같다). 휴지통 축·필드가 가리키는 오브젝트 밖 축은 그 연결만 뺀다."""
-    if "axes" not in req:
-        return None
+    """축 → (그 필드의 links | None, 버린 축 코드 수). None = 이번 전송은 축을 건드리지 않음. axes 필드가 없거나 꼴이 다르면
+    (관계 아님·항목 아님·하나만) None.
+    axis_codes(2026-11-18)가 있으면 그것만 본다(axes 는 무시) — 그 사용자의 축 항목 중 code 가 같은 것. 없는 코드는 버리고 수만 센다(오류 아님).
+    장치 정책 축과 대조하지 않는다(코드는 그 사용자의 축 항목에만 닿는다).
+    axes(항목 id, 옛 앱 경로): 분류 항목이 아닌 id = POLICY-DENIED(활동과 같다). 휴지통 축·필드가 가리키는 오브젝트 밖 축은 그 연결만 뺀다."""
+    if "axis_codes" in req:
+        found = _axis_items_by_code(c, uid, req["axis_codes"])
+        dropped = sum(1 for code in req["axis_codes"] if code not in found)
+        axes, gone = [found[code] for code in req["axis_codes"] if code in found], set()
+    elif "axes" in req:
+        axes, dropped = req["axes"], 0
+    else:
+        return None, 0
     f = byk.get(COLLECTED_AXES_FIELD)
     if f is None or f["value_type"] != "reference" or f["target_kind"] != "item":
-        return None
-    axes = req["axes"]
-    bad, gone = _axes_split(c, uid, axes)
-    if bad:
-        raise CrmError("POLICY-DENIED", "axes 에 분류(축) 항목이 아닌 id 가 있어요.")
+        return None, dropped
+    if "axis_codes" not in req:
+        bad, gone = _axes_split(c, uid, axes)
+        if bad:
+            raise CrmError("POLICY-DENIED", "axes 에 분류(축) 항목이 아닌 id 가 있어요.")
     keep = []
     for a in axes:
         if a in gone:
@@ -1052,8 +1117,40 @@ def _collected_axes(c, uid, req, byk):
         if t and (not f["target_object_id"] or t["object_id"] == f["target_object_id"]):
             keep.append({"field_key": f["key"], "target_kind": "item", "target_id": a})
     if not f["multiple"] and len(keep) > 1:
-        return None
-    return keep
+        return None, dropped
+    return keep, dropped
+
+
+def _collected_axes_only(c, uid, od, item_id, axes_links):
+    """사용자가 판별(보관·버림)한 항목의 축 관계만 장치 값으로 맞춘다(2026-11-18 축 잇기) — 축은 키워드 규칙이 붙인 값이라 사용자 판별과 겹치지 않는다.
+    제목·본문·필드·판별 state 는 그대로. 같으면 쓰지 않는다. 반환 바꿨나. 정의 검사에 걸리면(항목 값이 지금 정의와 다름) 바꾸지 않는다."""
+    if axes_links is None:
+        return False
+    cur = db._links_by_item(c, uid, [item_id]).get(item_id, [])
+    old = sorted(ln["target_id"] for ln in cur if ln["field_key"] == COLLECTED_AXES_FIELD and not ln.get("hidden"))
+    if old == sorted(ln["target_id"] for ln in axes_links):
+        return False
+    row = _one(c, "SELECT revision, title, body, data FROM items WHERE user_id=%s AND id=%s FOR UPDATE", (uid, item_id))
+    fields = {f["key"] for f in db._fields(c, uid, od["id"])}
+    old_data = row["data"] or {}
+    data = {k: v for k, v in old_data.items() if k in fields}
+    orphan = {k: v for k, v in old_data.items() if k not in fields}
+    cur = [ln for ln in cur if ln["field_key"] != COLLECTED_AXES_FIELD]   # 축은 장치 값으로 통째로(휴지통 축 연결도 뺀다 — _collected_write 와 같다)
+    hidden = [ln for ln in cur if ln.get("hidden")]
+    links = [{k: ln[k] for k in ("field_key", "target_kind", "target_id")} for ln in cur if not ln.get("hidden")] + list(axes_links)
+    try:
+        with c.transaction():
+            p = db.item_propose(uid, od["id"], od["revision"], item_id, row["revision"], None, row["title"], row["body"], data, links)
+            db.item_decide(uid, item_id, row["revision"], p["proposal_id"], "apply")
+    except CrmError as e:
+        if e.code not in ("ARG-INVALID", "LINK-INVALID"):
+            raise
+        return False
+    if orphan:
+        c.execute("UPDATE items SET data = %s || data WHERE user_id=%s AND id=%s", (Jsonb(orphan), uid, item_id))
+    for ln in hidden:
+        db._insert_link(c, uid, ln, source_item=item_id, source_object=od["id"])
+    return True
 
 
 def _collected_write(c, uid, od, req, values, axes_links, item_id):
@@ -1113,7 +1210,18 @@ def _apply_collected(c, dev, req, latest, current, req_sha, proj_sha, nbytes):
     item_id = current["target_item_id"] if current else None
     if item_id and _user_locked(_cs_row(c, uid, item_id)):   # 사용자가 판별(보관·버림)한 항목 — 장치 개정(removed 포함)이 덮지 않는다
         c.execute("UPDATE import_entries SET is_current_applied=false WHERE user_id=%s AND id=%s", (uid, current["id"]))
-        return _insert_entry(c, dev, req, latest, req_sha, proj_sha, "noop", True, item_id=item_id), False
+        state = "noop"
+        if req["state"] != "removed" and "axis_codes" in req:   # 축 관계만은 맞춘다(축 코드 경로, 2026-11-18)
+            archived = _one(c, "SELECT archived_at IS NOT NULL AS a FROM items WHERE user_id=%s AND id=%s", (uid, item_id))["a"]
+            od = None if archived else _collected_obj(c, uid)
+            if od:
+                od = _one(c, "SELECT id, revision FROM object_defs WHERE user_id=%s AND id=%s", (uid, od["id"]))
+                byk = {f["key"]: f for f in db._fields(c, uid, od["id"])}
+                links, req["_axis_codes_dropped"] = _collected_axes(c, uid, req, byk)
+                with db.device_ingest_mode():
+                    if _collected_axes_only(c, uid, od, item_id, links):
+                        state = "applied"
+        return _insert_entry(c, dev, req, latest, req_sha, proj_sha, state, True, item_id=item_id), False
     if req["state"] == "removed":
         if not item_id:
             return _insert_entry(c, dev, req, latest, req_sha, proj_sha, "excluded", False), False
@@ -1129,7 +1237,7 @@ def _apply_collected(c, dev, req, latest, current, req_sha, proj_sha, nbytes):
             return _insert_entry(c, dev, req, latest, req_sha, proj_sha, "noop", True, item_id=item_id), False
     od, byk = _collected_target(c, uid)
     values = _collected_values(req, byk)
-    axes_links = _collected_axes(c, uid, req, byk)
+    axes_links, req["_axis_codes_dropped"] = _collected_axes(c, uid, req, byk)
     with db.device_ingest_mode():
         item_id = _collected_write(c, uid, od, req, values, axes_links, item_id)
     _cs_device(c, uid, item_id, req["state"])
@@ -1256,12 +1364,70 @@ def collected_list(uid: str, state: str = "pending") -> dict:
                        "AND COALESCE(s.state,'pending')=%s ORDER BY i.data->>'collected_on' DESC NULLS LAST, i.id LIMIT %s",
                     (uid, od["id"], state, COLLECTED_LIST_MAX))
         ax = {}
-        for a in _all(c, "SELECT l.source_item_id AS sid, t.id, t.title FROM item_links l JOIN items t ON t.user_id=l.user_id "
+        for a in _all(c, "SELECT l.source_item_id AS sid, t.id, t.code, t.title FROM item_links l JOIN items t ON t.user_id=l.user_id "
                          "AND t.id=l.target_item_id WHERE l.user_id=%s AND l.field_key=%s AND l.source_item_id = ANY(%s) "
-                         "AND t.trashed_at IS NULL ORDER BY l.id", (uid, COLLECTED_AXES_FIELD, [r["id"] for r in rows])):
-            ax.setdefault(a["sid"], []).append({"id": a["id"], "title": a["title"]})
+                         "AND t.trashed_at IS NULL ORDER BY t.code NULLS LAST, l.id", (uid, COLLECTED_AXES_FIELD, [r["id"] for r in rows])):
+            ax.setdefault(a["sid"], []).append({"id": a["id"], "code": a["code"], "title": a["title"]})
     return {"ready": True, "posts": [_post_out(r, ax.get(r["id"], [])) for r in rows],
             "counts": {"pending": n.get("pending", 0), "kept": n.get("kept", 0)}}
+
+
+def axis_overview(uid: str, axis_id: str = "") -> dict:
+    """축 보기(2026-11-18 축 잇기 명세 2.3) — 웹 GET /api/axes 와 MCP axis_overview_get 이 같이 쓴다. 읽기만.
+    {ready, axes: [{id, code, title, keywords, description, counts: {pending, kept, total}, page}]}.
+    축 = 분류 역할 오브젝트의 적용·미보관·휴지통 아닌 항목(code 순 → 만든 순 → id). description = 축 항목 본문(원하는 관점).
+    counts = 그 축에 붙은 수집 글(휴지통·보관(archive) 제외, total 은 버림 포함). 수집 글 오브젝트가 없으면 0.
+    page = 그 축에 붙은 최신 한 장(axis-page/1 기록, 휴지통·지움 제외) {record_id, title, at, ai: true, notice} 또는 None.
+    axis_id 를 주면 그 축 하나만 돌려주고 page.body(markdown)를 싣는다. 없는·남의 축 id = NOT-FOUND."""
+    axis_id = str(axis_id or "")
+    if axis_id and not _ITEM_ID_RE.match(axis_id):
+        raise CrmError("ARG-INVALID", "axis_id 는 축 항목 id(i_…)예요.")
+    with tx() as c:
+        oid = db._classify_target(c, uid)
+        if not oid:
+            if axis_id:
+                raise _nf("그 축")
+            return {"ready": False, "axes": []}
+        rows = _all(c, "SELECT id, code, title, body, data FROM items WHERE user_id=%s AND object_id=%s AND revision > 0 "
+                       "AND archived_at IS NULL AND trashed_at IS NULL" + (" AND id=%s" if axis_id else "") +
+                    " ORDER BY code NULLS LAST, created_at, id", (uid, oid, axis_id) if axis_id else (uid, oid))
+        if axis_id and not rows:
+            raise _nf("그 축")
+        ids = [r["id"] for r in rows]
+        cnt = {}
+        od = _collected_obj(c, uid)
+        if od and ids:
+            for r in _all(c, "SELECT l.target_item_id AS ax, COALESCE(s.state,'pending') AS st, count(*) AS n FROM item_links l "
+                             "JOIN items i ON i.user_id=l.user_id AND i.id=l.source_item_id LEFT JOIN collected_states s "
+                             "ON s.user_id=i.user_id AND s.item_id=i.id WHERE l.user_id=%s AND l.field_key=%s AND l.target_item_id = ANY(%s) "
+                             "AND i.object_id=%s AND i.revision > 0 AND i.archived_at IS NULL AND i.trashed_at IS NULL GROUP BY 1, 2",
+                          (uid, COLLECTED_AXES_FIELD, ids, od["id"])):
+                cnt.setdefault(r["ax"], {})[r["st"]] = r["n"]
+        pages = {}
+        if ids:
+            for r in _all(c, "SELECT DISTINCT ON (l.target_item_id) l.target_item_id AS ax, r.id, r.title, r.body, "
+                             "COALESCE(r.source_created_at, r.created) AS at FROM item_links l JOIN records r ON r.user_id=l.user_id "
+                             "AND r.id=l.source_record_id WHERE l.user_id=%s AND l.field_key='axes' AND l.target_item_id = ANY(%s) "
+                             "AND r.generation_meta->>'transform_version'=%s AND r.deleted_at IS NULL AND r.trashed_at IS NULL "
+                             "ORDER BY l.target_item_id, r.created DESC, r.id DESC", (uid, ids, AXIS_PAGE)):
+                pages[r["ax"]] = r
+    out = []
+    for r in rows:
+        d = r["data"] or {}
+        kw = d.get("keywords")
+        n = cnt.get(r["id"], {})
+        pg = pages.get(r["id"])
+        page = None
+        if pg:
+            page = {"record_id": pg["id"], "title": pg["title"], "at": _j(pg["at"]), "ai": True, "notice": AXIS_PAGE_NOTICE}
+            if axis_id:
+                page["body"] = pg["body"]
+        out.append({"id": r["id"], "code": r["code"], "title": r["title"],
+                    "keywords": [k for k in kw if isinstance(k, str)] if isinstance(kw, list) else [],
+                    "description": r["body"] or "",
+                    "counts": {"pending": n.get("pending", 0), "kept": n.get("kept", 0), "total": sum(n.values())},
+                    "page": page})
+    return {"ready": True, "axes": out}
 
 
 def collected_decisions(authorization: str, since: str = "", limit=None) -> dict:
@@ -1408,7 +1574,10 @@ def submit(authorization: str, idempotency_key_header: str, raw: bytes) -> tuple
         else:
             e = _auto_approve(c, uid, _receive_self(c, dev, req, latest, current, req_sha, proj_sha))
         c.execute("UPDATE import_streams SET last_used_at=now() WHERE user_id=%s AND id=%s", (uid, dev["id"]))
-        return 201, _resp(e, False)
+        out = _resp(e, False)
+        if "_axis_codes_dropped" in req:   # 축 코드 중 그 사용자의 축 항목에 없어 버린 수(오류 아님). 축을 맞춰 본 전송에만
+            out["axis_codes_unknown"] = req.pop("_axis_codes_dropped")
+        return 201, out
 
 
 def device_self(authorization: str) -> dict:
@@ -1419,10 +1588,20 @@ def device_self(authorization: str) -> dict:
     with tx() as c:
         r = _one(c, "SELECT token_expires_at FROM import_streams WHERE user_id=%s AND id=%s", (dev["user_id"], dev["id"]))
         axes = live_axes(c, dev["user_id"])
+        coded = _has_coded_axes(c, dev["user_id"])
     # 정책 axes = 저장값이 아니라 지금 계정의 축 항목 전부(agent 의 POLICY-AXIS 검사가 그대로 통과한다). 판 = 저장 판 + 축 집합 지문
+    # features(2026-11-18) = 이 서버가 받는 선택 기능. axis_codes 는 코드 있는 축 항목이 있을 때만 — 없으면 앱은 옛 경로(축 없음) 그대로 보낸다
+    # (축 없는 계정의 수집 글을 다시 올리지 않는다). 옛 앱은 이 키를 모른다(무시)
     return {"stream_id": dev["id"], "label": dev["label"], "policy": {**(dev["policy"] or {}), "axes": axes},
             "policy_revision": wire_revision(dev["policy_revision"], axes),
-            "hmac_namespace": dev["hmac_namespace"], "token_expires_at": _j(r["token_expires_at"])}
+            "hmac_namespace": dev["hmac_namespace"], "token_expires_at": _j(r["token_expires_at"]),
+            "features": list(SERVER_FEATURES) if coded else []}
+
+
+def _has_coded_axes(c, uid) -> bool:
+    oid = db._classify_target(c, uid)
+    return bool(oid and _one(c, "SELECT 1 AS x FROM items WHERE user_id=%s AND object_id=%s AND code IS NOT NULL AND revision > 0 "
+                                "AND archived_at IS NULL AND trashed_at IS NULL LIMIT 1", (uid, oid)))
 
 
 def device_self_revoke(authorization: str) -> dict:
@@ -1536,6 +1715,11 @@ def _approve_shape(kind: str, p: dict) -> dict:
         if n:
             gm["redacted_paths"] = n
         return {"ak": "self", "tp": "structured", "gk": "mixed", "gm": gm, "owner": "self", "src": SESSION_WRAP_SOURCE}
+    if kind == "self_text" and p.get("transform_version") == AXIS_PAGE:
+        # 축 한 장 = AI 가 이은 글 — 작성자 모름·생성·ai(인용 비적격, db._ELIGIBLE_SQL). 축 코드는 메타에도 둔다(최신 판 찾기·옛 판 연결 떼기)
+        gm = {"transform_version": p["transform_version"], "execution": p["execution"], "reported_by": "device",
+              "axis_code": p["axis_code"]}
+        return {"ak": "unknown", "tp": "generated", "gk": "ai", "gm": gm, "owner": None, "src": AXIS_PAGE_SOURCE}
     if kind == "self_text":
         return {"ak": "self", "tp": "verbatim", "gk": "unknown", "gm": {}, "owner": None, "src": RECORD_SOURCE_TEXT}
     g = p["generation"]
@@ -1578,11 +1762,37 @@ def _approve_in(c, uid, e, by="user") -> str:
               "AND is_current_applied", (uid, e["stream_id"], e["original_id"]))
     c.execute("UPDATE import_entries SET state='applied', payload=NULL, payload_bytes=0, resolved_at=now(), resolved_by=%s, "
               "target_record_id=%s, is_current_applied=true WHERE user_id=%s AND id=%s", (by, rid, uid, e["id"]))
+    if p.get("transform_version") == AXIS_PAGE:
+        _axis_page_link(c, uid, rid, p["axis_code"])
     # 자동 분류(2026-11-18) — 새 기록과 밀려난 옛 개정 기록을 함께 맞춘다(옛 개정의 자동 분류 항목은 빠진다). savepoint 안, 실패해도 승인은 그대로
     olds = [r["target_record_id"] for r in _all(c, "SELECT DISTINCT target_record_id FROM import_entries WHERE user_id=%s AND stream_id=%s "
                                                    "AND original_id=%s AND target_record_id IS NOT NULL", (uid, e["stream_id"], e["original_id"]))]
     db._route_hook(c, uid, sorted({rid, *olds}))
     return rid
+
+
+def _axis_items_by_code(c, uid, codes):
+    """축 코드 → 축 항목 id(분류 역할 오브젝트의 적용·미보관·휴지통 아닌 항목, items.code 같음). 없는 코드는 빠진다."""
+    oid = db._classify_target(c, uid)
+    if not oid or not codes:
+        return {}
+    return {r["code"]: r["id"] for r in _all(c, "SELECT code, id FROM items WHERE user_id=%s AND object_id=%s AND code = ANY(%s) "
+                                                "AND revision > 0 AND archived_at IS NULL AND trashed_at IS NULL", (uid, oid, list(codes)))}
+
+
+def _axis_page_link(c, uid, rid, code):
+    """새 한 장 기록 → 그 축 항목에 axes 연결(record_attach 와 같은 관계). 같은 축의 옛 한 장 기록(같은 axis_code 메타)은 축 연결만 뗀다 —
+    축마다 최신 한 판만 그 축에 붙는다(옛 기록 자체는 개정 규칙 그대로 남는다). 축 항목이 없으면 연결 없이 기록만 남는다."""
+    c.execute("DELETE FROM item_links l USING records r WHERE l.user_id=%s AND l.field_key='axes' AND l.source_record_id=r.id "
+              "AND r.user_id=l.user_id AND r.id<>%s AND r.generation_meta->>'transform_version'=%s AND r.generation_meta->>'axis_code'=%s",
+              (uid, rid, AXIS_PAGE, code))
+    item = _axis_items_by_code(c, uid, [code]).get(code)
+    if item:
+        try:
+            with c.transaction():   # 자동 분류 항목(ROUTE-LOCKED)이면 연결만 빼고 기록은 남긴다
+                db._insert_link(c, uid, {"field_key": "axes", "target_kind": "item", "target_id": item}, source_record=rid)
+        except CrmError:
+            pass
 
 
 def inbox_approve(uid: str, import_id: str) -> dict:

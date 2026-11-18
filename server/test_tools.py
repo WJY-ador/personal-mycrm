@@ -7741,7 +7741,7 @@ async def test_bi_imports():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url=PUBLIC) as h:
             g = await h.get("/api/imports/device", headers=hb)
             assert g.status_code == 200 and set(g.json()) == {"stream_id", "label", "policy", "policy_revision", "hmac_namespace",
-                                                              "token_expires_at"} and g.json()["stream_id"] == cb["device"]["id"], g.text
+                                                              "token_expires_at", "features"} and g.json()["stream_id"] == cb["device"]["id"], g.text
             assert cb["token"].split(".")[-1] not in g.text
             h.cookies.set("crm_session", main.site.session_value(B))
             assert (await h.get("/api/imports/device")).status_code == 401, "웹 세션은 장치 경로에 안 걸린다"

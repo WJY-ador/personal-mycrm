@@ -29,6 +29,9 @@ SKELETON_ADAPTERS = ("kakao",)
 BLOCKED_ADAPTERS = ("linkedin_moves",)
 MAX_SESSION_WRAP_FOLDERS = 20   # 세션 정리 폴더 수 상한
 
+# 서버 선택 기능(GET /api/imports/device 의 features) 중 이 앱이 아는 것. axis_codes = 수집 글 축을 코드로 보낸다(2026-11-18)
+KNOWN_FEATURES = ("axis_codes",)
+
 _ACCOUNT_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 # 키 공간 ID — 요청엔 안 들어가고 Keychain 항목 이름에만 쓴다. 서버 표시 형식이 미정이라 안전 문자만 본다
 NAMESPACE_RE = re.compile(r"^[A-Za-z0-9_.:-]{6,64}$")
@@ -84,6 +87,7 @@ def default_config() -> dict:
         "allowed_axes": [],
         "allowed_actions": None,             # 서버 policy.actions (None = 아직 모름 → 서버가 판정)
         "allowed_transforms": None,          # 서버 policy.transform_versions
+        "server_features": None,             # 서버 features(KNOWN_FEATURES 안). None = 아직 모름 → 옛 경로
         "token_expires_at": None,            # 표시용(서버 GET /api/imports/device)
         "viewer_port": DEFAULT_VIEWER_PORT,
         "upload": {"max_per_run": 100, "min_interval_sec": 6.5, "timeout_sec": 30},
@@ -130,6 +134,10 @@ def default_config() -> dict:
             "file_glob_suffix": ".md",
             "codex_cli_path": None,          # 사용자가 선택한 Codex CLI 절대 경로
             "codex_models": [],              # 확인한 구독 모델 ID만. 비면 Codex 대화 비활성
+        },
+        # 축 한 장(2026-11-18) — 이 폴더 바로 아래 <축 코드>.md 만 읽어 axis-page/1 로 올린다. 기본값 없음(비면 꺼짐). 경로는 이 PC 설정에만
+        "axis_pages": {
+            "dir": None,                     # 절대 경로
         },
         # 세션 정리(2026-11-04) — 사람이 지정한 세션 정리 폴더(그 바로 아래 YYYY-MM-DD.md)만. 모델 없음. 폴더 목록은 이 PC 설정에만 둔다
         "session_wrap": {
@@ -233,6 +241,15 @@ def validate_config(cfg: dict) -> dict:
         v = cfg.get(k)
         if v is not None and (not isinstance(v, list) or not all(isinstance(x, str) and x in allowed for x in v)):
             raise ConfigError(k)
+    sf = cfg.get("server_features")
+    if sf is not None and (not isinstance(sf, list) or not all(isinstance(x, str) and x in KNOWN_FEATURES for x in sf)):
+        raise ConfigError("server_features")
+    ap = cfg.get("axis_pages")
+    if ap is not None:
+        d = ap.get("dir") if isinstance(ap, dict) else None
+        if (not isinstance(ap, dict) or set(ap) - {"dir"}
+                or (d is not None and (not isinstance(d, str) or not os.path.isabs(d) or "\x00" in d))):
+            raise ConfigError("axis_pages")   # 경로 값은 메시지에 넣지 않는다
     tea = cfg.get("token_expires_at")
     if tea is not None and (not isinstance(tea, str) or len(tea) > 40):
         raise ConfigError("token_expires_at")
@@ -353,6 +370,9 @@ def apply_device_info(cfg: dict, info: dict, *, expected_stream: str) -> dict:
     out.update({"source_instance_id": expected_stream, "hmac_namespace": ns, "policy_revision": pr,
                 "allowed_axes": list(dict.fromkeys(axes)), "allowed_actions": actions,
                 "allowed_transforms": transforms,
+                # 옛 서버는 features 를 주지 않는다 → [](아는 기능 없음). 축 코드는 서버가 axis_codes 를 알릴 때만 보낸다
+                "server_features": [f for f in dict.fromkeys(info.get("features") or []) if f in KNOWN_FEATURES]
+                if isinstance(info.get("features"), list) else [],
                 "device_label": label if isinstance(label, str) and 1 <= len(label) <= 80 else cfg.get("device_label"),
                 "token_expires_at": info.get("token_expires_at") if isinstance(info.get("token_expires_at"), str)
                 else None})

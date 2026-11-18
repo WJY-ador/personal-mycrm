@@ -25,6 +25,7 @@ EXECUTIONS = ("attended", "unattended")
 SERVER_ID_RE = re.compile(r"^[a-z][a-z0-9]{0,7}_[A-Za-z0-9_-]{6,64}$")
 SOURCE_INSTANCE_RE = re.compile(r"^is_[0-9a-f]{24}$")           # import_streams.id (서버 스키마와 같음)
 AXIS_ID_RE = re.compile(r"^i_[A-Za-z0-9_-]{4,40}$")              # 축 = 항목 ID
+AXIS_CODE_RE = re.compile(r"^[A-Z0-9-]{1,10}$")                  # 축 코드(A, B-1 …) — 수집 글 axis_codes·한 장 axis_code(2026-11-18)
 ACTIVITY_ID_RE = re.compile(r"^a_[A-Za-z0-9_-]{6,40}$")          # activity_ref = 활동 판 ID
 # PC 생성 ID: 128비트 난수 hex. URL·계정명·파일명에서 유도하지 않는다.
 ORIGINAL_ID_RE = re.compile(r"^o_[0-9a-f]{32}$")
@@ -55,7 +56,9 @@ TRANSFORMS = {
     "self-text/1": "self_text",
     "self-summary/1": "self_summary",
     "session-wrap/1": "self_text",   # 세션 정리 묶음(agent/sessionwrap.py) — 서버 승인 뒤 정리 기록
+    "axis-page/1": "self_text",      # 축 한 장(agent/axispages.py) — 서버가 AI 초안(인용 불가)으로 받아 그 축 항목에 붙인다
 }
+AXIS_PAGE_TRANSFORM = "axis-page/1"
 # 변환 버전별 허용 행동·제공자(activity 만)
 TRANSFORM_ACTIVITY = {
     "board-likes/1": {"actions": ("like",), "providers": ("sns",)},
@@ -82,7 +85,7 @@ KIND_FIELDS = {
     },
     "self_text": {
         "required": ("body",),
-        "optional": ("title", "source_created_at", "source_date", "activity_ref", "generation"),
+        "optional": ("title", "source_created_at", "source_date", "activity_ref", "generation", "axis_code"),
     },
     "self_summary": {
         "required": ("body", "generation"),
@@ -91,7 +94,7 @@ KIND_FIELDS = {
     # 선택 필드: 생성기는 값이 없으면 키를 뺀다. 검증기는 서버(공용 벡터)처럼 null 을 「없음」으로 받는다
     "collected_post": {
         "required": ("raw_id", "channel", "collected_on", "title", "state"),
-        "optional": ("post_url", "author_display", "posted_on", "axes", "ai"),
+        "optional": ("post_url", "author_display", "posted_on", "axes", "ai", "axis_codes"),
     },
 }
 # 수집 글에서 URL 꼴을 허용하는 유일한 필드(이메일·경로 꼴은 여기서도 거절)
@@ -353,6 +356,18 @@ def _check_axes(axes) -> None:
         raise ContractError("DUPLICATE", "axes")
 
 
+def _check_axis_codes(codes) -> None:
+    if not isinstance(codes, list):
+        raise ContractError("TYPE", "axis_codes")
+    if len(codes) > MAX_AXES:
+        raise ContractError("TOO-MANY", "axis_codes")
+    for i, a in enumerate(codes):
+        if not isinstance(a, str) or not AXIS_CODE_RE.match(a):
+            raise ContractError("FORMAT", f"axis_codes[{i}]")
+    if len(set(codes)) != len(codes):
+        raise ContractError("DUPLICATE", "axis_codes")
+
+
 def _check_single_line(v, field: str, max_cp: int) -> None:
     _check_text(v, field, max_cp, max_cp * 4, allow_null=False)
     if "\n" in v or "\r" in v:
@@ -386,6 +401,8 @@ def _validate_collected_post(o: dict) -> None:
         raise ContractError("DATE", "posted_on")
     if o.get("axes") is not None:
         _check_axes(o["axes"])
+    if o.get("axis_codes") is not None:
+        _check_axis_codes(o["axis_codes"])
     if o.get("ai") is not None:
         _check_ai(o["ai"])
 
@@ -444,6 +461,16 @@ def _validate_self_text(o: dict) -> None:
     ref = o.get("activity_ref")
     if ref is not None and (not isinstance(ref, str) or not ACTIVITY_ID_RE.match(ref)):
         raise ContractError("FORMAT", "activity_ref")
+    if o["transform_version"] == AXIS_PAGE_TRANSFORM:   # 축 한 장 — 축 코드 필수, 활동 연결·생성 신고 없음(서버와 같은 판정)
+        if "axis_code" not in o:
+            raise ContractError("MISSING", "axis_code")
+        if not isinstance(o["axis_code"], str) or not AXIS_CODE_RE.match(o["axis_code"]):
+            raise ContractError("FORMAT", "axis_code")
+        for k in ("activity_ref", "generation"):
+            if k in o:
+                raise ContractError("UNKNOWN-FIELD", k)
+    elif "axis_code" in o:
+        raise ContractError("UNKNOWN-FIELD", "axis_code")
 
 
 def _validate_self_summary(o: dict) -> None:

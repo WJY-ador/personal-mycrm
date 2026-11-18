@@ -136,6 +136,8 @@
       "examples": [{"import_id": "ie_example01", "action": "approve"}]},
     "collected_post_decide": {"family": "inbox", "tier": "write", "direct": false, "keywords": ["수집 글", "보관", "버림", "버려", "수집 인박스", "피드"],
       "examples": [{"item_id": "i_example01", "state": "kept"}, {"item_id": "i_example02", "state": "dropped"}]},
+    "axis_overview_get": {"family": "inbox", "tier": "read", "direct": false, "keywords": ["축", "관심 축", "오늘의 축", "축 한 장", "한 장", "축별 수집 글"],
+      "examples": [{"axis_id": ""}, {"axis_id": "i_example01"}]},
 
     "trash_list": {"family": "trash", "tier": "read", "keywords": ["휴지통", "지운 것", "삭제 목록"],
       "examples": [{"kind": ""}]},

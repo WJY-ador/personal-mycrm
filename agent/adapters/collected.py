@@ -170,6 +170,22 @@ def map_axes(codes, axes_map: dict) -> list:
     return out[:contract.MAX_AXES]
 
 
+def axis_codes_of(row: dict) -> list:
+    """행의 축 코드(2026-11-18 축 잇기) — 대시보드와 같은 규칙: axes(사람이 확정)가 비지 않았으면 axes, 아니면 axes_hint 전부.
+    코드 꼴(contract.AXIS_CODE_RE)만, 중복 제거, 최대 10. 모델을 쓰지 않는다."""
+    codes = row.get("axes")
+    if not (isinstance(codes, list) and any(isinstance(c, str) and c.strip() for c in codes)):
+        codes = row.get("axes_hint")
+    out = []
+    if not isinstance(codes, list):
+        return out
+    for c in codes:
+        c = c.strip() if isinstance(c, str) else None
+        if c and contract.AXIS_CODE_RE.match(c) and c not in out:
+            out.append(c)
+    return out[:contract.MAX_AXES]
+
+
 def ai_of(row: dict):
     """원천 grade·summary·long{asis,tobe,ops,points} → ai 객체. 비면 None. 한도를 넘는 글은 자른다."""
     ai = {}
@@ -285,7 +301,7 @@ class FeedAdapter(Adapter):
     transform_version = "board-feed/1"          # 활동(save). 수집 글은 collected-post/1
     RULES = {
         "pc_only": "원문 본문 전체·작성자 소개",
-        "to_server": "수집 글(URL·제목 줄·작성자 표시·날짜·축·AI 요약과 분석). 보관(kept)이면 save 활동",
+        "to_server": "수집 글(URL·제목 줄·작성자 표시·날짜·축 코드(axes, 없으면 axes_hint)·AI 요약과 분석). 보관(kept)이면 save 활동",
         "forbidden": "큐에 있다는 이유로 read 생성 금지. 버림·만료·자동제외는 새로 올리지 않는다",
     }
 
@@ -338,11 +354,13 @@ class FeedAdapter(Adapter):
                 yield Quarantine(bad, key)
             return
         axes = map_axes(row.get("axes"), axes_map)
+        # 축 코드는 서버로 갈 글(pending·kept)에만 — 버린 글(removed)은 축을 바꿔도 다시 올리지 않는다(투영이 그대로)
+        codes = axis_codes_of(row) if state != "removed" else []
         fields = _post_fields(channel=channel, collected_on=collected_on, title=title, state=state,
                               post_url=post_url_of(row.get("post_url")), author=row.get("author"),
                               posted_on=kst_date(row.get("published_at")), axes=axes, ai=ai_of(row))
         yield CollectedPost(dedupe_key=key, fingerprint=fp, raw=row, fields=fields,
-                            only_if_sent=(state == "removed"))
+                            only_if_sent=(state == "removed"), axis_codes=codes)
         if state == "kept":
             yield _activity(key, fp, row, "save", None, collected_on, CHANNEL_PROVIDER[channel], axes)
 

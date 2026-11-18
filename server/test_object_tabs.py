@@ -162,7 +162,7 @@ async def test_list(U, O, po):
     assert r["sort"] == {"key": "posted_on", "dir": "desc"}, "기본 정렬 = 첫 날짜 필드 내림차순"
     assert r["total"] == live and len(r["rows"]) == 50 and r["next_cursor"] == "50"
     row = r["rows"][0]
-    assert set(row) == {"id", "code", "title", "revision", "updated_at", "data", "state"}
+    assert set(row) == {"id", "code", "title", "revision", "updated_at", "data", "state", "axes"}   # axes = 축 코드 칩(2026-11-18, 수집 글 행만)
     assert set(row["data"]) <= {"channel", "author_display", "posted_on", "collected_on", "ai_grade"}, "열 밖 값(AI 긴 필드 등)은 싣지 않는다"
     ps = [x["data"].get("posted_on") for x in r["rows"]]
     assert ps == sorted(ps, reverse=True) and ps[0] == "2026-12-28", ps[:3]

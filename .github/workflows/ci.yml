@@ -369,6 +369,19 @@ jobs:
           PY
           python server/test_inbox_auto.py
 
+      # 축 잇기(2026-11-18) — 수집 글 axis_codes · 축 한 장 axis-page/1(AI 초안·인용 비적격) · 축 보기 · 장치 features·정책 이관(합성 PG).
+      # 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
+      - name: "④-x 축 잇기 시험 (test_axis_link.py)"
+        env:
+          DATABASE_URL: postgresql://postgres:crm@localhost:5432/crm_test_axis
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:crm@localhost:5432/crm", autocommit=True) as c:
+              c.execute("CREATE DATABASE crm_test_axis")
+          PY
+          python server/test_axis_link.py
+
       # 웹 「대화」 전송 골격(2026-11-04 PR 1) — 실제 uvicorn(스레드) + 장치 WS + SSE · 세션·턴 멱등·TURN-BUSY·재개·WS 인증·한도·스위치·30일 삭제(합성 PG).
       # 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
       - name: "④-o 웹 대화 시험 (test_webchat.py)"

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "canon-inbox-1.schema.json",
   "title": "canon-inbox/1 schema_revision 2 — POST /api/imports 요청 본문",
-  "$comment": "정본 판정 = server/imports.py validate() + 공용 벡터 vectors/canon-inbox-1.json. 이 스키마로 표현 못 하는 규칙: (1) UTF-8 JSON 객체 하나·중복 키 금지·실수(1.0 포함) 금지 (2) previous_revision ≠ revision (3) transform_version 별 허용 kind·action·provider(board-likes/1 = activity·like·sns, board-feed/1 = activity·save·sns|web|kakao, board-reactions/1 = activity·like|comment|repost|reply·sns|web, board-mail/1 = activity·read|save|send|reply·mail, self-text/1 = self_text, self-summary/1 = self_summary, session-wrap/1 = self_text, collected-post/1 = collected_post) (4) title·body 에 URL·이메일·로컬 경로 꼴 금지, title 한 줄, body 8000 코드 포인트·UTF-8 32 KiB (5) source_created_at 과 source_date 는 함께 쓰지 않음 (6) people 의 (hmac, role) 중복·axes 중복 금지 (7) 요청 64 KiB, activity 요청 8 KiB (8) collected_post: title·author_display·ai 문자열에 URL·이메일·로컬 경로 꼴 금지, title 한 줄. post_url 만 URL 허용 — https:// 시작·공백 없음·2000 코드 포인트, 이메일·로컬 경로 꼴은 거절. posted_on 은 빠짐과 null 이 같다. Idempotency-Key = ci1_ + sha256hex(JCS([\"canon-inbox/1\", 2, source_instance_id, original_id, revision])). JCS = json.dumps(sort_keys=True, separators=(',', ':'), ensure_ascii=False).",
+  "$comment": "정본 판정 = server/imports.py validate() + 공용 벡터 vectors/canon-inbox-1.json. 이 스키마로 표현 못 하는 규칙: (1) UTF-8 JSON 객체 하나·중복 키 금지·실수(1.0 포함) 금지 (2) previous_revision ≠ revision (3) transform_version 별 허용 kind·action·provider(board-likes/1 = activity·like·sns, board-feed/1 = activity·save·sns|web|kakao, board-reactions/1 = activity·like|comment|repost|reply·sns|web, board-mail/1 = activity·read|save|send|reply·mail, self-text/1 = self_text, self-summary/1 = self_summary, session-wrap/1 = self_text, collected-post/1 = collected_post, axis-page/1 = self_text — axis_code 필수, activity_ref·generation 없음. 다른 변환의 self_text 는 axis_code 금지) (4) title·body 에 URL·이메일·로컬 경로 꼴 금지, title 한 줄, body 8000 코드 포인트·UTF-8 32 KiB (5) source_created_at 과 source_date 는 함께 쓰지 않음 (6) people 의 (hmac, role) 중복·axes 중복 금지 (7) 요청 64 KiB, activity 요청 8 KiB (8) collected_post: title·author_display·ai 문자열에 URL·이메일·로컬 경로 꼴 금지, title 한 줄. post_url 만 URL 허용 — https:// 시작·공백 없음·2000 코드 포인트, 이메일·로컬 경로 꼴은 거절. posted_on 은 빠짐과 null 이 같다. Idempotency-Key = ci1_ + sha256hex(JCS([\"canon-inbox/1\", 2, source_instance_id, original_id, revision])). JCS = json.dumps(sort_keys=True, separators=(',', ':'), ensure_ascii=False).",
   "type": "object",
   "required": ["contract", "schema_revision", "source_instance_id", "original_id", "revision", "previous_revision", "kind", "execution",
                "transform_version", "policy_revision"],
@@ -16,7 +16,7 @@
     "kind": {"enum": ["self_text", "activity", "self_summary", "collected_post"]},
     "execution": {"enum": ["attended", "unattended"]},
     "transform_version": {"enum": ["board-likes/1", "board-feed/1", "board-reactions/1", "board-mail/1", "self-text/1", "self-summary/1",
-                                   "session-wrap/1", "collected-post/1"]},
+                                   "session-wrap/1", "collected-post/1", "axis-page/1"]},
     "policy_revision": {"type": "integer", "minimum": 1}
   },
   "oneOf": [
@@ -49,7 +49,8 @@
         "source_created_at": {"type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|[+-]\\d{2}:\\d{2})$"},
         "source_date": {"type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
         "activity_ref": {"type": ["string", "null"], "pattern": "^a_[A-Za-z0-9_-]{6,40}$"},
-        "generation": {"type": "object", "additionalProperties": false, "required": ["method"], "properties": {"method": {"const": "none"}}}
+        "generation": {"type": "object", "additionalProperties": false, "required": ["method"], "properties": {"method": {"const": "none"}}},
+        "axis_code": {"type": "string", "pattern": "^[A-Z0-9-]{1,10}$", "$comment": "axis-page/1 만(필수) — 축 코드. 서버가 그 사용자의 축 항목(items.code)에 붙인다"}
       },
       "required": ["body"],
       "additionalProperties": false
@@ -96,6 +97,8 @@
         "author_display": {"type": "string", "minLength": 1, "maxLength": 200, "$comment": "공개 글에 보이는 표시 이름 — 표시용 글자만(사람 항목 아님)"},
         "posted_on": {"type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
         "axes": {"type": "array", "maxItems": 10, "uniqueItems": true, "items": {"type": "string", "pattern": "^i_[A-Za-z0-9_-]{4,40}$"}},
+        "axis_codes": {"type": "array", "maxItems": 10, "uniqueItems": true, "items": {"type": "string", "pattern": "^[A-Z0-9-]{1,10}$"},
+          "$comment": "축 코드(2026-11-18). 있으면 axes 대신 쓴다 — 그 사용자의 축 항목 중 code 가 같은 것. 없는 코드는 버린다(오류 아님)"},
         "ai": {
           "type": "object", "additionalProperties": false, "$comment": "AI 가 만든 값 — 서버 ai_* 필드에만. 내 글·후보·꺼내기 인용 아님",
           "properties": {
