@@ -110,6 +110,9 @@ test("켜짐 = 입력 칸 하나 + 모델 고르기 · 시작 단계 없이 첫 
   expect(turn().querySelector("p")?.textContent).toBe("안녕");
   expect(turn().querySelector("details summary")?.textContent).toBe("도구 1번 사용");
   expect(turn().querySelector("strong")?.textContent).toBe("중요");
+  fire("delta", { turn_id: "ct_1", seq: 3, data: { text: "\n\n## 질문\n\n> 인용 (r_1)\n\n- 근거" } });   // 답 markdown = 소제목·인용·목록으로(글자 그대로 ## 가 보이지 않게)
+  expect([turn().querySelector("h3")?.textContent, turn().querySelector("blockquote")?.textContent, turn().querySelector("blockquote + ul > li")?.textContent]).toEqual(["질문", "인용 (r_1)", "근거"]);
+  expect(turn().textContent).not.toContain("##");
   expect(turn().querySelector("svg[data-sprout]")).toBeNull();
   expect(aside().textContent).not.toContain("other@example.com");
   const stop = btn("중지");
@@ -117,7 +120,7 @@ test("켜짐 = 입력 칸 하나 + 모델 고르기 · 시작 단계 없이 첫 
   expect(btn("보내기").disabled).toBe(true);   // 실행 중 = 보내기 잠금
   await act(async () => { stop.click(); });
   expect(s.api.stop).toHaveBeenCalledWith("cs_1");
-  fire("done", { turn_id: "ct_1", seq: 3, data: {} });
+  fire("done", { turn_id: "ct_1", seq: 4, data: {} });
   expect(btn("중지")).toBeUndefined();
 });
 
