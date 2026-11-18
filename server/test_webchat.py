@@ -2187,6 +2187,29 @@ def test_ai_links(srv):
         assert out["binding"]["provider"] == "claude" and out["binding"]["model"] == "sonnet"
         ok("앱 하나 1.3: launch-authorization binding 꼴 그대로 — grant_id, consent_challenge_id = 허용 행 id(비지 않은 문자열)")
 
+        # 설치된 agent(0.1.7)는 expires_at 이 PC 시각 + 16초를 넘으면 거절한다(턴 = PROVIDER-BINDING). lease 15초면 서버 시계가
+        # PC 보다 1초 넘게 빠를 때 거절된다. 서버 응답을 실제 agent 파서에 PC 시각을 옮겨 넣어 본다.
+        # PC 가 느림 = 상한 쪽 여유, PC 가 빠름 = 갱신(5초마다, 왕복 포함 6초) 전에 lease 가 끝나지 않는 쪽 여유.
+        from datetime import datetime as _dt, timedelta as _td
+        from agent import chat_launch_authority as lauth
+        raw = json.dumps(out).encode()
+        def parsed_at(shift):
+            class Shifted(_dt):
+                @classmethod
+                def now(cls, tz=None):
+                    return _dt.now(tz) + _td(seconds=shift)
+            with patch.object(lauth, "datetime", Shifted):
+                return lauth.LaunchAuthorizationClient._parse(raw, sid, turn, "claude", "sonnet")
+        for behind in (0, 1.5, 3.5):
+            try:
+                parsed_at(-behind)
+            except ValueError as e:
+                raise AssertionError(f"PC 시계가 서버보다 {behind}초 느리면 lease 를 거절한다({e})") from None
+        for ahead in (0, 1.5, 3.5):
+            lease = parsed_at(ahead).expires_at - (time.time() + ahead)
+            assert lease > 6, f"PC 시계가 {ahead}초 빠르면 lease {lease:.1f}초 — 갱신 전에 끝난다"
+        ok("launch lease: PC 시계가 서버와 ±3.5초 어긋나도 agent 가 받고, 갱신 전에 끝나지 않는다")
+
         pc.send({"type": "hello", "agent_version": "0.1.7", "providers": ["claude"], "capabilities_version": 2, "capabilities": caps,
                  "ai_links": {"claude": "off"}})
         stop = pc.wait(lambda m: m.get("type") == "turn.stop" and m.get("turn_id") == turn)
