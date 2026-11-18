@@ -26,7 +26,7 @@ export type Item = {
   proposal: Proposal | null; links: Link[]; created_at: string; updated_at: string; promotion?: Promotion | null;
 };
 export type Field = { key: string; label: string; value_type: string; options: { value: string; label: string }[]; target_object_id?: string | null };
-export type Def = { id: string; key: string; label: string; semantic_kind: string; std_id: string | null; archived_at: string | null; fields: Field[];
+export type Def = { id: string; key: string; label: string; semantic_kind: string; std_id: string | null; template_slot?: string | null; archived_at: string | null; fields: Field[];
   policy?: { promotion?: { claim_field?: string; event_field?: string } | null } | null };
 export type Person = { id: string; alias: string; revision: number; created: string; updated: string };
 export type Refl = { id: string; source_id: string; kind: string; body: string; review: string; revision: number; created: string; updated: string; reviewed_at: string | null };

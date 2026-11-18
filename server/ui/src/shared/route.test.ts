@@ -6,7 +6,7 @@ import type { AppState } from "./state";
 const S = {
   user: { display_name: "홍길동", nav: "new" }, switches: { trash: false },
   tabs: [{ id: "t-001", label: "일지", blocks: ["journal"] }, { id: "t-002", label: "질문", blocks: ["sheet"] }],
-  definitions: [{ id: "d1", std_id: "std:principles", fields: [] }, { id: "d2", std_id: null, fields: [] }],
+  definitions: [{ id: "d1", std_id: "std:principles", fields: [] }, { id: "d2", key: "notes", std_id: null, fields: [] }],
   items: [{ id: "p1", object_id: "d1", revision: 2 }, { id: "x1", object_id: "d2", revision: 1 }], item_proposals: [{ id: "n1", object_id: "d1", revision: 0 }],
 } as unknown as AppState;
 const go = (h: string, st: AppState = S, last = {}) => resolve(h, st, last) as Exclude<View, { replace: string }>;
@@ -16,15 +16,16 @@ test("옛 묶음 주소 = 새 자리로 replace", () => {
   expect(["#_obj", "#_settings", "#_settings/structure", "#_devices", "#map", "#_inbox", "#_inbox/i1", "#today", "#home/x", "#structure/defs",
     "#structure/d1/p1", "#structure/d2/x1", "#_setup/nope", "#_setup/trash"].map(h => rep(h)))
     .toEqual(["#_setup/objects", "#_setup/structure", "#_setup/structure", "#_setup/pc", "#_setup/map", "#_today", "#_today/inbox/i1", "#_today",
-      "#_today", "#_setup/structure", "#_me/principle/p1", "#_me/custom/x1", "#_setup/layout", "#_setup/layout"]);
+      "#_today", "#_setup/structure", "#_me/principle/p1", "#_me/obj/notes/x1", "#_setup/layout", "#_setup/layout"]);
   expect([rep("#structure/d1/n1"), rep("#structure/d1"), rep("#map/review/q1/c1"), rep("#today/review/q1/c1"), rep("#_inbox/applied")]).toEqual([undefined, undefined, undefined, undefined, undefined]);
 });
 
 test("화면 고르기 — 탭 줄 · 사용자 탭 · 옛 화면 · 모르면 「나」 · Setup 페이지", () => {
   const pick = (h: string) => { const v = go(h); return [v.screen, v.args, v.cur, v.setup, v.navnew]; };
-  expect(pick("")).toEqual(["me", ["", ""], "_me", null, true]);
-  expect(pick("#nope")).toEqual(["me", ["", ""], "_me", null, true]);
-  expect(pick("#_me/principle/p1")).toEqual(["me", ["principle", "p1"], "_me", null, true]);
+  expect(pick("")).toEqual(["me", ["", "", ""], "_me", null, true]);
+  expect(pick("#nope")).toEqual(["me", ["", "", ""], "_me", null, true]);
+  expect(pick("#_me/principle/p1")).toEqual(["me", ["principle", "p1", ""], "_me", null, true]);
+  expect(pick("#_me/obj/notes/x1")).toEqual(["me", ["obj", "notes", "x1"], "_me", null, true]);
   expect(pick("#_today/inbox/i1")).toEqual(["today", ["today", "inbox", "i1"], "_today", null, true]);
   expect(pick("#_inbox/applied")).toEqual(["today", ["inbox", "applied"], "_today", null, true]);
   expect(pick("#t-001/r9")).toEqual(["sheet", ["t-001", "record", "journal", "r9"], "_setup", "objects", false]);

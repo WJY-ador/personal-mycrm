@@ -9,7 +9,7 @@
     "me": {
       "regions": ["summary"],
       "default": {
-        "tabs": ["summary", "principle", "decision", "axis", "custom", "person", "source"],
+        "tabs": ["summary", "principle", "decision", "axis", "person", "source"],
         "regions": {
           "summary": [{"c": "heatmap", "p": {}}, {"c": "kinds", "p": {}}, {"c": "waiting", "p": {}}, {"c": "recent", "p": {}}]
         }

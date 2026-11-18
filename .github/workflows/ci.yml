@@ -313,6 +313,19 @@ jobs:
           PY
           python server/test_collected_inbox.py
 
+      # 오브젝트 탭(2026-11-18) — 「나」 하위 탭 레이아웃의 오브젝트 탭(obj:<key>)·옛 custom 펼침·목록 보기 API(열·정렬·칩·검색·쪽·격리)(합성 PG).
+      # 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
+      - name: "④-v2 오브젝트 탭 시험 (test_object_tabs.py)"
+        env:
+          DATABASE_URL: postgresql://postgres:crm@localhost:5432/crm_test_objtab
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:crm@localhost:5432/crm", autocommit=True) as c:
+              c.execute("CREATE DATABASE crm_test_objtab")
+          PY
+          python server/test_object_tabs.py
+
       # 받는 즉시 승인(2026-11-13) — 장치 내 글 = 받는 즉시 기록(출처 판정 = 승인과 같다) · 기록 한도·스위치 꺼짐 = 대기 → auto_approve_pending(합성 PG).
       # 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
       - name: "④-w 받는 즉시 승인 시험 (test_inbox_auto.py)"

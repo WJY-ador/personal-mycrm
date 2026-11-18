@@ -44,7 +44,7 @@ test("서버 배치 그대로 · 탭 이름·자물쇠(기본 종류) · 블록 
   const el = await show();
   expect(text(el, "h2")).toEqual(["페이지 레이아웃: 나"]);
   expect(keys(el, 0)).toEqual(SWAP);
-  expect(lis(el, 0).map(li => li.children[0].textContent + li.children[1].textContent)).toEqual(["⠿기준 ", "⠿요약", "⠿결정 ", "⠿축 ", "⠿커스텀", "⠿사람 ", "⠿출처 "]);
+  expect(lis(el, 0).map(li => li.children[0].textContent + li.children[1].textContent)).toEqual(["⠿기준 ", "⠿요약", "⠿결정 ", "⠿축 ", "⠿사람 ", "⠿출처 "]);
   expect(lis(el, 0)[0].getAttribute("aria-label")).toBe("기준, 1번째");
   expect(lis(el, 1).map(li => li.children[1].textContent)).toEqual(DEF.regions.summary.map(s => reg.components[s.c as keyof typeof reg.components].label));
   expect(resetBtn(el).disabled).toBe(false);
@@ -385,4 +385,17 @@ test("끌어 놓기(마우스) — 끄는 동안 자리만 바꾸고 놓을 때 
   await ev(rows[0], "pointerup", 125, "touch");
   await flush();
   expect((writes()[0].body as typeof server).layout.pages.me.regions.summary.map(s => s.c)).toEqual(["kinds", "waiting", "heatmap", "recent"]);
+});
+
+test("오브젝트 탭 — 이름 = 오브젝트 label(자물쇠 없음) · 서버 배치에 없으면 사람 앞에 붙는다 · 옮기면 PUT 의 tabs 에 obj:<key>", async () => {
+  const S = { definitions: [{ id: "od_cp", key: "collected_posts", label: "수집 글", std_id: null, archived_at: null, fields: [] },
+    { id: "od_old", key: "old_one", label: "보관한 것", std_id: null, archived_at: "2026-11-01T00:00:00+00:00", fields: [] }] };
+  server = lay(DEF.tabs);
+  const el = await showScreen("layout", "#_setup/layout", [], S);
+  expect(keys(el, 0)).toEqual(["summary", "principle", "decision", "axis", "obj:collected_posts", "person", "source"]);
+  const li = el.querySelector('li[data-lay-key="obj:collected_posts"]')!;
+  expect(li.children[1].textContent).toBe("수집 글");
+  expect(li.querySelector("svg")).toBeNull();
+  await alt(li, "ArrowLeft");
+  expect((writes()[0].body as typeof server).layout.pages.me.tabs).toEqual(["summary", "principle", "decision", "obj:collected_posts", "axis", "person", "source"]);
 });

@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiErr } from "../../../shared/api";
 import { queryClient } from "../../../shared/queries";
 import { meApi, type Layout, type MePage } from "../meApi";
-import { validTabs } from "../text";
+import { fitTabs, validTabs } from "../text";
 import { QK } from "../useWorld";
 
 type Op = { kind: "put"; page: MePage } | { kind: "reset" };
@@ -23,7 +23,8 @@ export const LAY_TEXT = {
 const cached = () => queryClient.getQueryData<Layout>(QK.layout);
 const pageOf = (l: Layout | undefined) => { const p = l?.layout?.pages?.me; return p && validTabs(p.tabs) ? p : null; };
 
-export function useLay(def: MePage) {
+// keys = 지금 사용자 오브젝트 key(만든 순) — 탭 순서를 그 오브젝트에 맞춘다(서버 db.me_tabs_fit 과 같은 규칙, 저장 때 서버가 다시 맞춘다)
+export function useLay(def: MePage, keys: string[] = []) {
   const q = useQuery({ queryKey: QK.layout, queryFn: meApi.layout });
   const [cur, setCur] = useState<MePage | null>(null);   // 보내는 중인 배치(화면은 바로 새 배치) — 없으면 마지막 저장 배치
   const [msg, setMsg] = useState({ text: "", err: false });
@@ -58,7 +59,8 @@ export function useLay(def: MePage) {
     if (line.current.busy) line.current.queued = op; else void send(op);
   }
 
-  const page = cur || pageOf(q.data) || def;
+  const raw = cur || pageOf(q.data) || def;
+  const page = { ...raw, tabs: fitTabs(raw.tabs, keys) };
   // 순서 바꾸기 — grp(tabs|summary)의 key 를 to 자리로. 바뀐 게 있으면 PUT 1(요약 블록은 칸째 옮긴다 — props 그대로)
   function move(grp: "tabs" | "summary", key: string, to: number): boolean {
     const tabs = page.tabs.slice(), slots = (page.regions.summary || def.regions.summary).slice();

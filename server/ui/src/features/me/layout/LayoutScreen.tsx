@@ -9,8 +9,10 @@ import { useState } from "react";
 import type { ScreenProps } from "../../../shared/ctx";
 import { Lock } from "../../../shared/Glyph";
 import type { MePage } from "../meApi";
-import { LOADING, ME_LOCKED, ME_TAB_LABEL, isTab } from "../text";
+import { LOADING, ME_LOCKED, isTab, tabLabel as nameOf } from "../text";
 import { DndList } from "./DndList";
+import { userObjDefs } from "../model";
+import { fitTabs } from "../text";
 import { LAY_TEXT, useLay } from "./useLay";
 import css from "./Layout.module.css";
 
@@ -18,21 +20,22 @@ type Props = ScreenProps & { def: MePage; blockLabel: Record<string, string> };
 const same = (a: string[], b: string[]) => a.join("\n") === b.join("\n");
 type Grp = "tabs" | "summary";
 
-export function LayoutScreen({ def, blockLabel }: Props) {
-  const L = useLay(def);
+export function LayoutScreen({ ctx, def, blockLabel }: Props) {
+  const defs = ctx.state ? userObjDefs(ctx.state) : [];
+  const L = useLay(def, defs.map(d => d.key));
   // grp·key = 문구를 붙일 행 · n 이 바뀌면 새 노드 = 같은 문구도 다시 읽힌다
   const [pos, setPos] = useState<{ text: string; n: number; grp?: Grp; key?: string }>({ text: "", n: 0 });
   if (L.pending) return <div className="paper"><p className="hint">{LOADING}</p></div>;
   const tabs = L.page.tabs, blocks = (L.page.regions.summary || def.regions.summary).map(s => s.c);
-  const isDef = same(tabs, def.tabs) && same(blocks, def.regions.summary.map(s => s.c));
+  const isDef = same(tabs, fitTabs(def.tabs, defs.map(d => d.key))) && same(blocks, def.regions.summary.map(s => s.c));
   const msg = L.msg.text || (L.api ? "" : LAY_TEXT.noApi);
   const posText = L.msg.err ? "" : pos.text;   // 저장 실패·STALE 로 되돌렸으면 옮긴 자리는 더 맞지 않다
   // 옮긴 행이면 이름 바로 아래에 보이는 문구 — text(aria-label·버튼 이름)는 그대로, 읽기는 #lay-pos 만
   const inline = (grp: Grp, k: string) => posText && pos.grp === grp && pos.key === k
     ? <span className={css.rowpos} data-lay-pos="" aria-hidden="true">{posText}</span> : null;
   const tabLabel = (t: string) => {
-    const text = isTab(t) ? ME_TAB_LABEL[t] : t;
-    return { text, node: <>{text}{ME_LOCKED.has(t) && <> <Lock hidden /></>}{inline("tabs", t)}</> };
+    const text = nameOf(defs, t);
+    return { text, node: <>{text}{isTab(t) && ME_LOCKED.has(t) && <> <Lock hidden /></>}{inline("tabs", t)}</> };
   };
   const blockText = (b: string) => { const text = blockLabel[b] || b; return { text, node: <>{text}{inline("summary", b)}</> }; };
   // 옮김 = useLay.move 가 바꿨을 때만(경계·제자리 = false) — 새 자리는 move 와 같은 방식으로 끝에 맞춘다

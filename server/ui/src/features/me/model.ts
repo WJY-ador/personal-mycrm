@@ -5,7 +5,7 @@ import { meTabOf } from "../../shared/route";
 import { srcText as srcTextOf } from "../../shared/source";
 import { readOk, type AppState, type Cand, type Def, type Item, type Person, type Question, type Rec, type Refl, type Source } from "../../shared/state";
 import type { Act, AxisCtx, PersonCtx, Stats } from "./meApi";
-import { ME_STD, REFL_KIND, SRC_KIND, firstLine, type MeTab } from "./text";
+import { REFL_KIND, SRC_KIND, firstLine, isAnyMeStd, isMeStd, type MeTab } from "./text";
 
 export type World = {
   S: AppState; recs: Rec[]; stats: Stats | null;
@@ -15,7 +15,7 @@ export type World = {
 };
 type Head = { id: string; title: string; kind: string; at: string };
 export type Row = Head & ({ k: "journal"; x: Rec } | { k: "q"; x: Question } | { k: "cand"; x: Cand } | { k: "item"; x: Item } | { k: "refl"; x: Refl });
-export type TabRow = { id: string; title: string; code: string | null; meta: string; grp?: string; x: Item | Person | Source };
+export type TabRow = { id: string; title: string; code: string | null; meta: string; x: Item | Person | Source };
 
 export const defs = (W: World) => (W.S.definitions || []).filter(d => !d.archived_at);
 export const defById = (W: World, id: string) => (W.S.definitions || []).find(d => d.id === id);
@@ -27,13 +27,17 @@ export const srcText = (W: World, sid: string | null) => srcTextOf(W.S.sources, 
 export const srcName = (W: World, sid: string) => { const x = srcById(W, sid); return x ? `${x.name}(${SRC_KIND[x.kind] || x.kind})` : "찾을 수 없는 출처"; };
 export const records = (W: World) => (readOk(W.S, "journal") ? W.recs : []);
 
-export const stdDef = (W: World, tab: string): Def | undefined => defs(W).find(d => d.std_id === ME_STD[tab]);
-export const customDefs = (W: World) => defs(W).filter(d => !Object.values(ME_STD).includes(d.std_id || ""));
+export const stdDef = (W: World, tab: string): Def | undefined => defs(W).find(d => isMeStd(d, tab));
+// 사용자 오브젝트(오브젝트 탭이 되는 것) — 적용·미보관, 기준·결정·축 표준 아님. 서버 db.me_object_keys 와 같은 규칙
+export const userObjDefs = (S: AppState) => (S.definitions || []).filter(d => !d.archived_at && !isAnyMeStd(d));
+export const customDefs = (W: World) => userObjDefs(W.S);
 export const itemsOf = (W: World, defId: string) => (W.S.items || []).filter(it => it.object_id === defId);
 const codeCmp = (a: Item, b: Item) => (a.code ? 0 : 1) - (b.code ? 0 : 1) || String(a.code || "").localeCompare(String(b.code || ""), "ko", { numeric: true });
 export const sorted = (xs: Item[]) => xs.map((x, i) => [x, i] as const).sort((p, q) => codeCmp(p[0], q[0]) || p[1] - q[1]).map(p => p[0]);
 
-export const tabOfItem = (W: World, it: Item): MeTab => meTabOf(W.S, it);   // 판정 한 벌 = shared/route(옛 주소 replace 와 같은 규칙)
+// 항목이 열리는 탭의 주소 조각(principle | decision | axis | obj/<key>) — 판정 한 벌 = shared/route(옛 주소 replace 와 같은 규칙)
+export const tabOfItem = (W: World, it: Item): string => meTabOf(W.S, it);
+export const objDefByKey = (W: World, key: string) => customDefs(W).find(d => d.key === key);
 
 // 상세로 열 수 있는 데이터 — 만든 시각 최신 순(같으면 넣은 순)
 export function homeRows(W: World): Row[] {
@@ -53,20 +57,19 @@ export function homeRows(W: World): Row[] {
 export function tabRows(W: World, tab: MeTab): TabRow[] {
   if (tab === "person") return (W.S.people || []).map(p => ({ id: p.id, title: p.alias, code: "", meta: "", x: p }));
   if (tab === "source") return (W.S.sources || []).map(s => ({ id: s.id, title: s.name, code: "", meta: SRC_KIND[s.kind] || s.kind, x: s }));
-  if (tab === "custom") return customDefs(W).flatMap(d => sorted(itemsOf(W, d.id)).map(it => ({ id: it.id, title: it.title || "(제목 없음)", code: it.code, meta: d.label, grp: d.id, x: it })));
   const d = stdDef(W, tab);
   return d ? sorted(itemsOf(W, d.id)).map(it => ({ id: it.id, title: it.title || "(제목 없음)", code: it.code,
     meta: tab === "principle" ? (it.decision === "confirmed" ? "확정" : it.decision === "excluded" ? "반영 안 함" : "확정 전") : "", x: it })) : [];
 }
 
-// 하위 탭 건수 — 그 종류 전체(못 읽은 종류는 null = 숫자 없음)
-export function tabCount(W: World, t: MeTab): number | null {
+// 하위 탭 건수 — 그 종류 전체(못 읽은 종류는 null = 숫자 없음). t = 고정 탭 또는 오브젝트 탭(obj:<key>)
+export function tabCount(W: World, t: string): number | null {
   const S = W.S;
   if (t === "summary") return null;
   if (t === "person") return Array.isArray(S.people) ? S.people.length : null;
   if (t === "source") return Array.isArray(S.sources) ? S.sources.length : null;
   if (!readOk(S, "items") || !Array.isArray(S.items)) return null;
-  if (t === "custom") return customDefs(W).reduce((s, d) => s + itemsOf(W, d.id).length, 0);
+  if (t.startsWith("obj:")) { const d = objDefByKey(W, t.slice(4)); return d ? itemsOf(W, d.id).length : 0; }
   const d = stdDef(W, t);
   return d ? itemsOf(W, d.id).length : 0;
 }

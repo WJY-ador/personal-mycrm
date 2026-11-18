@@ -6,6 +6,7 @@
 1) 결정성 2) 다른 사용자 섞임 없음 3) 휴지통·지운 글 없음 4) quote = 원 본문[start:end] 5) 비적격(AI 요약) 빠짐, ineligible_excluded 건수
 6) 세션 정리 꼴 기록 draft 에 들어감 7) 수집 글은 related_posts 만(ai_*·본문 없음) 8) 항목(기준) 없음 9) question_id 확정 후보 맨 앞·남의 질문 NOT-FOUND
 10) 검색어 만들기 11) gaps 코드별 1건 이상 12) markdown 줄머리 이스케이프 13) ARG-INVALID 14) 카탈로그 tier read = chat_mcp 고정 목록
+15) 흔한 낱말 가중치 정렬 16) 인용 후보에서 빼는 줄(소제목, 굵게만, 표, 목록 머리표만 다른 같은 문장)과 굵게 줄머리 17) 근거 10편 상한과 more_evidence
 """
 import asyncio
 import datetime as _dt
@@ -181,6 +182,15 @@ def setup():
     S["r_hi"] = [rec(A, f"옛 고득점 {i}", "에타표식 테타표식 요타표식 문장 하나. 에타표식 테타표식 요타표식 문장 둘.", date=days_ago(400))
                  for i in range(4)]
     S["r_new"] = rec(A, "새 저득점", "에타표식 테타표식 새 문장.")
+    # 가중치 — 흔한 낱말 둘(크시, 시그마)만 맞은 문장 8개는 오늘, 드문 낱말(오미) + 흔한 낱말 하나가 맞은 문장은 300일 전
+    S["r_common"] = rec(A, "흔한 낱말 메모", " ".join(f"크시표식 시그마표식 흔한 문장 {i}." for i in range(8)))
+    S["r_rare"] = rec(A, "드문 낱말 메모", "오미표식 크시표식 드문 문장.", date=days_ago(300))
+    # 인용 후보에서 빼는 줄 — 소제목, 굵게만 있는 줄, 표 줄, 목록 머리표만 다른 같은 문장. 굵게로 시작하는 보통 문장은 남는다
+    S["r_lines"] = rec(A, "줄 거르기 메모", "# 뮤표식 뉴표식 소제목. 소제목 줄 둘째 조각 뮤표식 뉴표식\n**뮤표식 뉴표식 굵은 줄**\n"
+                                         "__뮤표식 뉴표식 굵은 줄 둘__:\n| 뮤표식 | 뉴표식 |\n- 뮤표식 뉴표식 같은 문장\n* 뮤표식 뉴표식 같은 문장\n"
+                                         "1. 뮤표식 뉴표식 같은 문장\n**뮤표식** 뉴표식 굵게 머리 문장")
+    # 근거 10편 상한 — 맞는 기록 12편(날짜가 달라 순서가 정해진다)
+    S["r_many"] = [rec(A, f"많은 근거 {i:02d}", f"로표식 시표식 근거 문장 {i:02d}.", date=days_ago(i)) for i in range(12)]
 
     # 다른 사용자 — 같은 검색어의 자료(섞이면 안 된다)
     qb = db.question_add(B, f"{OTHER_MARK} 질문")["id"]
@@ -214,11 +224,11 @@ def codes(res):
 def test_shape_and_determinism(S):
     a = answer.assemble(S["A"], question=Q_MAIN)
     b = answer.assemble(S["A"], question=Q_MAIN)
-    assert list(a) == ["kind", "question", "terms", "draft", "evidence", "related_posts", "gaps", "markdown", "notice", "assembled_at"], list(a)
+    assert list(a) == ["kind", "question", "terms", "draft", "evidence", "related_posts", "gaps", "markdown", "notice", "display_rule", "assembled_at"], list(a)
     a.pop("assembled_at")
     b.pop("assembled_at")
     assert a == b
-    assert a["kind"] == "answer_material" and a["question"] == {"text": Q_MAIN, "id": None} and a["notice"] == answer.NOTICE
+    assert a["kind"] == "answer_material" and a["question"] == {"text": Q_MAIN, "id": None} and a["notice"] == answer.NOTICE and a["display_rule"] == answer.DISPLAY_RULE
     assert a["terms"] == ["알파도구", "베타검증"], a["terms"]
     # 정렬: 점수 같으면 확정 후보 있는 기록(10일 전)이 오늘 기록보다 먼저 · 한 기록에서 초안 2개까지
     ids = draft_ids(a)
@@ -227,7 +237,8 @@ def test_shape_and_determinism(S):
     assert [d["n"] for d in a["draft"]] == list(range(1, len(ids) + 1))
     assert all(set(d) == {"n", "quote", "ref"} for d in a["draft"])
     ev = {e["ref"]["id"]: e for e in a["evidence"]}
-    assert len(ev[S["r_main"]]["quotes"]) == 3 and all(q["score"] == 2 for q in ev[S["r_main"]]["quotes"])
+    qs = ev[S["r_main"]]["quotes"]   # score = 맞은 검색어 가중치 합 — 세 문장 모두 두 검색어가 맞아 같은 값
+    assert len(qs) == 3 and len({q["score"] for q in qs}) == 1 and qs[0]["score"] > 0, qs
     assert ev[S["refl"]]["ref"]["kind"] == "reflection" and ev[S["refl"]]["title"] == "읽은 글"
     assert ev[S["refl"]]["provenance"] == {"text_process": None, "generation_kind": None, "decision_owner": None}
     assert ev[S["r_main"]]["date"] == TODAY.isoformat() and ev[S["r_conf"]]["date"] == days_ago(10).isoformat()
@@ -381,6 +392,9 @@ def test_gaps(S):
     assert codes(po) == ["no_match", "posts_without_thought"] and [p["id"] for p in po["related_posts"]] == [S["post_only"]], po
     assert po["gaps"][0]["text"] == answer.GAP_TEXT["no_match"]
     seen |= set(codes(po))
+    many = get(S["A"], question="로표식 시표식")
+    assert codes(many) == ["more_evidence"], codes(many)
+    seen |= set(codes(many))
     saved = answer.SCAN_LIMIT
     answer.SCAN_LIMIT = 3
     try:
@@ -399,16 +413,20 @@ def test_markdown_escape(S):
     res = get(S["A"], question="감마표식 델타표식")
     md = res["markdown"].split("\n")
     i1, i2 = S["r_esc1"], S["r_esc2"]
-    for line in (f"> \\# 감마표식 델타표식 제목꼴 ({i1})", f"> \\> 감마표식 델타표식 인용꼴 ({i1})",
+    assert all("제목꼴" not in d["quote"] for d in res["draft"]) and "제목꼴 (" not in res["markdown"]   # 소제목 줄은 인용 후보가 아니다
+    for line in (f"> \\> 감마표식 델타표식 인용꼴 ({i1})",
                  f"> \\--- 감마표식 델타표식 가로줄꼴 ({i2})", f"> \\- 감마표식 델타표식 목록꼴 ({i2})"):
         assert line in md, (line, md)
     assert f"- ({i1}) # 제목꼴 제목, {TODAY.isoformat()}, verbatim" in md, md   # 근거 줄 = "- (ref id) 제목, 날짜, 셋째 칸"
     assert md[0] == "## 감마표식 델타표식" and "### 답변 초안" in md and "### 근거" in md
-    assert {d["quote"] for d in res["draft"]} >= {"# 감마표식 델타표식 제목꼴", "- 감마표식 델타표식 목록꼴"}   # 값은 그대로
+    assert {d["quote"] for d in res["draft"]} >= {"> 감마표식 델타표식 인용꼴", "- 감마표식 델타표식 목록꼴"}   # 값은 그대로
     # 줄 머리 꼴 각 1건(정렬 목록, 글머리 *, +, 코드 울타리 ```, ~~~, HTML <, 링크 정의 [, setext = -, 들여쓴 코드 4칸, 탭)
     for raw, want in (("1. 하나", "1\\. 하나"), ("12) 둘", "12\\) 둘"), ("* 별", "\\* 별"), ("+ 더하기", "\\+ 더하기"),
                       ("```py", "\\```py"), ("~~~", "\\~~~"), ("<div>태그", "\\<div>태그"), ("[x]: https://e.x", "\\[x]: https://e.x"),
-                      ("===", "\\==="), ("--", "\\--"), ("    코드", "&#32;   코드"), ("\t코드", "&#32;코드"), ("  # 두 칸", "  \\# 두 칸"),
+                      ("===", "\\==="), ("--", "\\--"), ("# 제목", "\\# 제목"),
+                      # 굵게 줄머리는 그대로, 가로줄 꼴(***, ** * *, ___)은 이스케이프
+                      ("**굵게** 뒤", "**굵게** 뒤"), ("__굵게__", "__굵게__"), ("  **두 칸 굵게**", "  **두 칸 굵게**"),
+                      ("***", "\\***"), ("** * *", "\\** * *"), ("___", "\\___"), ("**", "**"), ("    코드", "&#32;   코드"), ("\t코드", "&#32;코드"), ("  # 두 칸", "  \\# 두 칸"),
                       ("보통 줄", "보통 줄")):
         assert answer._md_escape(raw) == want, (raw, answer._md_escape(raw))
     # bare CR 도 줄 끝
@@ -419,7 +437,7 @@ def test_markdown_escape(S):
     # 질문 소제목: 줄 머리와 끝의 '#'
     assert get(S["A"], question="C# 도입 #")["markdown"].split("\n")[0] == "## C# 도입 \\#"
     assert get(S["A"], question="# 감마표식 델타표식")["markdown"].split("\n")[0] == "## \\# 감마표식 델타표식"
-    ok("12) markdown 줄머리 이스케이프(#, >, ---, -, 정렬 목록, *, +, 코드 울타리, <, [, setext, 들여쓰기) · bare CR · 질문 소제목 끝 # · 근거 줄 맨 앞 ref id")
+    ok("12) markdown 줄머리 이스케이프(#, >, ---, -, 정렬 목록, *, +, 코드 울타리, <, [, setext, 들여쓰기, 가로줄) · 굵게 줄머리 그대로 · bare CR · 질문 소제목 끝 # · 근거 줄 맨 앞 ref id")
 
 
 def test_arg_invalid(S):
@@ -437,6 +455,49 @@ def test_arg_invalid(S):
     ok("13) ARG-INVALID: 둘 다 없음, 둘 다 있음, 301자, terms 13개, 제어 문자, 서식 문자(Cf), 빈 검색어, 31자 검색어, 문자열 아닌 형식 · 앞뒤 공백 자름")
 
 
+def test_weighting(S):
+    q = "크시표식 오미표식 시그마표식"
+    a, b = get(S["A"], question=q), get(S["A"], question=q)
+    assert a == b
+    ids = draft_ids(a)
+    # 남기는 기준(맞은 검색어 2개 이상)은 그대로 — 흔한 낱말 둘만 맞은 문장도 남는다. 정렬은 가중치 합이라 드문 낱말 문장(300일 전)이 오늘 문장보다 위
+    assert ids[0] == S["r_rare"] and S["r_common"] in ids, ids
+    ev = {e["ref"]["id"]: e for e in a["evidence"]}
+    assert [e["ref"]["id"] for e in a["evidence"]][:2] == [S["r_rare"], S["r_common"]], a["evidence"]
+    rare, common = ev[S["r_rare"]]["quotes"][0]["score"], ev[S["r_common"]]["quotes"][0]["score"]
+    assert rare > common > 0, (rare, common)
+    # 가중치 = log(전체 문장 수 / (1 + 그 낱말 든 문장 수)), 0 아래면 0
+    w = answer.term_weights(["가 나. 다 라.", "가 마."], ["가", "다", "없음"])
+    assert w == {"가": 0.0, "다": round(__import__("math").log(3 / 2), 6), "없음": round(__import__("math").log(3), 6)}, w
+    assert answer.term_weights([], ["가"]) == {"가": 0.0}
+    ok(f"15) 흔한 낱말 가중치: 드문 낱말 문장(score {rare}, 300일 전)이 흔한 낱말만 맞은 문장(score {common}, 오늘)보다 위 · 결정적 · 가중치 식")
+
+
+def test_line_filters(S):
+    res = get(S["A"], question="뮤표식 뉴표식")
+    ev = {e["ref"]["id"]: e for e in res["evidence"]}
+    assert [q["text"] for q in ev[S["r_lines"]]["quotes"]] == ["- 뮤표식 뉴표식 같은 문장", "**뮤표식** 뉴표식 굵게 머리 문장"], ev[S["r_lines"]]
+    assert [d["quote"] for d in res["draft"]] == ["- 뮤표식 뉴표식 같은 문장", "**뮤표식** 뉴표식 굵게 머리 문장"], res["draft"]
+    md = res["markdown"].split("\n")
+    assert f"> **뮤표식** 뉴표식 굵게 머리 문장 ({S['r_lines']})" in md, md   # 굵게 줄머리에 백슬래시가 없다
+    assert not any(ln.startswith(("> \\**", "> \\__")) for ln in md), md
+    t = "| 가 | 나 |\n  ## 소제목\n#해시태그 문장"
+    assert list(answer.sentences(t)) == [(t.index("#해"), len(t), "#해시태그 문장")]   # 해시태그는 소제목이 아니다
+    ok("16) 인용 후보에서 소제목 줄(둘째 조각 포함), 굵게만 있는 줄, 표 줄, 목록 머리표만 다른 같은 문장을 뺀다 · 굵게로 시작하는 문장은 이스케이프 없이")
+
+
+def test_more_evidence(S):
+    res = get(S["A"], question="로표식 시표식")
+    assert len(res["evidence"]) == answer.EVIDENCE_MAX == 10
+    assert [e["ref"]["id"] for e in res["evidence"]] == S["r_many"][:10]
+    g = next(x for x in res["gaps"] if x["code"] == "more_evidence")
+    assert g == {"code": "more_evidence", "text": "같은 질문으로 찾은 기록이 2편 더 있어요.", "count": 2}, g
+    md = res["markdown"]
+    assert sum(1 for ln in md.split("\n") if ln.startswith("- (r")) == 10 and "- 같은 질문으로 찾은 기록이 2편 더 있어요." in md
+    assert all(i not in md for i in S["r_many"][10:])
+    ok("17) 근거 10편 상한 · 넘친 2편은 부족한 곳 more_evidence 고정 문구 하나")
+
+
 async def test_catalog(S):
     cat = facade.load_catalog()
     spec = cat["ops"]["answer_get"]
@@ -448,7 +509,13 @@ async def test_catalog(S):
     assert (o.tier, o.family, o.direct, o.bind) == ("read", "question", False, None)
     for ex in o.examples:
         facade.validate(o, ex)
-    assert "answer_get 을 부른다. markdown 은 고치지 않고 그대로 보여 준다. 초안 사이에 문장을 더하거나 요약하지 않는다." in main.INSTRUCTIONS
+    # 보여 주기 규칙 한 문구 — 응답 display_rule, INSTRUCTIONS, docstring(웹 대화 find 설명), 카탈로그 rule(find 의 rule)
+    assert answer.DISPLAY_RULE == ("markdown 을 처음부터 끝까지 그대로 보여 준다. 줄을 빼거나 묶거나 요약하지 않는다. "
+                                   "markdown 앞뒤에 네 문장을 덧붙이지 않는다. 부족한 점은 markdown 의 부족한 곳 절만 쓴다. "
+                                   "사용자가 따로 묻기 전에는 해석하지 않는다.")
+    assert f"answer_get 을 부른다. {answer.DISPLAY_RULE}" in main.INSTRUCTIONS
+    assert answer.DISPLAY_RULE in " ".join(o.doc.split()) and spec["rule"] == answer.DISPLAY_RULE
+    assert answer.DISPLAY_RULE in facade.rule_of(o)
     assert "읽고 든 생각은 내 글이라 근거에 들어간다. 검토 완료 표시는 판단 확정이 아니다." in main.INSTRUCTIONS
     async with Client(main.mcp) as c:
         tools = {t.name for t in (await c.list_tools()).tools}
@@ -468,9 +535,11 @@ async def test_catalog(S):
         assert bad.is_error and CODE.search(bad.content[0].text).group(1) == "ARG-INVALID", bad.content[0].text
         nf = await c.call_tool("read", {"op": "answer_get", "params": {"question_id": S["qb"]}})
         assert nf.is_error and CODE.search(nf.content[0].text).group(1) == "NOT-FOUND", nf.content[0].text
+        det = await c.call_tool("find", {"op": "answer_get"})
+        assert not det.is_error and answer.DISPLAY_RULE in det.content[0].text, det.content[0].text[:300]
         wrong = await c.call_tool("write", {"op": "answer_get", "params": {"question": Q_MAIN}})
         assert wrong.is_error and CODE.search(wrong.content[0].text).group(1) == "TIER-MISMATCH"
-    ok("14) 카탈로그: answer_get tier read, family question, facade 전용 = chat_mcp 고정 목록 · read 겉면 호출 = 조립 결과 · ARG-INVALID·NOT-FOUND·TIER-MISMATCH")
+    ok("14) 카탈로그: answer_get tier read, family question, facade 전용 = chat_mcp 고정 목록 · 보여 주기 규칙 한 문구(응답, INSTRUCTIONS, docstring, rule, find) · read 겉면 호출 = 조립 결과 · ARG-INVALID·NOT-FOUND·TIER-MISMATCH")
 
 
 async def run():
@@ -491,6 +560,9 @@ async def run():
         test_gaps(S)
         test_markdown_escape(S)
         test_arg_invalid(S)
+        test_weighting(S)
+        test_line_filters(S)
+        test_more_evidence(S)
         await test_catalog(S)
     finally:
         cleanup()

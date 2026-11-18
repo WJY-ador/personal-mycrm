@@ -3139,6 +3139,99 @@ def items(uid, object_id=None):
         return _items_query(c, uid, "revision > 0 AND archived_at IS NULL AND trashed_at IS NULL", [])
 
 
+# ── 오브젝트 탭 목록 보기(List View, 2026-11-18 오브젝트 탭 명세 1절 3·5) — 읽기만. 같은 꼴의 MCP read op 는 두지 않는다 ──
+# 열 = 제목 + 필드 앞 최대 5개(정의 순서, 참조·AI 긴 필드 제외) · 수집 글은 판별 상태 열 하나 더(collected_states, 행 없음 = pending).
+# 정렬 = 제목·수정 시각·필드(jsonb 값 순서 — 숫자는 수로, 글자는 글자로)·상태. 기본 = 첫 날짜 필드 내림차순, 없으면 수정 시각 내림차순.
+# 필터 = 선택 목록(select) 필드마다 값 하나 + 상태 하나 + 제목 검색. 칩 건수 = 그 오브젝트 전체(거르기 전). 쪽 = 50행, 커서 = 건너뛸 행 수(불투명 취급).
+OBJ_LIST_PAGE = 50
+OBJ_LIST_COLS = 5
+OBJ_LIST_LONG = ("ai_as_is", "ai_to_be", "ai_ops", "ai_points")   # 열에서 빼는 AI 긴 필드(항목 페이지엔 그대로)
+OBJ_LIST_STATES = ("pending", "kept", "dropped")
+_OBJ_LIST_Q_MAX = 200
+
+
+def object_list(uid, key, sort="", direction="", q="", filters=None, state="", cursor=""):
+    """오브젝트 key 하나의 목록 보기 — 사용자 격리, 적용·미보관·휴지통 아닌 항목만. 반환
+    {object: {id, key, label}, columns: [{key, label, value_type, options}], has_state, sort: {key, dir},
+     filters: [{key, label, values: [{value, label, n}]}], states: {pending, kept, dropped} | None,
+     rows: [{id, code, title, revision, updated_at, data: {열 key: 값}, state?}], total, next_cursor}."""
+    import imports   # imports 가 db 를 가져다 쓴다 — 모듈 맨 위에서 가져오면 순환
+    filters = filters or {}
+    if not isinstance(q, str) or len(q) > _OBJ_LIST_Q_MAX:
+        raise CrmError("ARG-INVALID", f"검색어는 {_OBJ_LIST_Q_MAX}자 이하예요.")
+    if cursor and (not str(cursor).isdigit() or len(str(cursor)) > 7):
+        raise CrmError("ARG-INVALID", "cursor 는 이전 응답의 next_cursor 그대로예요.")
+    if direction not in ("", "asc", "desc"):
+        raise CrmError("ARG-INVALID", "dir 은 asc, desc 중 하나예요.")
+    with tx() as c:
+        od = _one(c, "SELECT id, key, label FROM object_defs WHERE user_id=%(uid)s AND key=%(key)s AND revision > 0 AND archived_at IS NULL "
+                     f"AND {_ME_USER_OBJ}", {"uid": uid, "key": key, **_me_user_obj_args()})
+        if not od:
+            raise CrmError("NOT-FOUND", "이 오브젝트를 찾을 수 없어요.", "「나」 탭을 새로 고쳐 주세요.")
+        fields = [f for f in _fields(c, uid, od["id"]) if f["value_type"] != "reference"]
+        by_key = {f["key"]: f for f in fields}
+        cols = [f for f in fields if f["key"] not in OBJ_LIST_LONG][:OBJ_LIST_COLS]
+        has_state = od["key"] == imports.COLLECTED_OBJECT_KEY
+        date = next((f["key"] for f in fields if f["value_type"] == "date"), None)
+        sk = sort or (date or "updated_at")
+        if sk not in ("title", "updated_at") and sk not in by_key and not (has_state and sk == "state"):
+            raise CrmError("ARG-INVALID", f"정렬할 수 없는 열이에요: {sk}")
+        sd = direction or ("asc" if sort == "title" else "desc")
+        for fk, v in filters.items():
+            if fk not in by_key or by_key[fk]["value_type"] != "select" or not isinstance(v, str) or not v:
+                raise CrmError("ARG-INVALID", f"거를 수 없는 필드예요: {fk}")
+        if state and (not has_state or state not in OBJ_LIST_STATES):
+            raise CrmError("ARG-INVALID", f"state 는 {', '.join(OBJ_LIST_STATES)} 중 하나예요.")
+        base = ("FROM items i LEFT JOIN collected_states s ON s.user_id=i.user_id AND s.item_id=i.id "
+                "WHERE i.user_id=%s AND i.object_id=%s AND i.revision > 0 AND i.archived_at IS NULL AND i.trashed_at IS NULL")
+        args = [uid, od["id"]]
+        out_filters = []
+        for f in fields:
+            if f["value_type"] != "select":
+                continue
+            n = {r["v"]: r["n"] for r in _all(c, f"SELECT i.data->>%s AS v, count(*) AS n {base} AND i.data ? %s GROUP BY 1",
+                                               [f["key"], *args, f["key"]]) if r["v"] is not None}
+            vals = [{"value": o["value"], "label": o["label"], "n": n.pop(o["value"], 0)} for o in (f["options"] or [])]
+            vals += [{"value": v, "label": v, "n": m} for v, m in sorted(n.items())]   # 선택지에서 빠진 옛 값도 거를 수 있게
+            out_filters.append({"key": f["key"], "label": f["label"], "values": vals})
+        states = None
+        if has_state:
+            st = {r["st"]: r["n"] for r in _all(c, f"SELECT COALESCE(s.state,'pending') AS st, count(*) AS n {base} GROUP BY 1", args)}
+            states = {k: st.get(k, 0) for k in OBJ_LIST_STATES}
+        where, wargs = "", []
+        for fk, v in filters.items():
+            where += " AND i.data->>%s = %s"
+            wargs += [fk, v]
+        if state:
+            where += " AND COALESCE(s.state,'pending') = %s"
+            wargs.append(state)
+        if q.strip():
+            where += r" AND i.title ILIKE %s ESCAPE '\'"
+            wargs.append("%" + re.sub(r"([\\%_])", r"\\\1", q.strip()) + "%")
+        total = _one(c, f"SELECT count(*) AS n {base}{where}", [*args, *wargs])["n"]
+        D = "ASC" if sd == "asc" else "DESC"
+        order = {"title": ("i.title", []), "updated_at": ("i.updated_at", []), "state": ("COALESCE(s.state,'pending')", [])}.get(sk) \
+            or ("NULLIF(i.data->%s, 'null'::jsonb)", [sk])   # JSON null = 빈 값(맨 뒤)
+        off = int(cursor or 0)
+        rows = _all(c, f"SELECT i.id, i.code, i.title, i.revision, i.updated_at, i.data, COALESCE(s.state,'pending') AS state {base}{where} "
+                       f"ORDER BY {order[0]} {D} NULLS LAST, i.id {D} LIMIT %s OFFSET %s",
+                    [*args, *wargs, *order[1], OBJ_LIST_PAGE + 1, off])
+    more, rows = len(rows) > OBJ_LIST_PAGE, rows[:OBJ_LIST_PAGE]
+    ck = [f["key"] for f in cols]
+    out = []
+    for r in rows:
+        d = r["data"] or {}
+        row = {"id": r["id"], "code": r["code"], "title": r["title"], "revision": r["revision"], "updated_at": r["updated_at"].isoformat(),
+               "data": {k: d[k] for k in ck if k in d}}
+        if has_state:
+            row["state"] = r["state"]
+        out.append(row)
+    return {"object": {"id": od["id"], "key": od["key"], "label": od["label"]},
+            "columns": [{"key": f["key"], "label": f["label"], "value_type": f["value_type"], "options": f["options"] or []} for f in cols],
+            "has_state": has_state, "sort": {"key": sk, "dir": sd}, "filters": out_filters, "states": states,
+            "rows": out, "total": total, "next_cursor": str(off + OBJ_LIST_PAGE) if more else None}
+
+
 def item_proposals(uid):
     """아직 적용 안 된 새 항목 제안(revision 0). 웹에서 적용·제외할 수 있게 상태에 싣는다."""
     with tx() as c:
@@ -4043,7 +4136,10 @@ def me_home(uid):
 # 레이아웃 = 사용자당 page_layouts 한 행. 정본 = server/layout_registry.json 한 곳(컴포넌트·허용 영역·props 모양 · 페이지별 영역·기본값).
 # Python(layout_check)과 화면(R2 의 TS)이 같은 파일을 읽는다 — 여기 사본을 두지 않는다.
 # 계약 v2 = {"v": 2, "pages": {페이지: {"tabs": 기본 탭의 순열, "regions": {영역: [{"c": 컴포넌트, "p": {props}}, …]}}}}.
-# 탭은 순서만 바뀐다(빼기·더하기 없음). 영역 안 컴포넌트는 그 영역에 허용된 것만·중복 없이(빼기는 된다). 모르는 키는 거절.
+# 탭은 순서만 바꾼다. 고정 탭(레지스트리 기본)은 늘 한 번씩 있고, 오브젝트 탭은 오브젝트 적용·보관에 따라 서버가 넣고 뺀다(아래). 영역 안 컴포넌트는 그 영역에 허용된 것만·중복 없이(빼기는 된다). 모르는 키는 거절.
+# 오브젝트 탭(2026-11-18 오브젝트 탭 명세 1절) = "obj:<오브젝트 key>" — 사용자 오브젝트(적용·미보관, 기준·결정·축 표준 아님)마다 하나.
+# 서버가 넣고 뺀다: 읽을 때(_layout_up keys) 보관한 오브젝트 탭은 빼고, 새 오브젝트 탭은 사람·출처 앞에 붙인다. 저장은 그 사용자 오브젝트 key 만 받는다.
+# 옛 "custom" 탭(오브젝트 탭 전)은 읽을 때 그 자리에서 오브젝트 탭들로 펼친다(쓰기 없음) — 사용자가 옮긴 순서를 잃지 않는다.
 # v1 행({"v":1,"tabs","blocks"})은 읽을 때 v2 로 올려 돌려준다(쓰기 없음) — 다음 저장부터 v2.
 LAYOUT_REGISTRY_PATH = Path(__file__).parent / "layout_registry.json"
 LAYOUT_REGISTRY = json.loads(LAYOUT_REGISTRY_PATH.read_text(encoding="utf-8"))
@@ -4051,6 +4147,45 @@ LAYOUT_VERSION = 2
 DEFAULT_LAYOUT = {"v": LAYOUT_VERSION, "pages": {k: p["default"] for k, p in LAYOUT_REGISTRY["pages"].items()}}
 LAYOUT_MAX_BYTES = 8192   # layout 의 JSON 상한(웹은 json_limits 로 먼저 본다 · MCP 는 layout_set 이 본다)
 _PROP_TYPES = {"string": str, "integer": int, "boolean": bool}
+OBJ_TAB = "obj:"
+_OBJ_TAB_RE = re.compile(r"^obj:[a-z][a-z0-9_]{0,39}$")
+# 「나」 고정 탭(기준·결정·축)의 오브젝트 = std_id std:<key> 이거나 template_slot author@1:<key>(표준 전 템플릿 계보 계정 — std_id NULL).
+# key·표시명만으로는 판정하지 않는다. 화면 shared/route ME_STD_KEY·isMeStd 와 같은 규칙
+ME_STD_KEYS = ("principles", "decision_events", "axes")
+ME_STD_IDS = tuple("std:" + k for k in ME_STD_KEYS)
+ME_STD_SLOTS = tuple("author@1:" + k for k in ME_STD_KEYS)
+_ME_USER_OBJ = ("(std_id IS NULL OR std_id <> ALL(%(std_ids)s)) AND (template_slot IS NULL OR template_slot <> ALL(%(std_slots)s))")
+
+
+def _me_user_obj_args():
+    return {"std_ids": list(ME_STD_IDS), "std_slots": list(ME_STD_SLOTS)}
+_OLD_CUSTOM_TAB = "custom"
+
+
+def me_object_keys(c, uid):
+    """「나」 오브젝트 탭이 되는 사용자 오브젝트 key — 적용(revision>0)·미보관·기준·결정·축 표준 아님. 만든 순(화면 정의 순서와 같다)."""
+    return [r["key"] for r in _all(c, "SELECT key FROM object_defs WHERE user_id=%(uid)s AND revision > 0 AND archived_at IS NULL "
+                                      f"AND {_ME_USER_OBJ} ORDER BY created_at, id", {"uid": uid, **_me_user_obj_args()})]
+
+
+def me_tabs_fit(tabs, keys):
+    """탭 순서 → 그 사용자 오브젝트에 맞춘 순서. 옛 custom 자리 = 오브젝트 탭들 · 없는(보관한) 오브젝트 탭은 뺀다 ·
+    빠진 오브젝트 탭은 사람·출처 가운데 앞선 것 바로 앞(둘 다 없으면 끝)에 만든 순으로. 고정 탭은 그대로."""
+    want = [OBJ_TAB + k for k in keys]
+    out = []
+    for t in tabs:
+        if t == _OLD_CUSTOM_TAB:
+            out += [w for w in want if w not in tabs and w not in out]
+        elif t.startswith(OBJ_TAB):
+            if t in want and t not in out:
+                out.append(t)
+        else:
+            out.append(t)
+    miss = [w for w in want if w not in out]
+    if miss:
+        at = min([out.index(t) for t in ("person", "source") if t in out] or [len(out)])
+        out[at:at] = miss
+    return out
 
 
 def layout_components(region=None, page="me"):
@@ -4083,8 +4218,9 @@ def _page_check(page, lay):
     if not isinstance(lay, dict) or set(lay) != {"tabs", "regions"}:
         raise _layout_invalid(f"pages.{page} 의 키는 tabs·regions 둘이에요")
     tabs, want = lay["tabs"], reg["default"]["tabs"]
-    if not isinstance(tabs, list) or not all(isinstance(t, str) for t in tabs) or len(tabs) != len(want) or set(tabs) != set(want):
-        raise _layout_invalid(f"tabs 는 {', '.join(want)} {len(want)}개를 한 번씩")
+    if not isinstance(tabs, list) or not all(isinstance(t, str) for t in tabs) or len(set(tabs)) != len(tabs) \
+            or not set(want) <= set(tabs) or not all(t in want or _OBJ_TAB_RE.match(t) for t in tabs):
+        raise _layout_invalid(f"tabs 는 {', '.join(want)} {len(want)}개를 한 번씩 + 오브젝트 탭(obj:<key>)")
     regions = lay["regions"]
     if not isinstance(regions, dict) or set(regions) != set(reg["regions"]):
         raise _layout_invalid(f"pages.{page}.regions 의 자리는 {', '.join(reg['regions'])} 예요")
@@ -4126,10 +4262,22 @@ def _default_layout():
     return json.loads(json.dumps(DEFAULT_LAYOUT))   # 깊은 사본 — 상수를 호출자가 못 바꾼다
 
 
-def _layout_up(stored):
+def _custom_expand(stored, keys):
+    """옛 custom 탭 → 그 자리에 오브젝트 탭들(keys 없음 = 그냥 뺀다). 사본을 돌려준다(저장값은 그대로). 모양이 다르면 손대지 않는다."""
+    me = stored.get("pages", {}).get("me") if isinstance(stored, dict) and isinstance(stored.get("pages"), dict) else None
+    tabs = me.get("tabs") if isinstance(me, dict) else None
+    if not isinstance(tabs, list) or _OLD_CUSTOM_TAB not in tabs:
+        return stored
+    out = json.loads(json.dumps(stored))
+    out["pages"]["me"]["tabs"] = [x for t in tabs for x in ([OBJ_TAB + k for k in keys or ()] if t == _OLD_CUSTOM_TAB else [t])]
+    return out
+
+
+def _layout_up(stored, keys=None):
     """저장된 값 → 응답용 v2 전체(모든 페이지). NULL = 기본. v1 = 그 자리에서 v2 로 올린다(쓰기 없음). 빠진 페이지 = 기본.
-    모양이 맞지 않는 옛 값은 기본으로(화면이 못 그리는 값을 내보내지 않는다)."""
-    out = _default_layout()
+    모양이 맞지 않는 옛 값은 기본으로(화면이 못 그리는 값을 내보내지 않는다).
+    keys = 그 사용자 오브젝트 key(me_object_keys) — 있으면 「나」 탭을 그 오브젝트에 맞춘다(me_tabs_fit). None = 저장값 그대로(custom 만 뺀다)."""
+    out = _layout_fit(_default_layout(), keys)
     if stored is None:
         return out
     if isinstance(stored, dict) and stored.get("v") == 1:
@@ -4140,11 +4288,17 @@ def _layout_up(stored):
             "tabs": stored.get("tabs"),
             "regions": {"summary": dflt if summary is None else [{"c": b, "p": {}} for b in summary]}}}}
     try:
-        lay = layout_check(stored)
+        lay = layout_check(_custom_expand(stored, keys))
     except CrmError:
         return out
-    out["pages"].update(lay["pages"])
+    out["pages"].update(_layout_fit(lay, keys)["pages"])
     return out
+
+
+def _layout_fit(lay, keys):
+    if keys is not None and "me" in lay["pages"]:
+        lay["pages"]["me"]["tabs"] = me_tabs_fit(lay["pages"]["me"]["tabs"], keys)
+    return lay
 
 
 def _layout_page(page):
@@ -4157,9 +4311,8 @@ def layout_get(uid):
     """{layout(v2 전체), version} — 행 없음 = 기본 + 0 · layout NULL(복원 뒤) = 기본 + 그 version · v1 행 = v2 로 올려서."""
     with tx() as c:
         r = _one(c, "SELECT layout, version FROM page_layouts WHERE user_id=%s", (uid,))
-    if not r:
-        return {"layout": _default_layout(), "version": 0}
-    return {"layout": _layout_up(r["layout"]), "version": r["version"]}
+        keys = me_object_keys(c, uid)
+    return {"layout": _layout_up(r["layout"] if r else None, keys), "version": r["version"] if r else 0}
 
 
 def _layout_stale(cur):
@@ -4182,8 +4335,15 @@ def layout_set(uid, layout, version, page=None):
         cur = _one(c, "SELECT layout, version FROM page_layouts WHERE user_id=%s", (uid,))
         if (cur["version"] if cur else 0) != version:
             raise _layout_stale(cur["version"] if cur else 0)
+        keys = me_object_keys(c, uid)
+        me = lay["pages"].get("me")
+        if me:   # 오브젝트 탭 = 이 사용자 오브젝트만(이름을 만들지 않는다). 빠진 오브젝트 탭은 서버가 채운다
+            bad = [t for t in me["tabs"] if t.startswith(OBJ_TAB) and t[len(OBJ_TAB):] not in keys]
+            if bad:
+                raise _layout_invalid(f"{', '.join(bad)} 는 없는 오브젝트 탭이에요. 오브젝트 탭: {', '.join(OBJ_TAB + k for k in keys) or '없음'}")
+            _layout_fit(lay, keys)
         if page is not None:   # 지금 저장본(v1 은 올려서) 위에 그 페이지만 바꾼다
-            full = _layout_up(cur["layout"] if cur else None)
+            full = _layout_up(cur["layout"] if cur else None, keys)
             full["pages"].update(lay["pages"])
             lay = full
         if cur:
@@ -4194,7 +4354,7 @@ def layout_set(uid, layout, version, page=None):
                         "RETURNING version", (uid, Jsonb(lay)))
         if not r:
             raise _layout_stale(version)
-    return {"layout": _layout_up(lay), "version": r["version"]}
+    return {"layout": _layout_up(lay, keys), "version": r["version"]}
 
 
 def layout_reset(uid, page=None):
@@ -4206,8 +4366,9 @@ def layout_reset(uid, page=None):
     with tx() as c:
         _user_lock(c, uid)
         cur = _one(c, "SELECT layout FROM page_layouts WHERE user_id=%s", (uid,))
+        keys = me_object_keys(c, uid)
         if not cur:
-            return {"layout": _default_layout(), "version": 0}
+            return {"layout": _layout_up(None, keys), "version": 0}
         lay = None
         if page is not None and cur["layout"] is not None:
             full = _layout_up(cur["layout"])
@@ -4215,7 +4376,7 @@ def layout_reset(uid, page=None):
             lay = {"v": LAYOUT_VERSION, "pages": rest} if rest else None
         r = _one(c, "UPDATE page_layouts SET layout=%s, version=version+1, updated_at=now() WHERE user_id=%s RETURNING version",
                  (Jsonb(lay) if lay is not None else None, uid))
-    return {"layout": _layout_up(lay), "version": r["version"]}
+    return {"layout": _layout_up(lay, keys), "version": r["version"]}
 
 
 HEATMAP_WEEKS = 13

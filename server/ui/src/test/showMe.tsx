@@ -14,11 +14,11 @@ let el: HTMLDivElement | null = null, root: Root | null = null;
 
 export async function showMe(hash: string, state: object, flash: { text: string } | null = null) {
   history.replaceState(null, "", hash);
-  const [, a = "", b = ""] = hash.replace(/^#/, "").split("/");
+  const [, a = "", b = "", c = ""] = hash.replace(/^#/, "").split("/");
   if (!el) { el = document.createElement("div"); document.body.append(el); root = createRoot(el); }
   const Me = SCREENS.me;
   await act(async () => root!.render(<QueryClientProvider client={queryClient}>
-    <Me ctx={{ reload, setDirty, state: state as AppState, args: [a, b], flash }} />
+    <Me ctx={{ reload, setDirty, state: state as AppState, args: [a, b, c], flash }} />
   </QueryClientProvider>));
   await flush();
   await flush();

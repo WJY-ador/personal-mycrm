@@ -40,7 +40,7 @@ export const STATS = {
   kinds: { principle: 2, decision: 0, axis: 2, custom: 0, records: 1, readings: 0, people: 1, sources: 1 },
   waiting: { candidates_pending: 1, principles_pending: 1, inbox_pending: 0 },
 };
-export const TABS = ["summary", "principle", "decision", "axis", "custom", "person", "source"];
+export const TABS = ["summary", "principle", "decision", "axis", "person", "source"];
 export const layout = (tabs = TABS, summary = ["heatmap", "kinds", "waiting", "recent"]) =>
   ({ layout: { v: 2, pages: { me: { tabs, regions: { summary: summary.map(c => ({ c, p: {} })) } } } }, version: 3 });
 export const JOURNAL = { id: "r1", title: "도입 메모", body: "# 도입 메모\n\n도입 회의에서 입력 **담당**을 먼저 정했다.\n\n둘째 문단", revision: 4, author_kind: "self",

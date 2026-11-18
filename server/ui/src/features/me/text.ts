@@ -1,16 +1,43 @@
 // 「나」 화면 문구·고정 값(옛 app.html 「나」 상세·v9 절 글자 그대로). 여러 화면이 같이 쓰는 낱말은 shared(words·source·item)에서 다시 내보낸다.
 import type { ApiError } from "../../shared/api";
 
-export const ME_TABS = ["summary", "principle", "decision", "axis", "custom", "person", "source"] as const;
+// 고정 탭 6 + 오브젝트 탭(obj:<key>, 사용자 오브젝트마다 하나 — 2026-11-18 오브젝트 탭). 오브젝트 탭 이름 = 그 오브젝트 label
+export const ME_TABS = ["summary", "principle", "decision", "axis", "person", "source"] as const;
 export type MeTab = (typeof ME_TABS)[number];
 export const isTab = (t: string | undefined): t is MeTab => (ME_TABS as readonly string[]).includes(t || "");
-// 저장값이 7 탭의 순서가 아니면(빠짐·중복·모르는 이름) 기본 배치(「나」·Setup 페이지 레이아웃 공용)
-export const validTabs = (t: unknown): t is MeTab[] => Array.isArray(t) && t.length === ME_TABS.length && new Set(t).size === ME_TABS.length && t.every(x => isTab(x));
-export const ME_TAB_LABEL: Record<MeTab, string> = { summary: "요약", principle: "기준", decision: "결정", axis: "축", custom: "커스텀", person: "사람", source: "출처" };
-export { ME_STD } from "../../shared/route";
+export const OBJ_TAB = "obj:";
+export const objTabKey = (t: string) => (t.startsWith(OBJ_TAB) ? t.slice(OBJ_TAB.length) : "");
+// 저장값이 고정 6탭을 한 번씩 + 오브젝트 탭이 아니면(빠짐·중복·모르는 이름) 기본 배치(「나」·Setup 페이지 레이아웃 공용)
+export const validTabs = (t: unknown): t is string[] => Array.isArray(t) && new Set(t).size === t.length && ME_TABS.every(x => t.includes(x))
+  && t.every(x => typeof x === "string" && (isTab(x) || /^obj:[a-z][a-z0-9_]{0,39}$/.test(x)));
+// 탭 순서를 지금 오브젝트에 맞춘다 — 서버 db.me_tabs_fit 과 같은 규칙(서버가 정본, 화면은 레이아웃을 다시 받기 전 새로 적용·보관한 오브젝트만 맞춘다).
+// 옛 custom 자리 = 오브젝트 탭들 · 없는 오브젝트 탭은 뺀다 · 빠진 탭은 사람·출처 가운데 앞선 것 바로 앞(둘 다 없으면 끝)
+export function fitTabs(tabs: string[], keys: string[]): string[] {
+  const want = keys.map(k => OBJ_TAB + k), out: string[] = [];
+  for (const t of tabs) {
+    if (t === "custom") out.push(...want.filter(w => !tabs.includes(w) && !out.includes(w)));
+    else if (t.startsWith(OBJ_TAB)) { if (want.includes(t) && !out.includes(t)) out.push(t); }
+    else out.push(t);
+  }
+  const miss = want.filter(w => !out.includes(w));
+  const at = Math.min(...["person", "source"].map(t => out.indexOf(t)).filter(i => i >= 0), out.length);
+  out.splice(at, 0, ...miss);
+  return out;
+}
+export const ME_TAB_LABEL: Record<MeTab, string> = { summary: "요약", principle: "기준", decision: "결정", axis: "축", person: "사람", source: "출처" };
+// 탭 이름 — 고정 탭 = 위 표, 오브젝트 탭 = 그 오브젝트 label(정의를 못 찾으면 key)
+export const tabLabel = (defs: { key: string; label: string }[] | undefined, t: string) =>
+  isTab(t) ? ME_TAB_LABEL[t] : (defs || []).find(d => d.key === objTabKey(t))?.label || objTabKey(t) || t;
+export { isAnyMeStd, isMeStd } from "../../shared/route";
 export const ME_LOCKED = new Set(["principle", "decision", "axis", "person", "source"]);
 export const ME_LENS: Partial<Record<MeTab, string>> = { principle: "근거 역추적", decision: "근거 역추적", axis: "축 묶음", person: "사람 관계" };
 export const URL_KINDS = ["journal", "q", "cand", "item", "refl"];
+// 오브젝트 탭 목록 보기 문구 — 판별 상태(수집 글, collected_states)는 오늘 탭 수집 인박스와 같은 낱말
+export const OBJ_STATE: [string, string][] = [["pending", "대기"], ["kept", "보관"], ["dropped", "버림"]];
+export const OBJ_TEXT = {
+  search: "제목 검색", state: "상태", title: "제목", link: "원문", more: "더 보기", none: "조건에 맞는 항목이 없어요.",
+  fail: "목록을 불러오지 못했어요.", retry: "다시 불러오기", back: "목록으로", gone: "이 오브젝트 탭은 없어요. 보관했거나 이름이 바뀌었을 수 있어요.",
+};
 
 export { ME_EMPTY } from "../../shared/words";
 export const STATS_FAIL = "통계를 불러오지 못했어요. 새로 고침해 주세요.";

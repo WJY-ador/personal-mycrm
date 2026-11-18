@@ -40,6 +40,7 @@
     "question_list": {"family": "question", "tier": "read", "keywords": ["질문", "질문 목록"],
       "examples": [{}]},
     "answer_get": {"family": "question", "tier": "read", "direct": false, "keywords": ["답변", "답해", "내 기록으로 답", "답변 초안", "근거 원문", "부족한 곳"],
+      "rule": "markdown 을 처음부터 끝까지 그대로 보여 준다. 줄을 빼거나 묶거나 요약하지 않는다. markdown 앞뒤에 네 문장을 덧붙이지 않는다. 부족한 점은 markdown 의 부족한 곳 절만 쓴다. 사용자가 따로 묻기 전에는 해석하지 않는다.",
       "examples": [{"question": "새 도구를 팀에 들일 때 무엇부터 확인해야 하나", "terms": ["도입", "검증"]}, {"question_id": "q_example01"}]},
     "profile_set": {"family": "question", "tier": "write", "keywords": ["프로필", "목적", "설정", "첫 자료"],
       "examples": [{"key": "purpose", "value": "일하며 내린 판단을 모아 둔다", "status": "confirmed", "source": "사용자 답"}]},
