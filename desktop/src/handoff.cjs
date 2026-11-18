@@ -77,6 +77,20 @@ function parseSetupLink(raw) {
   const step = u.searchParams.get('step');
   return SETUP_STEPS.includes(step) ? step : null;
 }
+// Where a setup step goes in the dashboard (spec 2026-11-18 §1.4). provider opens the AI panel: the dashboard hash
+// #_ai, which the web reads, opens the panel with the provider lines and clears. connect and permits only show the
+// dashboard (null). When the window already shows the dashboard document (same origin and path) only the hash changes
+// ({hash}: no reload, unsaved edits stay); otherwise the dashboard loads with the hash ({load}), also at app start.
+const AI_PANEL_HASH = '#_ai';
+function setupNavigation(step, currentUrl, dashboardUrl) {
+  if (step !== 'provider') return null;
+  const target = new URL(dashboardUrl); target.hash = AI_PANEL_HASH;
+  try {
+    const cur = new URL(currentUrl);
+    if (cur.origin === target.origin && cur.pathname === target.pathname) return {hash: AI_PANEL_HASH};
+  } catch {}
+  return {load: target.href};
+}
 // R-J5: any web page can open mycrm://…, so a deep link raises a window at most once per FOCUS_GAP_MS. The link itself
 // is still handled (login callback, setup step); only the raise is skipped. The first raise always passes. Monotonic clock.
 const FOCUS_GAP_MS = 2000;
@@ -92,4 +106,4 @@ function isLoginNav(input, hosted) {
     return u.origin === new URL(hosted).origin && (u.pathname === '/login' || u.pathname === '/desktop/login');
   } catch { return false; }
 }
-module.exports = {TTL_MS, SETUP_STEPS, FOCUS_GAP_MS, focusLimiter, challengeOf, begin, loginUrl, wantsFresh, parseCallback, parseSetupLink, accept, claimBody, claimRequest, findLink, isLoginNav};
+module.exports = {TTL_MS, SETUP_STEPS, AI_PANEL_HASH, setupNavigation, FOCUS_GAP_MS, focusLimiter, challengeOf, begin, loginUrl, wantsFresh, parseCallback, parseSetupLink, accept, claimBody, claimRequest, findLink, isLoginNav};

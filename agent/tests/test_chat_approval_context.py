@@ -16,6 +16,16 @@ class ApprovalOutcomesContextTest(unittest.TestCase):
         self.assertNotIn("record_id", context)
         self.assertNotIn("user_id", context)
 
+    def test_fixed_instructions_show_answer_get_markdown_whole(self):
+        # App 0.1.8: the same rule as server/main.py INSTRUCTIONS (answer_get), one constant for chat and bridge.
+        from agent import chat_approval_context as c
+        context = format_approval_outcomes(())
+        self.assertIn(c.ANSWER_GET_RULE, context)
+        for phrase in ("answer_get 의 markdown", "처음부터 끝까지 그대로 보여 준다", "앞뒤에 문장을 붙이지 않는다",
+                       "줄을 빼거나 묶거나 요약하지 않는다"):
+            self.assertIn(phrase, c.ANSWER_GET_RULE)
+        self.assertNotRegex(c.ANSWER_GET_RULE, "[「」·]")
+
     def test_accepts_only_server_approved_metadata_and_keeps_context_separate(self):
         outcome = {"id": "ca_" + "a" * 24, "op": "record_edit", "status": "confirmed"}
         normalized = normalize_approval_outcomes([outcome])

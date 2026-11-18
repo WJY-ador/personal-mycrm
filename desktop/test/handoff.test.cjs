@@ -88,8 +88,38 @@ test('R-J5: main.cjs raises the dashboard for setup and login links only through
  assert.match(main,/const linkRaise=handoff\.focusLimiter\(\);/);
  assert.match(body('raiseForLink'),/if\(!linkRaise\(\)\)return;showWindow\(\);app\.focus\(\{steal:true\}\);/);
  assert.doesNotMatch(body('deepLink'),/steal|showDashboard\(\);/,'deepLink does not raise by itself');
- assert.match(body('deepLink'),/raiseForLink\(showDashboard\);\r?\n  if\(handoff\.parseSetupLink\(raw\)\)return;[\s\S]*handoff\.accept/);
- // One window (spec 2026-11-13 §1.1): an old mycrm://connection?step=… link shows the dashboard and nothing else.
- assert.match(body('guard'),/if\(handoff\.parseSetupLink\(url\)\)\{event\.preventDefault\(\);raiseForLink\(showDashboard\);return;\}/);
+ assert.match(body('deepLink'),/raiseForLink\(showDashboard\);\r?\n  const step=handoff\.parseSetupLink\(raw\);if\(step\)\{openStep\(step\);return;\}[\s\S]*handoff\.accept/);
+ // One window (spec 2026-11-13 §1.1): a mycrm://connection?step=… link shows the dashboard; provider also opens the
+ // AI panel (spec 2026-11-18 §1.4, openStep).
+ assert.match(body('guard'),/const step=handoff\.parseSetupLink\(url\);\r?\n  if\(step\)\{event\.preventDefault\(\);raiseForLink\(showDashboard\);openStep\(step\);return;\}/);
  assert.doesNotMatch(main,/setup-step|setupLink|function show\(\)/);
+});
+
+test('setup step: provider opens the AI panel (#_ai), connect and permits only show the dashboard',()=>{
+ const DASH='https://personal-mycrm.onrender.com/app';
+ assert.equal(h.AI_PANEL_HASH,'#_ai');
+ for(const step of ['connect','permits',null])for(const cur of [DASH,'',DASH+'#_today'])assert.equal(h.setupNavigation(step,cur,DASH),null,String(step));
+ // The dashboard document is already open (any hash or query): only the hash changes, no reload.
+ for(const cur of [DASH,DASH+'#_today',DASH+'#_setup/pc',DASH+'?x=1#_me',DASH+'#_ai'])assert.deepEqual(h.setupNavigation('provider',cur,DASH),{hash:'#_ai'},cur);
+ // Anything else (app start, a login notice page, another path or origin): load the dashboard with the hash.
+ for(const cur of ['','about:blank','data:text/html,x','https://personal-mycrm.onrender.com/','https://personal-mycrm.onrender.com/login','https://evil.example/app'])
+  assert.deepEqual(h.setupNavigation('provider',cur,DASH),{load:DASH+'#_ai'},cur);
+ assert.equal(h.setupNavigation('provider','',DASH+'#_today').load,DASH+'#_ai','the dashboard URL keeps no other hash');
+ // The links the web uses (server/ui webchat text.ts) parse to these steps.
+ assert.equal(h.parseSetupLink('mycrm://connection?step=provider'),'provider');
+ assert.equal(h.parseSetupLink('mycrm://connection?step=connect'),'connect');
+});
+test('main: every setup link path (running app, page link, new window, link that launched the app) goes through openStep',()=>{
+ const main=require('node:fs').readFileSync(require('node:path').join(__dirname,'..','src','main.cjs'),'utf8');
+ assert.match(main,/const stepLimit=handoff\.focusLimiter\(\);/);
+ const open=/function openStep\(step\)\{[\s\S]*?\n\}/.exec(main)?.[0]||'';
+ assert.match(open,/handoff\.setupNavigation\(step,dash\.webContents\.getURL\(\),DASHBOARD\)/);
+ assert.match(open,/if\(!nav\|\|!stepLimit\(\)\)return;/,'connect and permits do nothing more; at most once per 2 s');
+ // The only script the app runs in the page: a fixed hash, no link text.
+ assert.match(open,/if\(nav\.hash\)dash\.webContents\.executeJavaScript\(`location\.hash=\$\{JSON\.stringify\(nav\.hash\)\};`\)\.catch\(\(\)=>\{\}\);/);
+ assert.equal((main.match(/executeJavaScript\(/g)||[]).length,1);
+ assert.match(open,/else dash\.loadURL\(nav\.load\)\.catch\(\(\)=>\{\}\);/);
+ assert.match(main,/setWindowOpenHandler\(\(\{url\}\)=>\{const step=handoff\.parseSetupLink\(url\);if\(step\)\{raiseForLink\(showDashboard\);openStep\(step\);\}else/);
+ // Launched by the link (queuedLink): the first load is the dashboard with the AI panel.
+ assert.match(main,/const link=queuedLink;queuedLink=null;const step=link\?handoff\.parseSetupLink\(link\):null;\r?\n  if\(link&&!step\)deepLink\(link\);else dash\.loadURL\(handoff\.setupNavigation\(step,'',DASHBOARD\)\?\.load\|\|DASHBOARD\)\.catch\(\(\)=>\{\}\);/);
 });

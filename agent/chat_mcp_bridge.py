@@ -14,6 +14,7 @@ import stat
 import sys
 from collections import defaultdict
 
+from .chat_approval_context import ANSWER_GET_RULE
 from .chat_launch_authority import AUTH_PATH, LaunchAuthorizationDenied
 
 
@@ -30,6 +31,9 @@ JSONRPC_METHOD_NOT_FOUND = -32601
 FAMILIES = ("state", "question", "record", "candidate", "definition", "person", "source",
             "activity", "inbox", "trash", "desk", "migration", "pc")
 MAX_LINE_BYTES = 256 * 1024
+# MCP initialize instructions: the server-level rules the provider CLI shows its model. Only the answer_get display
+# rule for now (app 0.1.8); the same constant is in the web chat fixed instructions (agent/chat_approval_context.py).
+BRIDGE_INSTRUCTIONS = ANSWER_GET_RULE
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 
 
@@ -182,7 +186,8 @@ class McpStdioBridge:
                 raise ValueError("params")
             if method == "initialize":
                 result = {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}},
-                          "serverInfo": {"name": SERVER_NAME, "version": "1"}}
+                          "serverInfo": {"name": SERVER_NAME, "version": "1"},
+                          "instructions": BRIDGE_INSTRUCTIONS}
             elif method == "ping":
                 result = {}
             elif method == "tools/list":

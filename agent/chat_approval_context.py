@@ -33,6 +33,12 @@ _CREATED_OPS = frozenset({
 _CREATED_KEYS = frozenset({"id", "source_id", "object_id", "proposal_id", "item_id"})
 _CREATED_ID = re.compile(r"^(?:od_[0-9a-f]{10}|(?:q|r|s|p|sr|dp|i|ip)_[A-Za-z0-9_-]{11})$")
 _STATUSES = frozenset({"confirmed", "cancelled"})
+# answer_get 결과를 보여 주는 규칙. server/main.py INSTRUCTIONS 의 answer_get 문장과 같은 뜻이다. 웹 대화 고정 지시문과
+# PC 브리지 initialize instructions(agent/chat_mcp_bridge.py)가 이 상수 하나를 쓴다.
+ANSWER_GET_RULE = (
+    "answer_get 의 markdown 은 처음부터 끝까지 그대로 보여 준다. 앞뒤에 문장을 붙이지 않는다. "
+    "줄을 빼거나 묶거나 요약하지 않는다."
+)
 MYCRM_FIXED_INSTRUCTIONS = (
     "MyCRM 대화에서는 승인된 mcp__my-crm 도구만 사용해 필요한 사용자 기록을 조회하고, "
     "사용자 지시를 MyCRM의 기존 도구 규칙과 미리보기 절차에 따라 처리한다. "
@@ -47,7 +53,8 @@ MYCRM_FIXED_INSTRUCTIONS = (
     "이 예외는 MyCRM 웹 AI 대화에서만 쓴다. 이 초안은 확인 카드에 전문이 보이고 사용자가 카드로 확인해야 저장되며, "
     "그 카드 확인을 사용자가 \"이 정리의 결정은 내가 했다\"고 말한 것으로 본다. "
     "형식: 주제마다 제목 한 줄과 문단 하나, 사용자 1인칭, 결정 하나에 문단 하나, 어휘는 사용자 것만, AI 내부 추론은 쓰지 않는다, "
-    "동기는 대화에 있는 것만 쓰고 없으면 \"동기: 대화에 없음\"."
+    "동기는 대화에 있는 것만 쓰고 없으면 \"동기: 대화에 없음\". "
+    + ANSWER_GET_RULE
 )
 
 
