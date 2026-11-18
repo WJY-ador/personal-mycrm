@@ -140,7 +140,8 @@ python3 -m agent [--home 경로] <명령>
 "mail": {"enabled": true, "input_path": "/absolute/path/to/mail.jsonl"}
 ```
 - `feed.channels` — 원천 `source` 값 → 채널(`linkedin`, `reddit`, `kakao`, `threads`, `blog`, `web`). 기본값: `source` 없음, `linkedin`, `linkedin_search` → `linkedin`, `reddit`, `kakao`, `brunch`, `naver_blog` → `blog`, `web`. 값을 `null` 로 적으면 그 `source` 는 보내지 않습니다. 매핑에 없는 `source` 는 격리합니다.
-- `feed.axes_map` — 원천 축 코드 → 축 항목 ID. 웹 연결 장치 허용 규칙의 축 안이어야 합니다. 매핑에 없는 코드는 버립니다(최대 10개).
+- 축(2026-11-18): 행의 `axes` 가 비지 않았으면 `axes`, 아니면 `axes_hint` 전부를 축 코드(`axis_codes`, 예 `A`, `B-1`)로 보냅니다(대시보드와 같은 규칙, 따로 고를 것 없음). 서버가 그 계정의 축 항목(코드가 같은 것)에 붙입니다. 서버가 장치 정보(`GET /api/imports/device`)의 `features` 에 `axis_codes` 를 알릴 때만 싣습니다 — 모르면 하루 한 번 묻고(대기 요청이 없어도), 옛 서버면 축 없이 보냅니다(옛 서버는 그 키를 거절합니다). 처음 알게 되면 축이 있는 대기·보관 글이 새 개정으로 다시 올라갑니다(실행당 50건 — 업로드 간격 6.5초로 앱의 실행 시간 한도 600초 안, 남은 것은 다음 실행). 버린 글과 축이 없는 글은 다시 올리지 않습니다.
+- `feed.axes_map` — (옛 경로) 원천 축 코드 → 축 항목 ID. 서버가 `axis_codes` 를 받으면 쓰지 않습니다. 웹 연결 장치 허용 규칙의 축 안이어야 합니다. 매핑에 없는 코드는 버립니다(최대 10개).
 - `reactions.inputs` — 파일마다 `format`(`reactions` 또는 `threads_likes`)과 `channel` 을 적습니다. `channel` 은 `kakao` 를 쓸 수 없습니다(반응 활동의 제공자에 카톡이 없습니다). `reactions.kind_actions` — 원천 `kind` → 활동(기본 `like`, `comment`, `repost`, `reply` 그대로). 매핑에 없는 `kind` 는 활동 없이 격리 기록만 남기고, 수집 글은 그대로 보냅니다.
 - `threads_likes` 입력은 수집 글만 만듭니다. 좋아요 활동은 `likes` 어댑터가 만듭니다. 그래서 같은 Threads 좋아요 파일을 두 어댑터가 함께 읽어도 활동이 겹치지 않습니다.
 - 웹 연결 장치 허용 규칙에서 변환(`collected-post/1`, `board-feed/1`, `board-reactions/1`, `board-mail/1`)과 행동(`save`, `comment`, `repost`, `reply`, `read`, `send`)을 켜야 서버가 받습니다. 꺼져 있으면 만들지 않고 건너뜁니다(`run-once` 결과의 `skipped_policy`). 웹에서 켜면 다음 실행이 허용 규칙을 다시 받아 만듭니다.
@@ -172,7 +173,8 @@ python3 -m agent [--home 경로] <명령>
 | `post_url` | `https://` URL | → `post_url` |
 | `author` | 문자열 | → `author_display` |
 | `published_at` | 오프셋 있는 시각 또는 날짜 | KST 날짜 → `posted_on`. 없으면 비움 |
-| `axes` | 축 코드 문자열 목록 | `feed.axes_map` 으로 → `axes`(수집 글과 `save` 활동) |
+| `axes` | 축 코드 문자열 목록(사람이 확정) | 비지 않았으면 → `axis_codes`(서버가 받을 때). 옛 경로는 `feed.axes_map` 으로 → `axes`(수집 글과 `save` 활동) |
+| `axes_hint` | 축 코드 문자열 목록(키워드 규칙) | `axes` 가 비면 → `axis_codes` |
 | `grade` | `signal`, `news`, `noise` | → `ai.grade` |
 | `summary` | 문자열 | → `ai.summary`(500자에서 자름) |
 | `long` | `{asis, tobe, ops, points[]}` | → `ai.as_is`, `ai.to_be`, `ai.ops`(각 1,000자), `ai.points`(12개, 각 300자) |
@@ -222,6 +224,19 @@ python3 -m agent [--home 경로] <명령>
 - 요약은 서버 「승인 대기」로 가고, 내가 웹에서 승인해야 기록이 됩니다. 승인해도 AI 생성 표시가 남습니다.
 - 웹에서 삭제한 요약은 입력 파일이 바뀌어도 바로 다시 요약하지 않습니다(구독 사용 0). 휴지통이면 168시간 뒤 입력이 바뀌어 있을 때 한 번 다시 요약해 보내고(복원했으면 접수), 영구 삭제했으면 더는 요약하지 않습니다.
 - 지금 에이전트는 내 글(`self-text/1`)을 만드는 어댑터가 없습니다. 승인 대기로 가는 것은 AI 요약과 세션 정리(아래)입니다. 수집 글(3-1절)은 승인 대기 없이 바로 항목이 됩니다.
+
+## 4-0. 축 한 장 폴더 (기본 꺼짐)
+
+축마다 AI 가 이어 쓴 「한 장」(`<축 코드>.md`)을 `axis-page/1` 로 보냅니다. 서버는 받는 즉시 「AI 가 쓴 초안」 기록(인용 불가)으로 두고 그 축에 붙입니다. 이 앱은 모델을 쓰지 않습니다.
+
+```json
+"axis_pages": {"dir": "/absolute/path/to/axis-folder"}
+```
+
+- 폴더 바로 아래의 `<코드>.md`(코드 = 대문자, 숫자, `-` 1~10자)만 읽습니다. `A.prev.md`, `*.bad.json`, `*.error.txt`, `*.material.json`, 숨김, 심볼릭 링크, 하위 폴더는 읽지 않습니다. 이 경로는 이 PC 설정에만 두고 서버로 보내지 않습니다.
+- 제목 = 첫 `# ` 줄(없으면 「축 <코드> 한 장」), 본문 = 그 뒤 markdown 그대로, 원본 시각 = 파일 수정 시각. 제목, 본문의 URL, 이메일, 로컬 경로는 `‹링크›`, `‹메일›`, `‹경로›` 로 가리고 보냅니다.
+- 파일 내용이 바뀐 것만 새 판으로 보냅니다(수정 시각만 바뀐 재작성은 보내지 않음). 같은 축의 새 판은 옛 판을 대신합니다.
+- 서버가 `axis-page/1` 을 모르면(허용 규칙에 없음) 아무것도 만들지 않습니다.
 
 ## 4-1. 세션 정리 폴더 (기본 꺼짐)
 
