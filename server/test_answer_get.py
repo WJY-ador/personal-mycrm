@@ -7,6 +7,7 @@
 6) 세션 정리 꼴 기록 draft 에 들어감 7) 수집 글은 related_posts 만(ai_*·본문 없음) 8) 항목(기준) 없음 9) question_id 확정 후보 맨 앞·남의 질문 NOT-FOUND
 10) 검색어 만들기 11) gaps 코드별 1건 이상 12) markdown 줄머리 이스케이프 13) ARG-INVALID 14) 카탈로그 tier read = chat_mcp 고정 목록
 15) 흔한 낱말 가중치 정렬 16) 인용 후보에서 빼는 줄(소제목, 굵게만, 표, 목록 머리표만 다른 같은 문장)과 굵게 줄머리 17) 근거 10편 상한과 more_evidence
+18) 접힌 줄(약 80칸에서 접어 쓴 글)은 한 문장으로 잇는다, 잇지 않는 조건, \r\n, markdown 여러 줄 인용, 길이 상한, 코드 울타리, 가로줄, 들여쓴 줄
 """
 import asyncio
 import datetime as _dt
@@ -50,6 +51,13 @@ Q_MAIN = "알파도구 베타검증은 무엇부터 하나"
 # 응답에 나오면 안 되는 표식
 AI_MARK, TRASH_MARK, DEL_MARK, ITEM_MARK, OTHER_MARK = "AI요약표식ZQX", "휴지통표식ZQX", "지운글표식ZQX", "항목표식ZQX", "남의자료ZQX"
 AISUM_MARK, POSTBODY_MARK, LOC_MARK = "수집AI요약ZQX", "수집본문ZQX", "https://secret.example/loc-ZQX"
+# 접힌 줄 — 가짜 문장. 첫 줄은 인용 부호 안에서 끝나고 문장은 둘째 줄에서 끝난다
+FOLD_A = '상대가 "피자표식 우동표식 채택은 보급이 아니라 귀속 문제"로 한 줄 요약했을 때, 나는 "결국'
+FOLD_B = '보급이라는 게 회사가 지원해 주느냐의 문제"라고 답했다.'
+FOLD_CR_A = "피자표식 우동표식 둘째 기록은 윈도에서 쓴 글이라 줄 끝이 캐리지 리턴과 줄바꿈 둘이고 이 줄은"
+FOLD_CR_B = "다음 줄에서 문장이 끝난다."
+FOLD_LI_A = "- 피자표식 우동표식 목록 항목은 사십 자를 넘게 길게 써서 마침표 없이 다음 줄로 넘어가고"
+FOLD_LI_B = "  들여쓴 이어지는 줄에서 끝난다."
 
 
 def ok(msg):
@@ -189,6 +197,10 @@ def setup():
     S["r_lines"] = rec(A, "줄 거르기 메모", "# 뮤표식 뉴표식 소제목. 소제목 줄 둘째 조각 뮤표식 뉴표식\n**뮤표식 뉴표식 굵은 줄**\n"
                                          "__뮤표식 뉴표식 굵은 줄 둘__:\n| 뮤표식 | 뉴표식 |\n- 뮤표식 뉴표식 같은 문장\n* 뮤표식 뉴표식 같은 문장\n"
                                          "1. 뮤표식 뉴표식 같은 문장\n**뮤표식** 뉴표식 굵게 머리 문장")
+    # 접힌 줄 — 두 줄 문장, \r\n 본문, 들여쓴 이어지는 줄이 있는 목록 항목
+    S["r_fold"] = rec(A, "접힌 줄 메모", f"{FOLD_A}\n{FOLD_B}")
+    S["r_fold_cr"] = rec(A, "접힌 줄 CRLF 메모", f"{FOLD_CR_A}\r\n{FOLD_CR_B}")
+    S["r_fold_li"] = rec(A, "접힌 목록 메모", f"{FOLD_LI_A}\n{FOLD_LI_B}\n- 둘째 항목이다.")
     # 근거 10편 상한 — 맞는 기록 12편(날짜가 달라 순서가 정해진다)
     S["r_many"] = [rec(A, f"많은 근거 {i:02d}", f"로표식 시표식 근거 문장 {i:02d}.", date=days_ago(i)) for i in range(12)]
 
@@ -272,7 +284,7 @@ def _body(uid, kind, rid):
 def test_quote_verbatim(S):
     n = 0
     for kw in ({"question": Q_MAIN}, {"question_id": S["q1"]}, {"question": "감마표식 델타표식"}, {"question": "엡실론표식 제타표식"},
-               {"question": "카파표식 람다표식"}):
+               {"question": "카파표식 람다표식"}, {"question": "피자표식 우동표식"}):
         res = get(S["A"], **kw)
         spans = set()
         for e in res["evidence"]:
@@ -498,6 +510,112 @@ def test_more_evidence(S):
     ok("17) 근거 10편 상한 · 넘친 2편은 부족한 곳 more_evidence 고정 문구 하나")
 
 
+def _check(body, want):
+    """sentences(body) 가 want(문장 목록)와 같고 모든 (start, end) 가 body[start:end] 와 맞는다."""
+    got = list(answer.sentences(body))
+    assert [t for _, _, t in got] == want, (body, got)
+    assert all(body[a:b] == t for a, b, t in got), got
+
+
+def test_folded_lines(S):
+    for ln in (FOLD_A, FOLD_CR_A, FOLD_LI_A):
+        assert len(ln.strip()) >= answer.FOLD_MIN, (len(ln.strip()), ln)
+    # 두 줄 문장 = 인용 하나(줄바꿈 포함 원문 그대로), 둘째 줄이 따로 된 인용으로 나오지 않는다
+    _check(f"{FOLD_A}\n{FOLD_B} 다음 문장이다.", [f"{FOLD_A}\n{FOLD_B}", "다음 문장이다."])
+    # 세 줄 문단 — 둘째 줄 중간에서 문장이 끝나고 새 문장이 셋째 줄까지 간다(덩어리 안 위치 계산)
+    l1 = "세 줄로 접은 문단의 첫 줄은 마침표 없이 길게 이어지고 둘째 줄로 넘어가며 계속"
+    l2 = "  이어진다. 둘째 문장은 둘째 줄 중간에서 시작해 셋째 줄까지 길게 이어지고 또"
+    l3 = "여기서 끝난다. 마지막 문장."
+    assert len(l1.strip()) >= 40 and len(l2.strip()) >= 40
+    _check(f"앞 문단.\n\n{l1}\n{l2}\n{l3}",
+           ["앞 문단.", f"{l1}\n  이어진다.", f"둘째 문장은 둘째 줄 중간에서 시작해 셋째 줄까지 길게 이어지고 또\n여기서 끝난다.", "마지막 문장."])
+    # 접힌 목록 항목 — 들여쓴 이어지는 줄을 앞 줄에 잇는다. 다음 머리표 줄은 잇지 않는다
+    _check(f"{FOLD_LI_A}\n{FOLD_LI_B}\n- 둘째 항목이다.", [f"{FOLD_LI_A}\n{FOLD_LI_B}", "- 둘째 항목이다."])
+    # 길이 경계 — 앞뒤 공백 뺀 39자는 잇지 않고 40자는 잇는다
+    s40 = "가나다라마바사아자차" * 4
+    s39 = s40[:39]
+    assert (len(s39), len(s40)) == (39, 40)
+    _check(f"{s39}\n이어질 줄.", [s39, "이어질 줄."])
+    _check(f"  {s39}  \n이어질 줄.", [s39, "이어질 줄."])
+    _check(f"{s40}\n이어질 줄.", [f"{s40}\n이어질 줄."])
+    # 다음 줄이 목록 머리표, #, >, |, ** 로 시작하면(들여쓰기 뺀 뒤) 잇지 않는다
+    for nxt in ("- 목록", "* 별 목록", "+ 더하기 목록", "1. 정렬 목록", "12) 정렬 목록", "  - 들여쓴 목록", "#해시태그 줄", "## 소제목 줄",
+                "> 인용 줄", "| 표 | 줄 |", "**굵게** 시작 줄", "  **들여쓴 굵게** 줄"):
+        got = list(answer.sentences(f"{s40}\n{nxt}"))
+        assert got[0] == (0, 40, s40) and all("\n" not in t for _, _, t in got), (nxt, got)
+    # 앞 줄이 문장 끝 글자(뒤 닫는 따옴표, 괄호 포함)나 쌍점으로 끝나면, 사이에 빈 줄이나 공백만 있는 줄이 있으면 잇지 않는다(지금과 같다)
+    for end in (".", "?", "!", "。", '."', ".”", ".)", ".」", ":", "："):
+        _check(f"{s40}{end}\n다음 줄", [f"{s40}{end}", "다음 줄"])
+    _check(f"{s40}\n\n다음 줄", [s40, "다음 줄"])
+    _check(f"{s40}\n   \n다음 줄", [s40, "다음 줄"])
+    # _skip_line 줄은 잇지 않는다 — 긴 소제목 줄 뒤 줄, 긴 줄 뒤 굵게만 있는 줄
+    _check(f"## {s40}\n소제목 다음 줄", ["소제목 다음 줄"])
+    _check(f"{s40}\n__굵은 줄__\n끝 줄", [s40, "끝 줄"])
+    # \r\n, \r 줄 끝 — 문장에 \r\n 이 남는다
+    _check(f"{FOLD_CR_A}\r\n{FOLD_CR_B}", [f"{FOLD_CR_A}\r\n{FOLD_CR_B}"])
+    _check(f"{s40}\r이어질 줄.", [f"{s40}\r이어질 줄."])
+    # 같은 글 안 같은 문장 — 접힌 꼴과 한 줄 꼴은 같은 문장으로 본다(뒤 것을 건너뛴다)
+    _check(f"{FOLD_A}\n{FOLD_B}\n\n{FOLD_A} {FOLD_B}", [f"{FOLD_A}\n{FOLD_B}"])
+    # 검색어 비교는 줄바꿈을 공백으로 본다 — 공백 든 검색어가 접힌 자리에 걸쳐도 맞는다(반환 text 는 원문 그대로)
+    folded = f"{FOLD_A}\n{FOLD_B}"
+    assert answer.score(folded, ["결국 보급이라는"]) == 1 and answer.weigh(folded, ["결국 보급이라는"], {"결국 보급이라는": 1.5}) == (1, 1.5)
+    assert answer.term_weights([f"{folded} 둘째. 셋째."], ["결국 보급이라는"]) == {"결국 보급이라는": round(__import__("math").log(3 / 2), 6)}
+
+    # 길이 상한 — 이은 결과로 줄 끝을 넘는 문장이 FOLD_MAX(400)자 이하면 잇고, 넘으면 그 덩어리는 줄마다 나눈다(다시 잇지 않는다)
+    rows = [(f"줄{i:02d} " + s40)[:40] for i in range(9)]
+    assert answer.FOLD_MAX == 400 and all(len(r) == 40 for r in rows)
+    tail31, tail32 = ("끝줄 " + s40)[:31], ("끝줄 " + s40)[:32]
+    at400, at401 = "\n".join([*rows, tail31]), "\n".join([*rows, tail32])
+    assert (len(at400), len(at401)) == (400, 401)
+    _check(f"{at400}\n\n뒤 문단.", [at400, "뒤 문단."])
+    _check(f"{at401}\n\n뒤 문단.", [*rows, tail32, "뒤 문단."])
+    # 한 줄짜리 긴 문장은 상한과 무관하게 그대로, 그 줄에 다음 줄을 이으면 상한을 넘어 잇지 않는다
+    one = "한 줄짜리 긴 문장 " + "가" * 450
+    _check(one, [one])
+    _check(f"{one}\n다음 줄", [one, "다음 줄"])
+    # 상한은 줄 끝을 넘는 문장만 본다 — 덩어리 안에 줄 끝을 넘지 않는 긴 문장이 있어도 접힌 문장은 잇는다
+    _check("나" * 450 + f". {s40}\n이어진 끝.", ["나" * 450 + ".", f"{s40}\n이어진 끝."])
+    # 코드 울타리 — 울타리 줄은 앞뒤로 잇지 않고 울타리 안 줄도 서로 잇지 않는다(닫힌 뒤는 다시 잇는다)
+    c1, c2 = ("코드 첫 줄 " + s40)[:40], ("코드 둘째 줄 " + s40)[:40]
+    for fo, fc in (("```", "````"), ("```py", "```"), ("~~~", "~~~~"), ("  ```", "  ````")):
+        _check(f"{s40}\n{fo}\n{c1}\n{c2}\n{fc}\n{s40[:-1]}끝\n이어진다.",
+               [s40, fo.strip(), c1, c2, fc.strip(), f"{s40[:-1]}끝\n이어진다."])
+    _check(f"{s40}\n```\n{c1}\n{c2}", [s40, "```", c1, c2])   # 닫지 않은 울타리는 끝까지 울타리 안
+    _check(f"~~~\n{c1}\n```\n{c2}\n~~~", ["~~~", c1, "```", c2])   # ~~~ 는 ``` 로 닫히지 않는다(같은 문장 ~~~ 는 같은 글 중복이라 한 번)
+    # 가로줄, 밑줄 꼴 — 앞뒤로 잇지 않는다
+    for rule in ("---", "===", "***", "___", "* * *", "-- --", "=========="):
+        got = list(answer.sentences(f"{s40}\n{rule}"))
+        assert got[0] == (0, 40, s40) and all("\n" not in t for _, _, t in got), (rule, got)
+    _check("-" * 45 + "\n다음 줄", ["-" * 45, "다음 줄"])
+    _check("=" * 20 + " " + "=" * 20 + "\n다음 줄", ["=" * 20 + " " + "=" * 20, "다음 줄"])
+    # 4칸 이상 들여쓴 줄 — 목록 항목의 이어지는 줄이 아니면 잇지 않는다(앞이든 뒤든)
+    _check(f"{s40}\n    들여쓴 코드 줄", [s40, "들여쓴 코드 줄"])
+    _check(f"{s40}\n\t탭 들여쓴 줄", [s40, "탭 들여쓴 줄"])
+    _check(f"    {s40}\n다음 줄", [s40, "다음 줄"])
+    _check(f"{s40}\n   세 칸 들여쓴 줄", [f"{s40}\n   세 칸 들여쓴 줄"])
+    li = ("- 목록 항목 첫 줄 " + s40)[:42]
+    _check(f"{li}\n    네 칸 들여쓴 이어지는 줄", [f"{li}\n    네 칸 들여쓴 이어지는 줄"])
+    _check(f"    {li}\n      더 들여쓴 이어지는 줄", [f"{li}\n      더 들여쓴 이어지는 줄"])
+
+    # 조립 — 근거 인용과 초안이 접힌 문장 하나, body[start:end] == text, markdown 은 줄마다 '> ' 와 마지막 줄 뒤 (ref id)
+    res = get(S["A"], question="피자표식 우동표식")
+    ev = {e["ref"]["id"]: e for e in res["evidence"]}
+    want = {S["r_fold"]: f"{FOLD_A}\n{FOLD_B}", S["r_fold_cr"]: f"{FOLD_CR_A}\r\n{FOLD_CR_B}", S["r_fold_li"]: f"{FOLD_LI_A}\n{FOLD_LI_B}"}
+    for rid, text in want.items():
+        qs = ev[rid]["quotes"]
+        assert [q["text"] for q in qs] == [text], qs
+        assert _body(S["A"], "record", rid)[qs[0]["start"]:qs[0]["end"]] == text
+    assert sorted(d["quote"] for d in res["draft"]) == sorted(want.values()), res["draft"]
+    assert not any(d["quote"].startswith(("보급이라는", "다음 줄에서", "들여쓴")) for d in res["draft"])
+    md = res["markdown"]
+    assert f"> {FOLD_A}\n> {FOLD_B} ({S['r_fold']})" in md, md
+    assert f"> {FOLD_CR_A}\n> {FOLD_CR_B} ({S['r_fold_cr']})" in md and "\r" not in md, md
+    assert f"> \\{FOLD_LI_A}\n> {FOLD_LI_B} ({S['r_fold_li']})" in md, md
+    ok("18) 접힌 줄: 두 줄, 세 줄 문단, 목록 이어지는 줄을 한 문장으로(body[start:end] = text, 둘째 줄 따로 없음) 39자와 40자 경계, "
+       "머리표 # > | ** 줄, 문장 끝과 쌍점, 빈 줄, _skip_line 은 잇지 않음, \\r\\n, 같은 문장 판정, 공백 든 검색어, markdown 여러 줄 인용, "
+       "길이 상한 400자, 코드 울타리, 가로줄과 밑줄, 4칸 들여쓴 줄(목록 이어지는 줄만 이음)")
+
+
 async def test_catalog(S):
     cat = facade.load_catalog()
     spec = cat["ops"]["answer_get"]
@@ -563,6 +681,7 @@ async def run():
         test_weighting(S)
         test_line_filters(S)
         test_more_evidence(S)
+        test_folded_lines(S)
         await test_catalog(S)
     finally:
         cleanup()
