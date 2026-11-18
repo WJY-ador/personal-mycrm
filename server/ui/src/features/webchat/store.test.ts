@@ -3,7 +3,7 @@
 import { expect, test, vi } from "vitest";
 import { ApiFail } from "../../shared/api";
 import type { Capabilities, Es, Grant } from "./api";
-import { CAPS_REFRESH_GAP_MS, MODEL_KEY, WebchatStore, choiceKey, pastTurns, type Saved } from "./store";
+import { CAPS_REFRESH_GAP_MS, MODEL_KEY, STATE_POLL_MS, WebchatStore, chatState, choiceKey, pastTurns, type Saved } from "./store";
 import { EMPTY, END, ERR, GRANT, REPLACED, TEXT_MAX, TRIMMED, errText } from "./text";
 
 class FakeEs implements Es {
@@ -612,4 +612,67 @@ test("보안 검토 1: 무장은 10초 뒤 저절로 풀리고, 풀린 뒤 누�
   await s.actOnApproval("ap_1", "confirm");
   expect(s.api.confirmApproval).not.toHaveBeenCalled();
   expect(s.approvalArmed).toBe("ap_1");
+});
+
+// ── 대화 연결 상시(2026-11-18) — PC 상태 하나 ──
+test("chatState: 서버 setup 과 선택지, 진행 중 대화의 PC 연결로만 네 상태를 정한다(시간 창 없음)", () => {
+  // 새 대화: 선택지가 있으면 ready, 없으면 setup 대응
+  expect(chatState("ready", 1, 2, null)).toBe("ready");
+  expect(chatState("none", 0, 0, null)).toBe("no_pc");
+  expect(chatState("offline", 0, 0, null)).toBe("app_off");
+  expect(chatState("no_provider", 0, 0, null)).toBe("ai_not_linked");
+  expect(chatState("no_link", 1, 0, null)).toBe("ai_not_linked");
+  expect(chatState("ready", 1, 0, null)).toBe("ai_not_linked");   // 서버는 ready(옛 앱, capabilities 비어 있음) 인데 고를 것이 없다
+  // setup 이 없는 응답(옛 서버)
+  expect(chatState(undefined, 0, 0, null)).toBe("app_off");
+  expect(chatState(undefined, 1, 0, null)).toBe("ai_not_linked");
+  expect(chatState(undefined, 1, 1, null)).toBe("ready");
+  // 진행 중 대화 = 그 대화의 PC 연결이 정한다(capabilities 와 무관)
+  expect(chatState("offline", 0, 0, { connected: true })).toBe("ready");
+  expect(chatState("ready", 1, 2, { connected: false })).toBe("app_off");
+});
+
+test("store.chatState: 아직 모르면 null, 보내기는 ready 일 때만, 진행 중 대화는 SSE pc 가 정한다", async () => {
+  const { s } = mk(false);
+  expect(s.chatState()).toBeNull();
+  s.api.capabilities = vi.fn(async () => ({ devices: [], setup: "offline" as const }));
+  await s.toggle(true);
+  expect(s.chatState()).toBe("app_off");
+  s.input = "메모";
+  expect(s.canSend()).toBe(false);
+  s.api.capabilities = vi.fn(async () => caps(["is_1", [["fake", [null]]]]));
+  await s.loadCapabilities();
+  expect([s.chatState(), s.canSend()]).toEqual(["ready", true]);
+  // 진행 중 대화: SSE pc 사건이 상태를 바꾼다
+  const t = mk(); await t.s.toggle(true);
+  expect(t.s.chatState()).toBe("ready");
+  t.es.fire("pc", { device_id: "is_1", connected: false });
+  expect(t.s.chatState()).toBe("app_off");
+  t.s.input = "메모";
+  expect(t.s.canSend()).toBe(false);
+  t.es.fire("pc", { device_id: "is_1", connected: true });
+  expect([t.s.chatState(), t.s.canSend()]).toEqual(["ready", true]);
+});
+
+test("pollState: STATE_POLL_MS 마다 조용히 다시 읽는다(불러오는 중 표시, 오류 줄 없음), 멈추면 더 읽지 않는다", async () => {
+  const { s } = mk(false);
+  const timers: Array<{ fn: () => void; ms: number; on: boolean }> = [];
+  s.later = (fn, ms) => { const t = { fn, ms, on: true }; timers.push(t); return () => { t.on = false; }; };
+  const tick = async () => { const t = timers.filter(x => x.on && x.ms === STATE_POLL_MS).pop()!; t.on = false; t.fn(); await Promise.resolve(); await Promise.resolve(); };
+  s.api.capabilities = vi.fn(async () => ({ devices: [], setup: "offline" as const }));
+  await s.toggle(true);
+  const n = () => calls(s.api.capabilities).length;
+  const stop = s.pollState();
+  expect(timers.filter(x => x.on).map(x => x.ms)).toEqual([STATE_POLL_MS]);
+  const seen: boolean[] = [];
+  const off = s.subscribe(() => seen.push(s.capsLoading));
+  await tick();
+  expect(n()).toBe(2);
+  expect(seen.every(x => !x)).toBe(true);   // 5초마다 불러오는 중으로 깜빡이지 않는다
+  s.api.capabilities = vi.fn(async () => { throw new ApiFail({ code: "OFFLINE", msg: "" }); });
+  await tick();
+  expect(s.line).toBe("");   // 배경 재확인의 실패는 오류 줄을 쓰지 않는다
+  stop();
+  expect(timers.filter(x => x.on)).toEqual([]);
+  off();
 });

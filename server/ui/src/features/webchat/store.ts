@@ -7,7 +7,7 @@
 // 브라우저 저장소에는 모델 선택(PC, 공급자, 모델 이름) 하나만 쓴다. 글과 대화 내용은 쓰지 않는다.
 import { apiErr } from "../../shared/api";
 import { reportError } from "../../shared/report";
-import { webchatApi, type Capabilities, type Es, type Grant, type Message, type Session, type WebchatApi } from "./api";
+import { webchatApi, type Capabilities, type Setup, type Es, type Grant, type Message, type Session, type WebchatApi } from "./api";
 import type { Approval } from "./api";
 import { AI_UNLINKED, BUSY_NEW, PAST_END, REPLACED, TEXT_MAX, TRIMMED, endText, errText } from "./text";
 import { splitModels } from "./models";
@@ -22,12 +22,28 @@ export const MODEL_KEY = "mycrm-webchat-model";
 export const GRANT_PROVIDERS = ["claude", "codex"];   // server/webchat.py GRANT_PROVIDERS 와 같은 값 — fake 는 허용 없이 시작
 export const GRANT_POLL_MS = 1500;
 export const CAPS_REFRESH_GAP_MS = 2000;
+export const STATE_POLL_MS = 5000;   // 대화 연결 상시(2026-11-18): 패널이 열려 있고 ready 가 아니면 이 간격으로 capabilities 를 다시 읽는다
 export const ARM_READY_MS = 1000;   // 보안 검토 1(2026-11-12): 정말 실행은 무장 뒤 1초 동안 눌리지 않는다(더블클릭, Enter 두 번 막기)
 export const ARM_TTL_MS = 10000;    // 무장은 10초 뒤 저절로 풀린다   // R-J3: 창 focus, 탭 다시 보임 때 다시 읽기 — 이 간격 안의 중복(focus + visibilitychange 등)은 한 번으로
 const cid = () => (crypto.randomUUID ? crypto.randomUUID() : `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`);
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 export const choiceKey = (c: Choice) => `${c.device}|${c.provider}|${c.model ?? ""}`;
 const same = (a: Choice | null, b: Choice | null) => !!a && !!b && choiceKey(a) === choiceKey(b);
+
+// PC 상태 하나(대화 연결 상시 명세 2절) — 패널 본문, 모델 고르기 말풍선, 보내기 버튼이 모두 이 값을 본다. 새 판정은 만들지 않는다:
+//   진행 중 대화 = 그 대화의 PC 연결(SSE pc 사건, 서버 허브의 장치 WebSocket), 새 대화 = 서버 capabilities 의 선택지와 setup.
+//   setup 은 허브의 장치 WebSocket 연결로 정해진다(시간 창 없음). /api/state 의 devices_status(작업 폴 180초 창)는 읽지 않는다 — 둘을 섞으면 같은 순간 두 상태를 말한다.
+//   none = no_pc, offline = app_off, no_provider 와 no_link = ai_not_linked. 서버가 ready 라도 고를 선택지가 없으면(capabilities 가 빈 옛 앱) ai_not_linked.
+//   setup 이 없는 응답(옛 서버)은 연결된 PC 가 있으면 ai_not_linked, 없으면 app_off.
+export type ChatState = "ready" | "app_off" | "ai_not_linked" | "no_pc";
+export function chatState(setup: Setup | undefined, devices: number, choices: number, session: { connected: boolean } | null): ChatState {
+  if (session) return session.connected ? "ready" : "app_off";
+  if (choices) return "ready";
+  if (setup === "none") return "no_pc";
+  if (setup === "offline") return "app_off";
+  if (setup) return "ai_not_linked";
+  return devices ? "ai_not_linked" : "app_off";
+}
 
 export type Saved = { get(): string | null; set(v: string): void; drop(): void };
 const local: Saved = {   // 막힌 저장소(사생활 모드 등) = 기억 없이 동작
@@ -57,7 +73,8 @@ export class WebchatStore {
   replaced = false; trimmed = "";   // replaced = 다른 탭이 이 대화를 열어 이 탭의 SSE 가 끝남(다시 붙지 않는다) · trimmed = 재생에서 생략된 앞부분 안내
   private es: Es | null = null;
   private grantSeq = 0;
-  private capsAt: number | null = null;   // 마지막 capabilities 읽기를 시작한 시각(now)
+  private capsAt: number | null = null;
+  private capsFlight = false;   // capabilities 읽기 진행 중(보이는 읽기, 조용한 재확인 모두) — 겹쳐 보내지 않는다   // 마지막 capabilities 읽기를 시작한 시각(now)
   private grantFlight = false;   // J-F3: 허용 요청부터 세션 생성까지 — 이 동안 보내기, 다시 요청, Enter 가 같은 요청을 또 보내지 않는다
   private approvalsRequest = false;
   private approvalsRequestSid = "";
@@ -74,7 +91,13 @@ export class WebchatStore {
   canSend() {
     const n = [...this.input].length;
     if (this.readOnly || this.replaced || this.sending || this.running() || this.waiting() || !this.input.trim() || n > TEXT_MAX) return false;
-    return this.sid ? this.connected : !!this.choice;
+    return this.chatState() === "ready" && (!!this.sid || !!this.choice);
+  }
+  // 지금 PC 상태 — 아직 모르면(capabilities 를 한 번도 못 읽었고 진행 중 대화도 없음) null
+  chatState(): ChatState | null {
+    const live = !!this.sid && !this.readOnly;
+    if (!live && !this.capsLoaded) return null;
+    return chatState(this.capabilities.setup, this.capabilities.devices.filter(d => d.connected).length, this.choices().length, live ? { connected: this.connected } : null);
   }
   say(text: string, bad = false) { this.line = text; this.bad = bad; this.emit(); }
 
@@ -113,9 +136,11 @@ export class WebchatStore {
   }
 
   // 지난번 선택 복원 — 목록에 없으면 버린다. 목록이 비었으면(PC 꺼짐 등) 기억은 지우지 않고 선택만 비운다
-  async loadCapabilities() {
-    if (this.capsLoading) return;
-    this.capsLoading = true; this.capsAt = this.now(); this.emit();
+  // quiet = 배경 재확인(5초) — 불러오는 중 표시와 오류 줄을 건드리지 않는다(5초마다 깜빡이지 않게)
+  async loadCapabilities(quiet = false) {
+    if (this.capsFlight) return;
+    this.capsFlight = true; this.capsAt = this.now();
+    if (!quiet) { this.capsLoading = true; this.emit(); }
     try {
       this.capabilities = await this.api.capabilities(); this.capsLoaded = true;
       const list = this.choices();
@@ -124,8 +149,17 @@ export class WebchatStore {
       const fromSaved = saved ? list.find(c => choiceKey(c) === saved) : undefined;
       if (saved && !fromSaved && list.length) this.saved.drop();
       this.choice = keep || fromSaved || splitModels(list).top[0] || list[0] || null;   // J-F5: 기억이 없으면 접히지 않은 첫 모델
-    } catch (e) { this.say(errText(apiErr(e)), true); }
-    finally { this.capsLoading = false; this.emit(); }
+    } catch (e) { if (!quiet) this.say(errText(apiErr(e)), true); }
+    finally { this.capsFlight = false; this.capsLoading = false; this.emit(); }
+  }
+
+  // 대화 연결 상시(2026-11-18): STATE_POLL_MS 마다 조용히 다시 읽는다. 켜고 끄는 조건(패널 열림, ready 아님, 탭 보임)은 화면(Panel)이 정한다. 돌려준 함수 = 멈춤
+  pollState(): () => void {
+    let stop = () => {};
+    let on = true;
+    const tick = () => { if (!on) return; void this.loadCapabilities(true); stop = this.later(tick, STATE_POLL_MS); };
+    stop = this.later(tick, STATE_POLL_MS);
+    return () => { on = false; stop(); };
   }
 
   // R-J3(보안 검토 발견 7): 창 focus, 탭이 다시 보일 때 허용 표시를 새로 읽는다(다른 탭, PC 앱에서 세우거나 해제했을 수 있다).

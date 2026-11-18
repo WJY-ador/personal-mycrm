@@ -3,7 +3,7 @@ export const TEXT_MAX = 8000;   // server/webchat.py TEXT_MAX_CHARS 와 같은 �
 export const TITLE = "AI";
 export const EMPTY = "연결된 AI와 대화해요. 기록을 남기거나 바꾸는 일은 MyCRM의 기존 권한과 확인 규칙을 따라요.";
 export const PC_ON = "PC 연결됨";
-export const PC_OFF = "PC 꺼짐";
+export const PC_OFF = "PC 앱 꺼짐";
 export const WAITING = "답을 기다리는 중";
 export const KEEP = "대화 기록은 서버에 30일 보관돼요.";
 export const TOOLS_ONLY = "AI는 내 판단 대시보드의 도구만 써요.";
@@ -16,12 +16,6 @@ export const PICK = "모델 고르기";
 export const PICK_SWITCH = "이 모델로 새 대화를 시작해요. 지금 대화는 지난 대화 목록에 남아요.";
 export const PICK_SWITCH_GO = "새 대화 시작";
 export const PICK_LOADING = "모델 목록을 불러오는 중이에요.";
-export const NO_MODEL: Record<string, string> = {
-  none: "연결된 PC가 없어요. 연결 장치에서 PC를 연결하면 모델을 고를 수 있어요.",
-  offline: "PC 앱이 꺼져 있어요. PC에서 MyCRM 앱을 켜면 모델이 나타나요.",
-  recent: "PC는 연결돼 있지만 대화에 쓸 수 있는 모델을 알려 오지 않았어요. PC 앱의 대화 기능이 꺼져 있거나 아직 지원을 준비하고 있어요.",
-  "": "지금 고를 수 있는 모델이 없어요. PC 앱이 켜져 있는지 확인하세요.",
-};
 const PROVIDER: Record<string, string> = { claude: "Claude", codex: "Codex", fake: "시험용 가짜 AI" };
 export const providerName = (p: string) => PROVIDER[p] || p;
 export const modelLabel = (provider: string, model: string | null) => `${providerName(provider)}, ${model || "기본 모델"}`;
@@ -96,7 +90,7 @@ export const ERR: Record<string, string> = {
   CONSENT_REQUIRED: "이 PC의 대화 허용이 해제됐어요. 새 대화를 시작하면 PC 앱에서 다시 허용할 수 있어요.",
   "GRANT-EXPIRED": "PC 허용 시간이 지났어요. 다시 요청하세요.", "GRANT-USED": "이미 쓴 PC 허용이에요. 다시 요청하세요.",
   "GRANT-INVALID": "이 선택에 맞는 PC 허용이 없어요. 다시 요청하세요.",
-  "TURN-BUSY": "앞 답이 끝난 뒤 보내세요.", "DEVICE-OFFLINE": "PC 가 연결돼 있지 않아요.", "NO-DEVICE": "연결된 PC 가 없어요. 연결 장치에서 PC 를 연결하세요.",
+  "TURN-BUSY": "앞 답이 끝난 뒤 보내세요.", "DEVICE-OFFLINE": "PC 앱이 꺼져 있어요. 켜면 바로 대화할 수 있어요.", "NO-DEVICE": "이 계정에 연결된 PC가 없어요.",   // 상태 표(CHAT_STATE) app_off, no_pc 와 같은 말
   OFFLINE: "서버에 연결하지 못했어요. 연결을 확인한 뒤 다시 시도하세요.", "PROVIDER-UNAVAILABLE": "고른 AI 또는 모델을 지금 쓸 수 없어요. 모델 고르기에서 다시 고르세요.",
   "SESSION-CONFLICT": "다른 대화가 먼저 시작됐어요. 기존 대화를 다시 열거나 새로고침하세요.",
   "DEVICE-REQUIRED": "연결된 PC 가 여러 대예요.", "DEVICE-GONE": "이 대화의 PC 연결이 해제됐어요. 다시 열면 새 대화가 시작돼요.",
@@ -110,18 +104,19 @@ export const endText = (code: string) => END[code] || `답이 끝나지 못했�
 export const MORE_MODELS = "다른 모델";
 export const PICKED = "고른 모델";
 
-// 연결 안내(J-F1, 2026-11-13 앱 하나) — 쓸 수 있는 AI가 없을 때 2단계. 상태는 서버 capabilities.setup 이 정한다.
-// PC 연결은 앱 로그인으로 저절로 된다(토큰, 연결 장치 창 없음). AI 연결은 PC의 Claude, Codex 로그인이다
-export const GUIDE_TITLE = "AI와 대화하려면 PC 앱에서 연결해 주세요";
-export const GUIDE_NOTE = "AI는 내 PC의 Claude나 Codex로 답해요. 아래 단계를 마치면 여기서 바로 대화할 수 있어요.";
-export const GUIDE_STEPS: Array<{ title: string; text: string }> = [
-  { title: "PC 앱 받기와 로그인", text: "MyCRM PC 앱을 받아 설치하고, 앱에서 이 계정으로 로그인해요. PC는 자동으로 연결돼요." },
-  { title: "AI 연결", text: "PC 앱의 AI 패널에서 [Claude 연결]을 눌러 로그인을 마쳐요. PC에 Claude나 Codex CLI가 있어야 해요." },
-];
-export const GUIDE_OFFLINE = "PC 앱이 꺼져 있어요. PC에서 MyCRM 앱을 열어 주세요.";
-export const GUIDE_STATE: Record<string, string> = { done: "끝났어요", now: "지금 할 일", todo: "다음 단계" };
-export const GUIDE_DOWNLOAD = "PC 앱 받기";
-export const GUIDE_RECHECK = "다시 확인";
+// PC 상태(2026-11-18 대화 연결 상시 명세 2절) — 패널 본문, 모델 고르기 말풍선, 보내기 버튼이 store.chatState() 값 하나에서 고른다.
+// ready 는 문구 없음(대화 가능). 버튼 = 사용자가 누를 때만 연다. mycrm://connection?step= 값은 desktop/src/handoff.cjs SETUP_STEPS 안에서 고른다
+export const CHAT_STATE: Record<"app_off" | "ai_not_linked" | "no_pc", { line: string; act: string; href: string }> = {
+  app_off: { line: "PC 앱이 꺼져 있어요. 켜면 바로 대화할 수 있어요.", act: "PC 앱 열기", href: "mycrm://connection?step=connect" },
+  ai_not_linked: { line: "PC 앱은 켜져 있는데 AI 로그인이 안 돼 있어요.", act: "PC 앱에서 AI 연결", href: "mycrm://connection?step=provider" },
+  no_pc: { line: "이 계정에 연결된 PC가 없어요.", act: "PC 앱 받기", href: "/download" },
+};
+// 안 되는 것(고정 한 줄)
+export const CHAT_LIMIT = "AI는 내 PC의 Claude나 Codex로 답해요. PC가 꺼졌거나 잠들었거나 PC 앱을 완전히 종료하면 대화할 수 없어요.";
+// app_off 버튼 아래 한 줄 — mycrm:// 링크는 앱이 설치된 PC 의 브라우저에서만 열린다(폰, 다른 PC 에서는 아무것도 열리지 않는다)
+export const CHAT_OPEN_HERE = "MyCRM 앱이 설치된 이 PC에서만 열려요.";
+// 앱 창 안 ai_not_linked 인데 연결할 공급자 줄이 없을 때(CLI 가 없음, AiLinks 가 빈 경우) — 옛 연결 안내 2단계의 문장을 되살렸다
+export const AI_NEED_CLI = "PC에 Claude나 Codex CLI가 있어야 해요.";
 
 // AI 연결(1.3) — 앱 창 안에서만 버튼(window.mycrmDesktop.ai). 연결 = 공급자 로그인, 끊기 = 이 PC에서 MyCRM 이 그 AI 를 쓰지 않게 하는 표시(공급자 로그아웃 아님)
 export const AI_UNLINKED = "이 PC의 AI 연결이 끊겼어요. AI 패널에서 다시 연결해 주세요.";

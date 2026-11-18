@@ -2789,6 +2789,25 @@ def test_rate(srv):
     ok(f"한도: 턴 분당 {webchat.TURNS_PER_MINUTE} — 넘으면 429 RATE-LIMIT")
 
 
+def test_silence(srv, ua, tok_a, dev_a):
+    """대화 연결 상시(2026-11-18): 앱 ping 에 pong 하는 PC 는 DEVICE_SILENCE_SECONDS 를 넘겨도 붙어 있고(거짓 끊김 없음),
+    아무것도 보내지 않는 PC(잠든 PC)는 허브에서 빠지고 4002 로 닫힌다."""
+    old = webchat.PING_SECONDS, webchat.DEVICE_SILENCE_SECONDS
+    webchat.PING_SECONDS, webchat.DEVICE_SILENCE_SECONDS = 0.2, 0.6
+    try:
+        pc = PC(srv, tok_a)
+        end = time.monotonic() + 1.5   # 판정 시간의 2배 넘게 pong 으로 답한다(0.1.7 agent 의 _on ping → pong 과 같다)
+        while time.monotonic() < end:
+            assert pc.wait(lambda m: m["type"] == "ping", 2), "ping"
+            pc.send({"type": "pong"})
+        assert pc.closed is None and webchat.hub.connected(ua, dev_a), ("답하는 PC 는 붙어 있다", pc.closed)
+        assert pc.wait_closed(3) == 4002, ("답이 끊기면 4002", pc.closed)   # 이제 답하지 않는다
+        assert not webchat.hub.connected(ua, dev_a)
+    finally:
+        webchat.PING_SECONDS, webchat.DEVICE_SILENCE_SECONDS = old
+    ok(f"잠든 PC: {webchat.DEVICE_SILENCE_SECONDS}초 동안 받은 것 없음 = 허브에서 빼고 4002, pong 하는 PC 는 그대로")
+
+
 def test_revoke(srv, ua, tok_a, dev_a, sid):
     old = webchat.PING_SECONDS
     webchat.PING_SECONDS = 0.3
@@ -2914,6 +2933,7 @@ def main_():
         test_review(srv)
         test_rate(srv)
         test_switch_runtime(srv, ub, b2["token"], sid_b)
+        test_silence(srv, ua, tok_a, dev_a)
         test_revoke(srv, ua, tok_a, dev_a, sid_a)
     test_purge(db.user_by_email("wc-del@example.com")["id"])
     cleanup()

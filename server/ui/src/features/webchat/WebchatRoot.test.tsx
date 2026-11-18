@@ -8,9 +8,9 @@ import { flush } from "../../test/fakeServer";
 import { aiAsk } from "../../shared/aiAsk";
 import { ApiFail } from "../../shared/api";
 import type { Approval } from "./api";
-import { WebchatStore } from "./store";
+import { STATE_POLL_MS, WebchatStore } from "./store";
 import { WebchatRoot } from "./WebchatRoot";
-import { AI_UNLINKED, EMPTY, END, GRANT, GUIDE_OFFLINE, GUIDE_RECHECK, GUIDE_STEPS, GUIDE_TITLE, HISTORY_NOTE, MORE_MODELS, NO_MODEL, OP_NAME, PC_ON, PICK_SWITCH, TITLE, WAITING } from "./text";
+import { AI_NEED_CLI, AI_UNLINKED, CHAT_LIMIT, CHAT_OPEN_HERE, CHAT_STATE, ERR, EMPTY, END, GRANT, HISTORY_NOTE, MORE_MODELS, OP_NAME, PC_OFF, PC_ON, PICK, PICK_LOADING, PICK_SWITCH, TITLE, WAITING } from "./text";
 
 let el: HTMLDivElement, nav: HTMLSpanElement, root: Root;
 beforeEach(() => {
@@ -139,16 +139,129 @@ test("모델 목록 열림 = 서버가 준 것만 · 진행 중 대화에서 다
   expect(aside().querySelector("[data-turn]")).toBeNull();
 });
 
-test("모델 없음 = 빈 목록 대신 이유 한 줄(연결 장치 상태로 구분)", async () => {
-  for (const dev of ["none", "offline", "recent"]) {
-    const { s } = mk();
-    s.api.capabilities = vi.fn(async () => ({ devices: [] }));
-    await open(s, dev);
-    await act(async () => { (aside().querySelector("[aria-haspopup=dialog]") as HTMLButtonElement).click(); }); await flush();
-    expect(aside().querySelector("#webchat-models")?.textContent).toBe(NO_MODEL[dev]);
-    expect(btn("보내기").disabled).toBe(true);
-    act(() => root.unmount()); root = createRoot(el);
+// ── 대화 연결 상시(2026-11-18) — 본문, 말풍선, 보내기가 상태값 하나를 본다 ──
+const pop = async () => { await act(async () => { (aside().querySelector("[aria-haspopup=dialog]") as HTMLButtonElement).click(); }); await flush(); };
+const LINES = Object.values(CHAT_STATE).map(x => x.line);
+test("PC 상태 = 서버 setup 하나: 본문 한 줄, 모델 고르기 말풍선, 보내기가 같은 상태, 버튼 링크, 안 되는 것 고정 한 줄, 다시 확인 버튼 없음", async () => {
+  for (const [setup, state, href] of [
+    ["none", "no_pc", "/download"],
+    ["offline", "app_off", "mycrm://connection?step=connect"],
+    ["no_provider", "ai_not_linked", "mycrm://connection?step=provider"],
+    ["no_link", "ai_not_linked", "mycrm://connection?step=provider"],
+  ] as const) {
+    for (const dev of ["none", "offline", "recent"]) {   // /api/state 의 devices_status 는 더 읽지 않는다 — 무엇이 와도 같은 화면
+      const { s } = mk();
+      s.api.capabilities = vi.fn(async () => ({ devices: [], setup }));
+      await open(s, dev);
+      const g = aside().querySelector(`section[data-pc="${state}"]`) as HTMLElement;
+      expect(g).not.toBeNull();
+      expect(aside().querySelectorAll("section[data-pc]").length).toBe(1);
+      expect(g.querySelector("[role=status]")?.textContent).toBe(CHAT_STATE[state].line);
+      expect(g.textContent).toContain(CHAT_LIMIT);
+      expect(g.textContent!.includes(CHAT_OPEN_HERE)).toBe(state === "app_off");   // 이 PC 에서만 열린다 = app_off 만
+      expect(LINES.filter(l => aside().textContent!.includes(l))).toEqual([CHAT_STATE[state].line]);   // 다른 상태 문구가 같은 화면에 없다
+      const links = [...g.querySelectorAll("a")];
+      expect(links.map(a => [a.textContent, a.getAttribute("href")])).toEqual([[CHAT_STATE[state].act, href]]);
+      expect(links[0].getAttribute("target")).toBe(state === "no_pc" ? "_blank" : null);   // mycrm:// 는 새 창 없이 — 사용자가 누를 때만 연다
+      expect([...aside().querySelectorAll("button")].map(b => b.textContent)).not.toContain("다시 확인");
+      expect(aside().textContent).not.toContain(EMPTY);
+      await pop();
+      expect(aside().querySelector("#webchat-models")?.textContent).toBe(CHAT_STATE[state].line);
+      await type("메모");
+      expect(btn("보내기").disabled).toBe(true);
+      act(() => root.unmount()); root = createRoot(el);
+    }
   }
+});
+
+test("서버는 ready 인데 고를 선택지가 없으면(옛 앱, capabilities 비어 있음) 본문과 말풍선 모두 ai_not_linked", async () => {
+  const { s } = mk();
+  s.api.capabilities = vi.fn(async () => ({ devices: [{ device_id: "is_1", connected: true, agent_version: "0.1", capabilities_version: 2, capabilities: [] }], setup: "ready" as const }));
+  await open(s);
+  expect(aside().querySelector("section[data-pc]")?.getAttribute("data-pc")).toBe("ai_not_linked");
+  await pop();
+  expect(aside().querySelector("#webchat-models")?.textContent).toBe(CHAT_STATE.ai_not_linked.line);
+});
+
+test("상태를 아직 모르면(capabilities 읽기 실패) 본문도 말풍선도 상태를 단정하지 않는다, 재확인이 성공하면 그 상태", async () => {
+  const { s } = mk();
+  const { tick } = timers(s);
+  s.api.capabilities = vi.fn(async () => { throw new ApiFail({ code: "OFFLINE", msg: "" }); });
+  await open(s);
+  expect(s.chatState()).toBeNull();
+  expect(aside().querySelector("section[data-pc]")).toBeNull();
+  await pop();
+  const shown = aside().querySelector("#webchat-models")?.textContent || "";
+  expect(LINES.some(l => shown.includes(l))).toBe(false);
+  await act(async () => { s.togglePicker(false); });
+  s.api.capabilities = vi.fn(async () => ({ devices: [], setup: "offline" as const }));
+  await tick();
+  expect(aside().querySelector("section[data-pc=app_off]")).not.toBeNull();
+});
+
+function timers(s: WebchatStore) {
+  const list: Array<{ fn: () => void; ms: number; on: boolean }> = [];
+  s.later = (fn, ms) => { const t = { fn, ms, on: true }; list.push(t); return () => { t.on = false; }; };
+  const live = () => list.filter(x => x.on && x.ms === STATE_POLL_MS);
+  const tick = async () => { const t = live().pop()!; t.on = false; await act(async () => { t.fn(); }); await flush(); await flush(); };
+  return { live, tick };
+}
+
+test("패널이 열려 있고 ready 가 아니면 5초마다 다시 읽고, 앱이 켜지면 저절로 대화 가능 화면, 깜빡임 없음", async () => {
+  const { s } = mk();
+  const { live, tick } = timers(s);
+  const ok = s.api.capabilities;
+  s.api.capabilities = vi.fn(async () => ({ devices: [], setup: "offline" as const }));
+  await open(s);
+  expect(aside().querySelector("section[data-pc=app_off]")).not.toBeNull();
+  expect(live().length).toBe(1);
+  await tick();   // 아직 꺼짐
+  expect(s.api.capabilities).toHaveBeenCalledTimes(2);
+  expect(aside().querySelector("[aria-haspopup=dialog]")?.textContent).toContain(PICK);
+  expect(aside().querySelector("[aria-haspopup=dialog]")?.textContent).not.toContain(PICK_LOADING);
+  expect(live().length).toBe(1);
+  s.api.capabilities = ok;   // 앱이 켜졌다
+  await tick();
+  expect(aside().querySelector("section[data-pc]")).toBeNull();
+  expect(aside().textContent).toContain(EMPTY);
+  await type("안녕");
+  expect(btn("보내기").disabled).toBe(false);
+  expect(live().length).toBe(0);   // ready 면 멈춘다
+});
+
+test("5초 재확인: 탭이 숨으면 멈추고 다시 보이면 다시 돈다, 패널을 닫으면 멈춘다", async () => {
+  const { s } = mk();
+  const { live } = timers(s);
+  s.api.capabilities = vi.fn(async () => ({ devices: [], setup: "offline" as const }));
+  await open(s);
+  expect(live().length).toBe(1);
+  Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+  try {
+    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); }); await flush();
+    expect(live().length).toBe(0);
+  } finally { delete (document as { visibilityState?: string }).visibilityState; }
+  await act(async () => { document.dispatchEvent(new Event("visibilitychange")); }); await flush();
+  expect(live().length).toBe(1);
+  await act(async () => { btn("닫기").click(); }); await flush();
+  expect(live().length).toBe(0);
+});
+
+test("진행 중 대화에서 PC 앱이 꺼지면(SSE pc) 대화 아래 같은 안내, 머리글 PC 앱 꺼짐, 보내기 잠김, 켜지면 사라진다", async () => {
+  const { s, fire } = mk();
+  s.api.sessions = vi.fn(async () => ({ sessions: [{ session_id: "cs_1", status: "active", device_id: "is_1", connected: true, provider: "fake", model: null, binding_version: 2 }] }));
+  await open(s);
+  fire("turn", { turn_id: "ct_1", text: "안녕" });
+  fire("done", { turn_id: "ct_1", seq: 1 });
+  fire("pc", { device_id: "is_1", connected: false });
+  const g = aside().querySelector("section[data-pc=app_off]") as HTMLElement;
+  expect(g).not.toBeNull();
+  expect(aside().querySelector("[data-turn]")).not.toBeNull();
+  expect(aside().querySelector("[aria-label='대화 정보'] [role=status]")?.textContent).toContain(PC_OFF);
+  await type("메모");
+  expect(btn("보내기").disabled).toBe(true);
+  fire("pc", { device_id: "is_1", connected: true });
+  expect(aside().querySelector("section[data-pc]")).toBeNull();
+  expect(btn("보내기").disabled).toBe(false);
 });
 
 test("PC 허용 대기 = 기다림 캐릭터 + 허용을 눌러 달라는 글 · 입력 잠김 · 허용되면 보낸다", async () => {
@@ -315,34 +428,6 @@ test("확인 카드: 모르는 op = op 이름 그대로 · 승인 목록 오류�
 });
 
 // ── 대화 하나로 J(2026-11-12) ──
-test("J-F1(앱 하나): 쓸 수 있는 AI가 없으면 연결 안내 2단계, 멈춘 단계 = 서버 setup, PC 앱 받기 = none 만, 다시 확인", async () => {
-  for (const [setup, states, links] of [
-    ["none", ["now", "todo"], ["/download"]],
-    ["offline", ["now", "todo"], []],
-    ["no_provider", ["done", "now"], []],
-    ["no_link", ["done", "now"], []],
-  ] as const) {
-    const { s } = mk();
-    s.api.capabilities = vi.fn(async () => ({ devices: [], setup }));
-    await open(s);
-    const g = aside().querySelector(`section[data-setup="${setup}"]`) as HTMLElement;
-    expect(g).not.toBeNull();
-    expect(g.textContent).toContain(GUIDE_TITLE);
-    expect([...g.querySelectorAll("li")].map(li => li.getAttribute("data-state"))).toEqual(states);
-    expect([...g.querySelectorAll("li")].map(li => li.querySelector("h5")!.firstChild!.textContent!.trim())).toEqual(GUIDE_STEPS.map(x => x.title));
-    expect([...g.querySelectorAll("a")].map(a => a.getAttribute("href"))).toEqual(links);
-    expect(g.querySelector("[href^=\"mycrm:\"]")).toBeNull();   // 연결 장치 창 딥링크는 없앴다
-    if (setup === "offline") expect(g.textContent).toContain(GUIDE_OFFLINE);
-    expect(aside().textContent).not.toContain(EMPTY);
-    await act(async () => { btn(GUIDE_RECHECK, g).click(); }); await flush();
-    expect(s.api.capabilities).toHaveBeenCalledTimes(2);
-    act(() => root.unmount()); root = createRoot(el);
-  }
-  const { s } = mk();   // 고를 AI가 있으면 안내 없음
-  await open(s);
-  expect(aside().querySelector("section[data-setup]")).toBeNull();
-});
-
 test("앱 하나 1.3: 새 앱(ai_links)은 linked 공급자만 고르고, 허용 요청 없이 바로 세션을 연다", async () => {
   const { s } = mk();
   s.api.capabilities = vi.fn(async () => ({ devices: [{ device_id: "is_1", connected: true, agent_version: "1.0", capabilities_version: 2,
@@ -367,6 +452,54 @@ test("앱 하나 1.3: 새 앱인데 그새 끊김(CONSENT_REQUIRED) = 허용 창
   expect(s.api.grant).not.toHaveBeenCalled();
   expect(aside().textContent).toContain(AI_UNLINKED);
   expect(s.api.capabilities).toHaveBeenCalledTimes(2);
+});
+
+test("앱 창 안 ai_not_linked: 보일 공급자가 없으면(CLI 없음) CLI 가 있어야 한다는 한 줄, 있으면 연결 버튼", async () => {
+  const state = { providers: [{ provider: "claude", state: "missing", code: null }, { provider: "codex", state: "missing", code: null }] };
+  (window as unknown as { mycrmDesktop: unknown }).mycrmDesktop = { ai: { get: async () => state, onChange: () => () => {}, connect: async () => {}, disconnect: async () => {} } };
+  try {
+    const { s } = mk();
+    s.api.capabilities = vi.fn(async () => ({ devices: [], setup: "no_provider" as const }));
+    await open(s);
+    const g = aside().querySelector("section[data-pc=ai_not_linked]") as HTMLElement;
+    expect(g.textContent).toContain(AI_NEED_CLI);
+    expect(g.querySelector("a")).toBeNull();   // 앱 창 안에서는 mycrm:// 링크 대신
+  } finally { delete (window as unknown as { mycrmDesktop?: unknown }).mycrmDesktop; }
+});
+
+test("오류 문구도 상태 표와 같은 말: NO-DEVICE = no_pc, DEVICE-OFFLINE = app_off", () => {
+  expect(ERR["NO-DEVICE"]).toBe(CHAT_STATE.no_pc.line);
+  expect(ERR["DEVICE-OFFLINE"]).toBe(CHAT_STATE.app_off.line);
+});
+
+test("주소 표지 #_ai: 처음 열 때 있으면 패널을 열고 표지를 지운다(기록을 늘리지 않음)", async () => {
+  history.replaceState(null, "", location.pathname + "#_ai");
+  const n = history.length;
+  const { s } = mk();
+  await act(async () => root.render(<WebchatRoot ctx={{ reload, state: st(true) }} store={s} />)); await flush(); await flush();
+  expect(aside().hidden).toBe(false);
+  expect([location.hash, history.length]).toEqual(["", n]);
+});
+
+test("주소 표지 #_ai: hashchange 로 오면 열고 앞 주소로 되돌린다, 이미 열려 있으면 그대로, 다른 hash 는 영향 없음", async () => {
+  history.replaceState(null, "", location.pathname + "#records");
+  const { s } = mk();
+  await act(async () => root.render(<WebchatRoot ctx={{ reload, state: st(true) }} store={s} />));
+  const go = async (hash: string, from: string) => {
+    const base = location.href.split("#")[0];
+    history.replaceState(null, "", hash);
+    await act(async () => { window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: base + from, newURL: base + hash })); }); await flush(); await flush();
+  };
+  await go("#people", "#records");   // 다른 hash
+  expect(aside().hidden).toBe(true);
+  expect(location.hash).toBe("#people");
+  await go("#_ai", "#people");
+  expect(aside().hidden).toBe(false);
+  expect(location.hash).toBe("#people");
+  await go("#_ai", "#people");   // 이미 열림 = 그대로(닫히지 않는다)
+  expect(aside().hidden).toBe(false);
+  expect(location.hash).toBe("#people");
+  history.replaceState(null, "", location.pathname);
 });
 
 test("앱 하나 1.3: 앱 다리가 있으면 AI 연결 줄 — 끊김은 [Claude 연결] 하나, 연결됨은 [연결 끊기], CLI 없음은 줄 없음", async () => {
