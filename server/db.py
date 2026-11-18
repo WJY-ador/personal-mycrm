@@ -4265,9 +4265,17 @@ def display_name_set(uid, display_name):
     return {"display_name": name}
 
 
+def _routed_item(alias):
+    """그 항목(별칭 alias)이 자동 분류(item_routes state routed)인가 — SQL 조각 하나. 자동 분류 항목은 사용자의 판단이 아니라
+    결정, 기준 건수(me_home, me_stats)에서 뺀다(2026-11-18 메인 결정 13, 21)."""
+    return (f"EXISTS (SELECT 1 FROM item_routes ir WHERE ir.user_id={alias}.user_id AND ir.item_id={alias}.id "
+            "AND ir.state='routed')")
+
+
 def me_home(uid):
     """「나」 홈 데이터 — 표시 이름 · nav(항상 "new" — 옛 탐색은 2026-11-03 삭제, 응답 모양만 유지) · 개수. 기존 조회로 센다(따로 저장하지 않는다).
-    판단 = 확정 후보(지워지지 않은 기록) · 기준 = principle 오브젝트의 적용·미보관·확정 항목 · 결정 = event 오브젝트의 적용·미보관 항목."""
+    판단 = 확정 후보(지워지지 않은 기록), 기준 = principle 오브젝트의 적용, 미보관, 확정 항목, 결정 = event 오브젝트의 적용, 미보관 항목.
+    기준과 결정에서 자동 분류 항목(_routed_item)은 뺀다(me_stats 와 같은 기준, 2026-11-18)."""
     with tx() as c:
         u = _one(c, "SELECT display_name FROM users WHERE id=%s", (uid,))
         if not u:
@@ -4278,10 +4286,10 @@ def me_home(uid):
                         "AND r.deleted_at IS NULL AND r.trashed_at IS NULL WHERE c.user_id=%s AND c.decision='confirmed'"),
             "principles": n("SELECT count(*) AS n FROM items i JOIN object_defs o ON o.user_id=i.user_id AND o.id=i.object_id "
                             "WHERE i.user_id=%s AND o.semantic_kind='principle' AND i.revision > 0 AND i.archived_at IS NULL "
-                            "AND i.trashed_at IS NULL AND i.decision='confirmed'"),
+                            f"AND i.trashed_at IS NULL AND i.decision='confirmed' AND NOT {_routed_item('i')}"),
             "decisions": n("SELECT count(*) AS n FROM items i JOIN object_defs o ON o.user_id=i.user_id AND o.id=i.object_id "
                            "WHERE i.user_id=%s AND o.semantic_kind='event' AND i.revision > 0 AND i.archived_at IS NULL "
-                           "AND i.trashed_at IS NULL"),
+                           f"AND i.trashed_at IS NULL AND NOT {_routed_item('i')}"),
             "people": n("SELECT count(*) AS n FROM people WHERE user_id=%s AND trashed_at IS NULL"),   # 휴지통·표식 제외
             "sources": n("SELECT count(*) AS n FROM sources WHERE user_id=%s"),
             "reflections": n("SELECT count(*) AS n FROM source_reflections WHERE user_id=%s AND trashed_at IS NULL"),
@@ -4565,8 +4573,8 @@ def me_stats(uid):
     with tx() as c:
         ax_obj = _axis_object(c, uid)
         # routed = 자동 분류 항목(2026-11-18) — 사용자의 판단이 아니라 결정, 기준 건수에서 빼고 커스텀에 센다
-        live = ("SELECT i.id, i.object_id, o.semantic_kind, EXISTS (SELECT 1 FROM item_routes ir WHERE ir.user_id=i.user_id "
-                "AND ir.item_id=i.id AND ir.state='routed') AS routed FROM items i JOIN object_defs o ON o.user_id=i.user_id AND o.id=i.object_id "
+        live = (f"SELECT i.id, i.object_id, o.semantic_kind, {_routed_item('i')} AS routed FROM items i JOIN object_defs o "
+                "ON o.user_id=i.user_id AND o.id=i.object_id "
                 "WHERE i.user_id=%(uid)s AND i.revision > 0 AND i.archived_at IS NULL AND i.trashed_at IS NULL")
         a = {"uid": uid, "ax": ax_obj}
         axes = [] if ax_obj is None else [dict(r) for r in _all(c, f"""

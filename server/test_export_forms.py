@@ -468,6 +468,28 @@ async def test_catalog(S):
     ok("13) 카탈로그: export_get tier read(facade 전용) = chat_mcp 고정 목록 · read 겉면 호출 = 조립 결과 · ARG-INVALID·TIER-MISMATCH")
 
 
+def test_routed_not_material(S):
+    """구조 추천 22번 — 자동 분류 항목(item_routes routed)은 판단이 아니라 꺼내기 재료가 아니다. event 오브젝트에 route 를 적용해도
+    period_report 의 결정 목록과 재료 건수가 그대로다(근거는 원문 기록)."""
+    A = S["A"]
+    before = get(A, "period_report", {"kind": "period", "period": "all"})
+    d = {"key": "meets_x", "label": "가짜 회의", "semantic_kind": "event",
+         "fields": [{"key": "happened_on", "label": "날짜", "value_type": "date"}, {"key": "dec", "label": "결정", "value_type": "text"}],
+         "policy": {"route": {"v": 1, "unit": "heading", "match": {"heading_like": "회의 #*"},
+                              "fields": {"happened_on": {"from": "record_date"}, "dec": {"from": "label", "label": "결정"}}}}}
+    p = db.definition_propose(A, None, 0, d)
+    out = db.definition_apply(A, p["object_id"], p["proposal_id"], 0)
+    db.record_add(A, "가짜 회의록", "## 회의 1\n**결정** 가짜 결정 하나\n## 회의 2\n**결정** 가짜 결정 둘\n", source="가짜 출처")
+    with db.tx() as c:
+        n = c.execute("SELECT count(*) AS n FROM item_routes WHERE user_id=%s AND object_id=%s AND state='routed'",
+                      (A, p["object_id"])).fetchone()["n"]
+    assert n == 2, (n, out.get("route_sync"))
+    after = get(A, "period_report", {"kind": "period", "period": "all"})
+    assert refs({"sections": [sec(after, "decisions")]}) == refs({"sections": [sec(before, "decisions")]})
+    assert sec(after, "scope") == sec(before, "scope"), "재료 건수(결정 n건)도 그대로"
+    ok("자동 분류 항목(route 적용 event 2건)은 period_report 결정 목록에 들어가지 않는다")
+
+
 async def run():
     db.init_schema()   # CI 는 빈 전용 DB — 스키마부터
     cleanup()
@@ -487,6 +509,7 @@ async def run():
         test_period(S)
         test_check()
         await test_catalog(S)
+        test_routed_not_material(S)
     finally:
         cleanup()
         db.close()

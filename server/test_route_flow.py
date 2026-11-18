@@ -608,11 +608,15 @@ def test_me_stats_and_axis(uid):
     add(uid, "M1. 가짜", pivot_body(31))
     add(uid, "M2. 가짜", pivot_body(32))
     before = db.me_stats(uid)["kinds"]
+    home0 = db.me_home(uid)["counts"]
     oid, out = apply_def(uid, d)
     assert out["route_sync"]["created"] == 2
     k = db.me_stats(uid)["kinds"]
     want = (before["decision"], before["principle"], before["axis"], before["custom"] + 2)
     assert (k["decision"], k["principle"], k["axis"], k["custom"]) == want, (before, k)
+    home1 = db.me_home(uid)["counts"]   # 21: me_home(/api/state, MCP me_get)도 같은 기준
+    assert (home1["decisions"], home1["principles"]) == (home0["decisions"], home0["principles"]), (home0, home1)
+    assert home1["decisions"] == k["decision"], "me_home 결정 = me_stats 결정(촬영에서 0 과 5 로 어긋났던 것)"
     cur = next(x for x in db.definitions(uid) if x["id"] == oid)
     nd = json.loads(json.dumps(d))
     nd["policy"].pop("route")
@@ -620,6 +624,7 @@ def test_me_stats_and_axis(uid):
     db.definition_apply(uid, oid, p["proposal_id"], cur["revision"])
     k2 = db.me_stats(uid)["kinds"]
     assert (k2["decision"], k2["custom"]) == (before["decision"] + 2, before["custom"]), (before, k2)   # released = 보통 결정 항목
+    assert db.me_home(uid)["counts"]["decisions"] == home0["decisions"] + 2, "released 면 me_home 결정도 늘어난다"
     # 14: 축(분류 역할) 오브젝트에는 담을 규칙을 둘 수 없다
     with db.tx() as c:
         ax = db._axis_object(c, uid)
