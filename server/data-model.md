@@ -201,6 +201,7 @@ Postgres 전환은 끝났다(2026-10-18, `db.py` psycopg 판). 후보 revision �
 | object_defs | `policy.route`(JSON) | 담을 규칙. 꼴은 `route.check_route` 가 정의 제안 때 검사하고 정규화한 꼴로 저장한다(정규식 없음, `*_like` 만) |
 | item_routes | PK `(user_id, object_id, record_id, unit_key)` | 원문 단위 하나. `unit_key` = `''`(1기록 1항목) 또는 머리 글자(머리 줄 분할). 같은 머리가 또 나오면 둘째부터 머리 글자 + 줄바꿈 + 순번(partial duplicate_heading) |
 | item_routes | `state` routed/partial/excluded/released, `item_id` | routed = 항목을 만들었다, partial = 규칙에 일부만 맞아 분류 못 함, excluded = 사용자가 뺐다(다시 들어오지 않는다, 같은 원본의 새 판 기록에도 옮겨 적는다), released = route 를 뺀 적용이 놓아 준 항목(자동 분류 아님, 다시 넣으면 sync 가 다시 가져간다). routed, released 만 `item_id` 필수(`ck_item_routes_item`) |
+| item_routes | `released_revision` | released 로 놓아 줄 때의 항목 revision. 항목 revision 이 이것과 같고(사용자가 손대지 않음) 살아 있고 연결이 없을 때만 서버가 다시 가져간다 |
 | item_routes | `start_pos`, `end_pos`, `spans` jsonb, `record_revision`, `reason` | 단위 구간(Python str 인덱스, `body[start:end]`), 필드별 원문 구간, 맞춘 때의 기록 revision, partial 이유 |
 | items | `ingest_kind = 'route'` | 자동 분류로 만든 항목(옛 DB 는 `db._migrate_route` 가 CHECK 를 넓힌다). records 의 CHECK 는 그대로 |
 
@@ -213,6 +214,7 @@ Postgres 전환은 끝났다(2026-10-18, `db.py` psycopg 판). 후보 revision �
 - 옛 개정 = 그 기록을 가리키는 접수 행이 있고 그 가운데 지금 적용인 행이 하나도 없음. 같은 판 재전송(noop)은 옛 행(false)과 새 행(true)이 같은 기록을 가리키므로, false 행 하나로 빼면 살아 있는 기록이 빠진다.
 - 장치의 새 판 = 새 기록에 새 항목. 같은 기록 id 의 본문, 제목 수정은 같은 항목을 갱신한다(revision +1).
 - route 를 뺀 정의 적용 = routed 행은 released(항목 유지), partial 행 삭제, excluded 행 유지. 다시 넣으면 released 항목을 다시 가져간다 — 처음 판(행 전부 삭제)은 뺐다 넣으면 같은 단위가 항목 둘이 되고 뺀 단위가 다시 들어와 고쳤다(2026-11-18 독립 검토). 보관은 행과 잠금을 남기고 복구 때 다시 맞춘다.
+- released 항목은 사용자 것이다(2026-11-18 재검토): 다시 넣을 때 사용자가 고친 값이 원문 값으로 덮이고, 휴지통이나 원문 휴지통 왕복 뒤 같은 단위가 항목 둘이 되던 것을 고쳤다. released 행은 서버가 지우지 않고, 손대지 않은 것만 다시 가져간다. 빼기 되돌리기(include)는 같은 원본의 모든 판 기록에서 그 단위의 빼기를 함께 지운다.
 - `*_like` 는 정규식으로 바꾸지 않는다. `#` 연속을 정규식으로 바꾸면 지수 시간 역추적이 난다(검토 재현) — 선형 매처와 꼴 제한(`#` 뒤 `#`, 숫자 금지)으로 막는다.
 - 빼기, 되돌리기, 초안 버리기는 decide 등급(웹 대화 확인 카드). write 카드는 op 마다 지금 상태 읽기 함수가 필요해서다.
 
