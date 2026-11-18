@@ -14,12 +14,11 @@ import css from "./Obj.module.css";
 
 type Props = { W: World; def: Def; vq: ObjQuery; setVq: (q: ObjQuery) => void };
 const STATE_COL: ObjCol = { key: "state", label: OBJ_TEXT.state, value_type: "select", options: OBJ_STATE.map(([value, label]) => ({ value, label })) };
-// URL 꼴 글자 필드(url, *_url) = 열에선 「원문」 한 낱말 링크(긴 주소를 늘어놓지 않는다). http(s) 아닌 값은 링크로 만들지 않는다
-const isUrl = (c: ObjCol) => c.value_type === "text" && (c.key === "url" || c.key.endsWith("_url"));
-const href = (v: unknown) => (typeof v === "string" && /^https?:\/\//.test(v) ? v : "");
-const cell = (c: ObjCol, r: ObjRow) => (c.key === "state" ? fieldText(STATE_COL, r.state) : isUrl(c) ? (href(r.data[c.key]) ? OBJ_TEXT.link : "") : fieldText(c, r.data[c.key]));
-const td = (c: ObjCol, r: ObjRow) => (isUrl(c) && href(r.data[c.key])
-  ? <a href={href(r.data[c.key])} target="_blank" rel="noopener noreferrer">{OBJ_TEXT.link}</a> : cell(c, r));
+// 글자 필드 값이 https:// 로 시작하면 칸에는 「원문」 한 낱말 링크(새 탭) — 긴 주소를 늘어놓지 않는다. 키 이름이 아니라 값으로 판정한다
+const href = (c: ObjCol, v: unknown) => (c.value_type === "text" && typeof v === "string" && v.startsWith("https://") ? v : "");
+const cell = (c: ObjCol, r: ObjRow) => (c.key === "state" ? fieldText(STATE_COL, r.state) : href(c, r.data[c.key]) ? OBJ_TEXT.link : fieldText(c, r.data[c.key]));
+const td = (c: ObjCol, r: ObjRow) => (href(c, r.data[c.key])
+  ? <a href={href(c, r.data[c.key])} target="_blank" rel="noopener noreferrer">{OBJ_TEXT.link}</a> : cell(c, r));
 const firstDir = (c: ObjCol | null) => (c && (c.value_type === "date" || c.value_type === "number") ? "desc" : "asc");
 
 function Chips({ label, vals, cur, pick }: { label: string; vals: { value: string; label: string; n: number }[]; cur: string; pick: (v: string) => void }) {

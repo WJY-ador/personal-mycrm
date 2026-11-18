@@ -47,11 +47,15 @@ const navOn = (t: TabDef) => ({ _inbox: "_today", structure: "_setup", _obj: "_s
   (t.view === "question" || t.view === "record" ? "_setup" : t.id);
 
 // 「나」 의 탭(기본 종류 = 표준 정의 std_id) — 항목 하나를 어느 탭에서 여는지. features/me 도 이것을 쓴다
-// 표준 아닌 오브젝트 = 그 오브젝트의 탭(obj/<key>, 2026-11-18 오브젝트 탭). 서버 db.ME_STD_IDS 와 같은 값
-export const ME_STD: Record<string, string> = { principle: "std:principles", decision: "std:decision_events", axis: "std:axes" };
+// 고정 탭 오브젝트 = std_id std:<key> 이거나 template_slot author@1:<key>(표준 전 템플릿 계보 계정 — std_id 없음). key·표시명만으로는 판정하지 않는다.
+// 그 밖 오브젝트 = 그 오브젝트의 탭(obj/<key>, 2026-11-18 오브젝트 탭). 서버 db.ME_STD_KEYS·_ME_USER_OBJ 와 같은 규칙
+export const ME_STD_KEY: Record<string, string> = { principle: "principles", decision: "decision_events", axis: "axes" };
+type StdMark = { key: string; std_id?: string | null; template_slot?: string | null };
+export const isMeStd = (d: StdMark, tab: string) => !!ME_STD_KEY[tab] && (d.std_id === "std:" + ME_STD_KEY[tab] || d.template_slot === "author@1:" + ME_STD_KEY[tab]);
+export const isAnyMeStd = (d: StdMark) => Object.keys(ME_STD_KEY).some(t => isMeStd(d, t));
 export function meTabOf(S: AppState, it: Item): string {
   const d = (S.definitions || []).find(x => x.id === it.object_id);
-  for (const t of ["principle", "decision", "axis"] as const) if (d && d.std_id === ME_STD[t]) return t;
+  for (const t of ["principle", "decision", "axis"] as const) if (d && isMeStd(d, t)) return t;
   return "obj/" + encodeURIComponent(d?.key || "");
 }
 

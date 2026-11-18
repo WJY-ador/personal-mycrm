@@ -25,7 +25,7 @@ const page = (o: object = {}) => ({ object: { id: "od_cp", key: "collected_posts
   filters: [{ key: "channel", label: "채널", values: [{ value: "linkedin", label: "LinkedIn", n: 1 }, { value: "reddit", label: "Reddit", n: 1 }] }],
   states: { pending: 1, kept: 1, dropped: 0 }, total: 2, next_cursor: null,
   rows: [row("c1", "합성 글 하나", { channel: "reddit", author_display: "작성자 갑", posted_on: "2026-11-10", post_url: "https://example.com/a/very/long/path" }, "kept"),
-    row("c2", "합성 글 둘", { channel: "linkedin", post_url: "javascript:alert(1)" })], ...o });
+    row("c2", "합성 글 둘", { channel: "linkedin", post_url: "http://example.com/plain" })], ...o });
 let LIST: (url: string) => object = () => page();
 
 beforeEach(() => {
@@ -53,10 +53,10 @@ test("목록 보기 — 열(제목 + 필드 + 상태) · 값 표시(선택지 �
   expect(lists()).toEqual(["/api/me/objects/collected_posts"]);
   expect(text(el, "#obj-list th")).toEqual(["제목", "채널", "작성자", "게시일 ▼", "원 URL", "상태"]);
   expect(el.querySelector("#obj-list th[aria-sort=descending]")!.textContent).toBe("게시일 ▼");
-  expect([...el.querySelectorAll("#obj-list tbody tr")].map(r => text(r, "td"))).toEqual([["합성 글 하나", "Reddit", "작성자 갑", "11월 10일", "원문", "보관"], ["합성 글 둘", "LinkedIn", "", "", "", "대기"]]);
+  expect([...el.querySelectorAll("#obj-list tbody tr")].map(r => text(r, "td"))).toEqual([["합성 글 하나", "Reddit", "작성자 갑", "11월 10일", "원문", "보관"], ["합성 글 둘", "LinkedIn", "", "", "http://example.com/plain", "대기"]]);
   const link = el.querySelector<HTMLAnchorElement>("#obj-list tbody td a[target=_blank]")!;
   expect([link.getAttribute("href"), link.rel, link.textContent]).toEqual(["https://example.com/a/very/long/path", "noopener noreferrer", "원문"]);   // 긴 주소 대신 한 낱말
-  expect(el.querySelectorAll("#obj-list tbody td a[target=_blank]").length).toBe(1);   // http(s) 아닌 값은 링크 없음
+  expect(el.querySelectorAll("#obj-list tbody td a[target=_blank]").length).toBe(1);   // 값으로 판정 — https:// 로 시작할 때만 링크
   expect(el.querySelector("#obj-list tbody a")!.getAttribute("href")).toBe("#_me/obj/collected_posts/c1");
   expect(text(el, "#obj-list [role=group]")).toEqual(["상태대기 1보관 1", "채널LinkedIn 1Reddit 1"]);   // 0건 칩(버림)은 숨김
   expect(calls.filter(c => c.method !== "GET")).toEqual([]);
@@ -114,4 +114,16 @@ test("좁은 화면 — 표 대신 카드(제목 + 앞 두 필드)", async () =>
   const el = await showMe("#_me/obj/collected_posts", S());
   expect(el.querySelector("#obj-list table")).toBeNull();
   expect(text(el, "#obj-list li a")).toEqual(["합성 글 하나Reddit, 작성자 갑", "합성 글 둘LinkedIn"]);
+});
+
+test("템플릿 계보 계정(std_id 없음 + template_slot author@1:<key>) — 기준·결정·축은 고정 탭(항목이 보인다), 오브젝트 탭이 아니다", async () => {
+  const KEY: Record<string, string> = { od_p: "principles", od_e: "decision_events", od_ax: "axes" };   // 운영 key
+  const old = (d: { id: string; std_id: string | null; key: string }) => ({ ...d, key: KEY[d.id], std_id: null, template_slot: "author@1:" + KEY[d.id] });
+  const st = meState({ definitions: [...base.definitions.map(old), def("od_cp", "collected_posts", "수집 글", FIELDS)], items: S().items });
+  const el = await showMe("#_me/principle/p1", st);
+  expect(text(el, "nav a").map(t => t!.replace(/\d/g, ""))).toEqual(["요약", "기준", "결정", "축", "수집 글", "사람", "출처"]);
+  expect(text(el, "nav a").slice(1, 4)).toEqual(["기준2", "결정0", "축2"]);
+  expect(text(el, "#home-list li a .ht")).toEqual(["P-1 담당이 먼저", "두 번째 기준"]);
+  await showMe("#_me/item/a2", st);
+  expect(location.hash).toBe("#_me/axis/a2");
 });

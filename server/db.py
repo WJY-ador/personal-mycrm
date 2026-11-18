@@ -3164,8 +3164,8 @@ def object_list(uid, key, sort="", direction="", q="", filters=None, state="", c
     if direction not in ("", "asc", "desc"):
         raise CrmError("ARG-INVALID", "dir 은 asc, desc 중 하나예요.")
     with tx() as c:
-        od = _one(c, "SELECT id, key, label FROM object_defs WHERE user_id=%s AND key=%s AND revision > 0 AND archived_at IS NULL "
-                     "AND (std_id IS NULL OR std_id <> ALL(%s))", (uid, key, list(ME_STD_IDS)))
+        od = _one(c, "SELECT id, key, label FROM object_defs WHERE user_id=%(uid)s AND key=%(key)s AND revision > 0 AND archived_at IS NULL "
+                     f"AND {_ME_USER_OBJ}", {"uid": uid, "key": key, **_me_user_obj_args()})
         if not od:
             raise CrmError("NOT-FOUND", "이 오브젝트를 찾을 수 없어요.", "「나」 탭을 새로 고쳐 주세요.")
         fields = [f for f in _fields(c, uid, od["id"]) if f["value_type"] != "reference"]
@@ -4149,14 +4149,23 @@ LAYOUT_MAX_BYTES = 8192   # layout 의 JSON 상한(웹은 json_limits 로 먼저
 _PROP_TYPES = {"string": str, "integer": int, "boolean": bool}
 OBJ_TAB = "obj:"
 _OBJ_TAB_RE = re.compile(r"^obj:[a-z][a-z0-9_]{0,39}$")
-ME_STD_IDS = ("std:principles", "std:decision_events", "std:axes")   # 「나」 고정 탭(기준·결정·축)의 표준 오브젝트 — 화면 shared/route ME_STD 와 같은 값
+# 「나」 고정 탭(기준·결정·축)의 오브젝트 = std_id std:<key> 이거나 template_slot author@1:<key>(표준 전 템플릿 계보 계정 — std_id NULL).
+# key·표시명만으로는 판정하지 않는다. 화면 shared/route ME_STD_KEY·isMeStd 와 같은 규칙
+ME_STD_KEYS = ("principles", "decision_events", "axes")
+ME_STD_IDS = tuple("std:" + k for k in ME_STD_KEYS)
+ME_STD_SLOTS = tuple("author@1:" + k for k in ME_STD_KEYS)
+_ME_USER_OBJ = ("(std_id IS NULL OR std_id <> ALL(%(std_ids)s)) AND (template_slot IS NULL OR template_slot <> ALL(%(std_slots)s))")
+
+
+def _me_user_obj_args():
+    return {"std_ids": list(ME_STD_IDS), "std_slots": list(ME_STD_SLOTS)}
 _OLD_CUSTOM_TAB = "custom"
 
 
 def me_object_keys(c, uid):
     """「나」 오브젝트 탭이 되는 사용자 오브젝트 key — 적용(revision>0)·미보관·기준·결정·축 표준 아님. 만든 순(화면 정의 순서와 같다)."""
-    return [r["key"] for r in _all(c, "SELECT key FROM object_defs WHERE user_id=%s AND revision > 0 AND archived_at IS NULL "
-                                      "AND (std_id IS NULL OR std_id <> ALL(%s)) ORDER BY created_at, id", (uid, list(ME_STD_IDS)))]
+    return [r["key"] for r in _all(c, "SELECT key FROM object_defs WHERE user_id=%(uid)s AND revision > 0 AND archived_at IS NULL "
+                                      f"AND {_ME_USER_OBJ} ORDER BY created_at, id", {"uid": uid, **_me_user_obj_args()})]
 
 
 def me_tabs_fit(tabs, keys):

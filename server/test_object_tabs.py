@@ -35,8 +35,8 @@ import db  # noqa: E402
 import imports  # noqa: E402
 import main  # noqa: E402
 
-MAIN, OTHER = "ci-objtab@example.com", "ci-objtab-other@example.com"
-EMAILS = (MAIN, OTHER)
+MAIN, OTHER, OLD = "ci-objtab@example.com", "ci-objtab-other@example.com", "ci-objtab-old@example.com"
+EMAILS = (MAIN, OTHER, OLD)
 FIXED = ["summary", "principle", "decision", "axis", "person", "source"]
 POST_FIELDS = [
     {"key": "channel", "label": "채널", "value_type": "select", "required": True, "options": list(imports.COLLECTED_CHANNELS)},
@@ -232,13 +232,37 @@ async def test_list(U, O, po):
     print("OK 2 목록 보기(열·상태·정렬·칩·필터·검색·쪽·휴지통·보관·격리·웹)")
 
 
+def test_template_lineage(V):
+    """표준 전 템플릿 계보 계정(운영 원작자 꼴) — 기준·결정·축 = std_id NULL + template_slot author@1:<key>. 고정 탭이지 오브젝트 탭이 아니다."""
+    with db.tx() as c:
+        c.execute("UPDATE object_defs SET std_id=NULL, template_slot='author@1:'||key WHERE user_id=%s AND key IN ('principles','decision_events','axes')", (V,))
+        n = c.execute("SELECT count(*) AS n FROM object_defs WHERE user_id=%s AND template_slot LIKE 'author@1:%%' AND std_id IS NULL", (V,)).fetchone()["n"]
+    assert n == 3, "새 계정 시드 = 기준·결정·축 셋"
+    for k, lab in (("open_questions", "숙제"), ("publications", "발행"), ("craft", "접근 방식")):
+        oid = obj(V, k, lab)
+        with db.tx() as c:   # 템플릿 계보 사용자 오브젝트(author@1:<그 밖 key>)는 오브젝트 탭 그대로
+            c.execute("UPDATE object_defs SET template_slot=%s WHERE user_id=%s AND id=%s", ("author@1:" + k, V, oid))
+    obj(V, "collected_posts", "수집 글", POST_FIELDS)
+    obj(V, "verified_results", "확인된 결과")
+    assert tabs(V) == ["summary", "principle", "decision", "axis", "obj:open_questions", "obj:publications", "obj:craft",
+                       "obj:collected_posts", "obj:verified_results", "person", "source"], tabs(V)
+    with db.tx() as c:
+        keys = db.me_object_keys(c, V)
+    assert keys == ["open_questions", "publications", "craft", "collected_posts", "verified_results"]
+    for k in ("principles", "decision_events", "axes"):
+        expect("NOT-FOUND", db.object_list, V, k)
+        expect("LAYOUT-INVALID", db.layout_set, V, page(FIXED + ["obj:" + k]), 0, page="me")
+    print("OK 3 템플릿 계보 계정(std_id NULL + author@1) — 기준·결정·축 = 고정 탭, 오브젝트 탭 5 · 11탭")
+
+
 def main_():
     db.init_schema()
     cleanup()
-    U, O = (db.user_by_email(e)["id"] for e in EMAILS)
+    U, O, V = (db.user_by_email(e)["id"] for e in EMAILS)
     try:
         po = test_layout(U, O)
         asyncio.run(test_list(U, O, po))
+        test_template_lineage(V)
     finally:
         cleanup()
         db.close()

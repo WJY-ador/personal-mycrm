@@ -28,7 +28,7 @@ export const ME_TAB_LABEL: Record<MeTab, string> = { summary: "요약", principl
 // 탭 이름 — 고정 탭 = 위 표, 오브젝트 탭 = 그 오브젝트 label(정의를 못 찾으면 key)
 export const tabLabel = (defs: { key: string; label: string }[] | undefined, t: string) =>
   isTab(t) ? ME_TAB_LABEL[t] : (defs || []).find(d => d.key === objTabKey(t))?.label || objTabKey(t) || t;
-export { ME_STD } from "../../shared/route";
+export { isAnyMeStd, isMeStd } from "../../shared/route";
 export const ME_LOCKED = new Set(["principle", "decision", "axis", "person", "source"]);
 export const ME_LENS: Partial<Record<MeTab, string>> = { principle: "근거 역추적", decision: "근거 역추적", axis: "축 묶음", person: "사람 관계" };
 export const URL_KINDS = ["journal", "q", "cand", "item", "refl"];

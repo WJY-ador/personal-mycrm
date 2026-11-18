@@ -5,7 +5,7 @@ import { meTabOf } from "../../shared/route";
 import { srcText as srcTextOf } from "../../shared/source";
 import { readOk, type AppState, type Cand, type Def, type Item, type Person, type Question, type Rec, type Refl, type Source } from "../../shared/state";
 import type { Act, AxisCtx, PersonCtx, Stats } from "./meApi";
-import { ME_STD, REFL_KIND, SRC_KIND, firstLine, type MeTab } from "./text";
+import { REFL_KIND, SRC_KIND, firstLine, isAnyMeStd, isMeStd, type MeTab } from "./text";
 
 export type World = {
   S: AppState; recs: Rec[]; stats: Stats | null;
@@ -27,9 +27,9 @@ export const srcText = (W: World, sid: string | null) => srcTextOf(W.S.sources, 
 export const srcName = (W: World, sid: string) => { const x = srcById(W, sid); return x ? `${x.name}(${SRC_KIND[x.kind] || x.kind})` : "찾을 수 없는 출처"; };
 export const records = (W: World) => (readOk(W.S, "journal") ? W.recs : []);
 
-export const stdDef = (W: World, tab: string): Def | undefined => defs(W).find(d => d.std_id === ME_STD[tab]);
+export const stdDef = (W: World, tab: string): Def | undefined => defs(W).find(d => isMeStd(d, tab));
 // 사용자 오브젝트(오브젝트 탭이 되는 것) — 적용·미보관, 기준·결정·축 표준 아님. 서버 db.me_object_keys 와 같은 규칙
-export const userObjDefs = (S: AppState) => (S.definitions || []).filter(d => !d.archived_at && !Object.values(ME_STD).includes(d.std_id || ""));
+export const userObjDefs = (S: AppState) => (S.definitions || []).filter(d => !d.archived_at && !isAnyMeStd(d));
 export const customDefs = (W: World) => userObjDefs(W.S);
 export const itemsOf = (W: World, defId: string) => (W.S.items || []).filter(it => it.object_id === defId);
 const codeCmp = (a: Item, b: Item) => (a.code ? 0 : 1) - (b.code ? 0 : 1) || String(a.code || "").localeCompare(String(b.code || ""), "ko", { numeric: true });
