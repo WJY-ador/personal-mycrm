@@ -37,11 +37,11 @@ _TOKEN = re.compile(r"[0-9A-Za-z가-힣]+")
 _LINE = re.compile(r"[^\r\n]+")         # 줄 끝 = \r\n, \r, \n
 _LINE_SPLIT = re.compile(r"\r\n|\r|\n")
 _CUT = re.compile(r"(?<=[.?!。])\s+")   # 문장 끝 부호 뒤 공백에서 나눈다
-_CTRL = ("Cc", "Cf", "Zl", "Zp")
+_CTRL = ("Cc", "Cf", "Zl", "Zp")        # 거절할 범주: 제어 문자, 보이지 않는 서식 문자(U+202E, U+200B 등), 줄과 문단 구분
 # 인용 후보에서 빼는 줄 — markdown 소제목(ATX), 굵게만 있는 줄(끝 쌍점 허용), 표 줄. 목록 머리표는 같은 문장 비교 때만 뗀다
 _HEADING_LINE = re.compile(r" {0,3}#{1,6}(?:[ \t]|$)")
 _BOLD_LINE = re.compile(r"(\*\*|__)(?:(?!\1).)+\1[:：]?")
-_LIST_MARK = re.compile(r"(?:[-*+]|\d{1,9}[.)])[ \t]+")        # 거절할 범주: 제어 문자, 보이지 않는 서식 문자(U+202E, U+200B 등), 줄과 문단 구분
+_LIST_MARK = re.compile(r"(?:[-*+]|\d{1,9}[.)])[ \t]+")
 
 NOTICE = "내 기록 원문만 모았어요. 문장을 새로 쓰지 않았어요. 글로 다듬으면 그건 내 판단이 아니에요."
 # markdown 근거 줄 셋째 칸 — 읽고 든 생각(source_reflections)은 출처 표시도 text_process 도 없어 kind 로 고정 낱말을 쓴다
