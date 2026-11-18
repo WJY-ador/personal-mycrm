@@ -1,6 +1,7 @@
 [
   "agent/__init__.py",
   "agent/adapters/__init__.py",
+  "agent/adapters/axis_pages.py",
   "agent/adapters/base.py",
   "agent/adapters/collected.py",
   "agent/adapters/likes.py",

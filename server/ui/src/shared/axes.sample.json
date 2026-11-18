@@ -1,0 +1,22 @@
+{
+  "overview": {
+    "ready": true,
+    "axes": [
+      {"id": "i_axis_a", "code": "A", "title": "견본 축 하나", "keywords": ["견본어", "sample"], "description": "견본 관점 문장",
+       "counts": {"pending": 3, "kept": 1, "total": 5},
+       "page": {"record_id": "r_page_a", "title": "A. 견본 축 하나 — 나에 대해 한 장", "at": "2026-11-18T05:00:00+00:00", "ai": true, "notice": "AI 가 쓴 초안이에요. 판단 근거가 아니에요."}},
+      {"id": "i_axis_b1", "code": "B-1", "title": "견본 축 둘", "keywords": [], "description": "",
+       "counts": {"pending": 0, "kept": 0, "total": 0}, "page": null}
+    ]
+  },
+  "one": {
+    "ready": true,
+    "axes": [
+      {"id": "i_axis_a", "code": "A", "title": "견본 축 하나", "keywords": ["견본어", "sample"], "description": "견본 관점 문장",
+       "counts": {"pending": 3, "kept": 1, "total": 5},
+       "page": {"record_id": "r_page_a", "title": "A. 견본 축 하나 — 나에 대해 한 장", "at": "2026-11-18T05:00:00+00:00", "ai": true, "notice": "AI 가 쓴 초안이에요. 판단 근거가 아니에요.",
+                "body": "# A. 견본 축 하나 — 나에 대해 한 장\n\n견본 문단이에요.\n\n## 아직 답하지 못한 것\n\n- 견본 물음\n"}}
+    ]
+  },
+  "row_axes": [{"id": "i_axis_a", "code": "A", "title": "견본 축 하나"}]
+}

@@ -2,7 +2,8 @@
 // MyCRM app main process (spec 2026-11-13): one window, the hosted dashboard. No connection window: this PC connects by
 // itself with the app's login session (connector.cjs), the dashboard's "이 PC" line and AI panel talk to the app through
 // dash-bridge.cjs, the AI connection is the provider CLI's own login (ai-link.cjs), and failures become automatic error
-// reports (error-report.cjs). The tray keeps: open the dashboard, sync now, stop or start, quit.
+// reports (error-report.cjs). The tray keeps: open the dashboard, sync now, stop or start, quit ("완전히 종료" with one
+// confirmation, quit.cjs; Command+Q and the window's close only hide the window).
 const {app,BrowserWindow,Menu,Tray,nativeImage,ipcMain,shell,dialog,net,session,Notification,powerMonitor,autoUpdater:nativeUpdater} = require('electron');
 const {spawn} = require('node:child_process');
 const fs = require('node:fs');
@@ -23,11 +24,14 @@ const {createReporter}=require('./error-report.cjs');
 const {classify,syncOutcome,message}=require('./failures.cjs');
 const {createAiLink}=require('./ai-link.cjs');
 const {createPcState}=require('./pc-state.cjs');
+const {TRAY_QUIT_LABEL,HIDE_LABEL,hideAccelerator,createQuitConfirm}=require('./quit.cjs');
 let dash,tray,supervisor,log,prefs={},binary,home,settingsFile,quitting=false,ready=false;
 let busy=false,syncing=false,trayKey=null,connector=null,pollTimer=null,autorun=null,autosync=null,reporter=null,aiLink=null,pcState=null,logsDir=null;
 const commands=new Map();   // running sidecar commands: child -> first argument (ai-connect waits for a browser login)
 // installing: an in-app update is quitting the app (set on 'before-quit-for-update'); the window's close no longer hides it.
 let updater=null,installing=false;
+// sessionEnding: Windows ends the session (log off, restart, shut down: the window's 'session-end'); the close no longer hides.
+let sessionEnding=false;
 function stopProcesses(options){return supervisor.stopAll(options);}
 // Login handoff: one pending login (verifier never leaves memory) and a deep link that arrived before the window existed.
 let pendingLogin=null,queuedLink=handoff.findLink(process.argv);
@@ -72,26 +76,30 @@ function watchProcesses(){
 }
 function changed(){refreshTray();autorun?.nudge('change');signal(DASH.pcChanged);watchProcesses();}
 // Tray (main's decision 2026-11-13): open, sync now, stop or start, open at login (on by default), diagnostic logs, quit.
+// Quit is "완전히 종료" behind one confirmation (spec 2026-11-18 §1.1); it is the only menu item that ends the app.
 function openAtLogin(){return app.isPackaged&&app.getLoginItemSettings().openAtLogin===true;}
 function setOpenAtLogin(value){if(!app.isPackaged)return;app.setLoginItemSettings({openAtLogin:value});prefs.openAtLogin=value;savePreferences();trayKey=null;refreshTray();}
 function trayMenu(live,login){return Menu.buildFromTemplate([{label:'대시보드 열기',click:showDashboard},{label:'지금 동기화',click:()=>{runSync().then(trayResult,()=>{});}},
   {type:'separator'},live?{label:'중지',click:()=>exclusively(userStop).catch(()=>{})}:{label:'시작',click:()=>exclusively(userStart).catch(()=>{})},
   {label:'로그인할 때 열기',type:'checkbox',checked:login,enabled:app.isPackaged,click:item=>setOpenAtLogin(item.checked)},
   {label:'진단 로그 열기',click:()=>{if(logsDir)shell.openPath(logsDir).catch(()=>{});}},
-  {type:'separator'},{label:'종료',click:()=>app.quit()}]);}
+  {type:'separator'},{label:TRAY_QUIT_LABEL,click:()=>{confirmQuit().catch(()=>{});}}]);}
+const confirmQuit=createQuitConfirm({dialog,quit:()=>app.quit(),blocked:()=>quitting||installing,focus:()=>app.focus({steal:true})});
 function refreshTray(){
   if(!tray||tray.isDestroyed())return;
   const live=hasLiveProcess(supervisor?.snapshot()),login=openAtLogin(),key=live+'|'+login;
   if(key===trayKey)return;trayKey=key;tray.setContextMenu(trayMenu(live,login));
 }
 function showDashboard(){if(dash&&!dash.isDestroyed()){dash.show();dash.focus();}}
+function hideDashboard(){if(dash&&!dash.isDestroyed())dash.hide();}
 // Links that leave the hosted origin go to the system browser, https only.
 function leave(url){if(externalHttps(url))shell.openExternal(url).catch(()=>{});}
 // Order matters: a login start is taken over first; it is same-origin and would otherwise load in-app,
 // then redirect to AuthKit outside the allow list and start a browser login that never comes back.
 function guard(event,url){
-  // A mycrm://connection?step=… link from an older web page used to open the connection window: it shows the dashboard.
-  if(handoff.parseSetupLink(url)){event.preventDefault();raiseForLink(showDashboard);return;}
+  // A mycrm://connection?step=… link shows the dashboard; step=provider also opens its AI panel (openStep).
+  const step=handoff.parseSetupLink(url);
+  if(step){event.preventDefault();raiseForLink(showDashboard);openStep(step);return;}
   if(handoff.isLoginNav(url,HOSTED)){event.preventDefault();startLogin(handoff.wantsFresh(url));return;}
   if(inAppAllowed(url))return;event.preventDefault();leave(url);
 }
@@ -124,10 +132,21 @@ function startLogin(fresh=false){
 // R-J5: a deep link brings the window to the front at most once per 2 seconds (any web page can open mycrm://).
 const linkRaise=handoff.focusLimiter();
 function raiseForLink(showWindow){if(!linkRaise())return;showWindow();app.focus({steal:true});}
+// A setup step's place in the dashboard (handoff.setupNavigation): only step=provider moves, to the AI panel (#_ai).
+// A dashboard already open changes only its hash (a fixed script, no reload); any other page loads the dashboard.
+// Like the raise, at most once per 2 seconds: any web page can open mycrm://.
+const stepLimit=handoff.focusLimiter();
+function openStep(step){
+  if(!dash||dash.isDestroyed())return;
+  const nav=handoff.setupNavigation(step,dash.webContents.getURL(),DASHBOARD);
+  if(!nav||!stepLimit())return;
+  if(nav.hash)dash.webContents.executeJavaScript(`location.hash=${JSON.stringify(nav.hash)};`).catch(()=>{});
+  else dash.loadURL(nav.load).catch(()=>{});
+}
 function deepLink(raw){
   if(!dash||dash.isDestroyed()){queuedLink=raw;return;}
   raiseForLink(showDashboard);
-  if(handoff.parseSetupLink(raw))return;
+  const step=handoff.parseSetupLink(raw);if(step){openStep(step);return;}
   const parsed=handoff.parseCallback(raw),result=handoff.accept(pendingLogin,parsed);
   if(result!=='ok'){
     if(result==='expired')pendingLogin=null;
@@ -153,15 +172,17 @@ function createDashboard(){
   dash=new BrowserWindow({width:1200,height:800,minWidth:720,minHeight:520,title:'MyCRM',backgroundColor:'#ffffff',webPreferences:{partition:'persist:dashboard',preload:path.join(__dirname,'dash-preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true}});
   const wc=dash.webContents;
   wc.session.setPermissionRequestHandler((_wc,_p,callback)=>callback(false));
-  wc.setWindowOpenHandler(({url})=>{if(handoff.parseSetupLink(url))raiseForLink(showDashboard);else if(handoff.isLoginNav(url,HOSTED))startLogin(handoff.wantsFresh(url));else if(inAppAllowed(url))wc.loadURL(url).catch(()=>{});else leave(url);return {action:'deny'};});
+  wc.setWindowOpenHandler(({url})=>{const step=handoff.parseSetupLink(url);if(step){raiseForLink(showDashboard);openStep(step);}else if(handoff.isLoginNav(url,HOSTED))startLogin(handoff.wantsFresh(url));else if(inAppAllowed(url))wc.loadURL(url).catch(()=>{});else leave(url);return {action:'deny'};});
   wc.on('will-navigate',(e,url)=>guard(e,e.url||url));
   // Subframes (captcha, provider widgets) are not gated; only top-level navigation is.
   wc.on('will-redirect',(e,url,_inPlace,isMainFrame)=>{if(e.isMainFrame??isMainFrame)guard(e,e.url||url);});
-  dash.on('close',event=>{if(!quitting&&!installing){event.preventDefault();dash.hide();}});
+  dash.on('close',event=>{if(!quitting&&!installing&&!sessionEnding){event.preventDefault();dash.hide();}});
+  dash.on('session-end',()=>{sessionEnding=true;});
   dash.on('focus',()=>{connector?.poll('focus').then(()=>autoDevice('timer'));autorun?.nudge('focus');});
-  // A login callback that launched the app loads its claim (deepLink); anything else loads the dashboard.
-  const link=queuedLink;queuedLink=null;
-  if(link&&!handoff.parseSetupLink(link))deepLink(link);else dash.loadURL(DASHBOARD).catch(()=>{});
+  // A login callback that launched the app loads its claim (deepLink); anything else loads the dashboard, with the AI
+  // panel open when the app was launched by a step=provider link.
+  const link=queuedLink;queuedLink=null;const step=link?handoff.parseSetupLink(link):null;
+  if(link&&!step)deepLink(link);else dash.loadURL(handoff.setupNavigation(step,'',DASHBOARD)?.load||DASHBOARD).catch(()=>{});
 }
 // timeoutMs: run-once 10 minutes, ai-connect 11 minutes (a browser login), others 45 seconds.
 // The result keeps the last output line for the caller (ai-* answer with one JSON line); desktop.log keeps exit codes only.
@@ -409,7 +430,7 @@ async function initialize(){
   autosync.start();
   updater.start();
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    {label:'MyCRM',submenu:[{label:'대시보드',accelerator:'CmdOrCtrl+1',click:showDashboard},{type:'separator'},{label:'종료',accelerator:process.platform==='darwin'?'Command+Q':'Alt+F4',click:()=>app.quit()}]},
+    {label:'MyCRM',submenu:[{label:'대시보드',accelerator:'CmdOrCtrl+1',click:showDashboard},{type:'separator'},{label:HIDE_LABEL,accelerator:hideAccelerator(process.platform),click:hideDashboard}]},
     {role:'editMenu'},
     {label:'보기',submenu:[{label:'새로 고침',accelerator:'CmdOrCtrl+R',click:()=>dashNav('reload')},{label:'뒤로',accelerator:'CmdOrCtrl+[',click:()=>dashNav('back')},{label:'앞으로',accelerator:'CmdOrCtrl+]',click:()=>dashNav('forward')},{type:'separator'},{label:'브라우저에서 열기',click:openInBrowser}]}
   ]));

@@ -652,7 +652,8 @@ TRANSFORM_LABELS = {"board-likes/1": "좋아요 활동(바로 저장)", "self-te
                     "session-wrap/1": "세션 정리(바로 저장)",   # 받는 즉시 승인(2026-11-13). 승인 스위치 꺼짐·기록 한도면 승인 대기
                     # 수집 글(2026-11-12) — 남이 쓴 공개 글은 collected_posts 오브젝트의 항목으로 바로. 골격 활동은 명시된 행동만
                     "collected-post/1": "수집 글(바로 저장, 원문 본문은 PC)", "board-feed/1": "피드 보관 활동(바로 저장)",
-                    "board-reactions/1": "반응 활동(바로 저장)", "board-mail/1": "메일 활동(바로 저장, 주소·제목 없음)"}
+                    "board-reactions/1": "반응 활동(바로 저장)", "board-mail/1": "메일 활동(바로 저장, 주소·제목 없음)",
+                    "axis-page/1": "축 한 장(바로 저장, AI 초안·인용 불가)"}
 # 운영 화면 색 = 토큰 정본(TOKENS_CSS, 밝은 값 — 스크립트 0 이라 data-theme 가 붙지 않는다). 색 글자값을 여기 다시 쓰지 않는다(test_download F).
 _ADMIN_CSS = TOKENS_CSS + """
 body{font-family:system-ui,sans-serif;margin:0;color:var(--ink);background:var(--paper);line-height:1.5;font-size:14px}
@@ -2974,6 +2975,11 @@ class Web:
         sid = request.path_params["sid"]
         return await self._core_read(request, lambda uid: activity.source_context(uid, sid))
 
+    async def api_axes(self, request):
+        """GET /api/axes[?id=<축 항목 id>] — 축 보기(2026-11-18 축 잇기). 모양 = imports.axis_overview(MCP axis_overview_get 과 같은 함수)."""
+        aid = request.query_params.get("id", "")
+        return await self._core_read(request, lambda uid: imports.axis_overview(uid, aid))
+
     async def api_axis_context(self, request):
         """GET /api/axes/{item_id}/context — 축 상세(활동·기록·판단·기준 연결)."""
         iid = request.path_params["iid"]
@@ -3700,6 +3706,7 @@ class Web:
             Route("/api/activities/{aid}", u("web:activity", self.api_activity)),
             Route("/api/people/{pid}/context", u("web:person_context", self.api_person_context)),
             Route("/api/sources/{sid}/context", u("web:source_context", self.api_source_context)),
+            Route("/api/axes", u("web:axes", self.api_axes)),   # 축 보기(2026-11-18) — 읽기만
             Route("/api/axes/{iid}/context", u("web:axis_context", self.api_axis_context)),
             Route("/admin", self.admin_index),
             Route("/admin/reauth", self.admin_reauth),

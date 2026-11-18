@@ -187,7 +187,7 @@ test('electron-updater is required in main.cjs only',()=>{
 
 test('the window lets an install quit it; the install path never uses userStop or changes autoRun',()=>{
   const main=src('main.cjs');
-  assert.match(main,/dash\.on\('close',event=>\{if\(!quitting&&!installing\)/);
+  assert.match(main,/dash\.on\('close',event=>\{if\(!quitting&&!installing&&!sessionEnding\)/);
   assert.match(main,/nativeUpdater\.on\('before-quit-for-update',\(\)=>\{installing=true;\}\)/);
   assert.equal((main.match(/installing=true/g)||[]).length,1,'the windows close only for the updater\'s own quit');
   const prepare=/async function prepareInstall\(\)\{[\s\S]*?\n\}/.exec(main)?.[0]||'';

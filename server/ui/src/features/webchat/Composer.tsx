@@ -9,7 +9,7 @@ import type { WebchatStore } from "./store";
 import { PLACEHOLDER, TEXT_MAX } from "./text";
 import css from "./Webchat.module.css";
 
-export function Composer({ s, inRef, dev }: { s: WebchatStore; inRef: RefObject<HTMLTextAreaElement | null>; dev: string }) {
+export function Composer({ s, inRef }: { s: WebchatStore; inRef: RefObject<HTMLTextAreaElement | null> }) {
   const n = [...s.input].length;
   return (
     <form className={css.comp} onSubmit={e => { e.preventDefault(); void s.send(); }}>
@@ -17,7 +17,7 @@ export function Composer({ s, inRef, dev }: { s: WebchatStore; inRef: RefObject<
         onChange={e => { s.input = e.target.value; s.emit(); }}
         onKeyDown={e => { if (sendKey(e)) { e.preventDefault(); void s.send(); } }} />
       <div className={css.row}>
-        <ModelPicker s={s} dev={dev} />
+        <ModelPicker s={s} />
         <span className={`${css.count}${n > TEXT_MAX ? ` ${css.bad}` : ""}`}>{`${n.toLocaleString()} / ${TEXT_MAX.toLocaleString()}`}</span>
         {s.running() && <button type="button" className="secondary" onClick={() => void s.stop()}>중지</button>}
         <button type="submit" className="primary" disabled={!s.canSend()}>보내기</button></div>

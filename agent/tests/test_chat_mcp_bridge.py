@@ -136,6 +136,10 @@ class McpStdioBridgeTest(unittest.TestCase):
     def test_json_rpc_initialize_and_notifications(self):
         initialized = self.message("initialize", {"protocolVersion": "2024-11-05"})
         self.assertEqual(initialized["result"]["capabilities"], {"tools": {}})
+        # App 0.1.8: the provider CLI gets the answer_get display rule as server instructions.
+        from agent.chat_approval_context import ANSWER_GET_RULE
+        self.assertEqual(initialized["result"]["instructions"], ANSWER_GET_RULE)
+        self.assertEqual(set(initialized["result"]), {"protocolVersion", "capabilities", "serverInfo", "instructions"})
         self.assertIsNone(self.bridge.handle_line('{"jsonrpc":"2.0","method":"notifications/initialized"}'))
 
     def test_line_limit_and_malformed_json_fail_closed(self):

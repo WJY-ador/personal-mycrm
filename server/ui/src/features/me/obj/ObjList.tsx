@@ -6,7 +6,9 @@ import { keepPreviousData, useInfiniteQuery } from "@tanstack/react-query";
 import type { Def } from "../../../shared/state";
 import { fieldText } from "../FieldRows";
 import { meApi, type ObjCol, type ObjList as List, type ObjQuery, type ObjRow } from "../meApi";
-import type { World } from "../model";
+import { AxisCodes } from "../../../shared/AxisCodes";
+import { axisCodes } from "../../../shared/axes";
+import { axes, type World } from "../model";
 import { LOADING, ME_EMPTY, OBJ_STATE, OBJ_TEXT } from "../text";
 import { backNav, useMobile } from "../view";
 import { objHref } from "./ObjTab";
@@ -55,6 +57,9 @@ export function ObjList({ W, def, vq, setVq }: Props) {
         : <p className="hint">{LOADING}</p>}
     </section>);
   const rows = L.data!.pages.flatMap(p => p.rows);
+  // 행의 축 코드 칩(축 잇기) — 서버 행 axes [{id, code, title}], 코드가 비면 축 항목 값
+  const byAx = Object.fromEntries(axes(W).map(a => [a.id, { code: a.code, title: a.title }]));
+  const ax = (r: ObjRow) => <AxisCodes codes={axisCodes(r.axes, byAx)} />;
   const cols = first.has_state ? [...first.columns, STATE_COL] : first.columns;
   const filtered = !!(vq.q.trim() || vq.state || Object.values(vq.f).some(Boolean));
   const sortBy = (k: string, c: ObjCol | null) => setVq({ ...vq, sort: k, dir: first.sort.key === k ? (first.sort.dir === "asc" ? "desc" : "asc") : firstDir(c) });
@@ -74,13 +79,13 @@ export function ObjList({ W, def, vq, setVq }: Props) {
       </div>
       {!rows.length ? <div className="empty">{filtered ? OBJ_TEXT.none : ME_EMPTY}</div> : mobile ? (
         <ul className={css.cards}>{rows.map(r => <li key={r.id}><a href={objHref(def.key, r.id)} onClick={go}>
-          <span className={css.ct}>{r.code && <span className={css.cd}>{r.code} </span>}{r.title || "(제목 없음)"}</span>
+          <span className={css.ct}>{r.code && <span className={css.cd}>{r.code} </span>}{r.title || "(제목 없음)"}{r.axes?.length ? <> {ax(r)}</> : null}</span>
           <span className={css.cm}>{cols.slice(0, 2).map(c => cell(c, r)).filter(Boolean).join(", ")}</span></a></li>)}</ul>
       ) : (
         <div className={css.tw}><table className={css.tbl}>
           <thead><tr>{th("title", OBJ_TEXT.title, null)}{cols.map(c => th(c.key, c.label, c))}</tr></thead>
           <tbody>{rows.map(r => <tr key={r.id} onClick={e => { if (!(e.target as Element).closest("a")) { go(); location.hash = objHref(def.key, r.id); } }}>
-            <td className={css.tt}><a href={objHref(def.key, r.id)} onClick={go}>{r.code && <span className={css.cd}>{r.code} </span>}{r.title || "(제목 없음)"}</a></td>
+            <td className={css.tt}><a href={objHref(def.key, r.id)} onClick={go}>{r.code && <span className={css.cd}>{r.code} </span>}{r.title || "(제목 없음)"}</a>{r.axes?.length ? <> {ax(r)}</> : null}</td>
             {cols.map(c => <td key={c.key}>{td(c, r)}</td>)}</tr>)}</tbody>
         </table></div>
       )}

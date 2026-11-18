@@ -68,6 +68,34 @@ def stage_activity(st: "_store.Store", cfg: dict, adapter, obs: Observation, hma
 
 
 COLLECTED_TRANSFORM = "collected-post/1"
+AXIS_CODES_FEATURE = "axis_codes"
+FEATURES_CHECKED = "server_features_checked"     # 커서 — 서버 기능을 마지막으로 물어본 KST 날짜
+
+
+# 이미 올린 수집 글에 축 코드를 처음 실어 다시 올리는 개정(재업로드) — 실행당 몫. 업로드 간격(min_interval_sec 6.5초) × 건수가
+# 앱의 run-once 시간 한도(600초)를 넘지 않게 state_resync 와 같은 50 으로 나눈다(새 글은 몫과 무관하게 만든다). 남은 것은 다음 실행이 잇는다
+AXIS_RESTAGE_PER_RUN = 50
+
+
+def _axis_restage_full(st, cfg: dict, oid: str, fields: dict) -> bool:
+    """이 글이 이미 접수된 원본이고 내용(투영)이 바뀌어 새 개정이 될 참인데, 이번 실행의 재업로드 몫을 다 썼나. 다 안 썼으면 하나 센다."""
+    acc = st.latest_accepted(oid)
+    if acc is None or st.has_open_revision(oid) or acc["projection_sha"] == _projection(fields, COLLECTED_TRANSFORM):
+        return False
+    latest = st.latest_revision(oid)
+    if latest is not None and latest["projection_sha"] == _projection(fields, COLLECTED_TRANSFORM):
+        return False
+    n = cfg.setdefault("_axis_restaged", 0)
+    if n >= AXIS_RESTAGE_PER_RUN:
+        return True
+    cfg["_axis_restaged"] = n + 1
+    return False
+
+
+def axis_codes_on(cfg: dict) -> bool:
+    """서버가 수집 글 axis_codes 를 받는다고 알렸나(GET /api/imports/device 의 features). 모르면 False — 옛 서버는 그 키를
+    CONTRACT-INVALID 로 거절하고, 거절된 판은 같은 내용으로 다시 만들지 않으므로 보내기 전에 정한다."""
+    return AXIS_CODES_FEATURE in (cfg.get("server_features") or [])
 
 
 def stage_collected_post(st: "_store.Store", cfg: dict, adapter, cp: CollectedPost, counts: dict) -> None:
@@ -90,8 +118,18 @@ def stage_collected_post(st: "_store.Store", cfg: dict, adapter, cp: CollectedPo
         except _store.StoreError:
             pass
     fields = dict(cp.fields)
+    codes = list(cp.axis_codes or [])
+    if axis_codes_on(cfg):
+        # 서버가 축 코드를 받는다(2026-11-18) — 축은 코드로만 보낸다(옛 axes_map 경로·POLICY-AXIS 대조는 쓰지 않는다).
+        # 축이 없는 글은 키를 빼 투영이 옛 판과 같게 둔다(다시 올리지 않는다)
+        fields.pop("axes", None)
+        if codes:
+            fields["axis_codes"] = codes
     fields["raw_id"] = ev["raw_id"]
     oid = ev["original_id"]
+    if "axis_codes" in fields and _axis_restage_full(st, cfg, oid, fields):
+        counts["deferred_axis"] = counts.get("deferred_axis", 0) + 1     # 이미 올린 글의 축 다시 올리기 — 이번 실행 몫을 다 썼다
+        return
     rs = cfg.get("_resync")
     want = rs is not None and rs.wants(oid)
     before, quarantined = counts["staged"], counts["quarantined"]
@@ -231,8 +269,19 @@ def refresh_policy(paths, st, cfg: dict, up) -> dict:
         return {"status": "device-mismatch"}
     if new.get("hmac_namespace") != cfg.get("hmac_namespace"):
         return {"status": "namespace-changed"}
+    from . import osutil
+    st.cursor_set(FEATURES_CHECKED, osutil.kst_now().date().isoformat())   # 이 응답이 서버 기능도 알려 줬다 — 오늘은 다시 묻지 않는다
     if new.get("policy_revision") == cfg.get("policy_revision"):
-        return {"status": "unchanged"}         # 서버 판이 그대로인데 POLICY-STALE — 고칠 것이 없다. 멈춤 유지
+        # 서버 판이 그대로인데 POLICY-STALE — 고칠 것이 없다. 멈춤 유지. 서버 기능(features)이 바뀌었으면 그것만 저장한다
+        if new.get("server_features") != cfg.get("server_features"):
+            keep = dict(public, server_features=new.get("server_features"))
+            try:
+                _config.validate_config(keep)
+                _config.save(paths, keep)
+                cfg["server_features"] = keep["server_features"]
+            except _config.ConfigError:
+                pass
+        return {"status": "unchanged"}
     try:
         _config.validate_config(new)
     except _config.ConfigError:
@@ -249,6 +298,29 @@ def refresh_policy(paths, st, cfg: dict, up) -> dict:
     out.update({"status": "ok", "policy_revision": pr})
     cfg.update(new)
     return out
+
+
+def refresh_features(paths, cfg: dict, up) -> dict:
+    """서버 기능(features)만 다시 받아 설정의 server_features 를 맞춘다 — 허용 규칙·정책 판은 건드리지 않는다(그건 refresh_policy 몫).
+    옛 서버(features 없음)면 []. 반환 {"status": ok|device-*, "features": [...]} — 값·토큰 없음."""
+    from .uploader import DeviceError
+    try:
+        info = up.device()
+    except DeviceError as e:
+        return {"status": "device-" + e.kind}
+    if not isinstance(info, dict) or info.get("stream_id") != cfg.get("source_instance_id"):
+        return {"status": "device-mismatch"}
+    feats = info.get("features")
+    feats = [f for f in dict.fromkeys(feats) if f in _config.KNOWN_FEATURES] if isinstance(feats, list) else []
+    if feats != cfg.get("server_features"):
+        public = {k: v for k, v in cfg.items() if not k.startswith("_")}
+        public["server_features"] = feats
+        try:
+            _config.save(paths, public)
+        except _config.ConfigError:
+            return {"status": "config-invalid"}
+        cfg["server_features"] = feats
+    return {"status": "ok", "features": feats}
 
 
 def load_secrets(cfg: dict, ks: keystore.KeyStore, need_hmac: bool):
@@ -314,12 +386,25 @@ def _policy_allows(cfg: dict, transform: str, action: str | None = None) -> bool
     return not (action is not None and ac is not None and action not in ac)
 
 
+def _needs_features_check(st, cfg: dict) -> bool:
+    """수집 글(feed)을 켰는데 서버가 축 코드를 받는지 아직 모른다 — 하루 한 번(KST) 장치 정보를 물어본다. 대기 요청이 없으면
+    POLICY-STALE 이 오지 않아 새 서버를 알아챌 길이 없다(재업로드가 시작되지 않는다). 이미 알면 묻지 않는다."""
+    feed = (cfg.get("adapters") or {}).get("feed") or {}
+    if not feed.get("enabled") or axis_codes_on(cfg):
+        return False
+    from . import osutil
+    return st.cursor_get(FEATURES_CHECKED) != osutil.kst_now().date().isoformat()
+
+
 def _policy_missing_transforms(cfg: dict) -> bool:
-    """켠 어댑터가 쓰는 변환 중 설정의 허용 변환(allowed_transforms, 서버에서 받은 값)에 없는 것이 있나. 모르면(None) False."""
+    """켠 어댑터가 쓰는 변환 중 설정의 허용 변환(allowed_transforms, 서버에서 받은 값)에 없는 것이 있나. 모르면(None) False.
+    축 한 장(axis_pages.dir 설정)도 켠 것으로 본다."""
     allowed = cfg.get("allowed_transforms")
     if allowed is None:
         return False
     need = set()
+    if (cfg.get("axis_pages") or {}).get("dir"):
+        need.add(contract.AXIS_PAGE_TRANSFORM)
     for name, section in (cfg.get("adapters") or {}).items():
         if not section.get("enabled") or name not in _adapters.ACTIVE:
             continue
@@ -460,7 +545,15 @@ def run_once(paths, *, ks: keystore.KeyStore, uploader_factory=None, summarizer=
                 # (대기 요청이 없으면 POLICY-STALE 이 오지 않아 허용 변경을 알 길이 없다.) 실패해도 이번 실행은 그대로
                 up = (uploader_factory or Uploader)(cfg["server_url"], token, timeout=cfg["upload"]["timeout_sec"])
                 result["policy_refresh_before"] = refresh_policy(paths, st, cfg, up)
+            elif upload and _needs_features_check(st, cfg):
+                # 서버 기능(축 코드)을 아직 모른다 — 하루 한 번 기능만 묻는다(정책은 그대로). 실패해도 이번 실행은 그대로
+                up = (uploader_factory or Uploader)(cfg["server_url"], token, timeout=cfg["upload"]["timeout_sec"])
+                result["features_refresh"] = refresh_features(paths, cfg, up)
+                if result["features_refresh"]["status"] == "ok":
+                    st.cursor_set(FEATURES_CHECKED, osutil.kst_now().date().isoformat())
             cfg["_resync"] = _Resync(st, osutil.kst_now().date().isoformat())
+            from .adapters import axis_pages   # 축 한 장(설정 axis_pages.dir 일 때만) — 수집 글보다 먼저 줄 세운다(재업로드 뒤에 밀리지 않게)
+            result["axis_pages"] = axis_pages.collect(st, cfg, counts)
             collect(st, cfg, hkey, counts)
             result["collect"] = counts
             from . import sessionwrap   # 세션 정리 폴더(설정에서 켰을 때만) — 같은 전송 대기·업로드 경로

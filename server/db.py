@@ -3298,11 +3298,15 @@ OBJ_LIST_STATES = ("pending", "kept", "dropped")
 _OBJ_LIST_Q_MAX = 200
 
 
+OBJ_LIST_AXIS_FILTER = "axes"   # object_list 의 f.axes — select 필드가 아니라 축 연결로 거른다
+
+
 def object_list(uid, key, sort="", direction="", q="", filters=None, state="", cursor=""):
     """오브젝트 key 하나의 목록 보기 — 사용자 격리, 적용·미보관·휴지통 아닌 항목만. 반환
     {object: {id, key, label}, columns: [{key, label, value_type, options}], has_state, sort: {key, dir},
      filters: [{key, label, values: [{value, label, n}]}], states: {pending, kept, dropped} | None,
-     rows: [{id, code, title, revision, updated_at, data: {열 key: 값}, state?}], total, next_cursor}."""
+     rows: [{id, code, title, revision, updated_at, data: {열 key: 값}, state?, axes?}], total, next_cursor}.
+    filters 의 axes = 축 항목 id(그 축에 붙은 항목만). 수집 글 행만 state 와 axes([{id, code, title}], 축 코드 칩)를 싣는다."""
     import imports   # imports 가 db 를 가져다 쓴다 — 모듈 맨 위에서 가져오면 순환
     filters = filters or {}
     if not isinstance(q, str) or len(q) > _OBJ_LIST_Q_MAX:
@@ -3326,6 +3330,10 @@ def object_list(uid, key, sort="", direction="", q="", filters=None, state="", c
             raise CrmError("ARG-INVALID", f"정렬할 수 없는 열이에요: {sk}")
         sd = direction or ("asc" if sort == "title" else "desc")
         for fk, v in filters.items():
+            if fk == OBJ_LIST_AXIS_FILTER:   # 축 필터(2026-11-18 축 잇기) — f.axes=<축 항목 id>, 그 축에 axes 로 붙은 항목만
+                if not isinstance(v, str) or not re.match(r"^i_[A-Za-z0-9_-]{4,40}$", v):
+                    raise CrmError("ARG-INVALID", "f.axes 는 축 항목 id(i_…)예요.")
+                continue
             if fk not in by_key or by_key[fk]["value_type"] != "select" or not isinstance(v, str) or not v:
                 raise CrmError("ARG-INVALID", f"거를 수 없는 필드예요: {fk}")
         if state and (not has_state or state not in OBJ_LIST_STATES):
@@ -3333,6 +3341,10 @@ def object_list(uid, key, sort="", direction="", q="", filters=None, state="", c
         base = ("FROM items i LEFT JOIN collected_states s ON s.user_id=i.user_id AND s.item_id=i.id "
                 "WHERE i.user_id=%s AND i.object_id=%s AND i.revision > 0 AND i.archived_at IS NULL AND i.trashed_at IS NULL")
         args = [uid, od["id"]]
+        if filters.get(OBJ_LIST_AXIS_FILTER):   # 축 필터는 바탕 조건에 둔다 — 상태 칩·필터 칩 건수도 그 축 안에서 센다(축 화면 머리 건수와 같게)
+            base += (" AND EXISTS (SELECT 1 FROM item_links l WHERE l.user_id=i.user_id AND l.source_item_id=i.id "
+                     "AND l.field_key='axes' AND l.target_item_id=%s)")
+            args.append(filters[OBJ_LIST_AXIS_FILTER])
         out_filters = []
         for f in fields:
             if f["value_type"] != "select":
@@ -3348,6 +3360,8 @@ def object_list(uid, key, sort="", direction="", q="", filters=None, state="", c
             states = {k: st.get(k, 0) for k in OBJ_LIST_STATES}
         where, wargs = "", []
         for fk, v in filters.items():
+            if fk == OBJ_LIST_AXIS_FILTER:   # 바탕 조건(base)에 이미 넣었다
+                continue
             where += " AND i.data->>%s = %s"
             wargs += [fk, v]
         if state:
@@ -3366,6 +3380,12 @@ def object_list(uid, key, sort="", direction="", q="", filters=None, state="", c
                     [*args, *wargs, *order[1], OBJ_LIST_PAGE + 1, off])
         import route
         routed = route.item_sources(c, uid, [r["id"] for r in rows[:OBJ_LIST_PAGE]])   # 자동 분류 표시
+        chips = {}
+        if has_state:   # 수집 글 행의 축 코드 칩(2026-11-18) — 휴지통 축 제외
+            for a in _all(c, "SELECT l.source_item_id AS sid, t.id, t.code, t.title FROM item_links l JOIN items t ON t.user_id=l.user_id "
+                             "AND t.id=l.target_item_id WHERE l.user_id=%s AND l.field_key='axes' AND l.source_item_id = ANY(%s) "
+                             "AND t.trashed_at IS NULL ORDER BY t.code NULLS LAST, l.id", (uid, [r["id"] for r in rows[:OBJ_LIST_PAGE]])):
+                chips.setdefault(a["sid"], []).append({"id": a["id"], "code": a["code"], "title": a["title"]})
     more, rows = len(rows) > OBJ_LIST_PAGE, rows[:OBJ_LIST_PAGE]
     ck = [f["key"] for f in cols]
     out = []
@@ -3375,6 +3395,7 @@ def object_list(uid, key, sort="", direction="", q="", filters=None, state="", c
                "data": {k: d[k] for k in ck if k in d}}
         if has_state:
             row["state"] = r["state"]
+            row["axes"] = chips.get(r["id"], [])
         if r["id"] in routed:
             row["auto_routed"], row["route_source"] = True, routed[r["id"]]
         out.append(row)

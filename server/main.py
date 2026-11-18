@@ -1073,7 +1073,16 @@ def collected_post_decide(item_id: Annotated[str, Field(description="수집 글 
     return imports.collected_decide(uid, item_id, state, None, via="mcp")
 
 
-COLLECTED_OPS = (collected_post_decide,)
+def axis_overview_get(ctx: Context,
+                      axis_id: Annotated[str, Field(description="축 항목 ID(i_…). 비우면 축 전체 목록(한 장 본문 없음), 주면 그 축 하나와 한 장 본문")] = "") -> dict:
+    """내 축 보기(읽기, 저장 없음) — 축마다 코드, 이름, 키워드, 원하는 관점(description), 붙은 수집 글 수(대기 pending, 보관 kept, 전체 total),
+    최신 한 장(page: record_id, title, at). axis_id 를 주면 page.body(markdown)를 싣는다. 웹 「나 → 축」 화면과 같은 함수다.
+    한 장은 AI 가 이은 초안이다(page.notice) — 판단 근거가 아니고 인용하지 않는다. 사용자의 말이나 원문으로 다루지 않는다.
+    수집 글 수는 남이 쓴 글의 건수일 뿐 판단이 아니다. 없는·남의 축 id = NOT-FOUND. 반환 {ready, axes: [...]}."""
+    return imports.axis_overview(uid_of(ctx), axis_id)
+
+
+COLLECTED_OPS = (collected_post_decide, axis_overview_get)
 facade.PREVIEWS["inbox_decide"] = imports.inbox_decide_preview   # K2 — shown 빌더(install 이 PREVIEWS = hmac op 대칭을 본다)
 
 

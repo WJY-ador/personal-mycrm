@@ -2,7 +2,7 @@
 // 탭 줄 AI 버튼(AI 하나로 A1, 탭 줄의 대화 버튼은 이것 하나)은 #ui-chatnav 에 포털로, 패널은 오른쪽 고정(넓은 화면)·화면 전체(좁은 화면).
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
-import { aiAsk } from "../../shared/aiAsk";
+import { AI_HASH, aiAsk, hashOf } from "../../shared/aiAsk";
 import type { ScreenProps } from "../../shared/ctx";
 import { Panel } from "./Panel";
 import { webchat, type WebchatStore } from "./store";
@@ -28,6 +28,18 @@ export function WebchatRoot({ ctx, store = webchat }: ScreenProps & { store?: We
     if (!on) return;
     return aiAsk.on(text => { if (!s.input.trim()) { s.input = text; s.emit(); } void s.toggle(true); });
   }, [on, s]);
+  useEffect(() => {   // 주소 표지 #_ai(2026-11-18) — 처음 열 때와 hashchange 에 패널을 연다. 표지는 replaceState 로 지운다(뒤로 가기 기록을 늘리지 않음).
+    if (!on) return;   // hashchange 로 왔으면 앞 주소(oldURL 의 hash)로 되돌려 보던 화면을 그대로 둔다. 이미 열려 있으면 그대로
+    const take = (back = "") => {
+      if (location.hash !== AI_HASH) return;
+      history.replaceState(history.state, "", location.pathname + location.search + (back === AI_HASH ? "" : back));
+      if (!s.open) void s.toggle(true);
+    };
+    take();
+    const f = (e: HashChangeEvent) => take(hashOf(e.oldURL));
+    window.addEventListener("hashchange", f);
+    return () => window.removeEventListener("hashchange", f);
+  }, [on, s]);
   if (!on) return null;
   const nav = document.getElementById("ui-chatnav");
   const btn = <a href="#" className={`tab ${css.btn}${s.open ? ` ${css.on} on` : ""}`} role="button" aria-pressed={s.open} aria-controls="webchat"
@@ -35,7 +47,7 @@ export function WebchatRoot({ ctx, store = webchat }: ScreenProps & { store?: We
   return (
     <>
       {nav && createPortal(btn, nav)}
-      <Panel s={s} inRef={inRef} dev={ctx.state?.devices_status?.state ?? ""} />
+      <Panel s={s} inRef={inRef} />
     </>
   );
 }

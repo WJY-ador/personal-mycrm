@@ -291,7 +291,7 @@ async def body(A, B, d, ax):
     j = r.json()
     assert j["ready"] is True and [p["id"] for p in j["posts"]] == [i3, i1, i4] and j["counts"] == {"pending": 3, "kept": 1}, j
     p1 = j["posts"][1]   # 같은 수집일(11-12)이면 id 순
-    assert p1["axes"] == [{"id": ax, "title": "합성 축"}] and p1["post_url"] == "https://www.linkedin.com/posts/synthetic-1", p1
+    assert p1["axes"] == [{"id": ax, "code": "AX-0", "title": "합성 축"}] and p1["post_url"] == "https://www.linkedin.com/posts/synthetic-1", p1
     assert p1["ai"] == {"grade": "signal", "summary": "합성 요약", "as_is": "지금", "to_be": "다음", "ops": "운영", "points": ["점"]}, p1["ai"]
     assert p1["state"] == "pending" and p1["decided_by"] == "device" and p1["author_display"] == "합성 작성자"
     j = (await web("GET", "/api/collected?state=kept")).json()

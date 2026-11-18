@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { apiErr } from "../../shared/api";
 import { postMsg } from "../../shared/postErr";
 import { queryClient } from "../../shared/queries";
+import { AXES_QK } from "../../shared/axes";
 import { UNDO_MS } from "./collectedRows";
 import { BULK_MAX, collectedApi, type Post, type PostList } from "./collectedApi";
 
@@ -13,7 +14,7 @@ const WORD: Record<string, string> = { kept: "보관했어요.", dropped: "버�
 function forget(ids: string[]) {   // 판별한 글을 두 목록에서 바로 뺀다(다시 받기 전 깜빡임 없이)
   for (const k of ["pending", "kept"]) queryClient.setQueryData<PostList>(["collected", k], d => d && { ...d, posts: d.posts.filter(p => !ids.includes(p.id)) });
 }
-const refresh = () => queryClient.invalidateQueries({ queryKey: ["collected"] });
+const refresh = () => Promise.all([queryClient.invalidateQueries({ queryKey: ["collected"] }), queryClient.invalidateQueries({ queryKey: AXES_QK })]);   // 판별 뒤 축별 대기 수도
 
 export function useCollected() {
   const [busy, setBusy] = useState(false), [err, setErr] = useState(""), [note, setNote] = useState("");

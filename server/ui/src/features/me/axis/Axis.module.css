@@ -1,0 +1,44 @@
+/* 「나」 축 탭 — 축 카드 목록 · 축 화면(머리, 접힌 관점, 한 장, 수집 글). 기존 토큰만. 한 장은 AI 초안이라 명조(--prose)를 쓰지 않는다 */
+.box { min-width: 0; }
+.page { display: flex; flex-direction: column; gap: var(--sp-7); max-width: 960px; min-width: 0; }
+.cards { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: var(--sp-4); }
+.card { display: flex; flex-direction: column; gap: var(--sp-3); height: 100%; box-sizing: border-box; padding: var(--sp-5) var(--sp-6); min-width: 0;
+  border: 1px solid var(--line); border-radius: var(--r-4); background: var(--card); color: var(--ink); text-decoration: none; }
+.card:hover { border-color: var(--accent); background: var(--accent-soft); }
+.top { display: flex; align-items: baseline; gap: var(--sp-3); min-width: 0; }
+.dot { flex: none; display: inline-block; width: 9px; height: 9px; border-radius: 50%; align-self: center; }
+.code { flex: none; font-family: var(--mono); font-size: var(--fs-2); font-weight: 600; color: var(--ink); }
+.t { min-width: 0; font-size: var(--fs-3); font-weight: 500; overflow-wrap: anywhere; }
+.nums { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-5); font-size: var(--fs-2); color: var(--muted); }
+.nums b { font-family: var(--mono); font-weight: 600; color: var(--ink); }
+.has { margin-left: auto; }
+.h { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-4); margin: 0 0 var(--sp-3); font-size: var(--fs-5); overflow-wrap: anywhere; }
+.h .code { font-size: var(--fs-4); color: var(--muted); }
+.h + .nums .has { margin-left: 0; }
+.fold { margin-top: var(--sp-5); border-top: 1px solid var(--line); padding-top: var(--sp-4); }
+.fold > summary { cursor: pointer; font-size: var(--fs-2); font-weight: 600; color: var(--muted); min-height: 28px; display: list-item; }
+.fold > summary:hover { color: var(--accent); }
+.fold[open] > summary { margin-bottom: var(--sp-4); }
+.kw { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin: 0 0 var(--sp-4); }
+.kl { font-size: var(--fs-1); font-weight: 600; color: var(--muted); margin-right: var(--sp-2); }
+.kw :global(.chip) { white-space: normal; overflow-wrap: anywhere; }
+.body { white-space: pre-wrap; font-size: var(--fs-3); line-height: 1.7; margin: 0; overflow-wrap: anywhere; }
+.item { min-width: 0; }
+/* 한 장 */
+.ai { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); align-items: baseline; margin: 0 0 var(--sp-5); padding: var(--sp-3) var(--sp-5);
+  font-size: var(--fs-2); color: var(--ai); background: var(--ai-bg); border-radius: var(--r-3); border: 1px dashed var(--cand-line); }
+.when { font-family: var(--mono); font-size: var(--fs-1); color: var(--muted); }
+.doc { font-size: var(--fs-3); line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); min-width: 0; }
+.doc > * { margin: 0; }
+.doc > * + * { margin-top: var(--sp-5); }
+.doc h3 { font-size: var(--fs-4); font-weight: 700; line-height: 1.4; }
+.doc h4 { font-size: var(--fs-3); font-weight: 700; line-height: 1.4; }
+.doc > * + :is(h3, h4) { margin-top: var(--sp-8); }
+.doc > :is(h3, h4) + * { margin-top: var(--sp-3); }
+.doc blockquote { border-left: 3px solid var(--line); padding-left: var(--sp-5); color: var(--muted); }
+.doc ul { padding-left: var(--sp-7); }
+.doc li + li { margin-top: var(--sp-2); }
+@media (max-width: 767px) {
+  .cards { grid-template-columns: minmax(0, 1fr); }
+  .h { font-size: var(--fs-4); }
+}

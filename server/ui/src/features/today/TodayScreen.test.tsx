@@ -39,7 +39,7 @@ afterEach(() => { hideScreen(); vi.unstubAllGlobals(); });
 
 test("오늘 목록 — 대기·보관됨 줄 · 오늘 머리글(KST) · 그냥 쓴 글 0 · 활동 5줄 + 「더 1」 · [삭제]·쓰기 0", async () => {
   const el = await show("#_today", ["today", "", ""]);
-  expect(calls.map(c => c.url).sort()).toEqual(["/api/activities?limit=50", "/api/collected?state=pending", "/api/inbox?state=pending"]);
+  expect(calls.map(c => c.url).sort()).toEqual(["/api/activities?limit=50", "/api/axes", "/api/collected?state=pending", "/api/inbox?state=pending"]);   // + 오늘의 축(축 잇기)
   expect(el.querySelector("#home-list h3:not(#today-h)")!.textContent).toMatch(/^오늘, /);
   expect(el.textContent).toContain("대기 2");
   const kinds = text(el, ".hrows .ht").map(t => t!.replace(/\s+/g, " ").trim());

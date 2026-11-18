@@ -45,6 +45,7 @@ import hmac
 import json
 import re
 import secrets
+import time
 from psycopg.types.json import Jsonb
 
 from starlette.concurrency import run_in_threadpool
@@ -72,6 +73,10 @@ REPLAY_TURNS = 20                   # SSE 재생 상한 — 최근 턴 수(앞�
 REPLAY_BYTES = 2 * 1024 * 1024      # SSE 재생 상한 — 이벤트 바이트(n_bytes) 합. 최근 턴 1개는 늘 재생한다
 SSE_MAX_SECONDS = 300               # SSE 연결 하나의 최대 수명 — 끝나면 브라우저가 Last-Event-ID 로 다시 붙는다(재배포 때 옛 프로세스가 열린 SSE 를 무한히 기다리지 않게)
 PING_SECONDS = 25                   # 장치 WS ping + 토큰 재확인(철회·만료·차단 = 닫음)
+# 대화 연결 상시(2026-11-18): 장치 WS 에서 이만큼 아무것도 받지 못하면 잠든 PC(반쯤 열린 연결)로 보고 끊는다(허브에서 뺀 뒤 4002 로 닫음).
+# PC 앱 0.1.2~0.1.7 의 agent/chat.py 는 서버 앱 ping 마다 pong 을 보낸다(턴 실행 중에도 받는 스레드가 답한다) — ping 2번을 놓치면 끊는다.
+# ASGI 앱은 프로토콜 ping 을 보낼 수 없어(uvicorn 이 따로 한다) 앱 메시지 수신 시각으로 본다
+DEVICE_SILENCE_SECONDS = 60
 TURN_IDLE_SECONDS = 600             # 이벤트 없는 running 턴 → 다음 입력 때 failed(TURN-TIMEOUT)
 PROVIDER_LAUNCH_READY = True        # 2026-11-12 K: 원작자 실사용, 독립 검토 I와 J 반영 뒤 켬, Codex는 꺼짐
 LAUNCH_AUTHORIZATION_PATH = "/api/chat/launch-authorization"
@@ -121,9 +126,9 @@ OUTCOME_SKIP_OPS = frozenset({"item_route_exclude", "item_route_include", "defin
 # 바깥 main.BodyLimit(256 KiB)과 PC 브리지 한 줄(256 KiB) 안이다. grant, 동의 경로는 CONSENT_BODY_MAX(4 KiB) 그대로
 CHAT_MCP_BODY_MAX = 96 * 1024
 # F13(2026-11-11): 다음 턴 outcomes 를 agent 꼴(json 압축, ensure_ascii=False)로 직렬화한 바이트 상한. agent 는 고정 지시문과 머리말을 더한
-# 모델 context 가 16 KiB 를 넘으면 턴을 거절한다(APPROVAL-OUTCOMES). 고정 문구(실측 1237 바이트) + 이 값 <= 16 KiB - 1 KiB 여유.
+# 모델 context 가 16 KiB 를 넘으면 턴을 거절한다(APPROVAL-OUTCOMES). 고정 문구와 머리말(2026-11-18 실측: 고정 지시문 1750 바이트, overhead 2141 바이트) + 이 값 <= 16 KiB - 1 KiB 여유.
 # 시험(test_chat_injection)이 agent/chat_approval_context.py 의 실제 문구로 이 부등식을 대조한다. 최신 행부터 담고 넘치면 오래된 행을 뺀다
-APPROVAL_OUTCOMES_JSON_MAX = 13 * 1024
+APPROVAL_OUTCOMES_JSON_MAX = 12 * 1024
 # I 반영 R4(2026-11-11): 대화 경로의 요청 속도 버킷 — 접수(imports._rate, 장치 분당 10, 사용자 분당 30)와 나눈다. 5초 재인증(분당 12)과
 # 도구 호출이 접수 한도를 먹지 않고, 주입된 반복 호출이 같은 장치의 접수를 막지 못한다. 저장은 같은 import_counters 표(버킷 이름만 다름,
 # 매시 정리는 버킷과 무관). 버킷 → 장치 분당 상한. 사용자 합계 상한은 같은 버킷 안에서 장치 상한의 2배.
@@ -1908,6 +1913,7 @@ class _Dev:
         self.capabilities: list = []
         self.ai_links = None   # 앱 하나 1.3: hello 의 공급자 인증 상태({claude, codex} → 상태). None = 옛 앱(허용 창 흐름)
         self.closed = False
+        self.last_rx = time.monotonic()   # 마지막으로 무엇이든 받은 시각(단조 시계) — DEVICE_SILENCE_SECONDS 판정
         self.stop_sent: set = set()   # 이 연결에서 turn.stop 을 보낸 turn_id(끝난 턴 이벤트가 오면 한 번만 다시 알린다)
 
     async def send(self, obj) -> bool:
@@ -2606,9 +2612,16 @@ class Routes:
             db.usage_count(None, "api:chat_ws", code)
 
     async def _pinger(self, d: _Dev, h):
-        """PING_SECONDS 마다 ping + 토큰 재확인(철회·만료·차단 = 4001) · 스위치 꺼짐 = 1013."""
+        """PING_SECONDS 마다 ping + 토큰 재확인(철회·만료·차단 = 4001) · 스위치 꺼짐 = 1013 · DEVICE_SILENCE_SECONDS 동안 받은 것 없음 = 4002."""
         while not d.closed:
             await asyncio.sleep(PING_SECONDS)
+            if time.monotonic() - d.last_rx > DEVICE_SILENCE_SECONDS:   # 잠든 PC — 허브에서 먼저 빼 화면이 바로 안다
+                hub.detach(d)
+                try:
+                    await d.ws.close(code=4002)
+                except Exception:
+                    pass
+                return
             close = None
             if not await run_in_threadpool(enabled, d.dev["user_id"]):
                 close = 1013
@@ -2637,6 +2650,7 @@ class Routes:
                 return
             if msg["type"] == "websocket.disconnect":
                 return
+            d.last_rx = time.monotonic()
             raw = msg.get("text")
             if raw is None:
                 raw = (msg.get("bytes") or b"").decode("utf-8", "replace")

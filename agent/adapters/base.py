@@ -46,6 +46,9 @@ class CollectedPost:
     raw: dict
     fields: dict
     only_if_sent: bool = False
+    # 축 코드(2026-11-18, feed 만). fields 밖에 둔다 — 서버가 받는지(features axis_codes)는 runner.stage_collected_post 가 보고,
+    # 받으면 fields 의 axes 를 빼고 axis_codes 로 싣는다. 옛 서버엔 싣지 않는다
+    axis_codes: list = field(default_factory=list)
 
 
 @dataclass

@@ -3254,7 +3254,7 @@ async def test_optional_consent():
             db.init_schema(c)
             assert c.execute("SELECT count(*) AS n FROM usage_daily").fetchone()["n"] == 2, "표식이 있으면 지우지 않는다"
             assert [r["key"] for r in c.execute("SELECT key FROM schema_marks").fetchall()
-                    if not r["key"].startswith(("perm_seed:", imports.POLICY_ALL_MARK, db.AUTO_CAP_MARK + ":"))] == [db.USAGE_RESET_MARK]   # perm_seed:* = 관리자 프로필 권한 시드 표식(2026-11-12), device-policy-all-v1 = 장치 허용 규칙 이관 표식, auto_case_cap:날짜 = 자동 Case 전역 상한 감사 표식(2026-11-13)
+                    if not r["key"].startswith(("perm_seed:", imports.POLICY_ALL_MARK, imports.POLICY_ALL_V2_MARK, db.AUTO_CAP_MARK + ":"))] == [db.USAGE_RESET_MARK]   # perm_seed:* = 관리자 프로필 권한 시드 표식(2026-11-12), device-policy-all-v1 = 장치 허용 규칙 이관 표식, auto_case_cap:날짜 = 자동 Case 전역 상한 감사 표식(2026-11-13)
             c.execute("DELETE FROM schema_marks")   # 표식 없는 옛 DB
             c.commit()
             db.init_schema(c)
@@ -7741,7 +7741,7 @@ async def test_bi_imports():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url=PUBLIC) as h:
             g = await h.get("/api/imports/device", headers=hb)
             assert g.status_code == 200 and set(g.json()) == {"stream_id", "label", "policy", "policy_revision", "hmac_namespace",
-                                                              "token_expires_at"} and g.json()["stream_id"] == cb["device"]["id"], g.text
+                                                              "token_expires_at", "features"} and g.json()["stream_id"] == cb["device"]["id"], g.text
             assert cb["token"].split(".")[-1] not in g.text
             h.cookies.set("crm_session", main.site.session_value(B))
             assert (await h.get("/api/imports/device")).status_code == 401, "웹 세션은 장치 경로에 안 걸린다"

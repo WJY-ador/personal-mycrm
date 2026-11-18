@@ -76,6 +76,10 @@
       "required": false
     },
     {
+      "path": "agent/adapters/axis_pages.py",
+      "required": false
+    },
+    {
       "path": "agent/adapters/base.py",
       "required": false
     },
