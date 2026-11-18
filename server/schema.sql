@@ -554,6 +554,7 @@ CREATE TABLE IF NOT EXISTS item_routes (
   end_pos          integer,
   spans            jsonb NOT NULL DEFAULT '{}',
   record_revision  integer,
+  released_revision integer,   -- released 로 놓아 줄 때의 항목 revision. 같을 때만(사용자가 손대지 않았을 때만) 서버가 다시 가져간다
   reason           text,
   created_at       timestamptz NOT NULL DEFAULT now(),
   updated_at       timestamptz NOT NULL DEFAULT now(),

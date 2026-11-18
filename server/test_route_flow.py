@@ -512,20 +512,92 @@ def test_release_archive_stack(uid):
     db.record_edit(uid, r1, rev, "가짜 팀 회의 21", "가짜 팀 회의 스물하나")
     assert db.item_get(uid, i1)["title"] == "손으로 고친 Q1", "route 가 없으니 원문 수정이 항목을 바꾸지 않는다"
     db.record_attach(uid, r5, [{"field_key": "attach_to", "target_kind": "item", "target_id": i4}])   # 놓아 준 항목에는 연결된다
-    # route 를 다시 넣은 적용 — released 항목을 다시 가져간다(같은 단위가 항목 둘이 되지 않는다). 연결이 붙은 것은 released 그대로
+    # route 를 다시 넣은 적용 — released 항목은 사용자 것이다(재검토 15). 사용자가 고친 것(i1)과 연결이 붙은 것(i4)은 그대로 두고,
+    # 그 단위에 새 항목도 만들지 않는다
     cur = next(x for x in db.definitions(uid) if x["id"] == oid)
     p = db.definition_propose(uid, oid, cur["revision"], d)
     res = db.definition_apply(uid, oid, p["proposal_id"], cur["revision"])
-    assert (res["route_sync"]["created"], res["route_sync"]["updated"], res["route_sync"]["partial"]) == (0, 1, 1), res["route_sync"]
+    assert (res["route_sync"]["created"], res["route_sync"]["updated"], res["route_sync"]["partial"]) == (0, 0, 1), res["route_sync"]
     rs = routes(uid, oid)
-    assert rs[(r1, "")]["state"] == "routed" and rs[(r1, "")]["item_id"] == i1 and db.item_get(uid, i1)["title"] == "Q1. 가짜"
+    assert rs[(r1, "")]["state"] == "released" and db.item_get(uid, i1)["title"] == "손으로 고친 Q1", "고친 released 는 덮지 않는다"
     assert rs[(r4, "")]["state"] == "released" and rs[(r4, "")]["item_id"] == i4, "연결이 붙은 놓아 준 항목은 다시 가져가지 않는다"
     assert rs[(r2, "")]["state"] == "excluded" and len(db.items(uid, oid)) == 2, "뺀 단위는 다시 안 들어오고 항목도 늘지 않는다"
-    # 4: 연결이 붙은 released 항목은 원문이 대상에서 빠져도 지우지 않는다(행만 정리, 항목과 연결 그대로)
+    # 16: released 행은 원문이 대상에서 빠져도 서버가 지우지 않는다(항목, 연결 그대로). 복원해도 항목 하나
     db.trash_move(uid, "record", r4)
-    assert (r4, "") not in routes(uid, oid) and db.item_get(uid, i4)["id"] == i4
+    with db.tx_scope() as c:
+        route.sync(c, uid)
+    assert routes(uid, oid)[(r4, "")]["state"] == "released" and db.item_get(uid, i4)["id"] == i4
+    db.trash_restore(uid, "record", r4)
+    assert routes(uid, oid)[(r4, "")]["state"] == "released" and len(db.items(uid, oid)) == 2
     ok("보관(행과 잠금 유지, 복구하면 다시 맞춤), 자동 분류 항목 연결 거절, route 뺀 적용(routed = released, partial 지움, excluded 유지), "
-       "다시 넣으면 released 를 다시 가져감(항목 둘 안 됨, 연결 붙은 것은 그대로), 대화 확정 _bump ROUTE-LOCKED")
+       "다시 넣어도 고친 released, 연결 붙은 released 는 그대로(항목 둘 안 됨), released 행 유지, 대화 확정 _bump ROUTE-LOCKED")
+
+
+async def test_released_rules(uid):
+    """재검토 15, 16, 17 — 손대지 않은 released 는 다시 가져가고(E1R 반대), 휴지통 왕복 뒤에도 항목 하나(E2), 연결 붙은 released 는
+    원문 휴지통, 매일 정리, 복원 뒤에도 항목 하나(E3), 장치 새 판으로 옮겨 적은 빼기는 계보 include 로 되돌린다(F)."""
+    hd = {"key": "meets_r", "label": "가짜 회의", "semantic_kind": "event", "fields": [{"key": "dec", "label": "결정", "value_type": "text"}],
+          "policy": {"route": {"v": 1, "unit": "heading", "match": {"heading_like": "회의 #*"}, "fields": {"dec": {"from": "label", "label": "결정"}}}}}
+
+    def set_policy(oid, pol):
+        cur = next(x for x in db.definitions(uid) if x["id"] == oid)
+        nd = {**{k: hd[k] for k in ("key", "label", "semantic_kind", "fields")}, "policy": pol}
+        p = db.definition_propose(uid, oid, cur["revision"], nd)
+        return db.definition_apply(uid, oid, p["proposal_id"], cur["revision"]).get("route_sync")
+
+    oid, _ = apply_def(uid, hd)
+    ra = add(uid, "가짜 회의록 A", "## 회의 1\n**결정** 그대로\n")
+    rb = add(uid, "가짜 회의록 B", "## 회의 1\n**결정** 휴지통 갈 것\n")
+    ia, ib = routed_item(uid, oid, ra, "회의 1"), routed_item(uid, oid, rb, "회의 1")
+    set_policy(oid, {})
+    # E2: 놓아 준 항목을 휴지통에 넣고 route 를 다시 넣으면 새 항목을 만들지 않는다. 복원하면 다시 가져가 항목 하나
+    db.trash_move(uid, "item", ib, db.item_get(uid, ib)["revision"])
+    r = set_policy(oid, hd["policy"])
+    assert r["created"] == 0, r
+    assert routed_item(uid, oid, ra, "회의 1") == ia, "손대지 않은 released 는 다시 가져간다"
+    assert routes(uid, oid)[(rb, "회의 1")]["state"] == "released"
+    db.trash_restore(uid, "item", ib)
+    with db.tx_scope() as c:
+        route.sync(c, uid)
+    assert routed_item(uid, oid, rb, "회의 1") == ib and len(db.items(uid, oid)) == 2, "휴지통 왕복 뒤에도 항목 하나"
+    # E3: 연결 붙은 released — 원문 휴지통, 매일 정리(sync_all), 복원 뒤에도 항목 하나
+    rc = add(uid, "가짜 회의록 C", "## 회의 1\n**결정** 연결 붙일 것\n")
+    ic = routed_item(uid, oid, rc, "회의 1")
+    set_policy(oid, {})
+    rm = add(uid, "가짜 메모", "가짜 메모 본문", source="대화에서 입력")
+    db.record_attach(uid, rm, [{"field_key": "attach_to", "target_kind": "item", "target_id": ic}])
+    set_policy(oid, hd["policy"])
+    db.trash_move(uid, "record", rc)
+    route.sync_all(uid)
+    db.trash_restore(uid, "record", rc)
+    assert routes(uid, oid)[(rc, "회의 1")]["state"] == "released" and len(db.items(uid, oid)) == 3, "같은 단위 항목 둘이 안 된다"
+    # F: 장치 새 판으로 옮겨 적은 빼기 — 새 판 기록에서 include 하면 계보 전체의 빼기를 지우고 항목이 생긴다
+    con = imports.device_connect(uid, "가짜 PC 2")
+    dev, tok = con["device"], con["token"]
+    o, v1, v2 = "o_" + secrets.token_hex(16), "v_" + secrets.token_hex(16), "v_" + secrets.token_hex(16)
+    b1 = {"contract": "canon-inbox/1", "schema_revision": 2, "source_instance_id": dev["id"], "original_id": o, "revision": v1,
+          "previous_revision": None, "kind": "self_text", "execution": "unattended", "transform_version": "session-wrap/1",
+          "policy_revision": 1, "title": "가짜 장치 글", "body": "## 회의 1\n**결정** 판1\n", "source_date": "2030-01-02"}
+    rec1 = (await _post(tok, b1)).json()["target_id"]
+    i1 = routed_item(uid, oid, rec1, "회의 1")
+    route.exclude(uid, i1, db.item_get(uid, i1)["revision"])
+    rec2 = (await _post(tok, {**b1, "revision": v2, "previous_revision": v1, "body": "## 회의 1\n**결정** 판2\n"})).json()["target_id"]
+    assert routes(uid, oid)[(rec2, "회의 1")]["state"] == "excluded"
+    back = route.include(uid, oid, rec2, "회의 1")
+    assert back["item_id"] and back["reason"] is None and routed_item(uid, oid, rec2, "회의 1") == back["item_id"], back
+    assert (rec1, "회의 1") not in routes(uid, oid) or routes(uid, oid)[(rec1, "회의 1")]["state"] != "excluded"
+    # 항목이 안 생기는 되돌리기는 reason 으로 보인다
+    rp = add(uid, "가짜 회의록 P", "## 회의 1\n**결정** 뺄 것\n")
+    ip = routed_item(uid, oid, rp, "회의 1")
+    route.exclude(uid, ip, db.item_get(uid, ip)["revision"])
+    db.trash_move(uid, "record", rp)
+    back = route.include(uid, oid, rp, "회의 1")
+    assert back["item_id"] is None and back["reason"] == "not_target", back
+    # 18: 긴 id 는 길이 표로 거절, 오류 문장에 id 를 64자 넘게 싣지 않는다
+    expect("PAYLOAD-LIMIT", route.exclude, uid, "x" * 100000, 1)
+    e = expect("ARG-INVALID", route.exclude, uid, "i_" + "y" * 500, 1)
+    assert "y" * 65 not in e.message, e.message
+    ok("released 규칙 — 손대지 않은 것은 다시 가져감, 휴지통 왕복 뒤 항목 하나, 연결 붙은 released 유지, 계보 include, reason, id 길이")
 
 
 def test_me_stats_and_axis(uid):
@@ -629,6 +701,7 @@ async def run():
         test_definition_checks(uid)
         test_release_archive_stack(uid)
         test_me_stats_and_axis(uid)
+        await test_released_rules(uid)
         test_hint()
         test_isolation_and_migration(uid, oid)
     finally:

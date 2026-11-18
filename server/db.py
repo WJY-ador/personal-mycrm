@@ -842,6 +842,8 @@ def _migrate_route(c):
             c.execute(f'ALTER TABLE item_routes DROP CONSTRAINT "{r["conname"]}"')
         c.execute("ALTER TABLE item_routes ADD CONSTRAINT ck_item_routes_state CHECK (state IN ('routed','partial','excluded','released'))")
         c.execute("ALTER TABLE item_routes ADD CONSTRAINT ck_item_routes_item CHECK ((state IN ('routed','released')) = (item_id IS NOT NULL))")
+    if not _has_col(c, "item_routes", "released_revision"):   # 재검토 15 — 놓아 줄 때의 항목 revision(옛 행 NULL = 다시 가져가지 않는다)
+        c.execute("ALTER TABLE item_routes ADD COLUMN released_revision integer")
 
 
 def _migrate_migration_path(c):
@@ -2526,8 +2528,10 @@ def definition_apply(uid, object_id, proposal_id, expected_revision):
             # 자동 분류(2026-11-18 메인 결정, 검토 반영) — 담을 규칙을 뺀 적용: routed 행은 released 로(item_id 유지, 자동 분류 아님,
             # 잠금 풀림, 표시 없음), partial 행은 지우고, excluded 행은 그대로 둔다. route 가 다시 들어오면 sync 가 released 항목을
             # 다시 가져가므로 같은 단위가 항목 둘이 되지 않고, 뺀 단위도 다시 들어오지 않는다. 같은 트랜잭션이라 적용과 함께 되돌아간다
-            released = c.execute("UPDATE item_routes SET state='released', reason=NULL, updated_at=now() WHERE user_id=%s AND object_id=%s "
-                                 "AND state='routed'", (uid, object_id)).rowcount
+            # released_revision = 놓아 줄 때의 항목 revision — 사용자가 고치면 revision 이 올라 서버가 다시 가져가지 않는다(재검토 15)
+            released = c.execute("UPDATE item_routes r SET state='released', reason=NULL, released_revision=i.revision, updated_at=now() "
+                                 "FROM items i WHERE i.user_id=r.user_id AND i.id=r.item_id AND r.user_id=%s AND r.object_id=%s "
+                                 "AND r.state='routed'", (uid, object_id)).rowcount
             c.execute("DELETE FROM item_routes WHERE user_id=%s AND object_id=%s AND state='partial'", (uid, object_id))
         out = _def_out(c, uid, _one(c, f"SELECT {_DEF_COLS} FROM object_defs WHERE user_id=%s AND id=%s", (uid, object_id)))
     if "route" in (out.get("policy") or {}):   # 자동 분류 — 정의 적용이 커밋된 뒤 따로 그 오브젝트 전체를 맞춘다(넘치면 매일 정리가 잇는다)

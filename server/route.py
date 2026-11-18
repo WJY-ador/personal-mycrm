@@ -499,7 +499,7 @@ def _upsert(c, uid, oid, rid, u, state, item_id, rev, reason=None):
     c.execute("INSERT INTO item_routes (user_id,object_id,record_id,unit_key,state,item_id,start_pos,end_pos,spans,record_revision,reason) "
               "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (user_id,object_id,record_id,unit_key) DO UPDATE SET "
               "state=excluded.state, item_id=excluded.item_id, start_pos=excluded.start_pos, end_pos=excluded.end_pos, "
-              "spans=excluded.spans, record_revision=excluded.record_revision, reason=excluded.reason, updated_at=now()",
+              "spans=excluded.spans, record_revision=excluded.record_revision, reason=excluded.reason, released_revision=NULL, updated_at=now()",
               (uid, oid, rid, u["unit_key"], state, item_id, u["start"], u["end"], db.Jsonb(u["spans"]), rev, reason))
 
 
@@ -537,14 +537,25 @@ def _has_links(c, uid, item_id):
 
 
 def _release_or_drop(c, uid, oid, k, row, out):
-    """자동 분류 항목을 놓는다 — 연결이 있으면 지우지 않고 released 로 둔다(True), 없으면 완전 삭제(False, 행도 함께 지워진다)."""
+    """자동 분류 항목을 놓는다 — 연결이 있으면 지우지 않고 released 로 둔다(True), 없으면 완전 삭제(False, 행도 함께 지워진다).
+    routed 항목에는 연결 가드(db._route_link_guard) 때문에 연결이 붙지 않는다 — 연결이 있는 경우는 방어 코드다."""
     if _has_links(c, uid, row["item_id"]):
-        c.execute("UPDATE item_routes SET state='released', reason=NULL, updated_at=now() WHERE user_id=%s AND object_id=%s "
-                  "AND record_id=%s AND unit_key=%s", (uid, oid, k[0], k[1]))
+        c.execute("UPDATE item_routes r SET state='released', reason=NULL, released_revision=i.revision, updated_at=now() FROM items i "
+                  "WHERE i.user_id=r.user_id AND i.id=r.item_id AND r.user_id=%s AND r.object_id=%s AND r.record_id=%s AND r.unit_key=%s",
+                  (uid, oid, k[0], k[1]))
         return True
     _drop_item(c, uid, row["item_id"])
     out["removed"] += 1
     return False
+
+
+def _takeable(c, uid, row):
+    """놓아 준 항목을 서버가 다시 가져가도 되나 — 항목이 살아 있고(삭제, 휴지통, 보관 아님), revision 이 놓아 줄 때와 같고(사용자가 손대지
+    않았다), 그 항목을 가리키는 연결이 없을 때만."""
+    import db
+    it = db._one(c, "SELECT revision FROM items WHERE user_id=%s AND id=%s AND trashed_at IS NULL AND archived_at IS NULL", (uid, row["item_id"]))
+    return bool(it) and row["released_revision"] is not None and it["revision"] == row["released_revision"] \
+        and not _has_links(c, uid, row["item_id"])
 
 
 # 같은 원본(접수 행의 같은 stream_id, original_id)의 다른 판 기록에 있는 빼기(excluded)를 이 기록들에 옮겨 적는다.
@@ -568,7 +579,7 @@ def _sync_object(c, uid, od, recs, record_ids, out, budget):
     tids = {r["id"] for r in targets}
     if tids:
         c.execute(_CARRY_EXCLUDED, (uid, oid, sorted(tids)))
-    sql = ("SELECT r.record_id, r.unit_key, r.state, r.item_id, r.start_pos, r.end_pos, r.spans, r.record_revision, r.reason, "
+    sql = ("SELECT r.record_id, r.unit_key, r.state, r.item_id, r.start_pos, r.end_pos, r.spans, r.record_revision, r.reason, r.released_revision, "
            "i.title, i.data, i.revision, i.trashed_at FROM item_routes r LEFT JOIN items i ON i.user_id=r.user_id AND i.id=r.item_id "
            "WHERE r.user_id=%s AND r.object_id=%s")
     args = [uid, oid]
@@ -587,15 +598,22 @@ def _sync_object(c, uid, od, recs, record_ids, out, budget):
             st = row["state"] if row else None
             if st == "excluded":
                 continue
-            gone = st == "released" and (row["title"] is None or row["trashed_at"] is not None)   # 놓아 준 항목이 사라졌거나 휴지통
+            if st == "released":
+                # 놓아 준 항목은 사용자 것이다(재검토 15, 16). 손대지 않았을 때만(살아 있음, revision 그대로, 연결 없음) 단위가 exact 면
+                # 다시 가져간다. 아니면 행을 released 그대로 두고 그 단위에 새 항목도 만들지 않는다(사용자 항목이 차지한 단위)
+                if u["state"] == "exact" and _takeable(c, uid, row):
+                    if (row["title"], row["data"]) == (u["title"], u["data"]):
+                        _upsert(c, uid, oid, rec["id"], u, "routed", row["item_id"], rec["revision"])
+                    elif _write_item(c, uid, od, row["item_id"], row["revision"], u):
+                        _upsert(c, uid, oid, rec["id"], u, "routed", row["item_id"], rec["revision"])
+                        out["updated"] += 1
+                continue
             if st == "routed" and row["trashed_at"] is not None:   # 서버 밖에서 휴지통으로 간 자동 분류 항목 — 건드리지 않는다
                 continue
             if u["state"] == "exact":
-                if st in ("routed", "released") and not gone:
-                    if st == "released" and _has_links(c, uid, row["item_id"]):
-                        continue   # 연결이 붙은 놓아 준 항목은 다시 가져가지 않는다(released 그대로)
+                if st == "routed":
                     if (row["title"], row["data"]) == (u["title"], u["data"]):
-                        if st == "released" or not _same_row(row, u, rec["revision"]):
+                        if not _same_row(row, u, rec["revision"]):
                             _upsert(c, uid, oid, rec["id"], u, "routed", row["item_id"], rec["revision"])
                         continue
                     iid = _write_item(c, uid, od, row["item_id"], row["revision"], u)
@@ -603,9 +621,9 @@ def _sync_object(c, uid, od, recs, record_ids, out, budget):
                         _upsert(c, uid, oid, rec["id"], u, "routed", iid, rec["revision"])
                         out["updated"] += 1
                         continue
-                    if st == "routed" and _release_or_drop(c, uid, oid, k, row, out):
+                    if _release_or_drop(c, uid, oid, k, row, out):
                         continue
-                    _upsert(c, uid, oid, rec["id"], u, "partial", None, rec["revision"], "invalid")   # released 면 항목은 그대로 둔다
+                    _upsert(c, uid, oid, rec["id"], u, "partial", None, rec["revision"], "invalid")
                     out["partial"] += 1
                     continue
                 if out["created"] >= budget:
@@ -616,14 +634,14 @@ def _sync_object(c, uid, od, recs, record_ids, out, budget):
                     _upsert(c, uid, oid, rec["id"], u, "routed", iid, rec["revision"])
                     out["created"] += 1
                 else:
-                    if not row or not _same_row(row, u, rec["revision"], "invalid") or st != "partial":
+                    if not row or not _same_row(row, u, rec["revision"], "invalid"):
                         _upsert(c, uid, oid, rec["id"], u, "partial", None, rec["revision"], "invalid")
                     out["partial"] += 1
                 continue
             if st == "routed" and _release_or_drop(c, uid, oid, k, row, out):
                 continue
             out["partial"] += 1
-            if st != "partial" or not _same_row(row, u, rec["revision"], u["reason"]):   # released 행은 지우고(항목은 둔다) partial 로
+            if st != "partial" or not _same_row(row, u, rec["revision"], u["reason"]):
                 _upsert(c, uid, oid, rec["id"], u, "partial", None, rec["revision"], u["reason"])
         for k, row in rows.items():   # 판정에서 사라진 단위
             if k[0] == rec["id"] and k not in keys and row["state"] != "excluded":
@@ -634,7 +652,10 @@ def _sync_object(c, uid, od, recs, record_ids, out, budget):
 
 
 def _drop(c, uid, oid, k, row, out):
-    """단위가 없어졌다 — routed 는 항목을 지운다(연결이 있으면 released 로 둔다). released, partial 은 행만 지운다(항목은 둔다)."""
+    """단위가 없어졌다(판정에서 사라짐, 기록이 대상 밖) — routed 는 항목을 지운다(연결이 있으면 released 로 둔다). partial 은 행만 지운다.
+    released 행은 서버가 지우지 않는다(재검토 16) — 없어지는 길은 항목, 기록의 영구 삭제(FK cascade)뿐이다."""
+    if row["state"] == "released":
+        return
     if row["state"] == "routed" and _release_or_drop(c, uid, oid, k, row, out):
         return
     c.execute("DELETE FROM item_routes WHERE user_id=%s AND object_id=%s AND record_id=%s AND unit_key=%s", (uid, oid, k[0], k[1]))
@@ -801,14 +822,32 @@ def _routed_row(c, uid, item_id):
                       "WHERE r.user_id=%s AND r.item_id=%s AND r.state='routed' AND i.trashed_at IS NULL", (uid, str(item_id or "")))
 
 
+ID_ECHO_MAX = 64   # 오류 문장에 되돌려 주는 id 글자 수(재검토 18)
+
+
+def _cut(v):
+    return str(v or "")[:ID_ECHO_MAX]
+
+
+def _check_args(**kw):
+    """op 인자 길이 — 다른 op 와 같은 상한(db.check_len, LIMIT_TEXT 바이트). 넘으면 PAYLOAD-LIMIT(값은 되돌려 주지 않는다)."""
+    import db
+    for name, v in kw.items():
+        if v is not None and not isinstance(v, (str, int)):
+            raise db.CrmError("ARG-INVALID", f"{name} 꼴이 틀렸어요.")
+        if isinstance(v, str):
+            db.check_len(name, v, db.LIMIT_TEXT)
+
+
 def _not_routed(item_id):
     import db
-    return db.CrmError("ARG-INVALID", f"자동 분류 항목이 아니에요: {item_id}", "자동 분류 항목(auto_routed)만 뺄 수 있어요.")
+    return db.CrmError("ARG-INVALID", f"자동 분류 항목이 아니에요: {_cut(item_id)}", "자동 분류 항목(auto_routed)만 뺄 수 있어요.")
 
 
 def exclude_preview(uid, item_id):
     """빼기 미리보기 — {item_id, revision, item_title, record_id, record_title, quote(단위 구간 앞 200자)}. 자동 분류가 아니면 ARG-INVALID."""
     import db
+    _check_args(item_id=item_id)
     with db.tx() as c:
         r = _routed_row(c, uid, item_id)
     if not r:
@@ -821,6 +860,7 @@ def exclude(uid, item_id, expected_revision):
     """빼기(item_route_exclude) — 자동 분류 항목을 지우고(완전 삭제) 그 단위를 excluded 로 남긴다(다시 들어오지 않는다).
     반환 {item_id, object_id, record_id, unit_key, state: excluded}."""
     import db
+    _check_args(item_id=item_id)
     if not isinstance(expected_revision, int) or isinstance(expected_revision, bool):
         raise db.CrmError("ARG-INVALID", "expected_revision 은 정수예요.", "item_get 의 revision 을 그대로 넣으세요.")
     with db.tx() as c:
@@ -840,31 +880,54 @@ def exclude(uid, item_id, expected_revision):
 
 
 def include(uid, object_id, record_id, unit_key=""):
-    """되돌리기(item_route_include) — excluded 행을 지우고 그 기록을 다시 맞춘다(잘못 뺀 것 되돌리기).
-    excluded 행이 없으면 ARG-INVALID. 반환 {object_id, record_id, unit_key, item_id(다시 만들어졌으면, 아니면 None), sync}."""
+    """되돌리기(item_route_include) — 그 단위(object_id, unit_key)의 excluded 행을 같은 계보(같은 stream_id, original_id 의 모든 판 기록)에서
+    함께 지우고 그 기록들을 다시 맞춘다(잘못 뺀 것 되돌리기). 계보가 없는 기록은 그 기록의 행만. excluded 행이 없으면 ARG-INVALID.
+    반환 {object_id, record_id, unit_key, item_id(다시 생긴 항목, 없으면 None), reason(항목이 안 생긴 까닭 한 낱말, 생겼으면 None), sync}.
+    reason = not_target(기록이 대상 밖) | no_unit(규칙에 안 맞음) | partial 이유(require 등) | released(사용자 항목이 차지) | budget."""
     import db
+    _check_args(object_id=object_id, record_id=record_id, unit_key=unit_key)
     unit_key = unit_key or ""
+    oid, rid = str(object_id or ""), str(record_id or "")
     with db.tx_scope() as c:
         db._user_lock(c, uid)
-        n = c.execute("DELETE FROM item_routes WHERE user_id=%s AND object_id=%s AND record_id=%s AND unit_key=%s AND state='excluded'",
-                      (uid, str(object_id or ""), str(record_id or ""), unit_key)).rowcount
-        if not n:
+        rids = [r["id"] for r in db._all(
+            c, "SELECT DISTINCT e2.target_record_id AS id FROM import_entries e1 JOIN import_entries e2 ON e2.user_id=e1.user_id "
+               "AND e2.stream_id=e1.stream_id AND e2.original_id=e1.original_id WHERE e1.user_id=%s AND e1.target_record_id=%s "
+               "AND e2.target_record_id IS NOT NULL", (uid, rid))]
+        rids = sorted({rid, *rids})
+        n = c.execute("DELETE FROM item_routes WHERE user_id=%s AND object_id=%s AND unit_key=%s AND state='excluded' AND record_id = ANY(%s)",
+                      (uid, oid, unit_key, rids)).rowcount
+        if not n or not db._one(c, "SELECT 1 AS x FROM records WHERE user_id=%s AND id=%s", (uid, rid)):
             raise db.CrmError("ARG-INVALID", "뺀 기록이 아니에요.", "object_id, record_id, unit_key 를 빼기 결과 그대로 넣으세요.")
-        res = sync(c, uid, record_ids=[record_id], object_ids=[object_id])
-        r = db._one(c, "SELECT item_id FROM item_routes WHERE user_id=%s AND object_id=%s AND record_id=%s AND unit_key=%s",
-                    (uid, object_id, record_id, unit_key))
-    return {"object_id": object_id, "record_id": record_id, "unit_key": unit_key, "item_id": r["item_id"] if r else None, "sync": res}
+        res = sync(c, uid, record_ids=rids, object_ids=[oid])
+        r = db._one(c, "SELECT state, item_id, reason FROM item_routes WHERE user_id=%s AND object_id=%s AND record_id=%s AND unit_key=%s",
+                    (uid, oid, rid, unit_key))
+        tgt = db._one(c, f"SELECT {target_sql()} AS t FROM records r WHERE r.user_id=%s AND r.id=%s", (uid, rid))
+        # 옛 판 기록에서 되돌려도 계보의 지금 판에 항목이 생길 수 있다 — 그 항목을 돌려준다
+        lin = db._one(c, "SELECT record_id, item_id FROM item_routes WHERE user_id=%s AND object_id=%s AND unit_key=%s AND state='routed' "
+                         "AND record_id = ANY(%s) ORDER BY record_id = %s DESC LIMIT 1", (uid, oid, unit_key, rids, rid))
+    item_id = r["item_id"] if r and r["state"] == "routed" else (lin["item_id"] if lin else None)
+    if item_id:
+        reason = None
+    elif not (tgt and tgt["t"]):
+        reason = "not_target"
+    elif r is None:
+        reason = "budget" if res["left"] else "no_unit"
+    else:
+        reason = r["state"] if r["state"] == "released" else (r["reason"] or r["state"])
+    return {"object_id": oid, "record_id": rid, "unit_key": unit_key, "item_id": item_id, "reason": reason, "sync": res}
 
 
 def draft_discard(uid, object_id, proposal_id):
     """초안 버리기(definition_draft_discard) — 적용 전(revision 0) 오브젝트면 행을 지우고, 적용된 오브젝트면 draft 만 비운다.
     proposal_id 가 지금 초안과 다르면 CONFLICT. 반환 {object_id, discarded: true, deleted: bool}."""
     import db
+    _check_args(object_id=object_id, proposal_id=proposal_id)
     with db.tx() as c:
         db._user_lock(c, uid)
         r = db._one(c, "SELECT id, revision, draft_id FROM object_defs WHERE user_id=%s AND id=%s FOR UPDATE", (uid, str(object_id or "")))
         if not r:
-            raise db.CrmError("ARG-INVALID", f"오브젝트를 찾을 수 없어요: {object_id}", "definitions_get 으로 ID 를 확인하세요.")
+            raise db.CrmError("ARG-INVALID", f"오브젝트를 찾을 수 없어요: {_cut(object_id)}", "definitions_get 으로 ID 를 확인하세요.")
         if not r["draft_id"] or r["draft_id"] != proposal_id:
             raise db._conflict("초안이 없거나 바뀌었어요")
         if r["revision"] == 0:
