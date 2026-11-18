@@ -3211,7 +3211,7 @@ def object_list(uid, key, sort="", direction="", q="", filters=None, state="", c
         total = _one(c, f"SELECT count(*) AS n {base}{where}", [*args, *wargs])["n"]
         D = "ASC" if sd == "asc" else "DESC"
         order = {"title": ("i.title", []), "updated_at": ("i.updated_at", []), "state": ("COALESCE(s.state,'pending')", [])}.get(sk) \
-            or ("i.data->%s", [sk])
+            or ("NULLIF(i.data->%s, 'null'::jsonb)", [sk])   # JSON null = 빈 값(맨 뒤)
         off = int(cursor or 0)
         rows = _all(c, f"SELECT i.id, i.code, i.title, i.revision, i.updated_at, i.data, COALESCE(s.state,'pending') AS state {base}{where} "
                        f"ORDER BY {order[0]} {D} NULLS LAST, i.id {D} LIMIT %s OFFSET %s",

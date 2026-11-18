@@ -1189,7 +1189,7 @@ _WRITE_CREATE_ONLY = frozenset({"question_add", "record_add", "candidates_propos
 def _cur_layout(c, uid, n):
     """layout_set, layout_reset — page_layouts.layout 의 그 페이지(저장 없음이면 기본)와 version 을 덮는다(db.layout_set, layout_reset)."""
     r = _one(c, "SELECT layout, version FROM page_layouts WHERE user_id=%s FOR UPDATE", (uid,))
-    full = db._layout_up(r["layout"] if r else None)
+    full = db._layout_up(r["layout"] if r else None, db.me_object_keys(c, uid))   # 오브젝트 탭까지 — layout_get 과 같은 배치
     return {"화면": n.get("page"), "배치": full["pages"].get(n.get("page")), "배치 판": r["version"] if r else 0}
 
 

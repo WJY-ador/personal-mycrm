@@ -72,11 +72,6 @@ def obj(uid, key, label, fields=()):
     return p["object_id"]
 
 
-def item(uid, oid, title, data, code=None):
-    ev = db.item_propose(uid, oid, 1, None, 0, code, title, "", data, [])
-    return db.item_decide(uid, ev["item_id"], 0, ev["proposal_id"], "apply")["id"]
-
-
 def raw_item(uid, oid, title, data):
     """적용된 항목 한 행을 바로 넣는다 — 하루 제안 한도(100) 밖에서 쪽 나눔용 120건을 만든다."""
     iid = f"i_objtab_{abs(hash((oid, title))) % 10**12:012d}"
@@ -146,8 +141,10 @@ async def test_list(U, O, po):
     for i in range(120):
         d = {"channel": ch[i % 3], "collected_on": "2026-11-10", "author_display": f"작성자 {i % 7}", "ai_as_is": "긴 글",
              "ai_summary": f"요약 {i}", "ai_points": ["a"]}
-        if i % 10:   # 열 개 중 하나는 게시일 없음(정렬에서 맨 뒤)
+        if i % 10:   # 열 개 중 하나는 게시일 없음(정렬에서 맨 뒤) — 키 없음과 JSON null 둘 다
             d["posted_on"] = f"2026-{1 + i % 12:02d}-{1 + i % 28:02d}"
+        elif i % 20:
+            d["posted_on"] = None
         if i % 4 == 0:
             d["ai_grade"] = "signal"
         ids.append(raw_item(U, po, f"합성 글 {i:03d}" + (" 100%_진짜" if i == 7 else ""), d))
@@ -178,7 +175,9 @@ async def test_list(U, O, po):
         last = n
         cur = n["next_cursor"]
     assert len(seen) == live == len(set(seen)) and ids[4] not in seen and ids[5] not in seen, "휴지통·보관 제외"
-    assert all("posted_on" not in x["data"] for x in last["rows"][-12:]), "날짜 없음 = 맨 뒤(NULLS LAST)"
+    assert all(x["data"].get("posted_on") is None for x in last["rows"][-12:]), "날짜 없음 = 맨 뒤(NULLS LAST)"
+    asc = db.object_list(U, "collected_posts", sort="posted_on", direction="asc")["rows"]
+    assert asc[0]["data"]["posted_on"] == "2026-01-01" or asc[0]["data"]["posted_on"].startswith("2026-01"), "오름차순도 JSON null 은 맨 뒤"
     # 정렬 — 제목 오름(기본 방향) · 내림 · 같은 결과 반복(결정적)
     t = db.object_list(U, "collected_posts", sort="title")
     assert t["sort"] == {"key": "title", "dir": "asc"} and t["rows"][0]["title"] == "합성 글 000"
