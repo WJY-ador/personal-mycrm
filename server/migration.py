@@ -1307,6 +1307,12 @@ def plan_revert(uid: str, plan_id: str) -> dict:
             if e["previous_entry_id"]:   # 직전 판에 최신·현재 표시를 돌려준다(이 판이 내렸던 것)
                 c.execute("UPDATE import_entries SET is_latest_received=true, is_current_applied=(state IN ('applied','noop')) "
                           "WHERE user_id=%s AND id=%s", (uid, e["previous_entry_id"]))
+        # 자동 분류(2026-11-18 구조추천) — 휴지통으로 간 기록과 현재 판을 돌려받은 직전 판 기록을 함께 맞춘다(savepoint 안, 실패해도 되돌리기는 그대로)
+        prev = [x["target_record_id"] for x in _all(c, "SELECT DISTINCT p.target_record_id FROM import_entries e JOIN import_entries p "
+                                                       "ON p.user_id=e.user_id AND p.id=e.previous_entry_id WHERE e.user_id=%s AND e.id = ANY(%s) "
+                                                       "AND p.target_record_id IS NOT NULL", (uid, [e["id"] for e in ents]))]
+        if recs or prev:
+            db._route_hook(c, uid, sorted({*recs, *prev}))
         ru = _one(c, "SELECT max(purge_at) AS t FROM (SELECT purge_at FROM records WHERE user_id=%s AND id = ANY(%s) "
                      "UNION ALL SELECT purge_at FROM items WHERE user_id=%s AND id = ANY(%s)) x", (uid, recs, uid, items))["t"]
         c.execute("UPDATE migration_plans SET state='reverted', reverted_at=now() WHERE user_id=%s AND id=%s", (uid, plan_id))

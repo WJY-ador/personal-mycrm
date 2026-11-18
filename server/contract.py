@@ -268,6 +268,13 @@ CLASSIFY_OFF = "CLASSIFY-OFF"
 CLASSIFY_OFF_MSG = "분류 대상 오브젝트가 없어 기록을 분류할 수 없어요."
 CLASSIFY_OFF_ACT = "관심 축(key axes) 오브젝트가 생기면 분류할 수 있어요. 다른 칸(붙는 곳·쓸 자리·메모)은 지금도 남길 수 있어요."
 
+# 자동 분류(2026-11-18 구조추천 명세 6.2) — 담을 규칙(route)이 만든 항목은 고칠 수 없다(원문을 따라 바뀐다). 서버 내부 갱신만 통과
+ROUTE_LOCKED = "ROUTE-LOCKED"
+ROUTE_LOCKED_MSG = "자동 분류 항목은 원문을 고치면 따라 바뀌어요. 틀렸으면 빼세요."
+ROUTE_LOCKED_ACT = "원문 기록을 고치거나, 사용자가 말하면 item_route_exclude 로 빼세요."
+ROUTE_LINK_MSG = "자동 분류 항목에는 아직 연결할 수 없어요. 원문 기록에 연결하세요."
+ROUTE_LINK_ACT = "그 항목의 근거 원문 기록(route_source.record_id)을 연결 대상으로 쓰세요."
+
 
 # ── 고정 예제 입력 — 가짜 사용자 둘. 사용자가 정한 문자열은 전부 표식(ULBL·PLBL·SRC 등)을 달아 누출 시험이 찾게 한다 ──
 

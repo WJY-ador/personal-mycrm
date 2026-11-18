@@ -13,7 +13,7 @@ class ChatConfirmationGateTests(unittest.TestCase):
         allowed = allowed_operations(catalog)
         blocked = [(entry["tier"], name) for name, entry in catalog["ops"].items()
                    if entry["tier"] in ("decide", "purge") or name == "pc_connect"]
-        self.assertEqual(len(blocked), 22)
+        self.assertEqual(len(blocked), 25)   # 구조 추천(2026-11-18) decide 3 더함
         for tier, name in blocked:
             with self.subTest(tier=tier, name=name), self.assertRaises(ChatMcpDenied):
                 validate_call(tier, name, {}, allowed)
@@ -139,9 +139,9 @@ class ChatConfirmationGateTests(unittest.TestCase):
         self.assertEqual(webchat.CHAT_WRITE_CARD_OPS, writes - {"pc_connect"})
         self.assertEqual(len(webchat.CHAT_WRITE_CARD_OPS), 15)
         decides = {name for name, tier in _PINNED_TIERS.items() if tier in ("decide", "purge")}
-        self.assertEqual(webchat.CHAT_APPROVABLE_OPS, decides)   # AI 하나로 A3: decide 20 + purge 1
-        self.assertEqual(len(webchat.CHAT_APPROVABLE_OPS), 21)
-        self.assertEqual(len(webchat.CHAT_CARD_OPS), 36)
+        self.assertEqual(webchat.CHAT_APPROVABLE_OPS, decides)   # AI 하나로 A3: decide 20 + purge 1, 구조 추천(2026-11-18) decide 3 더함
+        self.assertEqual(len(webchat.CHAT_APPROVABLE_OPS), 24)
+        self.assertEqual(len(webchat.CHAT_CARD_OPS), 39)
         # A5: 늘 되돌릴 수 없음으로 보는 op 은 모두 카드 대상이다
         self.assertLessEqual(webchat.CHAT_IRREVERSIBLE_OPS, webchat.CHAT_APPROVABLE_OPS)
         self.assertEqual(webchat.CHAT_IRREVERSIBLE_OPS, {"trash_purge", "token_revoke", "pc_forget", "migration_token_send",

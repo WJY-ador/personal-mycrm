@@ -988,6 +988,7 @@ def _apply_activity(c, dev, req, latest, current, req_sha, proj_sha, nbytes):
         c.execute("INSERT INTO activity_links (user_id,id,activity_id,person_id,relation) VALUES (%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
                   (uid, db.new_id("al"), aid, pid, role))
     for ax in [a for a in req.get("axes", []) if a not in gone_axes]:   # 휴지통 축 = 그 연결만 뺀다(활동을 영구 격리시키지 않는다)
+        db._route_link_guard(c, uid, ax)   # 자동 분류 항목 축 = ROUTE-LOCKED(2026-11-18 검토 반영)
         c.execute("INSERT INTO activity_links (user_id,id,activity_id,axis_item_id,relation) VALUES (%s,%s,%s,%s,'axis') "
                   "ON CONFLICT DO NOTHING", (uid, db.new_id("al"), aid, ax))
     return _insert_entry(c, dev, req, latest, req_sha, proj_sha, "applied", True, activity_id=aid)
@@ -1577,6 +1578,10 @@ def _approve_in(c, uid, e, by="user") -> str:
               "AND is_current_applied", (uid, e["stream_id"], e["original_id"]))
     c.execute("UPDATE import_entries SET state='applied', payload=NULL, payload_bytes=0, resolved_at=now(), resolved_by=%s, "
               "target_record_id=%s, is_current_applied=true WHERE user_id=%s AND id=%s", (by, rid, uid, e["id"]))
+    # 자동 분류(2026-11-18) — 새 기록과 밀려난 옛 개정 기록을 함께 맞춘다(옛 개정의 자동 분류 항목은 빠진다). savepoint 안, 실패해도 승인은 그대로
+    olds = [r["target_record_id"] for r in _all(c, "SELECT DISTINCT target_record_id FROM import_entries WHERE user_id=%s AND stream_id=%s "
+                                                   "AND original_id=%s AND target_record_id IS NOT NULL", (uid, e["stream_id"], e["original_id"]))]
+    db._route_hook(c, uid, sorted({rid, *olds}))
     return rid
 
 
@@ -1916,6 +1921,10 @@ def mig_apply_in(c, uid, st, row, pr, tk, sca, sdate, batch_id, manifest_sha256,
                 (uid, db.new_id("ie"), st["id"], row["original_id"], row["revision"], latest["id"] if latest else None, kind, req_sha,
                  proj_sha, state, target if tk == "item" else None, target if tk == "record" else None, item_rev, batch_id,
                  bytes.fromhex(manifest_sha256) if manifest_sha256 else None, transform_version))
+    if tk == "record" and state == "applied":   # 자동 분류(2026-11-18) — 새 판 기록과 밀려난 옛 판을 함께 맞춘다(savepoint 안, 실패해도 반영은 그대로)
+        olds = [r["target_record_id"] for r in _all(c, "SELECT DISTINCT target_record_id FROM import_entries WHERE user_id=%s AND stream_id=%s "
+                                                       "AND original_id=%s AND target_record_id IS NOT NULL", (uid, st["id"], row["original_id"]))]
+        db._route_hook(c, uid, sorted({target, *olds}))
     out = _resp(e, False)
     return {**{k: out[k] for k in ("import_id", "state", "target_kind", "target_id", "duplicate")},
             "created": state == "applied" and (tk == "record" or current is None)}

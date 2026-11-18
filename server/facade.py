@@ -435,6 +435,42 @@ def _pv_trash(op):
     return build
 
 
+def _pv_item_route_exclude(uid, p):
+    """자동 분류 빼기(2026-11-18) — 항목 제목, 원문 기록 제목, 단위 구간 앞 200자 그대로. 자동 분류 항목이 아니면 실행과 같은 ARG-INVALID."""
+    import route
+    pv = route.exclude_preview(uid, p["item_id"])
+    shown = {"항목": pv["item_title"], "원문 기록": pv["record_title"], "원문 구간": pv["quote"],
+             "결과": "이 항목을 지우고, 같은 원문은 다시 자동 분류하지 않아요(되돌리기 가능)"}
+    snap = {"revision": pv["revision"], "body": _h(pv["item_title"], pv["record_id"], pv["quote"])}
+    return snap, shown, {"item_id": pv["item_id"], "record_id": pv["record_id"]}, False
+
+
+def _pv_item_route_include(uid, p):
+    """뺀 자동 분류 되돌리기 — 오브젝트 이름, 원문 기록 제목, 단위. 뺀 적이 없으면 실행과 같은 ARG-INVALID."""
+    unit_key = p.get("unit_key") or ""
+    r = _row("SELECT r.state, r.updated_at, o.label, rc.title FROM item_routes r JOIN object_defs o ON o.user_id=r.user_id AND o.id=r.object_id "
+             "JOIN records rc ON rc.user_id=r.user_id AND rc.id=r.record_id WHERE r.user_id=%s AND r.object_id=%s AND r.record_id=%s "
+             "AND r.unit_key=%s AND r.state='excluded'", (uid, str(p["object_id"] or ""), str(p["record_id"] or ""), unit_key))
+    if not r:
+        raise db.CrmError("ARG-INVALID", "뺀 기록이 아니에요.", "object_id, record_id, unit_key 를 빼기 결과 그대로 넣으세요.")
+    shown = {"자료 종류": r["label"], "원문 기록": r["title"], "단위": unit_key or None,
+             "결과": "빼기를 풀고 다시 자동 분류해요(규칙에 맞으면 항목이 다시 생겨요)"}
+    return {"state": r["state"], "at": _iso(r["updated_at"])}, shown, {"object_id": p["object_id"], "record_id": p["record_id"]}, False
+
+
+def _pv_definition_draft_discard(uid, p):
+    """정의 초안 버리기 — 초안 이름, 필드, 결과(적용 전이면 오브젝트 행 삭제, 적용된 오브젝트면 초안만 비움)."""
+    r = _def_row(uid, p["object_id"])
+    d = r["draft_doc"] if isinstance(r["draft_doc"], dict) else {}
+    if not r["draft_id"] or r["draft_id"] != p["proposal_id"]:
+        raise db.CrmError("CONFLICT", db.CONFLICT_MSG + " (초안이 없거나 바뀌었어요)", db.CONFLICT_ACT)
+    fields = [f"{f.get('key')}: {f.get('label')} ({f.get('value_type')})" for f in d.get("fields", []) if isinstance(f, dict)]
+    shown = {"초안 이름": d.get("label"), "초안 필드": fields,
+             "결과": "적용 전 초안이라 통째로 지워요" if r["revision"] == 0 else "초안만 버려요(지금 정의와 항목은 그대로)"}
+    snap = {"revision": r["revision"], "draft_id": r["draft_id"], "body": _h(r["draft_doc"])}
+    return snap, shown, {"object_id": r["id"], "deleted": r["revision"] == 0}, False
+
+
 def _pv_feedback_send(uid, p):
     shown = {"종류": p["kind"], "보낼 글": p["text"], "문제 난 도구": p.get("tool") or None}
     return {}, shown, {"to": "운영자"}, True
@@ -455,6 +491,9 @@ PREVIEWS = {
     "trash_restore": _pv_trash("restore"),
     "trash_purge": _pv_trash("purge"),
     "feedback_send": _pv_feedback_send,
+    "item_route_exclude": _pv_item_route_exclude,
+    "item_route_include": _pv_item_route_include,
+    "definition_draft_discard": _pv_definition_draft_discard,
 }
 
 

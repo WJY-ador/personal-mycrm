@@ -17,6 +17,7 @@ _APPROVABLE_OPS = frozenset({
     "source_reflection_delete", "inbox_decide", "trash_move", "trash_restore", "feedback_send",
     "migration_apply", "migration_cancel", "migration_revert", "migration_token_send", "pc_forget",
     "token_revoke", "trash_purge",
+    "item_route_exclude", "item_route_include", "definition_draft_discard",   # 구조 추천 자동 분류(2026-11-18) decide 3
     "layout_set", "layout_reset", "display_name_set", "question_add", "profile_set",
     "record_add", "record_attach", "record_title_set", "candidates_propose", "definition_propose",
     "item_propose", "person_save", "source_create", "source_reflection_save", "collected_post_decide",
