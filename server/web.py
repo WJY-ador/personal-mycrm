@@ -1211,6 +1211,97 @@ def render_userview(u: dict, opaque: str, named: bool, resp: dict, st: dict, tic
             f'<h2>문의 요약</h2><p class="note">원문은 <a href="/admin/tickets">문의 화면</a>에서만 봐요.</p>{tk}')
 
 
+# ── 구조 추천, 자동 분류 화면(2026-11-18 구조추천 명세 6.5) — 판정, 건수 정본은 route.py. 여기는 화면용으로 모으고 문장으로 풀기만 ──
+RECO_ASK = "내 기록을 보고 구조를 추천해 줘"   # 구조 추천 받기 버튼이 웹 AI 대화 입력칸에 넣는 정해진 요청(화면 사본 = defs/text.ts RECO_ASK)
+_FROM_TEXT = {"record_date": "기록 날짜", "title": "기록 제목", "heading": "머리 글자"}   # 추출 규칙 → 사람 말(인자 있는 셋은 아래 _rule_from)
+
+
+def _like_text(s: str) -> tuple[str, str]:
+    """*_like 꼴 → 사람 말 (이어지는 꼴, 끝나는 꼴). # = 숫자, 맨 끝 * = 로 시작. 글자는 그대로."""
+    body, tail = (s[:-1], True) if s.endswith("*") else (s, False)
+    t = body.replace("#", "숫자").strip()
+    return (f"{t} 로 시작하고", f"{t} 로 시작하는") if tail else (f"{t} 와 같고", f"{t} 와 같은")
+
+
+def _rule_from(rule: dict) -> str:
+    src = rule.get("from", "")
+    if src == "label":
+        return f"라벨 {rule.get('label', '')}"
+    if src == "section":
+        return f"머리 {rule.get('heading', '')} 아래 글"
+    if src == "key":
+        return f"키 {rule.get('key', '')}"
+    return _FROM_TEXT.get(src, src)
+
+
+def route_rule_text(route) -> str:
+    """담을 규칙(policy.route, route.check_route 정규화 꼴) → 사람이 읽는 한 문장. 결정적(같은 route = 같은 문장). 꼴이 아니면 빈 문자열."""
+    if not isinstance(route, dict) or route.get("unit") not in ("record", "heading"):
+        return ""
+    m, req = route.get("match") or {}, route.get("require") or {}
+    conds = []   # (이어지는 꼴, 끝나는 꼴) — 예: 출처가 세션 정리이고 제목이 P숫자. 로 시작하고 라벨 6개(…)가 다 있는 기록
+    if m.get("source"):
+        conds.append((f"출처가 {m['source']}이고", f"출처가 {m['source']}인"))
+    if m.get("title_like"):
+        go, end = _like_text(m["title_like"])
+        conds.append((f"제목이 {go}", f"제목이 {end}"))
+    for k, word in (("labels", "라벨"), ("headings", "머리"), ("keys", "키")):
+        ws = req.get(k) or []
+        if ws:
+            t = f"{word} {len(ws)}개({', '.join(ws)})가 다"
+            conds.append((f"{t} 있고", f"{t} 있는"))
+    who = " ".join([c[0] for c in conds[:-1]] + [conds[-1][1]]) + " 기록" if conds else "모든 기록"
+    if route["unit"] == "heading":
+        return f"{who} 안에서 머리 줄이 {_like_text(m.get('heading_like', ''))[1]} 절 하나가 항목 하나"
+    return f"{who}, 기록 하나가 항목 하나"
+
+
+def structure_reco(uid) -> dict:
+    """설정 > 내 구조 설정 추천 칸 — route.profile 의 초안(건수, 견본)에 초안 정의(이름, 필드, 담을 규칙 문장, base_revision)를 붙인다.
+    profile 초안엔 필드와 route 가 없어 db.definitions(object_ids) 의 proposal 을 읽는다(적용 전 초안도 콕 집어 물으면 온다)."""
+    import route
+    prof = route.profile(uid)
+    ids = [d["object_id"] for d in prof["drafts"]]
+    props = {d["id"]: d for d in db.definitions(uid, ids, include_archived=True)} if ids else {}
+    out = []
+    for d in prof["drafts"]:
+        p = (props.get(d["object_id"]) or {}).get("proposal") or {}
+        if p.get("proposal_id") != d["proposal_id"]:   # 두 읽기 사이에 초안이 바뀌었다 — 다음 읽기에서 맞는다
+            continue
+        doc = p.get("definition") or {}
+        rt = (doc.get("policy") or {}).get("route")
+        rules = (rt or {}).get("fields") or {}
+        out.append({"object_id": d["object_id"], "proposal_id": d["proposal_id"], "base_revision": p.get("base_revision") or 0,
+                    "key": doc.get("key") or d["key"], "label": doc.get("label") or d["label"], "semantic_kind": doc.get("semantic_kind"),
+                    "fields": [{"key": f.get("key"), "label": f.get("label"), "value_type": f.get("value_type"),
+                                "from": _rule_from(rules[f["key"]]) if f.get("key") in rules else ""} for f in doc.get("fields") or []],
+                    "has_route": d["has_route"], "rule": route_rule_text(rt) if rt else "",
+                    "would_fill": d["would_fill"], "partial": d["partial"], "samples": d["samples"]})
+    return {"drafts": out, "suggest": prof["suggest"], "unattached": prof["unattached"]["count"], "ask": RECO_ASK}
+
+
+def draft_rename(uid, b) -> dict:
+    """추천 카드 [이름 고치기] — 지금 초안(proposal_id 가 같아야 한다)의 label 만 바꿔 다시 제안한다(필드, 담을 규칙은 그대로, 새 proposal_id).
+    expected_revision = 그 오브젝트의 지금 revision(새 오브젝트 초안이면 0). 초안이 바뀌었으면 CONFLICT."""
+    label = b["label"].strip()
+    if not label:
+        raise db.CrmError("ARG-INVALID", "이름을 적어 주세요.")
+    cur = db.definitions(uid, [b["object_id"]], include_archived=True)
+    p = (cur[0].get("proposal") if cur else None) or {}
+    if p.get("proposal_id") != b["proposal_id"]:
+        raise db._conflict("초안이 없거나 바뀌었어요")
+    doc = dict(p.get("definition") or {})
+    doc["label"] = label
+    return db.definition_propose(uid, b["object_id"], b["expected_revision"], doc)
+
+
+def structure_hint(uid) -> dict:
+    """나 탭 요약 한 줄 — {show}. show = 담을 규칙 있는 초안이 있거나 안 붙은 기록이 많다(판정 정본 = route.hint, 본문을 읽지 않는 SQL 건수)."""
+    import route
+    h = route.hint(uid)
+    return {"show": h["suggest"] or h["route_drafts"] > 0}
+
+
 class Web:
     def __init__(self, issuer: str, public_url: str, verifier, dev: bool, dev_user: str):
         self.issuer = issuer.rstrip("/")
@@ -2555,6 +2646,73 @@ class Web:
         """GET — 「나」 통계(축 띠·히트맵·종류별·기다리는 결정). 전체 범위, 읽기만. 모양은 db.me_stats."""
         return await self._core_read(request, db.me_stats)
 
+    # ── 구조 추천, 자동 분류(2026-11-18 구조추천 명세 6.5) — 읽기 = 세션 → 본인 uid. 쓰기 = 세션 401 → Origin 403 → JSON 모양 400 →
+    # db.write_gate(MCP 와 같은 op 이름, 지우는 쪽은 quota=False — main.item_route_exclude, definition_draft_discard 와 같다) → route, db 본체.
+    async def api_structure_reco(self, request):
+        """GET — 추천 칸(초안 카드). 모양 = structure_reco."""
+        return await self._core_read(request, structure_reco)
+
+    async def api_structure_hint(self, request):
+        """GET — 나 탭 요약의 추천할 구조가 있어요 한 줄 표시 여부 {show}. 싼 건수만(structure_hint)."""
+        return await self._core_read(request, structure_hint)
+
+    async def api_route_item(self, request):
+        """GET ?id=<항목 id> — 자동 분류 항목의 근거 원문 {item: route.item_info | null}. 원문 text 는 서버가 자른 구간 그대로(화면은 글자로만 그린다)."""
+        import route
+        iid = request.query_params.get("id", "")
+        return await self._core_read(request, lambda uid: {"item": route.item_info(uid, iid)})
+
+    async def _route_write(self, request, op: str, shape: dict, call, quota: bool):
+        """구조 추천 쓰기 공통 — shape = {키: (타입들, 필수)}. 정수 키는 bool 을 받지 않는다. call(uid, body) → 결과."""
+        uid, err = await self._need(request)
+        if err:
+            return err
+        if not self.same_origin(request):
+            return JSONResponse({"code": "ORIGIN", "msg": "다른 사이트에서 온 요청이에요."}, status_code=403)
+        try:
+            body = await request.json()
+            assert isinstance(body, dict)
+            for k, (types, need) in shape.items():
+                v = body.get(k)
+                assert (v is None and not need) or (isinstance(v, types) and not isinstance(v, bool))
+        except Exception:
+            want = ", ".join(f"{k}({'/'.join(t.__name__ for t in ts)})" for k, (ts, _n) in shape.items())
+            return JSONResponse({"code": "ARG-INVALID", "msg": f"JSON 본문이 필요해요: {want}."}, status_code=400)
+
+        def write():
+            db.write_gate(op, {k: body[k] for k in shape if isinstance(body.get(k), str)}, uid, quota=quota)
+            return call(uid, body)
+        try:
+            out = await run_in_threadpool(write)
+        except db.CrmError as e:
+            return self._crm_err(e)
+        return JSONResponse(out, headers={"cache-control": "no-store"})
+
+    async def api_route_exclude(self, request):
+        """POST {item_id, expected_revision} — 자동 분류 항목 빼기(항목을 지우고 그 원문 단위를 예외로). 본체 = route.exclude(MCP item_route_exclude 와 같다)."""
+        import route
+        return await self._route_write(request, "item_route_exclude", {"item_id": ((str,), True), "expected_revision": ((int,), True)},
+                                       lambda uid, b: route.exclude(uid, b["item_id"], b["expected_revision"]), quota=False)
+
+    async def api_structure_draft(self, request):
+        """POST /api/structure/drafts/{apply|rename|discard} — 추천 카드 버튼 셋.
+        apply {object_id, proposal_id, expected_revision} = db.definition_apply(반환 route_sync),
+        rename {object_id, proposal_id, expected_revision, label} = 지금 초안의 label 만 바꿔 db.definition_propose(새 proposal_id),
+        discard {object_id, proposal_id} = route.draft_discard."""
+        import route
+        op = request.path_params["op"]
+        ids = {"object_id": ((str,), True), "proposal_id": ((str,), True)}
+        if op == "apply":
+            return await self._route_write(request, "definition_apply", {**ids, "expected_revision": ((int,), True)},
+                                           lambda uid, b: db.definition_apply(uid, b["object_id"], b["proposal_id"], b["expected_revision"]), quota=True)
+        if op == "rename":
+            return await self._route_write(request, "definition_propose", {**ids, "expected_revision": ((int,), True), "label": ((str,), True)},
+                                           draft_rename, quota=True)
+        if op == "discard":
+            return await self._route_write(request, "definition_draft_discard", ids,
+                                           lambda uid, b: route.draft_discard(uid, b["object_id"], b["proposal_id"]), quota=False)
+        return JSONResponse({"code": "NOT-FOUND", "msg": "없는 경로예요."}, status_code=404)
+
     # ── PR ②-a 작업 전달 (2026-10-22, 구현계획 §5·G3) ──
     # 장치 경로 = Bearer 장치 토큰(imports.authenticate)만 — 웹 쿠키·MCP 토큰 아님. 장치 권한에 확정 없음.
     # 폴링 버킷(GET /api/device/jobs · GET /api/jobs/<id>) = imports.POLL_LIMITS · 동시 롱폴 = imports.POLL_CONCURRENT(이 프로세스 메모리).
@@ -3505,6 +3663,11 @@ class Web:
             Route("/api/me/layout", u("web:me_layout", self.api_me_layout), methods=["GET", "PUT", "DELETE"]),   # PR ①-b 쓰기 예외(이 라우트만)
             Route("/api/me/stats", u("web:me_stats", self.api_me_stats)),   # PR ①-b — 읽기만
             Route("/api/me/objects/{key}", u("web:me_object_list", self.api_me_object_list)),   # 오브젝트 탭 목록 보기 — 읽기만
+            Route("/api/structure/reco", u("web:structure_reco", self.api_structure_reco)),   # 구조 추천 칸 — 읽기만
+            Route("/api/structure/hint", u("web:structure_hint", self.api_structure_hint)),   # 나 탭 요약 추천 한 줄 — 읽기만
+            Route("/api/structure/drafts/{op}", u("web:structure_draft", self.api_structure_draft), methods=["POST"]),   # 적용, 이름 고치기, 빼기
+            Route("/api/route/item", u("web:route_item", self.api_route_item)),   # 자동 분류 항목 근거 원문 — 읽기만
+            Route("/api/route/exclude", u("web:route_exclude", self.api_route_exclude), methods=["POST"]),   # 자동 분류 빼기
             Route("/api/trash", u("web:trash", self.api_trash)),   # 휴지통 PR-1 — 목록 · 상세 · 이동/복원/영구 삭제(경로 순서: 쓰기 먼저)
             Route("/api/trash/{op}", u("web:trash_op", self.api_trash_op), methods=["POST"]),
             Route("/api/trash/{kind}/{tid}", u("web:trash_get", self.api_trash_one)),

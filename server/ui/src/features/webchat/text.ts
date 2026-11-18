@@ -54,7 +54,7 @@ export const PAST_NOTE = "지난 대화예요. 읽기만 할 수 있어요. 이�
 export const PAST_EMPTY = "이 대화에는 남은 메시지가 없어요.";
 export const BUSY_NEW = "답이 끝난 뒤 새 대화를 시작할 수 있어요.";
 
-// 확인 카드 — 확인 카드 대상 op(server/webchat.py CHAT_CARD_OPS) 35개 = decide 20 + purge 1 + write 14(AI 하나로 A3). 모르는 op = op 이름 그대로.
+// 확인 카드 — 확인 카드 대상 op(server/webchat.py CHAT_CARD_OPS) 39개 = decide 23 + purge 1 + write 15(AI 하나로 A3, 구조 추천 2026-11-18 decide 3 더함). 모르는 op = op 이름 그대로.
 // 키 집합은 서버, agent/chat_approval_context.py 와 같아야 한다(server/test_chat_injection.py 가 대조한다)
 export const OP_NAME: Record<string, string> = {
   record_edit: "기록 고치기", record_provenance_set: "기록 작성자 표시 바꾸기", candidate_decide: "판단 후보 정하기",
@@ -65,6 +65,7 @@ export const OP_NAME: Record<string, string> = {
   feedback_send: "운영자에게 문의 보내기", migration_apply: "이관 반영하기", migration_cancel: "이관 취소하기",
   migration_revert: "이관 되돌리기", migration_token_send: "이관 토큰을 PC 앱으로 보내기", pc_forget: "PC 연결 해제하기",
   token_revoke: "토큰 폐기하기", trash_purge: "영구 삭제하기",
+  item_route_exclude: "자동 분류 빼기", item_route_include: "뺀 자동 분류 되돌리기", definition_draft_discard: "구조 초안 버리기",
   layout_set: "화면 배치 바꾸기", layout_reset: "화면 배치 처음으로", display_name_set: "표시 이름 바꾸기",
   question_add: "질문 더하기", profile_set: "프로필 항목 저장하기", record_add: "기록 남기기",
   record_attach: "기록 붙일 곳 정하기", record_title_set: "기록 제목 바꾸기", candidates_propose: "판단 후보 제안하기",

@@ -5,7 +5,7 @@ import { meApi } from "./meApi";
 import type { Row, World } from "./model";
 import { tabOfItem } from "./model";
 import { trashErr } from "../../shared/item";
-import { oldErrText, TRASH_ASK, TRASH_DONE } from "./text";
+import { oldErrText, ROUTE_TEXT, TRASH_ASK, TRASH_DONE } from "./text";
 
 const ITEM_DONE: Record<string, string> = { confirm: "남겼어요.", exclude: "반영 안 함으로 표시했어요.", pending: "되돌렸어요.", apply: "제안을 적용했어요.", discard: "제안을 제외했어요." };
 
@@ -29,6 +29,10 @@ export function Acts({ W, r, trashOn }: { W: World; r: Row; trashOn: boolean }) 
     const x = r.x, to = x.review !== "reviewed";
     bs.push(btn(to ? "primary" : "secondary", to ? "확인했어요" : "확인 전으로",
       () => run(() => meApi.review(x.id, to, x.revision), to ? "확인했어요로 바꿨어요." : "확인 전으로 바꿨어요.", oldErrText)));
+  } else if (r.k === "item" && r.x.revision && r.x.auto_routed) {   // 자동 분류 항목 — [빼기] 하나(확인 한 번). 고치기, 삭제, 보관 대신
+    const x = r.x;
+    bs.push(btn("secondary", ROUTE_TEXT.exclude, () => { if (window.confirm(ROUTE_TEXT.ask))
+      void run(() => meApi.routeExclude(x.id, x.revision), ROUTE_TEXT.done, oldErrText, "#_me/" + tabOfItem(W, x)); }));
   } else if (r.k === "item" && r.x.revision) {
     const x = r.x, decide = (action: string) => run(() => meApi.itemDecide({ item_id: x.id, expected_revision: x.revision, action,
       ...(action === "apply" || action === "discard" ? { proposal_id: x.proposal!.proposal_id } : {}) }), ITEM_DONE[action] || "저장했어요.", oldErrText);
@@ -42,7 +46,7 @@ export function Acts({ W, r, trashOn }: { W: World; r: Row; trashOn: boolean }) 
   const del = (kind: string, id: string, rev: number | null, back: string) =>
     bs.push(btn("secondary", "삭제", () => { if (window.confirm(TRASH_ASK)) void run(() => meApi.trash(kind, id, rev), TRASH_DONE, trashErr, back); }));
   if (trashOn && r.k === "journal") del("record", r.id, null, "#_me");
-  else if (trashOn && r.k === "item" && r.x.revision) del("item", r.id, r.x.revision, "#_me/" + tabOfItem(W, r.x));
+  else if (trashOn && r.k === "item" && r.x.revision && !r.x.auto_routed) del("item", r.id, r.x.revision, "#_me/" + tabOfItem(W, r.x));
   else if (trashOn && r.k === "refl") del("reflection", r.id, r.x.revision, "#_me");
   return (
     <>

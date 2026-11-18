@@ -2,6 +2,7 @@
 // 탭 줄 AI 버튼(AI 하나로 A1, 탭 줄의 대화 버튼은 이것 하나)은 #ui-chatnav 에 포털로, 패널은 오른쪽 고정(넓은 화면)·화면 전체(좁은 화면).
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
+import { aiAsk } from "../../shared/aiAsk";
 import type { ScreenProps } from "../../shared/ctx";
 import { Panel } from "./Panel";
 import { webchat, type WebchatStore } from "./store";
@@ -22,6 +23,10 @@ export function WebchatRoot({ ctx, store = webchat }: ScreenProps & { store?: We
     window.addEventListener("focus", back);
     document.addEventListener("visibilitychange", back);
     return () => { window.removeEventListener("focus", back); document.removeEventListener("visibilitychange", back); };
+  }, [on, s]);
+  useEffect(() => {   // 구조 추천 받기(2026-11-18) — 정해진 요청을 입력칸에 채워 연다. 보내기는 사용자가 누른다. 쓰던 글이 있으면 덮지 않는다
+    if (!on) return;
+    return aiAsk.on(text => { if (!s.input.trim()) { s.input = text; s.emit(); } void s.toggle(true); });
   }, [on, s]);
   if (!on) return null;
   const nav = document.getElementById("ui-chatnav");

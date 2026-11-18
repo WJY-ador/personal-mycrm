@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { AppState } from "../../shared/state";
 import { flush } from "../../test/fakeServer";
+import { aiAsk } from "../../shared/aiAsk";
 import { ApiFail } from "../../shared/api";
 import type { Approval } from "./api";
 import { WebchatStore } from "./store";
@@ -63,6 +64,21 @@ test("스위치 꺼짐 = 버튼·패널 0", async () => {
   await act(async () => root.render(<WebchatRoot ctx={{ reload, state: st(false) }} store={s} />));
   expect(nav.childElementCount).toBe(0);
   expect(el.querySelector("aside#webchat")).toBeNull();
+});
+
+test("구조 추천 받기(aiAsk) — 켜짐 = 패널을 열고 정해진 요청을 입력칸에 채운다(보내지 않음) · 쓰던 글은 덮지 않는다 · 꺼짐 = 받는 쪽 없음", async () => {
+  const { s } = mk();
+  await act(async () => root.render(<WebchatRoot ctx={{ reload, state: st(false) }} store={s} />));
+  expect(aiAsk.ready()).toBe(false);
+  await act(async () => root.render(<WebchatRoot ctx={{ reload, state: st(true) }} store={s} />));
+  expect(aiAsk.ready()).toBe(true);
+  await act(async () => { aiAsk.ask("내 기록을 보고 구조를 추천해 줘"); }); await flush(); await flush();
+  expect(aside().hidden).toBe(false);
+  expect((aside().querySelector("textarea") as HTMLTextAreaElement).value).toBe("내 기록을 보고 구조를 추천해 줘");
+  expect(s.api.turn).not.toHaveBeenCalled();
+  await type("쓰던 글");
+  await act(async () => { aiAsk.ask("내 기록을 보고 구조를 추천해 줘"); }); await flush();
+  expect((aside().querySelector("textarea") as HTMLTextAreaElement).value).toBe("쓰던 글");
 });
 
 test("켜짐 = 입력 칸 하나 + 모델 고르기 · 시작 단계 없이 첫 메시지로 대화 · 턴(도구 접힘·답 굵게·중지) · 남의 데이터 없음", async () => {
