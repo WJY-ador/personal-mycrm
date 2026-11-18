@@ -45,7 +45,7 @@ import imports  # noqa: E402
 import main  # noqa: E402
 import route  # noqa: E402
 
-MAIN, OTHER, HINT = "route-main@example.com", "route-other@example.com", "route-hint@example.com"
+MAIN, OTHER, HINT, FIT = "route-main@example.com", "route-other@example.com", "route-hint@example.com", "route-fit@example.com"
 SRC = "세션 정리"
 LABELS = ["어디서", "전에 가던 방향", "내가 설명한 것", "결정", "바뀐 것", "맞았나"]
 SECRET_LINE = "이 문장은 profile 응답에 나오면 안 되는 가짜 본문 표식이다"
@@ -66,7 +66,7 @@ def expect(code, fn, *a, **k):
 
 def cleanup():
     with db.tx() as c:
-        ids = [r["id"] for r in c.execute("SELECT id FROM users WHERE email = ANY(%s)", ([MAIN, OTHER, HINT],)).fetchall()]
+        ids = [r["id"] for r in c.execute("SELECT id FROM users WHERE email = ANY(%s)", ([MAIN, OTHER, HINT, FIT],)).fetchall()]
     for uid in ids:
         db.user_delete(uid)
 
@@ -661,6 +661,46 @@ def test_hint():
     ok("route.hint — 30편 알림 없음, 31편 알림, 붙은 기록 제외(profile 과 같은 값), route 있는 초안 수")
 
 
+def test_profile_fit(uid):
+    """20번 — MCP op 의 profile 은 대화 도구 응답 상한(24 KiB) 안으로 결정적으로 줄인다. 화면(기본값)은 줄이지 않는다."""
+    small = route.profile(uid, fit_chat=True)
+    assert "truncated" not in small, "작은 자료는 줄이지 않는다"
+    h = db.user_by_email(FIT)["id"]
+    db.display_name_set(h, "가짜 큰 자료")
+    syl = [chr(0xAC00 + i * 500) for i in range(20)] + [chr(0xAC00 + i * 28 + 1) for i in range(30)]
+    for i in range(40):
+        a, b = syl[i % 20], syl[20 + i % 30]
+        body = "".join(f"## 긴 머리 {syl[20 + (i + j) % 30]}{'나' * 185}\n가짜 문장\n" for j in range(3))
+        body += "".join(f"**라벨{syl[(i + j) % 20]}{'다' * 60}** — 가짜 값\n" for j in range(2))
+        body += "".join(f"- 키{syl[20 + (i + j) % 20]}{'라' * 60}: 가짜 값\n" for j in range(2))
+        db.record_add(h, f"가짜 긴 제목 {a}{'가' * 180} 꼴{b}", body, source=SRC)
+    d = json.loads(json.dumps(PIVOT_DEF))
+    d["key"], d["policy"]["route"]["match"]["title_like"] = "pivots_fit", "가짜 *"
+    d["policy"]["route"]["require"] = {"labels": []}
+    d["fields"] = [f for f in d["fields"] if not f.get("required") or f["key"] == "happened_on"]
+    d["policy"]["route"]["fields"] = {"happened_on": {"from": "record_date"}}
+    db.definition_propose(h, None, 0, d)
+    full = route.profile(h)
+    n_full = len(json.dumps(full, ensure_ascii=False).encode("utf-8"))
+    assert n_full > 32 * 1024 and "truncated" not in full, n_full   # 화면 경로(기본값)는 줄이지 않는다
+    got = route.profile(h, fit_chat=True)
+    n_got = len(json.dumps(got, ensure_ascii=False).encode("utf-8"))
+    assert n_got <= route.PROFILE_MAX_BYTES and got["truncated"] is True, n_got
+    for k in ("kind", "objects", "route_guide", "suggest", "notice"):
+        assert got[k] == full[k], k
+    assert got["unattached"]["count"] == full["unattached"]["count"]
+    assert [(x["object_id"], x["would_fill"], x["partial"]) for x in got["drafts"]] == \
+        [(x["object_id"], x["would_fill"], x["partial"]) for x in full["drafts"]]
+    assert all(len(x["text"]) <= 80 for x in got["headings"]) and all(len(x["text"]) <= 40 for x in got["labels"] + got["keys"])
+    assert all(len(x["shape"]) <= 80 and len(x["sample"]) <= 80 for x in got["titles"])
+    assert route.profile(h, fit_chat=True) == got, "결정적"
+    tight = route.fit(json.loads(json.dumps(full)), 6 * 1024)   # 목록 줄이기 경로 — titles, keys, labels 순으로 뒤에서부터 비운다
+    assert len(json.dumps(tight, ensure_ascii=False).encode("utf-8")) <= 6 * 1024 and tight["truncated"] is True
+    assert tight["titles"] == [] and tight["keys"] == [] and len(tight["headings"]) <= len(full["headings"]), tight
+    assert tight["objects"] == full["objects"] and tight["unattached"]["count"] == full["unattached"]["count"]
+    ok(f"profile 크기 상한 — 줄이기 전 {n_full} 바이트, op 응답 {n_got} 바이트(24 KiB 이하), truncated, 건수 키 그대로, 화면은 안 줄임, 작은 자료는 키 없음")
+
+
 def test_isolation_and_migration(uid, oid):
     other = db.user_by_email(OTHER)["id"]
     db.display_name_set(other, "다른 가짜")
@@ -701,6 +741,7 @@ async def run():
         test_definition_checks(uid)
         test_release_archive_stack(uid)
         test_me_stats_and_axis(uid)
+        test_profile_fit(uid)
         await test_released_rules(uid)
         test_hint()
         test_isolation_and_migration(uid, oid)

@@ -1001,9 +1001,54 @@ def hint(uid):
     return {"suggest": un > SUGGEST_MIN, "route_drafts": n}
 
 
-def profile(uid):
+PROFILE_MAX_BYTES = 24 * 1024   # 대화 도구 응답 상한(agent 32 KiB) 안에 드는 profile 직렬화 상한(UTF-8 바이트)
+_FIT_CHARS = (("headings", "text", 80), ("labels", "text", 40), ("keys", "text", 40), ("titles", "shape", 80), ("titles", "sample", 80))
+_FIT_TRIM = ("titles", "keys", "labels", "headings")   # 넘치면 이 순서로 뒤(빈도 낮은 쪽)에서부터 줄인다
+
+
+def _nbytes_json(v):
+    return len(json.dumps(v, ensure_ascii=False).encode("utf-8"))
+
+
+def fit(out, max_bytes=PROFILE_MAX_BYTES):
+    """profile 을 대화 도구 응답 상한 안으로 결정적으로 줄인다(같은 입력 = 같은 결과). 글자 상한(머리 80, 라벨과 키 40, 제목 꼴과 견본 80,
+    초안 견본 제목 80, quote 200) → 그래도 max_bytes 를 넘으면 titles, keys, labels, headings 를 뒤에서부터 → 초안 견본(3, 1, 0)
+    → 수집 글 채널별, 활동 종류별, 안 붙은 기록 출처별(상위 10). objects, 초안 건수, unattached.count, suggest, route_guide, notice 는
+    그대로. 줄였으면 "truncated": true 를 싣는다(안 줄였으면 키 없음)."""
+    cut = False
+    for key, field, n in _FIT_CHARS:
+        for e in out[key]:
+            if len(e[field]) > n:
+                e[field], cut = e[field][:n], True
+    for d in out["drafts"]:
+        for smp in d["samples"]:
+            for field, n in (("title", 80), ("quote", QUOTE_MAX)):
+                if len(smp[field]) > n:
+                    smp[field], cut = smp[field][:n], True
+    for key in _FIT_TRIM:
+        while out[key] and _nbytes_json(out) > max_bytes:
+            out[key].pop()
+            cut = True
+    for keep in (1, 0):
+        if _nbytes_json(out) <= max_bytes:
+            break
+        for d in out["drafts"]:
+            if len(d["samples"]) > keep:
+                d["samples"], cut = d["samples"][:keep], True
+    if _nbytes_json(out) > max_bytes:
+        for lst in (out["collected"]["by_channel"], out["activities"]["by_kind"], out["unattached"]["by_source"]):
+            if len(lst) > 10:
+                del lst[10:]
+                cut = True
+    if cut:
+        out["truncated"] = True
+    return out
+
+
+def profile(uid, fit_chat=False):
     """structure_profile_get — 사용자 데이터 profile(사실만, 본문을 싣지 않는다: 머리 줄, 라벨, 키, 제목 줄, 견본 quote 200자만).
-    읽는 기록 수 상한 PROFILE_SCAN(최신부터, 정렬 = db.RECORD_SORT)."""
+    읽는 기록 수 상한 PROFILE_SCAN(최신부터, 정렬 = db.RECORD_SORT). fit_chat=True(MCP op) = fit() 로 대화 도구 응답 상한 안에 줄인다.
+    화면(web.py)은 기본값 False 로 줄이지 않은 값을 받는다."""
     import db
     with db.tx() as c:
         recs = _records(c, uid, limit=PROFILE_SCAN)
@@ -1060,7 +1105,7 @@ def profile(uid):
                 e["count"] += 1
     un = sum(r["n"] for r in by_src)
     suggest = un > SUGGEST_MIN   # hint 와 같은 판정(같은 _unattached)
-    return {
+    out = {
         "kind": "structure_profile",
         "objects": objects,
         "unattached": {"count": un, "by_source": [{"source": r["source"], "count": r["n"]} for r in by_src]},
@@ -1076,3 +1121,4 @@ def profile(uid):
         "notice": (f"어느 오브젝트에도 안 붙은 기록이 {un}편 있어요. 추천할 구조가 있어요. " if suggest else "")
                   + "건수와 꼴은 서버가 원문에서 센 사실이에요. 이름과 필드는 사용자의 말에서 고르고, 초안은 definition_propose 로만 써요.",
     }
+    return fit(out) if fit_chat else out

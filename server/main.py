@@ -1125,7 +1125,7 @@ def structure_profile_get(ctx: Context) -> dict:
     collected(수집 글 채널별), activities(활동 종류별), drafts(초안마다 적용하면 채워질 건수 would_fill, 분류 못 함 partial, 견본 3건 원문 quote),
     route_guide(담을 규칙 꼴), suggest, notice. 본문은 싣지 않는다(머리 줄, 라벨, 키, 제목 줄, 견본 quote 200자만).
     이 결과를 읽고 definition_propose 로 초안(policy.route 포함)만 쓴다. 이름은 사용자의 말(제목, 머리 줄)에서 고르고, 필드는 데이터에 있는 것만 둔다."""
-    return route.profile(uid_of(ctx))
+    return route.profile(uid_of(ctx), fit_chat=True)   # 대화 도구 응답 상한 안으로(route.PROFILE_MAX_BYTES, 줄이면 truncated)
 
 
 def item_route_exclude(item_id: Annotated[str, Field(description="자동 분류 항목 ID (i_…, auto_routed 인 항목)")],
