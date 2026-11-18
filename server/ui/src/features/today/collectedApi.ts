@@ -5,7 +5,7 @@ import { getJSON, postJSON } from "../../shared/api";
 export type Ai = { grade: string | null; summary: string | null; as_is: string | null; to_be: string | null; ops: string | null; points: string[] | null };
 export type Post = {
   id: string; revision: number; title: string; channel: string | null; author_display: string | null; post_url: string | null;
-  posted_on: string | null; collected_on: string | null; axes: { id: string; title: string }[]; ai: Ai;
+  posted_on: string | null; collected_on: string | null; axes: { id: string; code: string | null; title: string }[]; ai: Ai;   // code = 축 코드(축 잇기, 코드 없는 축은 null)
   state: string; decided_by: string | null; decided_at: string | null;
 };
 export type PostList = { ready: boolean; posts: Post[]; counts: { pending: number; kept: number } };

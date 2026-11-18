@@ -4,6 +4,7 @@ import { deleteJSON, getJSON, postJSON, putJSON } from "../../shared/api";
 import { itemDecide, trashMove, type ItemDecide } from "../../shared/item";
 import { candidateDecide, fetchJournal, type CandDecide } from "../../shared/journal";
 import type { Act } from "../../shared/activity";
+import { axisParam } from "../../shared/axes";
 import type { Rec } from "../../shared/state";
 
 export type { Journal } from "../../shared/journal";
@@ -26,17 +27,20 @@ export type SourceCtx = { activity_count: number; by_action: { action: string; l
 
 // 오브젝트 탭 목록 보기(GET /api/me/objects/<key>, 50행씩) — 응답 모양 정본 = server/db.py object_list
 export type ObjCol = { key: string; label: string; value_type: string; options: { value: string; label: string }[] };
-export type ObjRow = { id: string; code: string | null; title: string; revision: number; updated_at: string; data: Record<string, unknown>; state?: string };
+// axes = 그 행의 축(수집 글 행만, 축 잇기 — 코드 칩)
+export type ObjRow = { id: string; code: string | null; title: string; revision: number; updated_at: string; data: Record<string, unknown>; state?: string;
+  axes?: { id: string; code: string | null; title: string | null }[] };
 export type ObjList = {
   object: { id: string; key: string; label: string }; columns: ObjCol[]; has_state: boolean; sort: { key: string; dir: "asc" | "desc" };
   filters: { key: string; label: string; values: { value: string; label: string; n: number }[] }[]; states: Record<string, number> | null;
   rows: ObjRow[]; total: number; next_cursor: string | null;
 };
-export type ObjQuery = { sort: string; dir: string; q: string; f: Record<string, string>; state: string };
+export type ObjQuery = { sort: string; dir: string; q: string; f: Record<string, string>; state: string; axis?: string };   // axis = 축 화면의 축 item id
 const objParams = (p: ObjQuery, cursor: string) => {
   const u = new URLSearchParams();
   for (const [k, v] of [["sort", p.sort], ["dir", p.dir], ["q", p.q.trim()], ["state", p.state], ["cursor", cursor]]) if (v) u.set(k, v);
   for (const [k, v] of Object.entries(p.f)) if (v) u.set("f." + k, v);
+  if (p.axis) u.set(...axisParam(p.axis));
   const s = u.toString();
   return s ? "?" + s : "";
 };

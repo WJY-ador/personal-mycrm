@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiErr } from "../../shared/api";
 import { LoadFail } from "../../shared/LoadFail";
+import { axisMap, useAxes } from "../../shared/axes";
 import { BULK_GRADES, groups, headline } from "./collectedRows";
 import { collectedApi, type Post } from "./collectedApi";
 import { CollectedCard } from "./CollectedCard";
@@ -12,7 +13,9 @@ import { LOADING } from "./text";
 import { useCollected } from "./useCollected";
 import css from "./Collected.module.css";
 
-function Kept({ n, act }: { n: number; act: ReturnType<typeof useCollected> }) {
+type By = ReturnType<typeof axisMap>;   // 축 item id → 코드·이름(축 코드 칩)
+
+function Kept({ n, act, by }: { n: number; act: ReturnType<typeof useCollected>; by: By }) {
   const [open, setOpen] = useState(false);
   const q = useQuery({ queryKey: ["collected", "kept"], queryFn: () => collectedApi.list("kept"), enabled: open });
   const posts = q.data?.posts;
@@ -21,19 +24,19 @@ function Kept({ n, act }: { n: number; act: ReturnType<typeof useCollected> }) {
       <summary>{`보관함 ${q.data ? q.data.counts.kept : n}건`}</summary>
       {!open ? null : q.isError && !posts ? <LoadFail err={apiErr(q.error)} what="보관함" /> : !posts ? <p className="hint">{LOADING}</p>
         : !posts.length ? <p className="hint">보관한 수집 글이 없어요.</p>
-        : <ul className={css.cards}>{posts.map(p => <CollectedCard key={p.id} p={p} busy={act.busy} drop={() => void act.decide(p, "dropped")} />)}</ul>}
+        : <ul className={css.cards}>{posts.map(p => <CollectedCard key={p.id} p={p} by={by} busy={act.busy} drop={() => void act.decide(p, "dropped")} />)}</ul>}
     </details>
   );
 }
 
-function Group({ grade, label, posts, act }: { grade: string; label: string; posts: Post[]; act: ReturnType<typeof useCollected> }) {
+function Group({ grade, label, posts, act, by }: { grade: string; label: string; posts: Post[]; act: ReturnType<typeof useCollected>; by: By }) {
   const armed = act.armed === grade;
   return (
     <section className={css.group} aria-label={label}>
       <div className={css.ghead}><h4>{label}</h4><span className="count">{posts.length}</span>
         {BULK_GRADES.has(grade) ? <button type="button" className={armed ? "secondary small" : "tertiary"} disabled={act.busy}
           onClick={() => act.dropAll(grade, posts)}>{armed ? `한 번 더 누르면 ${posts.length}건 버려요` : "전부 버림"}</button> : null}</div>
-      <ul className={css.cards}>{posts.map(p => <CollectedCard key={p.id} p={p} busy={act.busy}
+      <ul className={css.cards}>{posts.map(p => <CollectedCard key={p.id} p={p} by={by} busy={act.busy}
         keep={() => void act.decide(p, "kept")} drop={() => void act.decide(p, "dropped")} />)}</ul>
     </section>
   );
@@ -43,6 +46,7 @@ export function Collected() {
   const q = useQuery({ queryKey: ["collected", "pending"], queryFn: () => collectedApi.list("pending") });
   const [linkOnly, setLinkOnly] = useState(false);
   const act = useCollected();
+  const by = axisMap(useAxes().data?.axes);
   const all = q.data?.posts, posts = all ? (linkOnly ? all.filter(p => !!p.post_url) : all) : undefined;
   return (
     <section className={`paper ${css.box}`} id="collected" aria-labelledby="collected-h">
@@ -57,8 +61,8 @@ export function Collected() {
         : !q.data || !posts ? <p className="hint">{LOADING}</p>
         : !q.data.ready ? <p className={`hint ${css.empty}`}>수집 글을 담을 자료 종류(key collected_posts)가 아직 없어요. 만들면 PC가 모은 글이 여기에 쌓여요.</p>
         : !posts.length ? <p className={`hint ${css.empty}`}>{linkOnly && all!.length ? "원문 링크가 있는 새 수집 글이 없어요." : "새로 들어온 수집 글이 없어요. PC가 모은 글이 여기에 쌓여요."}</p>
-        : groups(posts).map(g => <Group key={g.grade || "none"} grade={g.grade} label={g.label} posts={g.posts} act={act} />)}
-      {q.data?.ready ? <Kept n={q.data.counts.kept} act={act} /> : null}
+        : groups(posts).map(g => <Group key={g.grade || "none"} grade={g.grade} label={g.label} posts={g.posts} act={act} by={by} />)}
+      {q.data?.ready ? <Kept n={q.data.counts.kept} act={act} by={by} /> : null}
     </section>
   );
 }

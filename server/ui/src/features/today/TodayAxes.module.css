@@ -1,0 +1,16 @@
+/* 오늘의 축 — 「나」 축 띠와 같은 꼴(한 줄 막대 + 칩 목록). 색 = 전역 축 토큰(--ax1~8)만 */
+.box { margin: 0 0 var(--sp-8); min-width: 0; }
+.fail { margin: 0 0 var(--sp-6); }
+.row { display: flex; align-items: center; gap: var(--sp-5); min-width: 0; }
+.l { flex: none; margin: 0; font-size: var(--fs-2); font-weight: 600; color: var(--muted); }
+.strip { flex: 1; min-width: 0; display: flex; gap: 2px; height: 10px; border-radius: var(--r-2); overflow: hidden; }
+.strip span { min-width: 3px; }
+.tot { flex: none; font-family: var(--mono); font-size: var(--fs-1); color: var(--muted); }
+.list { list-style: none; margin: var(--sp-3) 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: var(--sp-1) var(--sp-6); }
+.list a { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; min-height: 28px; padding: var(--sp-1) var(--sp-2); border-radius: var(--r-3);
+  font-size: var(--fs-2); color: var(--ink); text-decoration: none; }
+.list a:hover { background: var(--accent-soft); }
+.list i { flex: none; display: inline-block; width: 9px; height: 9px; border-radius: 50%; }
+.list b, .v { flex: none; font-family: var(--mono); font-size: var(--fs-1); }
+.t { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 767px) { .list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

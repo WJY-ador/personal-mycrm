@@ -7,6 +7,8 @@ import { useQuery } from "@tanstack/react-query";
 import type { ScreenProps } from "../../shared/ctx";
 import { Back } from "./Back";
 import { AxisBand } from "./AxisBand";
+import { AxisTab } from "./axis/AxisTab";
+import type { Md } from "./axis/AxisDoc";
 import { Detail } from "./Detail";
 import { EditCtx, useEditStore } from "../../shared/edit";
 import { LensView } from "./LensView";
@@ -27,9 +29,9 @@ import css from "./Me.module.css";
 
 const here = () => location.hash || "#_me";
 
-type Props = ScreenProps & { blocks: Blocks; layoutDefault: MePage };
+type Props = ScreenProps & { blocks: Blocks; layoutDefault: MePage; md: Md };   // md = 한 장 렌더러(웹 대화 답과 같은 것, 껍데기가 넘긴다)
 
-export function MeScreen({ ctx, blocks, layoutDefault }: Props) {
+export function MeScreen({ ctx, blocks, layoutDefault, md }: Props) {
   const S = ctx.state!, [a = "", b = "", c = ""] = ctx.args || [];
   const { W, statsFail, recs } = useWorld(S);
   const lay = useQuery({ queryKey: QK.layout, queryFn: meApi.layout });
@@ -39,7 +41,7 @@ export function MeScreen({ ctx, blocks, layoutDefault }: Props) {
   const t = a === "obj" ? OBJ_TAB + b : isTab(a) ? a : tabs[0];
   const ft = isTab(t) && t !== "summary" && !solo ? t : null;   // 고정 탭 목록(오브젝트 탭은 목록 보기 — 연결 수 고르기 없음)
   const rows = ft ? tabRows(W, ft) : [];
-  const sel = !ft || (mobile && !b) ? null : pick(W, ft, rows, b);   // 1열 첫 진입 = 목록만
+  const sel = !ft || ((mobile || ft === "axis") && !b) ? null : pick(W, ft, rows, b);   // 1열 첫 진입 = 목록만 · 축 탭 첫 진입 = 축 카드 목록(넘기지 않는다)
   const selItem = !solo && sel && t !== "person" && t !== "source" && isAxis(W, sel.id) ? sel.id : "";
   useQuery({ queryKey: QK.axis(selItem), queryFn: () => axisCtx(selItem), enabled: !!selItem });
   const pid = !solo && t === "person" && sel ? sel.id : "";
@@ -72,6 +74,7 @@ export function MeScreen({ ctx, blocks, layoutDefault }: Props) {
     const d = objDefByKey(W, b);
     body = d ? <ObjTab key={d.key} W={W} def={d} id={c} trashOn={trashOn} /> : <div className="paper"><div className="empty">{OBJ_TEXT.gone} <a href="#_me">{OBJ_TEXT.back}</a></div></div>;
   } else if (t === "summary") body = <Summary W={W} slots={L.regions.summary || []} blocks={blocks} statsFail={statsFail} />;
+  else if (t === "axis") body = <AxisTab W={W} id={b} trashOn={trashOn} md={md} />;   // 축 잇기(2026-11-18) — 축 카드 목록 | 축 화면
   else if (!rows.length) body = <div className="paper"><div className="empty">{ME_EMPTY}</div></div>;
   else body = <LensView W={W} t={ft!} rows={rows} sel={sel} want={b} trashOn={trashOn} recs={recs}
     person={{ state: pq.isError ? "fail" : pq.data ? "ok" : "loading", retry: () => void pq.refetch() }} />;

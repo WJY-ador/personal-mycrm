@@ -277,6 +277,9 @@ mark { background: var(--mark); color: var(--mark-ink); padding: 1px var(--sp-1)
 .asset-card.on { border-color: var(--ink); box-shadow: inset 3px 0 0 var(--ink); }
 .asset-card.new { border-style: dashed; background: var(--cand-bg); }
 .chip.code { color: var(--ink); font-weight: 600; }
+/* 축 코드 칩(수집 글 행) — 고동색 주색 한 색, 코드는 고정폭 */
+.axcodes { display: inline-flex; flex-wrap: wrap; gap: var(--sp-1); vertical-align: middle; }
+.chip.axcode { font-family: var(--mono); font-weight: 600; color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
 .chip.promo-met { border-color: color-mix(in srgb, var(--accent) 50%, transparent); color: var(--accent); background: var(--accent-soft); }
 .pills { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin: 0 0 var(--sp-6); }
 .pills a { border: 1px solid var(--line); color: var(--muted); font-size: var(--fs-1); padding: var(--sp-1) var(--sp-5); border-radius: var(--r-pill); text-decoration: none; }

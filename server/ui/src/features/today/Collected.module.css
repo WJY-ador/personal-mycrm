@@ -17,7 +17,6 @@
 .face:hover .line { color: var(--accent); }
 .top { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); font-size: var(--fs-2); }
 .author { font-weight: 600; color: var(--ink); }
-.axis { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
 .date { color: var(--muted); }
 .line { display: block; margin-top: var(--sp-2); font-size: var(--fs-3); line-height: 1.55; overflow-wrap: anywhere; }
 .aitag { margin-right: var(--sp-3); }

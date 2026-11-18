@@ -1,11 +1,12 @@
 // 「오늘」 화면 틀(옛 renderToday2) — 넓은 화면 = 목록 | 상세(대기 하나), 1열 = 목록 또는 상세 하나. 읽기: 대기 목록 · 최근 활동 50 · 상태의 내 글(불러온 범위).
 // 상태를 새로 받으면(껍데기 reload) 조회를 다시 받는다. [삭제] 없음 — 동작은 대기 상세의 승인·제외뿐
-// 맨 위 = 수집 인박스(Collected, 2026-11-13). 그 아래 「들어온 내 글과 활동」 머리 밑에 위 목록 | 상세.
+// 맨 위 = 오늘의 축(TodayAxes, 2026-11-18 축 잇기) · 수집 인박스(Collected, 2026-11-13). 그 아래 「들어온 내 글과 활동」 머리 밑에 위 목록 | 상세.
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import type { UiCtx } from "../../shared/ctx";
 import { useMobile } from "../../shared/mobile";
 import { Collected } from "./Collected";
+import { TodayAxes } from "./TodayAxes";
 import { InboxOne } from "./InboxOne";
 import { todayRows } from "./rows";
 import { LOADING } from "./text";
@@ -38,7 +39,7 @@ export function Today({ ctx, sel, flash, say }: Props) {
   return (
     <>
       <div className="hhead"><h2>오늘</h2>{flash}</div>
-      {!mobile || !sel ? <Collected /> : null}
+      {!mobile || !sel ? <><TodayAxes /><Collected /></> : null}
       <div className="home today">{!mobile || !sel ? list : null}{detail}</div>
     </>
   );

@@ -81,7 +81,6 @@ export function axes(W: World) {
     return { id: it.id, code: it.code, title: it.title || "", items: a?.items ?? null, records: a?.records ?? null, readings: a?.readings ?? null, n: a ? a.n : null }; }) : [];
 }
 export type Axis = ReturnType<typeof axes>[number];
-export const AX_COLORS = 8;   // 축 색 = 코드 순 1~8, 9번째부터 회색(건수와 무관하게 고정)
-export const axColor = (i: number) => (i < AX_COLORS ? `var(--ax${i + 1})` : "var(--soft)");
+export { AX_COLORS, axColor } from "../../shared/axes";   // 축 색 = 코드 순 1~8, 9번째부터 회색(건수와 무관하게 고정 — 오늘의 축과 한 벌)
 export const axShort = (t: string) => String(t || "").replace(/\s*\(.*\)\s*$/, "").replace(/\s+—\s+.*$/, "");
 export const axTip = (a: Axis) => `${a.code ? a.code + " " : ""}${axShort(a.title)}${a.n === null ? "" : `, 항목 ${a.items}, 글 ${a.records}, 읽기 자료 ${a.readings || 0}`}`;
