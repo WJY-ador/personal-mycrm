@@ -359,7 +359,26 @@ async def run():
         imports.migrate_device_policy(c)
         s = c.execute("SELECT policy FROM import_streams WHERE user_id=%s AND id=%s", (B, bdid)).fetchone()
         assert s["policy"]["transform_versions"] == ["collected-post/1"], s
-    print("OK 6 장치 features(코드 있는 축 = axis_codes, 없으면 빈 목록) · 전부 허용 장치에 axis-page/1 더하기(판 +1, 한 번, 줄인 정책 그대로)")
+    # v3(2026-11-19): v2 대상 밖(board-mail/1 없음) 장치에도 axis-page/1 을 더한다. 다른 변환은 그대로, 이미 가진 장치는 그대로, 한 번
+    assert "axis-page/1" in imports.DEFAULT_POLICY["transform_versions"], "새 장치 기본 정책"
+    no_mail = [t for t in old if t != "board-mail/1"]
+    with db.tx() as c:
+        c.execute("UPDATE import_streams SET policy=%s WHERE user_id=%s AND id=%s",
+                  (Jsonb({"actions": list(imports.ACTIONS), "transform_versions": no_mail, "axes": []}), B, bdid))
+        rev = lambda u, d: c.execute("SELECT policy, policy_revision FROM import_streams WHERE user_id=%s AND id=%s",
+                                     (u, d)).fetchone()
+        b0, a0 = rev(B, bdid), rev(A, did)
+        assert "axis-page/1" in a0["policy"]["transform_versions"], a0
+        c.execute("DELETE FROM schema_marks WHERE key=%s", (imports.POLICY_ALL_V3_MARK,))
+        n = imports.migrate_device_policy(c)
+        b1, a1 = rev(B, bdid), rev(A, did)
+        assert n >= 1 and b1["policy"]["transform_versions"] == no_mail + ["axis-page/1"], (n, b1)
+        assert b1["policy_revision"] == b0["policy_revision"] + 1 and b1["policy"]["actions"] == b0["policy"]["actions"], b1
+        assert "board-mail/1" not in b1["policy"]["transform_versions"], "다른 변환은 더하지 않는다"
+        assert a1 == a0, "이미 가진 장치는 판도 그대로"
+        assert imports.migrate_device_policy(c) == 0, "v3 표식 한 번"
+    print("OK 6 장치 features(코드 있는 축 = axis_codes, 없으면 빈 목록) · 전부 허용 장치에 axis-page/1 더하기(판 +1, 한 번, 줄인 정책 그대로)"
+          " · v3 모든 장치에 axis-page/1(다른 변환 그대로, 가진 장치 그대로, 한 번)")
 
 
 def main_():

@@ -509,6 +509,11 @@ def write_back(st, cfg: dict, up, *, min_interval: float = 0.0) -> dict | None:
     return out
 
 
+def _budget_left(started: float, budget: float) -> float:
+    """실행 시작(monotonic)부터 센 업로드 예산의 남은 초. 0 아래로 내려가지 않는다."""
+    return max(0.0, budget - (time.monotonic() - started))
+
+
 def new_counts() -> dict:
     return {"observed": 0, "new_events": 0, "staged": 0, "unchanged": 0, "waiting": 0, "blocked": 0,
             "quarantined": 0, "not_sent": 0, "masked": 0, "skipped_policy": 0}
@@ -518,7 +523,7 @@ def run_once(paths, *, ks: keystore.KeyStore, uploader_factory=None, summarizer=
              scheduled: bool = False, jitter_max: float = 300.0, sleep=time.sleep, upload: bool = True) -> dict:
     """잠금 → (예약 실행이면 0~5분 지연) → 수집·변환·대기 저장 → 요약(켜졌을 때) → 업로드."""
     from . import osutil
-    from .uploader import Uploader
+    from .uploader import UPLOAD_BUDGET_SEC, Uploader
 
     paths.ensure()
     lock = osutil.FileLock(paths.lock("run"))
@@ -529,6 +534,7 @@ def run_once(paths, *, ks: keystore.KeyStore, uploader_factory=None, summarizer=
     try:
         if scheduled and jitter_max > 0:
             sleep(random.uniform(0, jitter_max))
+        started = time.monotonic()      # 업로드 시간 예산의 시작(예약 실행의 지연은 빼고 센다)
         cfg = _config.load(paths)
         cfg = dict(cfg)
         cfg["_execution"] = "unattended" if scheduled else "attended"
@@ -564,8 +570,10 @@ def run_once(paths, *, ks: keystore.KeyStore, uploader_factory=None, summarizer=
                 if up is None:
                     up = (uploader_factory or Uploader)(cfg["server_url"], token,
                                                         timeout=cfg["upload"]["timeout_sec"])
+                # 시간 예산은 이 실행의 시작부터 센다(수집 시간 포함). 예산으로 멈춰도(stopped time-budget) 뒤 단계는 그대로 돈다
                 res_up = up.run(st, max_n=int(cfg["upload"]["max_per_run"]),
-                                min_interval=float(cfg["upload"]["min_interval_sec"]))
+                                min_interval=float(cfg["upload"]["min_interval_sec"]),
+                                budget=_budget_left(started, UPLOAD_BUDGET_SEC))
                 if (res_up.get("stopped") or "").replace("-halted", "") == "policy":
                     # 허용 규칙이 바뀜 → 정책을 다시 받아 대기 요청을 고친 뒤 이번 실행에서 한 번만 다시 보낸다
                     ref = refresh_policy(paths, st, cfg, up)
@@ -573,7 +581,8 @@ def run_once(paths, *, ks: keystore.KeyStore, uploader_factory=None, summarizer=
                     if ref["status"] == "ok":
                         st.clear_halt("policy")
                         res_up = up.run(st, max_n=int(cfg["upload"]["max_per_run"]),
-                                        min_interval=float(cfg["upload"]["min_interval_sec"]))
+                                        min_interval=float(cfg["upload"]["min_interval_sec"]),
+                                        budget=_budget_left(started, UPLOAD_BUDGET_SEC))
                 result["upload"] = res_up
                 if (res_up.get("stopped") or "").replace("-halted", "") not in _NO_WRITE_BACK_AFTER:
                     try:

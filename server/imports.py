@@ -59,6 +59,9 @@ DEFAULT_POLICY = {"actions": list(ACTIONS), "transform_versions": list(TRANSFORM
 POLICY_ALL_MARK = "device-policy-all-v1"
 # 그 뒤 늘어난 변환을 「전부 허용」 장치에 더하는 이관(2026-11-18 축 한 장). v1 이 돈 뒤의 전부 = ALL_BEFORE_V2 를 모두 가진 장치만
 POLICY_ALL_V2_MARK = "device-policy-all-v2"
+# 축 한 장(axis-page/1)을 모든 장치에 더하는 이관(2026-11-19). v2 는 「전부 허용」 장치만 골라 board-mail/1 없는 장치가 빠졌다.
+# 한 장은 PC 설정(axis_pages.dir, 기본값 없음)을 사용자가 넣어야만 만들어지므로 장치마다 막을 이유가 없다 — 다른 변환은 건드리지 않는다
+POLICY_ALL_V3_MARK = "device-policy-all-v3"
 ALL_BEFORE_V2 = ("board-likes/1", "self-text/1", "self-summary/1", "session-wrap/1", "collected-post/1", "board-feed/1",
                  "board-reactions/1", "board-mail/1")
 # 이관 대상 = 옛 제품 기본값 그대로인 장치(사용자가 고른 값이 아니다). 2026-11-04(22e373e) 전 기본값과 그 뒤 기본값.
@@ -670,11 +673,23 @@ def _migrate_policy_v2(c) -> int:
                     (Jsonb(new), Jsonb(list(ALL_BEFORE_V2)), Jsonb(new))))
 
 
+def _migrate_policy_v3(c) -> int:
+    """모든 장치(channel='device')의 transform_versions 에 axis-page/1 이 없으면 더한다. POLICY_ALL_V3_MARK 가 없을 때 한 번.
+    다른 변환, 행동, 축은 그대로. 바뀐 장치는 policy_revision +1(에이전트는 다음 실행의 정책 다시 받기에서 새 규칙을 받는다)."""
+    if not _one(c, "INSERT INTO schema_marks (key) VALUES (%s) ON CONFLICT (key) DO NOTHING RETURNING key", (POLICY_ALL_V3_MARK,)):
+        return 0
+    return len(_all(c, "UPDATE import_streams SET policy = jsonb_set(policy, '{transform_versions}', "
+                       "(policy->'transform_versions') || jsonb_build_array(%s::text)), policy_revision=policy_revision+1 "
+                       "WHERE channel='device' AND NOT (policy->'transform_versions') ? %s RETURNING id",
+                    (AXIS_PAGE, AXIS_PAGE)))
+
+
 def migrate_device_policy(c) -> int:
     """옛 기본 허용 규칙(OLD_DEFAULT_POLICIES) 그대로인 장치를 DEFAULT_POLICY 로 맞춘다(명세 1.2). POLICY_ALL_MARK 가 없을 때 한 번.
     사용자가 바꾼 규칙은 그대로 둔다. 바뀐 장치는 policy_revision +1(에이전트는 다음 업로드의 POLICY-STALE 에서 새 규칙을 받아
     다시 보낸다, agent/runner.py). 반환 = 바꾼 장치 수."""
     n = _migrate_policy_v2(c)
+    n += _migrate_policy_v3(c)
     if not _one(c, "INSERT INTO schema_marks (key) VALUES (%s) ON CONFLICT (key) DO NOTHING RETURNING key", (POLICY_ALL_MARK,)):
         return n
     for old in OLD_DEFAULT_POLICIES:   # 집합 비교 = 서로 포함(@> 와 <@), 축 0개
