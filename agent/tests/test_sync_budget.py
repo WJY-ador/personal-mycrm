@@ -11,8 +11,8 @@ from agent.tests.test_collected import feed_row
 
 # 데스크톱 앱의 run-once 강제 종료 한도(desktop/src/main.cjs command(): run-once 600000ms). JS 상수라 여기서 읽지 않고 숫자로 둔다
 DESKTOP_RUN_ONCE_KILL_SEC = 600
-# 업로드 뒤 뒷정리(판별 되돌림 한두 쪽, state 정리, 토큰 교체)에 남겨 둘 여유
-CLEANUP_MARGIN_SEC = 100
+# 판별 되돌림 최악(쪽 상한 × 간격) 밖의 뒷정리(state_resync 정리, state 집계, 요청 지연)에 남겨 둘 여유
+CLEANUP_MARGIN_SEC = 30
 
 
 class FakeClock:
@@ -55,7 +55,10 @@ class BudgetTest(unittest.TestCase):
                                                               clock=fake.clock)
 
     def test_default_budget_leaves_room_before_desktop_kill(self):
-        self.assertLess(_uploader.UPLOAD_BUDGET_SEC + CLEANUP_MARGIN_SEC, DESKTOP_RUN_ONCE_KILL_SEC)
+        # 업로드 예산 + write_back 최악(쪽 상한 × 기본 업로드 간격) + 여유 < 데스크톱 종료 한도
+        interval = float(_config.default_config()["upload"]["min_interval_sec"])
+        write_back_worst = runner.WRITE_BACK_MAX_PAGES * interval
+        self.assertLess(_uploader.UPLOAD_BUDGET_SEC + write_back_worst + CLEANUP_MARGIN_SEC, DESKTOP_RUN_ONCE_KILL_SEC)
 
     def test_upload_stops_at_budget_and_keeps_rest_pending(self):
         runner.run_once(self.th.paths, ks=self.ks, upload=False)               # 3건 전송 대기
@@ -63,7 +66,7 @@ class BudgetTest(unittest.TestCase):
         st = _store.Store(self.th.paths)
         try:
             up = self.factory(fake)(self.srv.url, TOKEN, 30)
-            res = up.run(st, max_n=100, min_interval=1, budget=480)
+            res = up.run(st, max_n=100, min_interval=1)        # 기본 예산(UPLOAD_BUDGET_SEC)
         finally:
             st.close()
         self.assertEqual(res["stopped"], "time-budget")

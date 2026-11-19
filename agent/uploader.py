@@ -54,8 +54,8 @@ UPLOAD_HALT_SCOPES = ("auth", "config", "account", "policy", "forbidden")
 OBJECT_MISSING = "OBJECT-MISSING"      # 서버 imports._HTTP 503 — 수집 글을 담을 오브젝트가 없다
 REJECT_STATUSES = (400, 413, 415, 422)
 MAX_RESPONSE_BYTES = 64 * 1024
-# 업로드 한 번의 시간 예산(초, monotonic). 데스크톱 앱이 run-once 를 600초에 끊는다(desktop/src/main.cjs) — 예산 480 + 뒷정리(판별 되돌림·state 정리) 여유 100 < 600
-UPLOAD_BUDGET_SEC = 480.0
+# 업로드 한 번의 시간 예산(초, monotonic). 데스크톱 앱이 run-once 를 600초에 끊는다(desktop/src/main.cjs) — 예산 420 + 판별 되돌림 최악(20쪽 × 6.5초 ≈ 130) + 정리 여유 < 600
+UPLOAD_BUDGET_SEC = 420.0
 DELETED_STATE = "deleted"   # 서버 200 응답의 state — 그 원본이 휴지통·영구 삭제 상태라 이 개정을 받지 않았다
 
 
