@@ -107,7 +107,7 @@ python3 -m agent [--home 경로] <명령>
 - 수집 글 어댑터(`feed`, `reactions`, `mail`)는 기본으로 꺼져 있습니다. 켜는 법은 아래 3-1절입니다.
 - `kakao` 는 의미 규칙만 있는 골격이라 켤 수 없습니다. 카톡 글은 `feed` 어댑터의 채널 `kakao` 로 들어옵니다(feed-queue `source: "kakao"`). 내가 보내고 답한 행동을 담은 입력 파일이 생기면 그때 켭니다.
 - LinkedIn 이직 입력원(`linkedin_moves`)은 설정에 적으면 설정 오류로 막습니다.
-- 그 밖: `viewer_port`(원문 보기 포트, 기본 8790 — 웹 활동 상세의 「로컬 연결 포트」와 같게), `upload`(`max_per_run` 100 · `min_interval_sec` 6.5 · `timeout_sec` 30). 업로드는 실행 시작부터 480초가 지나면 다음 건을 보내지 않고 멈춥니다(결과 `upload.stopped` 가 `time-budget`, 오류 아님, 종료 코드 0). 데스크톱 앱이 `run-once` 를 600초에 끊기 전에 판별 되돌림과 정리를 마치려는 것이고, 남은 건은 다음 실행이 잇습니다.
+- 그 밖: `viewer_port`(원문 보기 포트, 기본 8790 — 웹 활동 상세의 「로컬 연결 포트」와 같게), `upload`(`max_per_run` 100 · `min_interval_sec` 6.5 · `timeout_sec` 30). 업로드는 실행 시작부터 420초가 지나면 다음 건을 보내지 않고 멈춥니다(결과 `upload.stopped` 가 `time-budget`, 오류 아님, 종료 코드 0). 데스크톱 앱이 `run-once` 를 600초에 끊기 전에 판별 되돌림과 정리를 마치려는 것이고, 남은 건은 다음 실행이 잇습니다.
 
 ## 3-1. 수집 글 어댑터 (`feed`, `reactions`, `mail`, 기본 꺼짐)
 
