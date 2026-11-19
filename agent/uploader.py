@@ -16,6 +16,7 @@
 - 503 OBJECT-MISSING(수집 글 오브젝트 collected_posts 없음) → 그 개정만 대기 유지·지수 대기. 이번 실행의 남은 수집 글은
   미루고 다른 전송은 계속한다(사용자가 오브젝트를 만들면 다음 실행부터 이어진다)
 - 5xx(*-OFF 스위치 꺼짐 포함)·네트워크·시간 초과 → 대기 유지, 지수 대기(최대 1시간). 이번 실행 중단
+- 시간 예산(UPLOAD_BUDGET_SEC)이 다 됐으면 다음 건을 보내지 않고 멈춘다(stopped time-budget). 오류가 아니다 — 남은 건은 다음 실행이 잇는다
 로그·오류 메시지엔 상태 코드·규칙 코드만 남긴다(본문·토큰 없음).
 """
 from __future__ import annotations
@@ -53,6 +54,8 @@ UPLOAD_HALT_SCOPES = ("auth", "config", "account", "policy", "forbidden")
 OBJECT_MISSING = "OBJECT-MISSING"      # 서버 imports._HTTP 503 — 수집 글을 담을 오브젝트가 없다
 REJECT_STATUSES = (400, 413, 415, 422)
 MAX_RESPONSE_BYTES = 64 * 1024
+# 업로드 한 번의 시간 예산(초, monotonic). 데스크톱 앱이 run-once 를 600초에 끊는다(desktop/src/main.cjs) — 예산 480 + 뒷정리(판별 되돌림·state 정리) 여유 100 < 600
+UPLOAD_BUDGET_SEC = 480.0
 DELETED_STATE = "deleted"   # 서버 200 응답의 state — 그 원본이 휴지통·영구 삭제 상태라 이 개정을 받지 않았다
 
 
@@ -97,7 +100,7 @@ class DeviceError(RuntimeError):
 
 class Uploader:
     def __init__(self, server_url: str, token: str, *, timeout: float = 30, opener=None,
-                 sleep=time.sleep, now=osutil.kst_now):
+                 sleep=time.sleep, now=osutil.kst_now, clock=time.monotonic):
         self.base = server_url.rstrip("/")
         self.url = self.base + IMPORTS_PATH
         self._token = token
@@ -105,6 +108,7 @@ class Uploader:
         self.opener = opener or _opener()
         self.sleep = sleep
         self.now = now
+        self.clock = clock
 
     def __repr__(self):
         return "Uploader(<redacted>)"
@@ -179,7 +183,10 @@ class Uploader:
             raise DeviceError("malformed", status)
         return payload
 
-    def run(self, store, *, max_n: int = 100, min_interval: float = 0.0) -> dict:
+    def run(self, store, *, max_n: int = 100, min_interval: float = 0.0, budget: float = UPLOAD_BUDGET_SEC) -> dict:
+        """대기 개정을 순서대로 보낸다. budget = 이 호출의 시간 예산(초). 다음 건을 보내기 전(간격 sleep 뒤) 넘었으면
+        stopped time-budget 으로 멈춘다 — 보낸 건은 이미 저장됐고 남은 건은 pending 그대로 다음 실행이 잇는다."""
+        started = self.clock()
         out = {"sent": 0, "accepted": 0, "duplicate": 0, "deleted": 0, "conflict": 0, "halted": 0, "rejected": 0,
                "deferred": 0, "stopped": None}
         for scope in UPLOAD_HALT_SCOPES:
@@ -207,6 +214,9 @@ class Uploader:
             if not first and min_interval > 0:
                 self.sleep(min_interval)
             first = False
+            if self.clock() - started >= budget:
+                out["stopped"] = "time-budget"
+                break
             key = rev["idempotency_key"]
             body = store.read_pending(rev)
             if skip_collected and _kind_of(body) == "collected_post":
