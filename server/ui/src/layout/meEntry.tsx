@@ -9,11 +9,12 @@ import { Heatmap } from "../features/me/summary/Heatmap";
 import { Kinds } from "../features/me/summary/Kinds";
 import { Waiting } from "../features/me/summary/Waiting";
 import { Recent } from "../features/me/summary/Recent";
+import { Routine } from "../features/me/summary/Routine";
 import { answerMd } from "../features/webchat/answerMd";   // 축 한 장 = 웹 대화 답과 같은 렌더러(features 끼리 import 금지라 여기서 넘긴다)
 
 export const REGISTRY = reg;
 const BLOCK_LABEL = Object.fromEntries(Object.entries(reg.components).map(([k, v]) => [k, v.label]));
-export const BLOCKS: Blocks = { heatmap: Heatmap, kinds: Kinds, waiting: Waiting, recent: Recent };
+export const BLOCKS: Blocks = { heatmap: Heatmap, kinds: Kinds, waiting: Waiting, recent: Recent, routine: Routine };
 
 export const Me = (p: ScreenProps) => <MeScreen {...p} blocks={BLOCKS} layoutDefault={reg.pages.me.default} md={answerMd} />;
 export const Layout = (p: ScreenProps) => <LayoutScreen {...p} def={reg.pages.me.default} blockLabel={BLOCK_LABEL} />;

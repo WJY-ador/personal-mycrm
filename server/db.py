@@ -4398,6 +4398,26 @@ def _prop_check(cid, name, spec, v):
     return v
 
 
+# 첫 화면 루틴판 블록(2026-11-21 구현계획 2-1) — p 는 이 블록만 따로 본다. 레지스트리 props 가 키, 문자열, 길이 상한을 보고,
+# 여기서 필수 5키, 길이 1 이상, "칸key:값" 꼴을 본다. 오브젝트가 있는지는 저장 때 보지 않는다(읽을 때 missing 으로 알린다).
+ROUTINE_BLOCK = "routine"
+ROUTINE_OBJ_KEYS = ("in", "decided", "writing", "lines", "subheads")   # 오브젝트 key 문자열, 필수
+ROUTINE_PAIR_KEYS = ("in_signal", "stage")                           # 선택, "칸key:값"
+
+
+def _routine_p_check(p):
+    miss = [k for k in ROUTINE_OBJ_KEYS if k not in p]
+    if miss:
+        raise _layout_invalid(f"{ROUTINE_BLOCK}.p 에 {', '.join(miss)} 가 없어요(필수: {', '.join(ROUTINE_OBJ_KEYS)})")
+    for k, v in p.items():
+        if not v.strip():
+            raise _layout_invalid(f"{ROUTINE_BLOCK}.p.{k} 는 1~64자예요")
+        if k in ROUTINE_PAIR_KEYS:
+            f, sep, val = v.partition(":")
+            if not sep or not f.strip() or not val.strip():
+                raise _layout_invalid(f"{ROUTINE_BLOCK}.p.{k} 는 \"칸key:값\" 꼴이에요")
+
+
 def _page_check(page, lay):
     """페이지 하나 {"tabs", "regions"} → 정규화한 사본. 아니면 LAYOUT-INVALID."""
     reg = LAYOUT_REGISTRY["pages"][page]
@@ -4427,7 +4447,10 @@ def _page_check(page, lay):
             props = comps[cid]["props"]
             if not set(e["p"]) <= set(props):
                 raise _layout_invalid(f"{cid}.p 의 키는 {', '.join(props) or '없음'} 이에요")
-            norm.append({"c": cid, "p": {k: _prop_check(cid, k, props[k], v) for k, v in e["p"].items()}})
+            p = {k: _prop_check(cid, k, props[k], v) for k, v in e["p"].items()}
+            if cid == ROUTINE_BLOCK:
+                _routine_p_check(p)
+            norm.append({"c": cid, "p": p})
         out[slot] = norm
     return {"tabs": list(tabs), "regions": out}
 

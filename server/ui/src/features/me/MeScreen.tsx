@@ -6,6 +6,7 @@ import { useEffect, useLayoutEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ScreenProps } from "../../shared/ctx";
 import { Back } from "./Back";
+import { Board } from "./board/Board";
 import { AxisBand } from "./AxisBand";
 import { AxisTab } from "./axis/AxisTab";
 import type { Md } from "./axis/AxisDoc";
@@ -28,6 +29,8 @@ import { backNav, useMobile, useViewStore, ViewCtx } from "./view";
 import css from "./Me.module.css";
 
 const here = () => location.hash || "#_me";
+// 루틴판 블록 설정의 한판(writing) 오브젝트 key — 오브젝트 탭 항목 페이지의 「한판으로 보기」 링크를 그 오브젝트에만
+const boardKey = (L: MePage) => { const w = (L.regions.summary || []).find(s => s.c === "routine")?.p?.writing; return typeof w === "string" ? w : ""; };
 
 type Props = ScreenProps & { blocks: Blocks; layoutDefault: MePage; md: Md };   // md = 한 장 렌더러(웹 대화 답과 같은 것, 껍데기가 넘긴다)
 
@@ -37,8 +40,8 @@ export function MeScreen({ ctx, blocks, layoutDefault, md }: Props) {
   const lay = useQuery({ queryKey: QK.layout, queryFn: meApi.layout });
   const page = lay.data?.layout?.pages?.me, L = page && validTabs(page.tabs) ? page : layoutDefault;
   const tabs = fitTabs(L.tabs, customDefs(W).map(d => d.key)), mobile = useMobile();
-  const solo = URL_KINDS.includes(a) && !!b;
-  const t = a === "obj" ? OBJ_TAB + b : isTab(a) ? a : tabs[0];
+  const solo = URL_KINDS.includes(a) && !!b, board = a === "board" && !!b;   // board = 한판 상세(루틴판 쓰는 중 카드에서) — 요약 탭 아래
+  const t = board ? "summary" : a === "obj" ? OBJ_TAB + b : isTab(a) ? a : tabs[0];
   const ft = isTab(t) && t !== "summary" && !solo ? t : null;   // 고정 탭 목록(오브젝트 탭은 목록 보기 — 연결 수 고르기 없음)
   const rows = ft ? tabRows(W, ft) : [];
   const sel = !ft || ((mobile || ft === "axis") && !b) ? null : pick(W, ft, rows, b);   // 1열 첫 진입 = 목록만 · 축 탭 첫 진입 = 축 카드 목록(넘기지 않는다)
@@ -48,7 +51,8 @@ export function MeScreen({ ctx, blocks, layoutDefault, md }: Props) {
   const pq = useQuery({ queryKey: QK.person(pid), queryFn: () => meApi.person(pid), enabled: !!pid });
   const it = a === "item" && b ? itemById(W, b) : undefined;
   const old = a === "custom" && b ? itemById(W, b) : undefined;
-  const redirect = a && !b && srcById(W, a) ? "#_obj/source/" + a   // 옛 「나」 홈 출처 고르기 링크
+  const redirect = board ? ""
+    : a && !b && srcById(W, a) ? "#_obj/source/" + a   // 옛 「나」 홈 출처 고르기 링크
     : it && it.revision ? `#_me/${tabOfItem(W, it)}/${encodeURIComponent(b)}`
     : old && old.revision ? `#_me/${tabOfItem(W, old)}/${encodeURIComponent(b)}`   // 옛 커스텀 탭 항목 = 그 오브젝트 탭
     : a === "custom" ? (tabs.find(x => objTabKey(x)) ? tabHref(tabs.find(x => objTabKey(x))!) : "#_me")
@@ -65,14 +69,15 @@ export function MeScreen({ ctx, blocks, layoutDefault, md }: Props) {
   if (redirect) return null;
   const trashOn = !!S.switches?.trash;
   let body;
-  if (solo) {
+  if (board) body = <Board key={b} id={b} />;
+  else if (solo) {
     const r = homeRows(W).find(x => x.k === a && x.id === b);
     body = <section className={`paper hdetail ${css.solo}`} id="home-detail" aria-live="polite"><Back to="#_me" label="돌아가기" />
       {r ? <Detail W={W} r={r} trashOn={trashOn} /> : a === "journal" ? <RecDetail W={W} id={b} x={undefined} trashOn={trashOn} />
         : <div className="empty">{GONE} <a href="#_me">목록으로</a></div>}</section>;
   } else if (a === "obj") {
     const d = objDefByKey(W, b);
-    body = d ? <ObjTab key={d.key} W={W} def={d} id={c} trashOn={trashOn} /> : <div className="paper"><div className="empty">{OBJ_TEXT.gone} <a href="#_me">{OBJ_TEXT.back}</a></div></div>;
+    body = d ? <ObjTab key={d.key} W={W} def={d} id={c} trashOn={trashOn} boardKey={boardKey(L)} /> : <div className="paper"><div className="empty">{OBJ_TEXT.gone} <a href="#_me">{OBJ_TEXT.back}</a></div></div>;
   } else if (t === "summary") body = <Summary W={W} slots={L.regions.summary || []} blocks={blocks} statsFail={statsFail} />;
   else if (t === "axis") body = <AxisTab W={W} id={b} trashOn={trashOn} md={md} />;   // 축 잇기(2026-11-18) — 축 카드 목록 | 축 화면
   else if (!rows.length) body = <div className="paper"><div className="empty">{ME_EMPTY}</div></div>;

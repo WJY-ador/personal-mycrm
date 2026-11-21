@@ -3,7 +3,8 @@
     "heatmap": {"label": "13주 글과 활동", "regions": ["summary"], "props": {}},
     "kinds": {"label": "종류별 건수", "regions": ["summary"], "props": {}},
     "waiting": {"label": "기다리는 결정", "regions": ["summary"], "props": {}},
-    "recent": {"label": "최근 변경", "regions": ["summary"], "props": {}}
+    "recent": {"label": "최근 변경", "regions": ["summary"], "props": {}},
+    "routine": {"label": "루틴판", "regions": ["summary"], "width": "full", "props": {"in": {"type": "string", "max": 64}, "decided": {"type": "string", "max": 64}, "writing": {"type": "string", "max": 64}, "lines": {"type": "string", "max": 64}, "subheads": {"type": "string", "max": 64}, "in_signal": {"type": "string", "max": 64}, "verdict": {"type": "string", "max": 64}, "stage": {"type": "string", "max": 64}}}
   },
   "pages": {
     "me": {

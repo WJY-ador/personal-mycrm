@@ -222,6 +222,7 @@ Postgres 전환은 끝났다(2026-10-18, `db.py` psycopg 판). 후보 revision �
 - 정본 = `server/layout_registry.json` 한 곳: `components`(id → label·허용 영역 `regions`·`props` 모양 `{type: string|integer|boolean, enum?, max?}`) · `pages`(페이지 → 영역 목록·`default`). `db.DEFAULT_LAYOUT` 은 이 파일에서 만든다(사본 없음). 화면(TS)도 같은 파일을 읽는다.
 - 모양: `{"v": 2, "pages": {페이지: {"tabs": 기본 탭의 순열, "regions": {영역: [{"c": 컴포넌트, "p": {props}}]}}}}`. 영역마다 허용된 컴포넌트만·중복 없이(빼기는 된다). 모르는 키 `LAYOUT-INVALID`. JSON 상한 8192 바이트.
 - v1 행(`{"v":1,"tabs","blocks"}`)은 읽을 때 v2 로 올려 돌려준다(쓰기 없음). 다음 저장부터 v2. v1 모양 저장은 거절.
+- 컴포넌트 `routine`(루틴판, 2026-11-21)은 기본 배치에 없고 `width: "full"` 이다. props 8개는 레지스트리가 키, 문자열, 64자 상한을 보고, `db._routine_p_check` 가 필수 5키(in, decided, writing, lines, subheads), 1자 이상, in_signal, stage 의 칸key:값 꼴을 더 본다. 오브젝트가 있는지는 저장 때 보지 않는다.
 - 대화: `layout_get`(read) · `layout_set(page, layout, version)`(write — 그 페이지만 바꾼다) · `layout_reset(page)`(write). 웹 `GET·PUT·DELETE /api/me/layout` 은 v2 전체. 버전 불일치 `LAYOUT-STALE`.
 
 

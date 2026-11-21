@@ -35,6 +35,7 @@ import contract
 import db
 import imports
 import migration
+import routine_board
 import service_schema
 import stack_service
 import structure_svg
@@ -2661,6 +2662,17 @@ class Web:
         """GET — 「나」 통계(축 띠·히트맵·종류별·기다리는 결정). 전체 범위, 읽기만. 모양은 db.me_stats."""
         return await self._core_read(request, db.me_stats)
 
+    # ── 첫 화면 루틴판(2026-11-21 구현계획 2-4) — 읽기만. p = 저장된 배치의 routine 블록 p(없으면 ready false). MCP routine_board_get,
+    # routine_board_detail_get 과 같은 함수
+    async def api_me_routine(self, request):
+        """GET — 루틴판 집계. 모양 = routine_board.routine_board(ui/src/features/me/routine.sample.json 의 board)."""
+        return await self._core_read(request, routine_board.routine_board)
+
+    async def api_me_routine_one(self, request):
+        """GET /api/me/routine/{item_id} — 한판 상세. 남의 항목, 휴지통, 보관, 없는 id = 404. 모양 = routine.sample.json 의 detail."""
+        iid = request.path_params["iid"]
+        return await self._core_read(request, lambda uid: routine_board.routine_board_detail(uid, iid))
+
     # ── 구조 추천, 자동 분류(2026-11-18 구조추천 명세 6.5) — 읽기 = 세션 → 본인 uid. 쓰기 = 세션 401 → Origin 403 → JSON 모양 400 →
     # db.write_gate(MCP 와 같은 op 이름, 지우는 쪽은 quota=False — main.item_route_exclude, definition_draft_discard 와 같다) → route, db 본체.
     async def api_structure_reco(self, request):
@@ -3683,6 +3695,8 @@ class Web:
             Route("/api/me/layout", u("web:me_layout", self.api_me_layout), methods=["GET", "PUT", "DELETE"]),   # PR ①-b 쓰기 예외(이 라우트만)
             Route("/api/me/stats", u("web:me_stats", self.api_me_stats)),   # PR ①-b — 읽기만
             Route("/api/me/objects/{key}", u("web:me_object_list", self.api_me_object_list)),   # 오브젝트 탭 목록 보기 — 읽기만
+            Route("/api/me/routine", u("web:me_routine", self.api_me_routine)),   # 첫 화면 루틴판 — 읽기만
+            Route("/api/me/routine/{iid}", u("web:me_routine_one", self.api_me_routine_one)),   # 한판 상세 — 읽기만
             Route("/api/structure/reco", u("web:structure_reco", self.api_structure_reco)),   # 구조 추천 칸 — 읽기만
             Route("/api/structure/hint", u("web:structure_hint", self.api_structure_hint)),   # 나 탭 요약 추천 한 줄 — 읽기만
             Route("/api/structure/drafts/{op}", u("web:structure_draft", self.api_structure_draft), methods=["POST"]),   # 적용, 이름 고치기, 빼기

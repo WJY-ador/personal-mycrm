@@ -14,16 +14,18 @@ import css from "../Me.module.css";
 export const objHref = (key: string, id = "") => `#_me/obj/${encodeURIComponent(key)}${id ? "/" + encodeURIComponent(id) : ""}`;
 export const NO_QUERY: ObjQuery = { sort: "", dir: "", q: "", f: {}, state: "" };
 
-export function ObjTab({ W, def, id, trashOn }: { W: World; def: Def; id: string; trashOn: boolean }) {
+// boardKey = 루틴판 한판 오브젝트 key(레이아웃 routine 블록 p.writing, 없으면 "") — 그 오브젝트 항목 페이지에만 「한판으로 보기」 링크 하나
+export function ObjTab({ W, def, id, trashOn, boardKey = "" }: { W: World; def: Def; id: string; trashOn: boolean; boardKey?: string }) {
   const [vq, setVq] = useState<ObjQuery>(NO_QUERY);
   const mobile = useMobile();
   if (!id) return <ObjList W={W} def={def} vq={vq} setVq={setVq} />;
   const r = homeRows(W).find(x => x.k === "item" && x.id === id);
-  const list = objHref(def.key);
+  const list = objHref(def.key), ok = !!r && r.k === "item" && r.x.object_id === def.id;
   return (
     <section className={`paper hdetail ${css.solo}`} id="home-detail" aria-live="polite">
       {mobile ? <Back to={list} label={OBJ_TEXT.back} /> : <p className="hback"><a href={list}>{def.label} {OBJ_TEXT.back}</a></p>}
-      {r && r.k === "item" && r.x.object_id === def.id ? <Detail W={W} r={r} trashOn={trashOn} />
+      {ok && def.key === boardKey ? <p className="hint" id="board-link"><a href={`#_me/board/${encodeURIComponent(id)}`}>{OBJ_TEXT.board}</a></p> : null}
+      {ok && r.k === "item" ? <Detail W={W} r={r} trashOn={trashOn} />
         : <div className="empty">{GONE} <a href={list}>{OBJ_TEXT.back}</a></div>}
     </section>
   );
