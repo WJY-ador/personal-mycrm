@@ -24,3 +24,9 @@ export function dOnly(s: string | null | undefined): string {
   const y = Number(m[1]);
   return `${y !== new Date().getFullYear() ? y + "년 " : ""}${Number(m[2])}월 ${Number(m[3])}일`;
 }
+
+// "YYYY-MM-DD"(또는 그 꼴로 시작하는 ISO) → 「11-20」(MM-DD, 루틴판 줄 앞 날짜). 글자를 자른다 — Date 를 거치지 않아 시간대로 하루 밀리지 않는다. 못 읽으면 빈 칸
+export function mmdd(s: string | null | undefined): string {
+  const m = /^\d{4}-(\d{2})-(\d{2})/.exec(String(s || ""));
+  return m ? `${m[1]}-${m[2]}` : "";
+}

@@ -1,0 +1,30 @@
+/* 루틴판 — 요약 두 칸 폭. 세 열 카드 + 사이 화살표(좁은 폭 = 위아래, 화살표 아래로). 큰 숫자 = 주색. 줄·카드 강조는 마우스 올림과 포커스 같은 모양 */
+.rt { grid-column: 1 / -1; min-width: 0; }
+.flow { display: grid; grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr) 28px minmax(0, 1fr); align-items: stretch; }
+.col { background: var(--card); border: 1px solid var(--line); border-radius: var(--r-4); padding: var(--sp-8) var(--sp-8) var(--sp-7); min-width: 0; }
+.col h3 { margin: 0 0 var(--sp-6); font-size: var(--fs-3); color: var(--muted); font-weight: 600; }
+.big { margin: 0 0 var(--sp-8); display: flex; flex-direction: column; gap: var(--sp-1); }
+.big b { font-size: calc(var(--fs-7) * 1.5); font-weight: 600; line-height: 1; color: var(--accent); font-variant-numeric: tabular-nums; }
+.big span { font-size: var(--fs-3); color: var(--ink); }
+.big small { font-size: var(--fs-2); color: var(--muted); }
+.lines, .cards { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.ln { display: flex; align-items: baseline; gap: var(--sp-5); padding: var(--sp-4) var(--sp-3); border-top: 1px solid var(--line); border-radius: var(--r-3); color: var(--ink); text-decoration: none; font-size: var(--fs-3); transition: background-color .12s; }
+.dt { flex: none; font-family: var(--mono); font-size: var(--fs-1); color: var(--muted); font-variant-numeric: tabular-nums; }
+.lt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.more { margin: var(--sp-3) 0 0; padding-left: var(--sp-3); font-size: var(--fs-1); color: var(--muted); }
+.card { display: flex; flex-direction: column; gap: var(--sp-1); padding: var(--sp-5) var(--sp-3); border-top: 1px solid var(--line); border-radius: var(--r-3); color: var(--ink); text-decoration: none; transition: background-color .12s; }
+.tt { font-family: var(--prose); font-size: var(--fs-3); font-weight: 600; }
+.tc { font-size: var(--fs-1); color: var(--muted); }
+a.ln:hover, a.ln:focus-visible, .card:hover, .card:focus-visible { background: var(--accent-soft); }
+a.ln:hover .lt, a.ln:focus-visible .lt { text-decoration: underline; text-underline-offset: 3px; }
+.arr { display: flex; align-items: center; justify-content: center; }
+.arr span { position: relative; width: 100%; height: 1px; background: var(--soft); }
+.arr span::after { content: ""; position: absolute; right: 0; top: -4px; border-left: 7px solid var(--soft); border-top: 4.5px solid transparent; border-bottom: 4.5px solid transparent; }
+.since { margin: var(--sp-6) 0 0; font-size: var(--fs-2); color: var(--muted); }
+@media (max-width: 767px) {
+  .flow { grid-template-columns: minmax(0, 1fr); }
+  .arr { height: 28px; }
+  .arr span { width: 1px; height: 100%; }
+  .arr span::after { right: -4px; top: auto; bottom: 0; border-left: 4.5px solid transparent; border-right: 4.5px solid transparent; border-top: 7px solid var(--soft); border-bottom: 0; }
+}
+@media (prefers-reduced-motion: reduce) { .ln, .card { transition: none; } }

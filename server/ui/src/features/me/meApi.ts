@@ -78,5 +78,28 @@ export const meApi = {
   routeItem: (id: string) => getJSON<{ item: RouteInfo | null }>(`/api/route/item?id=${enc(id)}`),
   routeExclude: (item_id: string, expected_revision: number) => postJSON("/api/route/exclude", { item_id, expected_revision }),
   hint: () => getJSON<{ show: boolean }>("/api/structure/hint"),   // 나 탭 요약 추천 한 줄(서버가 건수만 싸게 센다)
+  // 루틴판(2026-11-21) — 블록 설정 p 는 서버가 저장된 레이아웃에서 읽는다(화면이 보내지 않는다). 읽기만
+  routine: () => getJSON<Routine>("/api/me/routine"),
+  routineDetail: (id: string) => getJSON<RoutineDetail>(`/api/me/routine/${enc(id)}`),
 };
 export type RouteInfo = { item_id: string; object_id: string; record_id: string; record_title: string | null; unit_key: string; start: number; end: number; text: string | null };
+
+// 루틴판 집계(GET /api/me/routine) · 한판 상세(GET /api/me/routine/<id>) — 응답 모양 정본 = server/db.py routine_board·routine_board_detail.
+// kind 는 JSON 견본 대조 때문에 string 으로 둔다(item|record, post|record). AI 값은 상세의 수집 글 ai_summary 하나뿐(ai = true)
+export type RoutineLine = { date: string | null; text: string; target: { kind: string; id: string; object_key: string; item_id?: string | null } };
+type RoutineCol = { lines: RoutineLine[]; more: number; unrefined: number };
+export type RoutineCard = { item_id: string; key_line: string; date: string | null; n_subheads: number; n_sources: number };
+export type Routine = {
+  ready: boolean; missing: string[]; last_routine_at: string | null; since: { new_in: number; new_decided: number };
+  in: RoutineCol & { n_total: number; n_7d: number; signal_7d: number };
+  decided: RoutineCol & { total: number; right: number; unknown: number; partial: number; wrong: number; none: number };
+  writing: { drafts: number; cards: RoutineCard[] };
+};
+export type RoutineRef = { kind: string; id: string; title: string | null; date: string | null;
+  author?: string | null; channel?: string | null; ai_summary?: string | null; ai?: boolean;
+  item?: { object_key: string; item_id: string; title: string | null; verdict: string | null } | null };
+export type RoutineSubhead = { item_id: string; order: number | null; text: string; body: string | null; sources: RoutineRef[] };
+export type RoutineDetail = {
+  board: { item_id: string; title: string; key_line: string | null; stage: string | null; date: string | null };
+  subheads: RoutineSubhead[]; inflow: RoutineRef[]; decided: RoutineRef[]; missing_sources: number;
+};
