@@ -13,7 +13,8 @@ export const RT = {
   in: "들어온 것", decided: "내가 정한 것", writing: "쓰는 중",
   inMean: (sig: number) => `이번 주 읽은 글, 그중 신호 ${sig}`, decidedMean: "결과를 아직 확인 안 한 결정", none: (n: number) => `판정 없음 ${n}`,
   writingMean: "이렇게 해야 한다로 정리 중", more: (n: number) => `외 ${n}건`,
-  cardMeta: (c: RoutineCard) => `소제목 ${c.n_subheads}, 출처 ${c.n_sources}`,
+  // 0 인 쪽은 빼고, 둘 다 0 이면 「출처 없음」
+  cardMeta: (c: RoutineCard) => [c.n_posts ? `글 ${c.n_posts}` : "", c.n_records ? `결정 ${c.n_records}` : ""].filter(Boolean).join(", ") || "출처 없음",
   since: (n: number, m: number, k: number) => `지난 루틴 뒤 들어온 것 ${n}, 정한 것 ${m}. 다듬을 것 ${k}. 대화에서 '루틴 하자'`,
 };
 export const boardHref = (id: string) => `#_me/board/${encodeURIComponent(id)}`;

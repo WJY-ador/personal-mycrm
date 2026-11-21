@@ -11,11 +11,13 @@ import sample from "./routine.sample.json";
 const P = { in: "collected_posts", decided: "pivots", writing: "publications", lines: "front_lines", subheads: "subheads" };
 const lay = (p: object = P) => ({ layout: { v: 2, pages: { me: { tabs: TABS, regions: { summary: [{ c: "routine", p }, { c: "heatmap", p: {} }] } } } }, version: 3 });
 const line = (date: string, text: string, target: object) => ({ date, text, target });
+const card = (item_id: string, key_line: string, n_posts: number, n_records: number) => ({ item_id, key_line, date: "2026-11-18", n_subheads: 2, n_sources: n_posts + n_records, n_posts, n_records });
 const BOARD = () => ({ ...structuredClone(sample.board),
   in: { ...sample.board.in, lines: [line("2026-11-20", "가짜 줄 하나", { kind: "item", id: "c1", object_key: "collected_posts", item_id: "c1" }),
     line("2026-11-19T23:00:00+09:00", "가짜 줄 둘", { kind: "item", id: "c2", object_key: "collected_posts" }), line("2026-11-18", "가짜 줄 셋", { kind: "item", id: "c3", object_key: "collected_posts" })] },
   decided: { ...sample.board.decided, lines: [line("2026-11-17", "가짜 결정 줄", { kind: "record", id: "r9", object_key: "pivots", item_id: "v9" }),
-    line("2026-11-16", "기록만 있는 줄", { kind: "record", id: "r8", object_key: "" })], more: 4 } });
+    line("2026-11-16", "기록만 있는 줄", { kind: "record", id: "r8", object_key: "" })], more: 4 },
+  writing: { drafts: 2, cards: [card("w1", "가짜 한판 하나", 2, 3), card("w2", "가짜 한판 둘", 0, 1), card("w3", "가짜 한판 셋", 0, 0)] } });
 let ROUTINE: () => object = BOARD, LAY: () => object = () => lay();
 
 beforeEach(() => {
@@ -42,7 +44,7 @@ test("세 열 — 큰 숫자 = n_7d · unknown · drafts, 뜻 한 줄, 판정 �
   expect(links("#rt-decided")).toEqual([["11-17가짜 결정 줄", "#_me/obj/pivots/v9"], ["11-16기록만 있는 줄", "#_me/journal/r8"]]);
   expect(rt.querySelector("#rt-in")!.textContent).toContain("외 2건");
   expect(rt.querySelector("#rt-decided")!.textContent).toContain("외 4건");
-  expect(links("#rt-writing")).toEqual([["기록은 쓰는 순간보다 다시 꺼낼 때 값이 난다소제목 3, 출처 5", "#_me/board/i_sampleboard1"]]);
+  expect(links("#rt-writing")).toEqual([["가짜 한판 하나글 2, 결정 3", "#_me/board/w1"], ["가짜 한판 둘결정 1", "#_me/board/w2"], ["가짜 한판 셋출처 없음", "#_me/board/w3"]]);   // 0 인 쪽은 뺀다
   expect(rt.querySelector("#rt-since")!.textContent).toBe("지난 루틴 뒤 들어온 것 4, 정한 것 1. 다듬을 것 10. 대화에서 '루틴 하자'");
   expect(rt.querySelectorAll("button").length).toBe(0);
   expect(el.querySelector("#me-summary")!.firstElementChild!.id).toBe("routine");   // 레이아웃 순서 그대로(맨 앞)

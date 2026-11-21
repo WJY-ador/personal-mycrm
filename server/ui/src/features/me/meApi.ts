@@ -88,7 +88,8 @@ export type RouteInfo = { item_id: string; object_id: string; record_id: string;
 // kind 는 JSON 견본 대조 때문에 string 으로 둔다(item|record, post|record). AI 값은 상세의 수집 글 ai_summary 하나뿐(ai = true)
 export type RoutineLine = { date: string | null; text: string; target: { kind: string; id: string; object_key: string; item_id?: string | null } };
 type RoutineCol = { lines: RoutineLine[]; more: number; unrefined: number };
-export type RoutineCard = { item_id: string; key_line: string; date: string | null; n_subheads: number; n_sources: number };
+// n_posts, n_records = 소제목 출처의 수집 글 수, 기록 수(중복 제외) — 카드 「글 N, 결정 M」
+export type RoutineCard = { item_id: string; key_line: string; date: string | null; n_subheads: number; n_sources: number; n_posts: number; n_records: number };
 export type Routine = {
   ready: boolean; missing: string[]; last_routine_at: string | null; since: { new_in: number; new_decided: number };
   in: RoutineCol & { n_total: number; n_7d: number; signal_7d: number };
