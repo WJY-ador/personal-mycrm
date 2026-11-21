@@ -4,11 +4,12 @@
 .meta { margin: 0 0 var(--sp-9); font-size: var(--fs-2); color: var(--muted); }
 .meta:empty { display: none; }
 .grid { position: relative; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 72px; align-items: start; margin-bottom: var(--sp-7); }
-.links { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 0; }
+.links { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 0; }   /* 선 = 카드 아래 층 */
 .dcol { position: relative; z-index: 1; min-width: 0; }
 .dcol h4 { margin: 0 0 var(--sp-5); font-size: var(--fs-2); color: var(--muted); }
 .cards { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-8); }
-.src, .out { background: var(--card); border: 1px solid var(--line); border-radius: var(--r-4); padding: var(--sp-5) var(--sp-6); transition: opacity .12s, border-color .12s; min-width: 0; }
+.src, .out { position: relative; z-index: 1; background: var(--card); border: 1px solid var(--line); border-radius: var(--r-4); padding: var(--sp-5) var(--sp-6); transition: border-color .12s; min-width: 0; }
+.src > *, .out > * { transition: opacity .12s; }
 .out { border-color: var(--accent); }
 .out.nosrc { border-style: dashed; }
 .none { font-size: var(--fs-2); color: var(--muted); border: 1px dashed var(--line); border-radius: var(--r-4); padding: var(--sp-5) var(--sp-6); }
@@ -31,7 +32,9 @@
 .ln { fill: none; stroke: var(--soft); stroke-width: 1.2; transition: opacity .12s; }
 .links marker path { fill: var(--soft); }
 .p0 { fill: var(--card); stroke: var(--muted); stroke-width: 1.5; }
-.focus .src:not(.on), .focus .out:not(.on) { opacity: .3; }
+/* 흐림 = 카드 안 글자만(카드 바탕은 불투명 그대로 — 뒤를 지나는 선이 비치지 않는다) */
+.focus .src:not(.on) > *, .focus .out:not(.on) > * { opacity: .3; }
+.focus .src:not(.on), .focus .out:not(.on) { border-color: color-mix(in srgb, var(--line) 50%, var(--card)); }
 .focus .links g:not(.on) { opacity: .12; }
 .focus .links g.on .ln { stroke: var(--accent); stroke-width: 2; }
 .focus .links g.on .p0 { stroke: var(--accent); }
@@ -40,4 +43,4 @@
   .grid { grid-template-columns: minmax(0, 1fr); row-gap: var(--sp-8); }
   .links { display: none; }
 }
-@media (prefers-reduced-motion: reduce) { .src, .out, .ln { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .src, .out, .src > *, .out > *, .ln { transition: none; } }
