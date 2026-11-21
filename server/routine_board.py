@@ -14,6 +14,8 @@ in_signal, stage = "칸key:값", verdict = 칸 key. 오브젝트 칸 key 는 정
   없어 unrefined 에 세지 않는다. 기록 하나에 항목이 여럿(### 분할)이면 줄의 target.item_id 는 가장 먼저 만든 항목이다.
 - 같은 대상에 첫 화면 줄이 여럿이면 가장 최근에 바뀐 줄 하나만 쓴다.
 - last_routine_at = front_lines, subheads, writing 항목의 적용 이력(item_history action apply) 중 가장 늦은 시각.
+- 카드 n_sources = 소제목들의 출처 합(중복 제외). n_posts, n_records = 소제목 출처에 한판 유입 글(inflow_posts), 재료(materials)를 더한
+  수집 글 수, 기록 수(중복 제외, 2026-11-21 명세 수정).
 - 상세 sources 는 수집 글 ref 가 먼저, 기록 ref 가 뒤다. inflow, decided 는 소제목 순서대로 모은 뒤 한판 칸 값을 붙인다(중복 제외).
   missing_sources = 상세의 모든 참조 중 지금 보이지 않는 대상(휴지통, 보관, 지움) 수(중복 제외).
 - AI 값(ai_*)은 판 응답에 넣지 않는다. 상세의 수집 글 ref 만 ai_summary 를 ai: true 와 함께 싣는다 — 근거가 아니다.
@@ -234,9 +236,11 @@ def routine_board(uid, p=None):
         wr_day = {r["id"]: _day(r, o_wr["date_field"]) for r in wrs}
         wrs.sort(key=lambda r: (wr_day[r["id"]], r["created_at"], r["id"]), reverse=True)
         top = wrs[:CARDS_MAX]
-        sh_of, src_of = _subheads_sources(c, uid, o_sh["id"], [r["id"] for r in top])
+        sh_of, src_of, all_of = _subheads_sources(c, uid, o_sh["id"], [r["id"] for r in top])
+        n_kind = lambda bid, kind: sum(1 for k in all_of.get(bid, ()) if k[0] == kind)   # noqa: E731
         cards = [{"item_id": r["id"], "key_line": _key_line(r), "date": wr_day[r["id"]].isoformat(),
-                  "n_subheads": len(sh_of.get(r["id"], ())), "n_sources": len(src_of.get(r["id"], ()))} for r in top]
+                  "n_subheads": len(sh_of.get(r["id"], ())), "n_sources": len(src_of.get(r["id"], ())),
+                  "n_posts": n_kind(r["id"], "post"), "n_records": n_kind(r["id"], "record")} for r in top]
 
         # 지난 루틴 뒤
         last = _one(c, "SELECT max(h.at) AS t FROM item_history h JOIN items i ON i.user_id=h.user_id AND i.id=h.item_id "
@@ -264,25 +268,33 @@ def _key_line(r):
 
 
 def _subheads_sources(c, uid, sh_oid, board_ids):
-    """한판들 → ({한판 id: [소제목 id]}, {한판 id: {(kind, id) 살아 있는 출처}})."""
+    """한판들 → ({한판 id: [소제목 id]}, {한판 id: {(kind, id)}} 소제목 출처, {한판 id: {(kind, id)}} 소제목 출처 + 한판 유입 글, 재료).
+    출처는 살아 있는 대상만 센다."""
     if not board_ids:
-        return {}, {}
+        return {}, {}, {}
     board_of = {r["src"]: r["b"] for r in _all(c, "SELECT l.source_item_id AS src, l.target_item_id AS b FROM item_links l JOIN items i "
                                               "ON i.user_id=l.user_id AND i.id=l.source_item_id WHERE l.user_id=%s AND l.field_key=%s "
                                               f"AND l.target_item_id = ANY(%s) AND i.object_id=%s AND {_LIVE_I}",
                                            (uid, F_BOARD, list(board_ids), sh_oid))}
     sh_ids = list(board_of)
     srcs = _links(c, uid, sh_ids, (F_SRC_RECORDS, F_SRC_POSTS))
-    items = _live_items(c, uid, {s["ti"] for s in srcs if s["ti"]})
-    recs = _live_records(c, uid, {s["tr"] for s in srcs if s["tr"]})
-    sh_of, src_of = {}, {}
+    own = _links(c, uid, list(board_ids), (F_INFLOW, F_MATERIALS))
+    items = _live_items(c, uid, {s["ti"] for s in srcs + own if s["ti"]})
+    recs = _live_records(c, uid, {s["tr"] for s in srcs + own if s["tr"]})
+    sh_of, src_of, all_of = {}, {}, {}
     for s in sh_ids:
         sh_of.setdefault(board_of[s], []).append(s)
+    key = lambda s: ("post", s["ti"]) if s["ti"] in items else ("record", s["tr"]) if s["tr"] in recs else None   # noqa: E731
     for s in srcs:
-        k = ("post", s["ti"]) if s["ti"] in items else ("record", s["tr"]) if s["tr"] in recs else None
+        k = key(s)
         if k:
             src_of.setdefault(board_of[s["src"]], set()).add(k)
-    return sh_of, src_of
+            all_of.setdefault(board_of[s["src"]], set()).add(k)
+    for s in own:
+        k = key(s)
+        if k:
+            all_of.setdefault(s["src"], set()).add(k)
+    return sh_of, src_of, all_of
 
 
 def _nf():

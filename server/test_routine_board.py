@@ -307,8 +307,10 @@ async def run():
     w = r["writing"]
     assert w["drafts"] == 4 and [x["item_id"] for x in w["cards"]] == [bd["B2"], bd["B1"], bd["B4"]], w
     c1 = w["cards"][1]
-    assert c1 == {"item_id": bd["B1"], "key_line": "가짜 핵심 한 줄", "date": day(2), "n_subheads": 4, "n_sources": 4}, c1   # P1·P2·R1·R4
-    assert w["cards"][0]["key_line"] == "가짜 한판 둘" and w["cards"][0]["n_subheads"] == 1 and w["cards"][0]["n_sources"] == 1
+    assert c1 == {"item_id": bd["B1"], "key_line": "가짜 핵심 한 줄", "date": day(2), "n_subheads": 4, "n_sources": 4,
+                  "n_posts": 3, "n_records": 3}, c1   # 소제목 P1·P2·R1·R4 · 한판 유입 P3·P1, 재료 R2 더해 글 P1·P2·P3, 기록 R1·R4·R2
+    assert w["cards"][0]["key_line"] == "가짜 한판 둘" and w["cards"][0]["n_subheads"] == 1 and w["cards"][0]["n_sources"] == 1 \
+        and (w["cards"][0]["n_posts"], w["cards"][0]["n_records"]) == (1, 0)
     no_ai_keys(r)
     ok("3 집계(7일 경계 오늘-6 포함 오늘-7 제외, created_at 대체, 신호, 판정 수, stage 조건, 카드 3장, 출처 합) · lines(post→in, route 기록→decided,"
        " route 아닌 기록 없음, 같은 대상은 최근 줄, 휴지통 대상 없음, more) · unrefined · since(이력 없음 = 전체, 적용 뒤 생긴 것) · AI 값 없음")

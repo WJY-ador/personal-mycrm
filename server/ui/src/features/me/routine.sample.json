@@ -34,7 +34,7 @@
    "drafts": 2,
    "cards": [
     {"item_id": "i_sampleboard1", "key_line": "기록은 쓰는 순간보다 다시 꺼낼 때 값이 난다", "date": "2026-11-18",
-     "n_subheads": 3, "n_sources": 5}
+     "n_subheads": 3, "n_sources": 5, "n_posts": 3, "n_records": 3}
    ]
   }
  },
