@@ -228,6 +228,8 @@ async def run():
     po["P6"] = item(A, o["posts"], "가짜 글 여섯", {"posted_on": day(30)})                       # 줄 없음
     po["P7"] = item(A, o["posts"], "가짜 글 일곱", {"posted_on": day(1)})                        # 보관
     sql("UPDATE items SET archived_at=now() WHERE user_id=%s AND id=%s", (A, po["P7"]))
+    po["P8"] = item(A, o["posts"], "가짜 글 여덟", {"posted_on": day(0), "ai_grade": "signal"})   # 버림
+    sql("INSERT INTO collected_states (user_id, item_id, state, decided_by) VALUES (%s,%s,'dropped','device')", (A, po["P8"]))
     pv = {}
     for k, v, d in (("D1", "맞았다 생각보다 빨랐다", 3), ("D2", "  미확인", 2), ("D3", "일부 맞음", 1), ("D4", "틀림", 0),
                     ("D5", "안 맞았다", 0), ("D6", None, 0)):
@@ -249,6 +251,8 @@ async def run():
     ln["L7"] = item(A, o["lines"], "다듬은 줄 넷", links=[ref_item("subject_post", po["P4"])])
     ln["L8"] = item(A, o["lines"], "휴지통 글 줄", links=[ref_item("subject_post", po["P5"])])
     trash_item(A, po["P5"])   # 줄을 단 뒤 휴지통
+    ln["L9"] = item(A, o["lines"], "버림 글 줄", links=[ref_item("subject_post", po["P8"])])
+    sql("UPDATE items SET updated_at = now() + interval '2 minutes' WHERE user_id=%s AND id=%s", (A, ln["L9"]))   # 버리지 않았다면 맨 앞
     sql("UPDATE items SET updated_at = now() - interval '1 minute' WHERE user_id=%s AND id=%s", (A, ln["L5"]))
     sql("UPDATE items SET updated_at = now() + interval '1 minute' WHERE user_id=%s AND id=%s", (A, ln["L7"]))
 
@@ -303,6 +307,7 @@ async def run():
                                       "target": {"kind": "record", "id": rec["R1"], "object_key": "rb_pivots", "item_id": pv["D1"]}}]
     assert r["decided"]["more"] == 0 and r["decided"]["unrefined"] == 2, r["decided"]   # route 있는 D2·D3
     assert "route 아닌 기록 줄" not in json.dumps(r, ensure_ascii=False)
+    assert "버림 글 줄" not in json.dumps(r, ensure_ascii=False), "버림 수집 글은 숫자(n_total, n_7d, signal_7d, unrefined, new_in)와 줄에서 뺀다"
     # 쓰는 중: draft 만(B3 발행, B7 휴지통 제외) · 최신 3장(created_at 대체 날짜 B2 1일, B1 2일, B4 5일)
     w = r["writing"]
     assert w["drafts"] == 4 and [x["item_id"] for x in w["cards"]] == [bd["B2"], bd["B1"], bd["B4"]], w
@@ -313,7 +318,7 @@ async def run():
         and (w["cards"][0]["n_posts"], w["cards"][0]["n_records"]) == (1, 0)
     no_ai_keys(r)
     ok("3 집계(7일 경계 오늘-6 포함 오늘-7 제외, created_at 대체, 신호, 판정 수, stage 조건, 카드 3장, 출처 합) · lines(post→in, route 기록→decided,"
-       " route 아닌 기록 없음, 같은 대상은 최근 줄, 휴지통 대상 없음, more) · unrefined · since(이력 없음 = 전체, 적용 뒤 생긴 것) · AI 값 없음")
+       " route 아닌 기록 없음, 같은 대상은 최근 줄, 휴지통 대상 없음, more) · unrefined · since(이력 없음 = 전체, 적용 뒤 생긴 것) · 버림 글 제외 · AI 값 없음")
 
     # ── 4. missing · 설정 없음 ──
     m = rb.routine_board(A, {**P, "lines": "rb_nothing", "subheads": "rb_nothing2"})

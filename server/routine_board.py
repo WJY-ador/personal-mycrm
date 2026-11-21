@@ -9,6 +9,7 @@ in_signal, stage = "칸key:값", verdict = 칸 key. 오브젝트 칸 key 는 정
 - 항목 = 적용, 미보관, 휴지통 아님. 기록 = 지우지 않음, 휴지통 아님.
 - 항목의 날짜 = 정의 순서상 첫 date 칸 값(YYYY-MM-DD 로 읽히는 것만), 없으면 created_at 의 KST 날짜. 기록의 날짜 = source_date,
   source_created_at, created 순(KST).
+- 버림(collected_states dropped) 수집 글은 in 열 숫자(n_total, n_7d, signal_7d, unrefined, since.new_in)와 줄에서 뺀다(2026-11-21 명세 수정).
 - verdict 가 없으면 decided 의 모든 항목이 none 이다.
 - decided 열 대상 = route 원문 기록(item_routes.record_id, item_id 있는 행)이 있는 decided 항목. route 가 없는 항목은 첫 화면 줄을 달 수
   없어 unrefined 에 세지 않는다. 기록 하나에 항목이 여럿(### 분할)이면 줄의 target.item_id 는 가장 먼저 만든 항목이다.
@@ -193,6 +194,9 @@ def routine_board(uid, p=None):
 
         # 들어온 것
         ins = _items(c, uid, o_in["id"])
+        dropped = {r["item_id"] for r in _all(c, "SELECT item_id FROM collected_states WHERE user_id=%s AND state='dropped' "
+                                                 "AND item_id = ANY(%s)", (uid, [r["id"] for r in ins]))}
+        ins = [r for r in ins if r["id"] not in dropped]   # 버림 수집 글은 들어온 것의 숫자, 줄 어디에도 넣지 않는다
         in_day = {r["id"]: _day(r, o_in["date_field"]) for r in ins}
         sf, sv = _pair(p.get("in_signal"))
         n_7d = sum(1 for d in in_day.values() if week0 <= d <= today)
