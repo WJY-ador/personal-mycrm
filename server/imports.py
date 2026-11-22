@@ -1925,7 +1925,9 @@ def _approve_in(c, uid, e, by="user") -> str:
 
 def _digest_store(c, uid, rid, d):
     """새 요약 기록 rid 에 구조를 싣는다 — post_urls → 그 사용자 수집 글 항목 id(휴지통 아닌 것, 같은 URL 이 여럿이면 먼저 만든 것).
-    없는 URL 은 버리고 수(dropped_urls)를 남긴다. 그 뒤 옛 요약 기록을 영구 삭제한다(사용자당 최신 하나, 2026-11-22 4-5)."""
+    없는 URL 은 버리고 수(dropped_urls)를 남긴다. 그 뒤 옛 요약 기록을 영구 삭제한다(사용자당 최신 하나, 2026-11-22 4-5).
+    단 다른 원본(다른 장치)의 현재 판 기록은 남긴다 — 지우면 그 원본의 접수 행이 모두 target 없는 deleted 가 되어 _source_deleted 가
+    purged 로 보고, 그 장치의 다음 요약이 200 deleted 로 끝난다(장치가 둘인 사용자). 읽기(inbox_digest)는 최신 하나만 본다."""
     od = _collected_obj(c, uid)
     urls = list(dict.fromkeys(u for t in d["themes"] for u in t["post_urls"]))
     found = {}
@@ -1938,8 +1940,9 @@ def _digest_store(c, uid, rid, d):
     add = {"digest": {"themes": themes, "input_n": d["input_n"], "made_at": d["made_at"]},
            "dropped_urls": sum(1 for u in urls if u not in found)}
     c.execute("UPDATE records SET generation_meta = generation_meta || %s WHERE user_id=%s AND id=%s", (Jsonb(add), uid, rid))
-    for r in _all(c, "SELECT id FROM records WHERE user_id=%s AND id<>%s AND generation_meta->>'transform_version'=%s",
-                  (uid, rid, INBOX_DIGEST)):
+    for r in _all(c, "SELECT r.id FROM records r WHERE r.user_id=%s AND r.id<>%s AND r.generation_meta->>'transform_version'=%s "
+                     "AND NOT EXISTS (SELECT 1 FROM import_entries e WHERE e.user_id=r.user_id AND e.target_record_id=r.id "
+                     "AND e.is_current_applied)", (uid, rid, INBOX_DIGEST)):
         db._purge_record(c, uid, r["id"])
 
 

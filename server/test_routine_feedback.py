@@ -5,7 +5,7 @@
 시험 자료는 가짜 축 코드, 가짜 URL, 가짜 문장뿐이다. 1절(목록 window, verdict, 루틴판 in.by_axis)은 test_routine_board.py 3b.
 
 1. 인박스 요약 받기(inbox-digest/1) — 받는 즉시 기록(unknown·generated·ai, 출처 인박스 요약) · post_urls → 수집 글 항목 id(없는 URL 은 버리고 수)
-   · 새 판이 옛 요약 기록을 영구 삭제(같은 원본 새 개정, 다른 원본 둘 다) · 계약 거절
+   · 새 판이 옛 요약 기록을 영구 삭제(같은 원본 옛 개정, 다른 원본의 현재 판은 남김 — 그 원본이 막히지 않게) · 계약 거절
 2. 읽기(imports.inbox_digest = 웹 GET /api/collected/digest = MCP inbox_digest_get) — pending_n, new_since(요약 밖·요약 뒤), by_axis,
    item_ids 는 살아 있는 항목만 · 요약 없음 · 견본 digest.sample.json 대조
 3. 요약 기록 제외 — 내 글 목록, heatmap, 종류별 건수, 답변 재료(비적격 셈 포함), 후보, 꺼내기
@@ -232,7 +232,15 @@ async def run():
     assert r["state"] == "noop" and r["target_id"] == g2, r
     r = await d.send("dg2", kind="digest")
     g3 = r["target_id"]
-    assert digest_records(A) == [g3], "다른 원본이어도 사용자당 최신 하나"
+    assert sorted(digest_records(A)) == sorted([g2, g3]), "다른 원본(다른 장치)의 현재 판은 남긴다 — 지우면 그 원본이 purged 로 막힌다"
+    r = await d.send("dg", kind="digest", digest={**DIGEST, "input_n": 2})
+    assert r["state"] == "applied", ("다른 원본이 대신한 뒤에도 그 원본은 계속 받는다", r)
+    g4 = r["target_id"]
+    assert sorted(digest_records(A)) == sorted([g3, g4]) and rec(A, g2) is None, digest_records(A)
+    r = await d.send("dg2", kind="digest", digest={**DIGEST, "input_n": 1})
+    g3 = r["target_id"]
+    assert r["state"] == "applied" and sorted(digest_records(A)) == sorted([g3, g4]), digest_records(A)
+    assert imports.inbox_digest(A)["digest"]["input_n"] == 1, "읽기는 최신 하나"
     # 계약
     bad_cases = (
         ({"digest": ...}, "digest: required"),
@@ -267,7 +275,7 @@ async def run():
 
     # ── 2. 읽기 ──
     dg = imports.inbox_digest(A)
-    assert dg["digest"]["themes"][0]["item_ids"] == [it[1], it[2]] and dg["digest"]["input_n"] == 4, dg
+    assert dg["digest"]["themes"][0]["item_ids"] == [it[1], it[2]] and dg["digest"]["input_n"] == 1, dg
     assert dg["pending_n"] == 4 and dg["new_since"] == 0, dg   # p4 는 요약 밖이지만 요약보다 먼저 들어왔다
     assert dg["by_axis"] == [{"code": "A", "title": "가짜 축 하나", "item_id": ax["A"], "pending": 2, "signal": 1},
                              {"code": "B-1", "title": "가짜 축 둘", "item_id": ax["B-1"], "pending": 2, "signal": 1}], dg["by_axis"]
