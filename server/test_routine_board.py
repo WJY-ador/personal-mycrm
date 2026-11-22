@@ -339,8 +339,14 @@ async def run():
 
     def ids(key, **kw):
         return {x["id"] for x in db.object_list(A, key, **kw)["rows"]}
-    # window = 판의 7일 규칙(날짜 칸, 없으면 created_at). 버림(P8)은 목록 state 필터 몫이라 들어온다 — 판 n_7d 와는 P8 만큼 다르다
+    # window = 판의 7일 규칙(날짜 칸, 없으면 created_at). 버림(P8)은 state 필터 몫 — 숫자 링크는 state=not_dropped 를 함께 건다
     assert ids("rb_posts", window="7") == {po["P1"], po["P2"], po["P4"], po["P8"]}
+    nd = db.object_list(A, "rb_posts", window="7", state="not_dropped")
+    assert {x["id"] for x in nd["rows"]} == {po["P1"], po["P2"], po["P4"]} and nd["total"] == r["in"]["n_7d"], "숫자 누름 = 목록 건수"
+    for a in ba:   # 축 칩 링크(window=7 + 축 + 버림 뺌) 총수 = 칩 숫자
+        assert db.object_list(A, "rb_posts", window="7", state="not_dropped", filters={"axes": a["item_id"]})["total"] == a["n"], a
+    assert ids("rb_posts", state="not_dropped") == {po["P1"], po["P2"], po["P3"], po["P4"], po["P6"]}
+    expect("ARG-INVALID", db.object_list, A, "rb_posts", state="kept")   # 판별 표 상태 값은 수집 글만
     assert ids("rb_posts", window="1") == {po["P1"], po["P4"], po["P8"]}
     assert ids("rb_posts", window="7", filters={"ai_grade": "signal"}) == {po["P1"], po["P4"], po["P8"]}
     lst = db.object_list(A, "rb_posts", window="7")
@@ -355,11 +361,13 @@ async def run():
     for bad in ({"window": "0"}, {"window": "91"}, {"window": "7d"}, {"verdict": "was_right:maybe"}, {"verdict": "was_right"},
                 {"verdict": "nothing:right"}):
         expect("ARG-INVALID", db.object_list, A, "rb_pivots", **bad)
+    w = await web("/api/me/objects/rb_posts?window=7&state=not_dropped")
+    assert w.status_code == 200 and w.json()["total"] == r["in"]["n_7d"], w.text[:300]
     w = await web("/api/me/objects/rb_pivots?verdict=was_right:unknown&window=7")
     assert w.status_code == 200 and [x["id"] for x in w.json()["rows"]] == [pv["D2"]], w.text[:300]
     assert (await web("/api/me/objects/rb_pivots?window=99")).status_code == 400
     ok("3b 들어온 것 축별 수(7일, 버림, 휴지통 글, 휴지통 축 제외, 많은 순) · 목록 window, verdict = 판과 같은 규칙(분류별 수 일치, 칩은 거르기 전,"
-       " 다른 필터와 함께, 웹, 잘못된 값 ARG-INVALID)")
+       " 다른 필터와 함께, 웹, 잘못된 값 ARG-INVALID) · state=not_dropped 로 n_7d, 축 칩 수 = 목록 총수")
 
     # ── 4. missing · 설정 없음 ──
     m = rb.routine_board(A, {**P, "lines": "rb_nothing", "subheads": "rb_nothing2"})

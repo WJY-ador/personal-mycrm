@@ -390,7 +390,10 @@ async def run():
     expect("PROVENANCE-AI-LOCKED", db.record_provenance_set, A, m2, "self", "verbatim", "가짜 사유")
     # 잘못된 값 · 격리
     expect("ARG-INVALID", imports.axis_page_save, A, ax["A"], "   ", None)
-    expect("ARG-INVALID", imports.axis_page_save, A, ax["A"], "가" * (imports.BODY_MAX_CP + 1), None)
+    big = "가" * (db.LIMIT_BODY // 3)   # 64 KiB 바로 아래(한글 3바이트) — 장치 기록 상한 8000자보다 길어도 받는다
+    cur = one()["mine"]["updated_at"]
+    assert imports.axis_page_save(A, ax["A"], big, cur)["axis"]["page"]["body"] == big
+    expect("ARG-INVALID", imports.axis_page_save, A, ax["A"], big + "가", one()["mine"]["updated_at"])
     expect("ARG-INVALID", imports.axis_page_save, A, "nope", "x", None)
     expect("NOT-FOUND", imports.axis_page_save, B, ax["A"], "남의 축", None)
     expect("NOT-FOUND", imports.axis_page_save, A, it[1], "축 아닌 항목", None)

@@ -3299,6 +3299,9 @@ OBJ_LIST_PAGE = 50
 OBJ_LIST_COLS = 5
 OBJ_LIST_LONG = ("ai_as_is", "ai_to_be", "ai_ops", "ai_points")   # 열에서 빼는 AI 긴 필드(항목 페이지엔 그대로)
 OBJ_LIST_STATES = ("pending", "kept", "dropped")
+# 버림(dropped) 아닌 것(대기 + 보관) — 루틴판 들어온 것 숫자, 축 칩 링크가 건다(판 숫자는 버림을 뺀다, 2026-11-22 메인). 판별 표가 없는
+# 오브젝트(수집 글 아님)도 받는다 — 판처럼 collected_states 행만 본다(행이 없으면 걸러지는 것 없음)
+OBJ_LIST_NOT_DROPPED = "not_dropped"
 _OBJ_LIST_Q_MAX = 200
 
 
@@ -3311,7 +3314,7 @@ def object_list(uid, key, sort="", direction="", q="", filters=None, state="", c
      filters: [{key, label, values: [{value, label, n}]}], states: {pending, kept, dropped} | None,
      rows: [{id, code, title, revision, updated_at, data: {열 key: 값}, state?, axes?}], total, next_cursor}.
     filters 의 axes = 축 항목 id(그 축에 붙은 항목만). 수집 글 행만 state 와 axes([{id, code, title}], 축 코드 칩)를 싣는다.
-    window = 최근 N일(1~90), verdict = "칸key:분류"(right|unknown|partial|wrong|none) — 루틴판 숫자와 같은 규칙(routine_board.filter_ids,
+    state = pending|kept|dropped(수집 글만) 또는 not_dropped(버림 아닌 것, 모든 오브젝트). window = 최근 N일(1~90), verdict = "칸key:분류"(right|unknown|partial|wrong|none) — 루틴판 숫자와 같은 규칙(routine_board.filter_ids,
     2026-11-22). 둘은 select 필터처럼 칩 건수(거르기 전)에 넣지 않는다."""
     import imports   # imports 가 db 를 가져다 쓴다 — 모듈 맨 위에서 가져오면 순환
     import routine_board
@@ -3352,8 +3355,8 @@ def object_list(uid, key, sort="", direction="", q="", filters=None, state="", c
                 continue
             if fk not in by_key or by_key[fk]["value_type"] != "select" or not isinstance(v, str) or not v:
                 raise CrmError("ARG-INVALID", f"거를 수 없는 필드예요: {fk}")
-        if state and (not has_state or state not in OBJ_LIST_STATES):
-            raise CrmError("ARG-INVALID", f"state 는 {', '.join(OBJ_LIST_STATES)} 중 하나예요.")
+        if state and state != OBJ_LIST_NOT_DROPPED and (not has_state or state not in OBJ_LIST_STATES):
+            raise CrmError("ARG-INVALID", f"state 는 {', '.join(OBJ_LIST_STATES + (OBJ_LIST_NOT_DROPPED,))} 중 하나예요.")
         if vpair and vpair[0] not in by_key:
             raise CrmError("ARG-INVALID", f"판정으로 거를 수 없는 칸이에요: {vpair[0]}")
         base = ("FROM items i LEFT JOIN collected_states s ON s.user_id=i.user_id AND s.item_id=i.id "
@@ -3382,7 +3385,9 @@ def object_list(uid, key, sort="", direction="", q="", filters=None, state="", c
                 continue
             where += " AND i.data->>%s = %s"
             wargs += [fk, v]
-        if state:
+        if state == OBJ_LIST_NOT_DROPPED:
+            where += " AND COALESCE(s.state,'pending') <> 'dropped'"
+        elif state:
             where += " AND COALESCE(s.state,'pending') = %s"
             wargs.append(state)
         if window or vpair:   # 루틴판 숫자와 같은 함수로 id 를 고른다(날짜 칸 해석, 판정 낱말 규칙이 파이썬에 있다)

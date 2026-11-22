@@ -1543,7 +1543,7 @@ def _axis_page_out(pg, mn, one):
 
 def axis_page_save(uid: str, axis_id: str, markdown, expected_updated_at=None, via: str = "web") -> dict:
     """축 한 장 내가 고친 판 저장(2026-11-22 구현계획 2절) — 웹 POST /api/axes/<축 id>/page 와 MCP axis_page_save 가 같이 쓴다.
-    markdown = 받은 그대로 저장(다듬지 않음, 기록 상한 BODY_MAX_CP·BODY_MAX_BYTES). expected_updated_at = 지금 내 판의 updated_at
+    markdown = 받은 그대로 저장(다듬지 않음, 사용자 기록 쓰기 상한 db.LIMIT_BODY 바이트, 2026-11-22 메인). expected_updated_at = 지금 내 판의 updated_at
     (첫 저장은 None·빈 값). 다르면 STALE. 저장마다 새 기록(unknown·generated·mixed, 출처 「내가 고친 판」), 옛 내 판은 휴지통.
     기록 한도(기록 200)를 쓴다. 반환 {axis: axis_overview(uid, axis_id) 의 axes[0]}."""
     axis_id = str(axis_id or "")
@@ -1551,8 +1551,8 @@ def axis_page_save(uid: str, axis_id: str, markdown, expected_updated_at=None, v
         raise CrmError("ARG-INVALID", "axis_id 는 축 항목 id(i_…)예요.")
     if not isinstance(markdown, str) or not markdown.strip():
         raise CrmError("ARG-INVALID", "내 판 본문이 비었어요.")
-    if len(markdown) > BODY_MAX_CP or len(markdown.encode("utf-8")) > BODY_MAX_BYTES or "\x00" in markdown:
-        raise CrmError("ARG-INVALID", f"내 판 본문은 {BODY_MAX_CP}자, {BODY_MAX_BYTES} 바이트까지예요.")
+    if len(markdown.encode("utf-8")) > db.LIMIT_BODY or "\x00" in markdown:
+        raise CrmError("ARG-INVALID", f"내 판 본문은 {db.LIMIT_BODY // 1024} KiB 까지예요.")
     exp = expected_updated_at or None
     if exp is not None and not isinstance(exp, str):
         raise CrmError("ARG-INVALID", "expected_updated_at 은 화면이 받은 mine.updated_at 그대로예요(첫 저장은 null).")
