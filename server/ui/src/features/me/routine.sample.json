@@ -1,0 +1,61 @@
+{
+ "_doc": "API 응답 견본 — 첫 화면 루틴판이 읽는 GET /api/me/routine(board) · GET /api/me/routine/<item_id>(detail). server/test_routine_board.py 가 실제 응답과 키 집합, 값 타입을 대조한다(목록은 첫 원소). detail.subheads[0].sources[0] 은 수집 글 ref, detail.inflow[0] 은 수집 글 ref, detail.decided[0] 은 기록 ref. 문장은 모두 가짜다.",
+ "board": {
+  "ready": true,
+  "missing": [],
+  "last_routine_at": "2026-11-20T21:30:00+09:00",
+  "since": {"new_in": 4, "new_decided": 1},
+  "in": {
+   "n_total": 120,
+   "n_7d": 9,
+   "signal_7d": 3,
+   "lines": [
+    {"date": "2026-11-20", "text": "작은 팀은 도구보다 순서가 먼저",
+     "target": {"kind": "item", "id": "i_samplepost1", "object_key": "collected_posts", "item_id": "i_samplepost1"}}
+   ],
+   "more": 2,
+   "unrefined": 6
+  },
+  "decided": {
+   "total": 12,
+   "right": 3,
+   "unknown": 5,
+   "partial": 1,
+   "wrong": 1,
+   "none": 2,
+   "lines": [
+    {"date": "2026-11-19", "text": "회의 전에 질문부터 적기로 했다",
+     "target": {"kind": "record", "id": "r_samplerec1", "object_key": "pivots", "item_id": "i_samplepivot1"}}
+   ],
+   "more": 0,
+   "unrefined": 4
+  },
+  "writing": {
+   "drafts": 2,
+   "cards": [
+    {"item_id": "i_sampleboard1", "key_line": "기록은 쓰는 순간보다 다시 꺼낼 때 값이 난다", "date": "2026-11-18",
+     "n_subheads": 3, "n_sources": 5, "n_posts": 3, "n_records": 3}
+   ]
+  }
+ },
+ "detail": {
+  "board": {"item_id": "i_sampleboard1", "title": "다시 꺼내는 기록", "key_line": "기록은 쓰는 순간보다 다시 꺼낼 때 값이 난다",
+            "stage": "draft", "date": "2026-11-18"},
+  "subheads": [
+   {"item_id": "i_samplesub1", "order": 1, "text": "쓰는 순간에는 값이 안 보인다", "body": "가짜 본문 한 단락.",
+    "sources": [
+     {"kind": "post", "id": "i_samplepost1", "title": "작은 팀의 도구 고르기", "author": "가짜 작성자", "channel": "linkedin",
+      "date": "2026-11-20", "ai_summary": "가짜 AI 요약 한 줄.", "ai": true}
+    ]}
+  ],
+  "inflow": [
+   {"kind": "post", "id": "i_samplepost1", "title": "작은 팀의 도구 고르기", "author": "가짜 작성자", "channel": "linkedin",
+    "date": "2026-11-20", "ai_summary": "가짜 AI 요약 한 줄.", "ai": true}
+  ],
+  "decided": [
+   {"kind": "record", "id": "r_samplerec1", "title": "질문 먼저 적기", "date": "2026-11-19",
+    "item": {"object_key": "pivots", "item_id": "i_samplepivot1", "title": "회의 전 질문 먼저", "verdict": "미확인"}}
+  ],
+  "missing_sources": 0
+ }
+}

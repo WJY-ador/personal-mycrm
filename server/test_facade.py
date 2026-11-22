@@ -173,7 +173,8 @@ async def test_catalog():
     assert (facade.OPS["collected_post_decide"].family, facade.OPS["collected_post_decide"].tier, facade.OPS["collected_post_decide"].bind) == ("inbox", "write", None)
     assert {o for o, x in facade.OPS.items() if not x.direct} == {"decide_preview"} | (mig - {"migration_receipt_get"}) | pc | LAYOUT_OPS | EDIT_OPS \
         | {"inbox_decide", "collected_post_decide", "axis_overview_get", "export_get", "answer_get"} \
-        | {"structure_profile_get", "item_route_exclude", "item_route_include", "definition_draft_discard"}
+        | {"structure_profile_get", "item_route_exclude", "item_route_include", "definition_draft_discard"} \
+        | {"routine_board_get", "routine_board_detail_get"}
     # 겉면 enum = tier 분할(겹침·빠짐 없음)
     enums = {t: tools[t].input_schema["properties"]["op"]["enum"] for t in facade.TIERS}
     allops = [o for t in facade.TIERS for o in enums[t]]
