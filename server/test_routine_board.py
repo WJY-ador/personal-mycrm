@@ -8,6 +8,7 @@
 2. 판정 첫 낱말 규칙 표
 3. 집계 숫자(들어온 것 7일 경계, created_at 대체, 신호, 판정 수, 쓰는 중 stage 조건과 카드) · lines 배치(post → in, route 기록 → decided,
    route 아닌 기록은 어느 열에도 없음, 같은 대상은 최근 줄 하나) · more · unrefined · since(이력 없음 = 전체, 이력 뒤 생긴 것)
+3b. (2026-11-22) 들어온 것 축별 수 in.by_axis · 목록 window, verdict 필터 = 판 숫자와 같은 규칙(db.object_list, 웹)
 4. missing(키 집합 그대로, 숫자 0) · 설정 없음 = ready false · AI 값 키 없음
 5. 상세(소제목 순서, 출처 합과 중복 제외, 출처 없는 소제목, missing_sources) · 남의 항목, 휴지통, 보관, 다른 오브젝트 항목 404
 6. 웹 GET /api/me/routine[/<id>] = 같은 함수 · 견본 routine.sample.json 대조 · MCP read op 두 개
@@ -109,13 +110,15 @@ def route(uid, oid, rid, iid):
 def setup_objects(uid):
     db.display_name_set(uid, "합성")
     o = {}
+    o["axes"] = obj(uid, "rb_axes", "가짜 축", [])   # 들어온 것 축별 수(2026-11-22)
     o["posts"] = obj(uid, "rb_posts", "가짜 글", [
         {"key": "channel", "label": "채널", "value_type": "select", "options": [{"value": "linkedin", "label": "링크드인"}]},
         {"key": "posted_on", "label": "글 날짜", "value_type": "date"},
         {"key": "author_display", "label": "작성자", "value_type": "text"},
         {"key": "ai_grade", "label": "AI 판별", "value_type": "select",
          "options": [{"value": "signal", "label": "신호"}, {"value": "noise", "label": "잡음"}]},
-        {"key": "ai_summary", "label": "AI 요약", "value_type": "text"}])
+        {"key": "ai_summary", "label": "AI 요약", "value_type": "text"},
+        {"key": "axes", "label": "축", "value_type": "reference", "target_kind": "item", "target_object_id": o["axes"], "multiple": True}])
     o["pivots"] = obj(uid, "rb_pivots", "가짜 결정", [
         {"key": "decided_on", "label": "정한 날", "value_type": "date"},
         {"key": "was_right", "label": "맞았나", "value_type": "text"}])
@@ -319,6 +322,52 @@ async def run():
     no_ai_keys(r)
     ok("3 집계(7일 경계 오늘-6 포함 오늘-7 제외, created_at 대체, 신호, 판정 수, stage 조건, 카드 3장, 출처 합) · lines(post→in, route 기록→decided,"
        " route 아닌 기록 없음, 같은 대상은 최근 줄, 휴지통 대상 없음, more) · unrefined · since(이력 없음 = 전체, 적용 뒤 생긴 것) · 버림 글 제외 · AI 값 없음")
+
+    # ── 3b. 들어온 것 축별 수 · 목록 필터 window, verdict = 판 숫자와 같은 규칙(2026-11-22) ──
+    ax_o = o["axes"]
+    axs = {k: db.item_decide(A, (pp := db.item_propose(A, ax_o, 1, None, 0, k, f"가짜 축 {k}", "", {}, []))["item_id"], 0,
+                             pp["proposal_id"], "apply")["id"] for k in ("A", "B", "Z")}
+    trash_item(A, axs["Z"])
+    with db.tx() as c:
+        for post, a in (("P1", "A"), ("P2", "A"), ("P4", "B"), ("P3", "B"), ("P8", "B"), ("P1", "Z"), ("P5", "A")):
+            db._insert_link(c, A, {"field_key": "axes", "target_kind": "item", "target_id": axs[a]}, source_item=po[post],
+                            source_object=o["posts"])
+    ba = rb.routine_board(A)["in"]["by_axis"]
+    # 7일 안 살아 있는 글(P1, P2, P4) 만: A = P1·P2, B = P4(P3 = 7일 밖, P8 = 버림, P5 = 휴지통), Z = 휴지통 축
+    assert ba == [{"code": "A", "title": "가짜 축 A", "item_id": axs["A"], "n": 2},
+                  {"code": "B", "title": "가짜 축 B", "item_id": axs["B"], "n": 1}], ba
+
+    def ids(key, **kw):
+        return {x["id"] for x in db.object_list(A, key, **kw)["rows"]}
+    # window = 판의 7일 규칙(날짜 칸, 없으면 created_at). 버림(P8)은 state 필터 몫 — 숫자 링크는 state=not_dropped 를 함께 건다
+    assert ids("rb_posts", window="7") == {po["P1"], po["P2"], po["P4"], po["P8"]}
+    nd = db.object_list(A, "rb_posts", window="7", state="not_dropped")
+    assert {x["id"] for x in nd["rows"]} == {po["P1"], po["P2"], po["P4"]} and nd["total"] == r["in"]["n_7d"], "숫자 누름 = 목록 건수"
+    for a in ba:   # 축 칩 링크(window=7 + 축 + 버림 뺌) 총수 = 칩 숫자
+        assert db.object_list(A, "rb_posts", window="7", state="not_dropped", filters={"axes": a["item_id"]})["total"] == a["n"], a
+    assert ids("rb_posts", state="not_dropped") == {po["P1"], po["P2"], po["P3"], po["P4"], po["P6"]}
+    expect("ARG-INVALID", db.object_list, A, "rb_posts", state="kept")   # 판별 표 상태 값은 수집 글만
+    assert ids("rb_posts", window="1") == {po["P1"], po["P4"], po["P8"]}
+    assert ids("rb_posts", window="7", filters={"ai_grade": "signal"}) == {po["P1"], po["P4"], po["P8"]}
+    lst = db.object_list(A, "rb_posts", window="7")
+    assert lst["total"] == 4 and sum(v["n"] for f in lst["filters"] if f["key"] == "ai_grade" for v in f["values"]) == 5, \
+        "칩 건수는 거르기 전(ai_grade 있는 살아 있는 글 전부 — P1, P2, P3, P4, P8)"
+    # verdict = verdict_of 낱말 규칙 — 분류마다 판 숫자와 같다
+    for cls in rb.VERDICTS:
+        got = ids("rb_pivots", verdict=f"was_right:{cls}")
+        assert len(got) == r["decided"][cls], (cls, got)
+    assert ids("rb_pivots", verdict="was_right:unknown") == {pv["D2"]} and ids("rb_pivots", verdict="was_right:none") == {pv["D5"], pv["D6"]}
+    assert ids("rb_pivots", verdict="was_right:right", window="3") == set() and ids("rb_pivots", verdict="was_right:right", window="4") == {pv["D1"]}
+    for bad in ({"window": "0"}, {"window": "91"}, {"window": "7d"}, {"verdict": "was_right:maybe"}, {"verdict": "was_right"},
+                {"verdict": "nothing:right"}):
+        expect("ARG-INVALID", db.object_list, A, "rb_pivots", **bad)
+    w = await web("/api/me/objects/rb_posts?window=7&state=not_dropped")
+    assert w.status_code == 200 and w.json()["total"] == r["in"]["n_7d"], w.text[:300]
+    w = await web("/api/me/objects/rb_pivots?verdict=was_right:unknown&window=7")
+    assert w.status_code == 200 and [x["id"] for x in w.json()["rows"]] == [pv["D2"]], w.text[:300]
+    assert (await web("/api/me/objects/rb_pivots?window=99")).status_code == 400
+    ok("3b 들어온 것 축별 수(7일, 버림, 휴지통 글, 휴지통 축 제외, 많은 순) · 목록 window, verdict = 판과 같은 규칙(분류별 수 일치, 칩은 거르기 전,"
+       " 다른 필터와 함께, 웹, 잘못된 값 ARG-INVALID) · state=not_dropped 로 n_7d, 축 칩 수 = 목록 총수")
 
     # ── 4. missing · 설정 없음 ──
     m = rb.routine_board(A, {**P, "lines": "rb_nothing", "subheads": "rb_nothing2"})

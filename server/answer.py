@@ -261,7 +261,7 @@ def _records(c, uid, pats, eligible):
     """최신 SCAN_LIMIT 편(정렬 = db.RECORD_SORT) 안에서 검색어 하나라도 든 기록. eligible=False = 지우지 않은 비적격 내 기록.
     pats=None 이면 거르지 않고 훑는 범위 전부(가중치의 문장 수를 세려고 적격 기록 본문 전체가 필요하다)."""
     cond = db._ELIGIBLE_SQL if eligible else \
-        f"r.deleted_at IS NULL AND r.trashed_at IS NULL AND NOT COALESCE({db._ELIGIBLE_SQL}, false)"
+        f"r.deleted_at IS NULL AND r.trashed_at IS NULL AND NOT COALESCE({db._ELIGIBLE_SQL}, false) AND {db._NOT_DIGEST.format(a='r.')}"   # 인박스 요약은 셈에도 넣지 않는다
     where = "" if pats is None else "WHERE x.body ILIKE ANY(%(pats)s)"
     return db._all(c, f"SELECT x.*, EXISTS (SELECT 1 FROM candidates k WHERE k.user_id=%(uid)s AND k.record_id=x.id "
                       f"AND k.decision='confirmed') AS confirmed "

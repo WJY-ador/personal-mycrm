@@ -1,0 +1,23 @@
+{
+ "_doc": "API 응답 견본 — 오늘 탭 수집 인박스 맨 위 인박스 요약이 읽는 GET /api/collected/digest(MCP inbox_digest_get 과 같은 함수 imports.inbox_digest). with = 요약 있음, empty = 요약 없음. digest 의 주제 이름, 문장은 AI 가 만든 값이다(근거 아님). item_ids = 수집 글 항목 id(휴지통 제외). new_since = 요약에 없는 대기 글 중 요약을 받은 뒤 생긴 수. by_axis = 축별 대기 수와 그중 신호(ai_grade signal) 수. server/test_routine_feedback.py 가 실제 응답과 키 집합, 값 타입을 대조한다(목록은 첫 원소). 문장은 모두 가짜다.",
+ "with": {
+  "digest": {
+   "themes": [
+    {"name": "견본 주제 하나", "line": "견본 글 두 편이 같은 흐름을 말해요.", "item_ids": ["i_sample1", "i_sample2"]}
+   ],
+   "input_n": 12,
+   "made_at": "2026-11-22T09:00:00+09:00"
+  },
+  "pending_n": 14,
+  "new_since": 2,
+  "by_axis": [
+   {"code": "A", "title": "견본 축 하나", "item_id": "i_axis_a", "pending": 5, "signal": 2}
+  ]
+ },
+ "empty": {
+  "digest": null,
+  "pending_n": 0,
+  "new_since": 0,
+  "by_axis": []
+ }
+}

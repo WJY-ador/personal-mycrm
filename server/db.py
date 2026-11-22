@@ -1329,6 +1329,10 @@ _ELIGIBLE_SQL = ("(r.author_kind='self' AND r.deleted_at IS NULL AND r.trashed_a
                  "OR r.decision_owner='self' "
                  "OR (r.generation_kind='conversation' AND EXISTS (SELECT 1 FROM confirm_events ce WHERE ce.user_id=r.user_id "
                  "AND ce.id::text = r.generation_meta->>'confirm_event_id'))))")
+# 인박스 요약(inbox-digest/1, 2026-11-22) 기록 — AI 가 만든 수집 인박스 머리 글. 내 글 목록, heatmap, 종류별 건수, 답변 재료에서 뺀다.
+# 표시는 generation_meta.transform_version(imports.INBOX_DIGEST 와 같은 값). {a} = 기록 별칭 접두("r." 또는 "")
+DIGEST_TV = "inbox-digest/1"
+_NOT_DIGEST = "COALESCE({a}generation_meta->>'transform_version', '') <> 'inbox-digest/1'"
 DECISION_OWNERS = ("self",)   # records.decision_owner — NULL(표시 없음) | 'self'. 화면에 보이지 않는다
 INELIGIBLE_WHY = "이 기록은 본인 원문이 아니라 근거로 쓸 수 없어요"
 _REC_COLS = "id,title,body,source,source_id,question_id,author_kind,text_process,created,revision"   # source = 옛 문자열(보존), source_id = 출처 연결
@@ -1770,7 +1774,7 @@ def records(uid, limit=50, before=None, before_id=None):
     with tx() as c:
         rows = _all(c, "SELECT id,title,body,source,source_id,question_id,author_kind,text_process,notes,created,"
                        "source_date,ingest_kind,generation_kind FROM records "
-                       "WHERE user_id=%s AND deleted_at IS NULL AND trashed_at IS NULL" + cond
+                       "WHERE user_id=%s AND deleted_at IS NULL AND trashed_at IS NULL AND " + _NOT_DIGEST.format(a="") + cond
                        + f" ORDER BY {RECORD_SORT} DESC, created DESC, id DESC LIMIT %s",
                        (uid, *args, limit))
     for r in rows:
@@ -3295,19 +3299,34 @@ OBJ_LIST_PAGE = 50
 OBJ_LIST_COLS = 5
 OBJ_LIST_LONG = ("ai_as_is", "ai_to_be", "ai_ops", "ai_points")   # 열에서 빼는 AI 긴 필드(항목 페이지엔 그대로)
 OBJ_LIST_STATES = ("pending", "kept", "dropped")
+# 버림(dropped) 아닌 것(대기 + 보관) — 루틴판 들어온 것 숫자, 축 칩 링크가 건다(판 숫자는 버림을 뺀다, 2026-11-22 메인). 판별 표가 없는
+# 오브젝트(수집 글 아님)도 받는다 — 판처럼 collected_states 행만 본다(행이 없으면 걸러지는 것 없음)
+OBJ_LIST_NOT_DROPPED = "not_dropped"
 _OBJ_LIST_Q_MAX = 200
 
 
 OBJ_LIST_AXIS_FILTER = "axes"   # object_list 의 f.axes — select 필드가 아니라 축 연결로 거른다
 
 
-def object_list(uid, key, sort="", direction="", q="", filters=None, state="", cursor=""):
+def object_list(uid, key, sort="", direction="", q="", filters=None, state="", cursor="", window="", verdict=""):
     """오브젝트 key 하나의 목록 보기 — 사용자 격리, 적용·미보관·휴지통 아닌 항목만. 반환
     {object: {id, key, label}, columns: [{key, label, value_type, options}], has_state, sort: {key, dir},
      filters: [{key, label, values: [{value, label, n}]}], states: {pending, kept, dropped} | None,
      rows: [{id, code, title, revision, updated_at, data: {열 key: 값}, state?, axes?}], total, next_cursor}.
-    filters 의 axes = 축 항목 id(그 축에 붙은 항목만). 수집 글 행만 state 와 axes([{id, code, title}], 축 코드 칩)를 싣는다."""
+    filters 의 axes = 축 항목 id(그 축에 붙은 항목만). 수집 글 행만 state 와 axes([{id, code, title}], 축 코드 칩)를 싣는다.
+    state = pending|kept|dropped(수집 글만) 또는 not_dropped(버림 아닌 것, 모든 오브젝트). window = 최근 N일(1~90), verdict = "칸key:분류"(right|unknown|partial|wrong|none) — 루틴판 숫자와 같은 규칙(routine_board.filter_ids,
+    2026-11-22). 둘은 select 필터처럼 칩 건수(거르기 전)에 넣지 않는다."""
     import imports   # imports 가 db 를 가져다 쓴다 — 모듈 맨 위에서 가져오면 순환
+    import routine_board
+    window, verdict = str(window or ""), str(verdict or "")
+    if window and (not window.isdigit() or not 1 <= int(window) <= routine_board.WINDOW_MAX):
+        raise CrmError("ARG-INVALID", f"window 는 1~{routine_board.WINDOW_MAX} 일수예요.")
+    vpair = None
+    if verdict:
+        vf, _, vc = verdict.partition(":")
+        if not vf or vc not in routine_board.VERDICTS:
+            raise CrmError("ARG-INVALID", f"verdict 는 칸key:{'|'.join(routine_board.VERDICTS)} 꼴이에요.")
+        vpair = (vf, vc)
     filters = filters or {}
     if not isinstance(q, str) or len(q) > _OBJ_LIST_Q_MAX:
         raise CrmError("ARG-INVALID", f"검색어는 {_OBJ_LIST_Q_MAX}자 이하예요.")
@@ -3336,8 +3355,10 @@ def object_list(uid, key, sort="", direction="", q="", filters=None, state="", c
                 continue
             if fk not in by_key or by_key[fk]["value_type"] != "select" or not isinstance(v, str) or not v:
                 raise CrmError("ARG-INVALID", f"거를 수 없는 필드예요: {fk}")
-        if state and (not has_state or state not in OBJ_LIST_STATES):
-            raise CrmError("ARG-INVALID", f"state 는 {', '.join(OBJ_LIST_STATES)} 중 하나예요.")
+        if state and state != OBJ_LIST_NOT_DROPPED and (not has_state or state not in OBJ_LIST_STATES):
+            raise CrmError("ARG-INVALID", f"state 는 {', '.join(OBJ_LIST_STATES + (OBJ_LIST_NOT_DROPPED,))} 중 하나예요.")
+        if vpair and vpair[0] not in by_key:
+            raise CrmError("ARG-INVALID", f"판정으로 거를 수 없는 칸이에요: {vpair[0]}")
         base = ("FROM items i LEFT JOIN collected_states s ON s.user_id=i.user_id AND s.item_id=i.id "
                 "WHERE i.user_id=%s AND i.object_id=%s AND i.revision > 0 AND i.archived_at IS NULL AND i.trashed_at IS NULL")
         args = [uid, od["id"]]
@@ -3364,9 +3385,15 @@ def object_list(uid, key, sort="", direction="", q="", filters=None, state="", c
                 continue
             where += " AND i.data->>%s = %s"
             wargs += [fk, v]
-        if state:
+        if state == OBJ_LIST_NOT_DROPPED:
+            where += " AND COALESCE(s.state,'pending') <> 'dropped'"
+        elif state:
             where += " AND COALESCE(s.state,'pending') = %s"
             wargs.append(state)
+        if window or vpair:   # 루틴판 숫자와 같은 함수로 id 를 고른다(날짜 칸 해석, 판정 낱말 규칙이 파이썬에 있다)
+            cand = _all(c, f"SELECT i.id, i.data, ((i.created_at) AT TIME ZONE 'Asia/Seoul')::date AS cday {base}", args)
+            where += " AND i.id = ANY(%s)"
+            wargs.append(sorted(routine_board.filter_ids(c, uid, od["id"], cand, int(window) if window else None, vpair)))
         if q.strip():
             where += r" AND i.title ILIKE %s ESCAPE '\'"
             wargs.append("%" + re.sub(r"([\\%_])", r"\\\1", q.strip()) + "%")
@@ -4638,7 +4665,8 @@ def me_stats(uid):
         frm = to - _dt.timedelta(days=HEATMAP_WEEKS * 7 - 1)
         b = {"uid": uid, "frm": frm, "to": to}
         rec = {r["d"]: r["n"] for r in _all(c, f"SELECT {_RECORD_DAY} AS d, count(*) AS n FROM records WHERE user_id=%(uid)s "
-                                               f"AND deleted_at IS NULL AND trashed_at IS NULL AND {_RECORD_DAY} BETWEEN %(frm)s AND %(to)s "
+                                               f"AND deleted_at IS NULL AND trashed_at IS NULL AND {_NOT_DIGEST.format(a='')} "
+                                               f"AND {_RECORD_DAY} BETWEEN %(frm)s AND %(to)s "
                                                "GROUP BY 1", b)}
         act = {r["d"]: r["n"] for r in _all(c, f"SELECT occurred_on AS d, count(DISTINCT id) AS n FROM ({activity._CUR} AND a.state='active') cur "
                                                "WHERE occurred_on BETWEEN %(frm)s AND %(to)s GROUP BY 1", b)}
@@ -4651,7 +4679,8 @@ def me_stats(uid):
             (SELECT count(*) FROM live WHERE semantic_kind='event' AND NOT routed AND object_id IS DISTINCT FROM %(ax)s) AS decision,
             (SELECT count(*) FROM live WHERE object_id = %(ax)s) AS axis,
             (SELECT count(*) FROM live WHERE (semantic_kind NOT IN ('principle','event') OR routed) AND object_id IS DISTINCT FROM %(ax)s) AS custom,
-            (SELECT count(*) FROM records WHERE user_id=%(uid)s AND deleted_at IS NULL AND trashed_at IS NULL) AS records,
+            (SELECT count(*) FROM records WHERE user_id=%(uid)s AND deleted_at IS NULL AND trashed_at IS NULL
+              AND {_NOT_DIGEST.format(a='')}) AS records,
             (SELECT count(*) FROM people WHERE user_id=%(uid)s AND trashed_at IS NULL) AS people,
             (SELECT count(*) FROM sources WHERE user_id=%(uid)s) AS sources,
             (SELECT count(*) FROM candidates cd JOIN records r ON r.user_id=cd.user_id AND r.id=cd.record_id AND r.deleted_at IS NULL

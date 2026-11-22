@@ -7,6 +7,18 @@
 .big b { font-size: calc(var(--fs-7) * 1.5); font-weight: 600; line-height: 1; color: var(--accent); font-variant-numeric: tabular-nums; }
 .big span { font-size: var(--fs-3); color: var(--ink); }
 .big small { font-size: var(--fs-2); color: var(--muted); }
+/* 큰 숫자 링크 — 겉모양은 숫자 그대로, 마우스 올림과 포커스 = 밑줄 */
+a.bn { align-self: flex-start; color: var(--accent); text-decoration: none; border-radius: var(--r-3); }
+a.bn:hover b, a.bn:focus-visible b { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; }
+/* 들어온 것 축별 수 — 축 코드 칩 + 수 */
+.big:has(+ .ax) { margin-bottom: var(--sp-4); }
+.ax { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin: 0 0 var(--sp-8); }
+.axc { display: inline-flex; align-items: baseline; gap: var(--sp-2); padding: var(--sp-1) var(--sp-4); border: 1px solid var(--line); border-radius: var(--r-pill);
+  background: var(--card); color: var(--ink); font-size: var(--fs-1); text-decoration: none; transition: background-color .12s; }
+.axc b { font-family: var(--mono); font-weight: 600; }
+.axc span { font-family: var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+a.axc:hover, a.axc:focus-visible { background: var(--accent-soft); border-color: var(--accent); }
+.axm { font-size: var(--fs-1); color: var(--muted); }
 .lines, .cards { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .ln { display: flex; align-items: baseline; gap: var(--sp-5); padding: var(--sp-4) var(--sp-3); border-top: 1px solid var(--line); border-radius: var(--r-3); color: var(--ink); text-decoration: none; font-size: var(--fs-3); transition: background-color .12s; }
 .dt { flex: none; font-family: var(--mono); font-size: var(--fs-1); color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -27,4 +39,4 @@ a.ln:hover .lt, a.ln:focus-visible .lt { text-decoration: underline; text-underl
   .arr span { width: 1px; height: 100%; }
   .arr span::after { right: -4px; top: auto; bottom: 0; border-left: 4.5px solid transparent; border-right: 4.5px solid transparent; border-top: 7px solid var(--soft); border-bottom: 0; }
 }
-@media (prefers-reduced-motion: reduce) { .ln, .card { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .ln, .card, .axc { transition: none; } }

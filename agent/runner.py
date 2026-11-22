@@ -236,9 +236,12 @@ def _stage(st, cfg, original_id, kind, transform_version, execution, fields, cou
 
 
 def stage_self_text(st, cfg, *, adapter_name: str, dedupe_key: str, fingerprint: str, kind: str,
-                    transform_version: str, execution: str, fields: dict, counts: dict) -> bool:
-    """자기 글·요약 요청 생성. 로컬 추가 대조(규칙 7): 매핑에 있는 계정 식별자가 본문에 있으면 격리."""
-    text = " ".join(str(fields.get(k) or "") for k in ("title", "body"))
+                    transform_version: str, execution: str, fields: dict, counts: dict,
+                    identity_text: str | None = None) -> bool:
+    """자기 글·요약 요청 생성. 로컬 추가 대조(규칙 7): 매핑에 있는 계정 식별자가 본문에 있으면 격리.
+    identity_text = 대조할 글(기본 제목+본문). 수집 인박스 요약은 digest 의 post_url(이미 collected-post/1 로 가는 남의 글 주소,
+    작성자 핸들이 들어 있다)을 대조하지 않는다 — 기본값(제목+본문 = 주제 이름·문장)을 그대로 넘긴다."""
+    text = identity_text if identity_text is not None else " ".join(str(fields.get(k) or "") for k in ("title", "body"))
     for acct in st.known_account_ids():
         if len(acct) >= 3 and acct in text:
             st.quarantine(adapter_name, "local-identity-match", dedupe_key)
@@ -398,13 +401,15 @@ def _needs_features_check(st, cfg: dict) -> bool:
 
 def _policy_missing_transforms(cfg: dict) -> bool:
     """켠 어댑터가 쓰는 변환 중 설정의 허용 변환(allowed_transforms, 서버에서 받은 값)에 없는 것이 있나. 모르면(None) False.
-    축 한 장(axis_pages.dir 설정)도 켠 것으로 본다."""
+    축 한 장(axis_pages.dir 설정)·수집 인박스 요약(inbox_digest.enabled)도 켠 것으로 본다."""
     allowed = cfg.get("allowed_transforms")
     if allowed is None:
         return False
     need = set()
     if (cfg.get("axis_pages") or {}).get("dir"):
         need.add(contract.AXIS_PAGE_TRANSFORM)
+    if (cfg.get("inbox_digest") or {}).get("enabled") is True:
+        need.add(contract.INBOX_DIGEST_TRANSFORM)
     for name, section in (cfg.get("adapters") or {}).items():
         if not section.get("enabled") or name not in _adapters.ACTIVE:
             continue
@@ -520,8 +525,11 @@ def new_counts() -> dict:
 
 
 def run_once(paths, *, ks: keystore.KeyStore, uploader_factory=None, summarizer=None,
-             scheduled: bool = False, jitter_max: float = 300.0, sleep=time.sleep, upload: bool = True) -> dict:
-    """잠금 → (예약 실행이면 0~5분 지연) → 수집·변환·대기 저장 → 요약(켜졌을 때) → 업로드."""
+             scheduled: bool = False, jitter_max: float = 300.0, sleep=time.sleep, upload: bool = True,
+             exec_runner=None, process_started: float | None = None) -> dict:
+    """잠금 → (예약 실행이면 0~5분 지연) → 수집·변환·대기 저장 → 요약(켜졌을 때) → 수집 인박스 요약(켜졌을 때) → 업로드.
+    exec_runner = 모델 실행기(시험은 가짜). process_started = 프로세스가 시작된 time.monotonic() 값(앱의 600초 종료 기준,
+    없으면 이 함수의 시작 시각)."""
     from . import osutil
     from .uploader import UPLOAD_BUDGET_SEC, Uploader
 
@@ -566,6 +574,12 @@ def run_once(paths, *, ks: keystore.KeyStore, uploader_factory=None, summarizer=
             result["session_wrap"] = sessionwrap.collect(st, cfg, counts)
             if summarizer is not None:
                 result["summary"] = summarizer(st, cfg)
+            # 수집 인박스 요약(inbox_digest.enabled 일 때만, 2026-11-22) — 수집 글 뒤에 줄 세운다: 서버가 post_url 을 항목으로 바꾸려면
+            # 그 글이 먼저 올라가 있어야 한다. 앱 600초 종료 기준 남은 시간이 220초 미만이면 건너뛴다(모델 150초 + 업로드 여유)
+            from .adapters import inbox_digest
+            result["inbox_digest"] = inbox_digest.collect(
+                st, cfg, counts, paths=paths, exec_runner=exec_runner,
+                process_started=started if process_started is None else min(process_started, started))
             if upload:
                 if up is None:
                     up = (uploader_factory or Uploader)(cfg["server_url"], token,

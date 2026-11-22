@@ -14,6 +14,7 @@ import json
 import os
 import re
 import sys
+import time
 
 from . import (AGENT_VERSION, ai_connection, chat_mcp_bridge, config as _config, contract, error_report, hmacid, keystore,
                osutil, runner, schedule, store as _store)
@@ -552,6 +553,7 @@ def cmd_validate(ctx: Ctx, a) -> int:
 
 
 def cmd_run_once(ctx: Ctx, a) -> int:
+    process_started = time.monotonic()   # 앱의 600초 종료 기준(수집 인박스 요약의 남은 시간 판단) — 연결 확인·토큰 승격 시간도 센다
     resume_connect(ctx)        # 브라우저 연결 확인 대기가 있으면 먼저 마친다(실패해도 이번 실행은 그대로)
     try:
         cfg = _config.load(ctx.paths)
@@ -583,7 +585,8 @@ def cmd_run_once(ctx: Ctx, a) -> int:
             ctx.say(_rotate_message(pr))
     try:
         res = runner.run_once(ctx.paths, ks=ks, uploader_factory=ctx.uploader_factory, summarizer=summarizer,
-                              scheduled=a.scheduled, upload=not a.no_upload)
+                              scheduled=a.scheduled, upload=not a.no_upload, exec_runner=ctx.exec_runner,
+                              process_started=None if a.scheduled else process_started)
     except (runner.RunError, AdapterError, keystore.KeyStoreError, _config.ConfigError) as e:
         ctx.say(f"실행 멈춤: {e}")
         _report(ctx, cfg, ks, "run-once/failed", _failure_code(e))

@@ -11,11 +11,17 @@ export type Post = {
 export type PostList = { ready: boolean; posts: Post[]; counts: { pending: number; kept: number } };
 export type Decided = { item_id: string; state: string; revision: number; decided_at: string | null };
 export type Dropped = { dropped: string[]; skipped: string[] };
+// 인박스 요약(GET /api/collected/digest, 2026-11-22 구현계획 4-3) — digest = PC 가 만든 AI 요약(없으면 null, 근거 아님) · new_since = 요약 뒤 생긴 대기 수 ·
+// by_axis = 축별 대기, 신호 수(모델 없이 서버가 센다)
+export type Theme = { name: string; line: string; item_ids: string[] };
+export type DigestAxis = { code: string | null; title: string | null; item_id: string; pending: number; signal: number };
+export type Digest = { digest: { themes: Theme[]; input_n: number; made_at: string } | null; pending_n: number; new_since: number; by_axis: DigestAxis[] };
 
 const enc = encodeURIComponent;
 export const BULK_MAX = 200;   // 묶음 버림 한 번에(서버 상한과 같다)
 export const collectedApi = {
   list: (state: "pending" | "kept") => getJSON<PostList>(`/api/collected?state=${state}`),
   decide: (id: string, state: string, expected_revision: number) => postJSON<Decided>(`/api/collected/${enc(id)}/decide`, { state, expected_revision }),
+  digest: () => getJSON<Digest>("/api/collected/digest"),
   drop: (ids: string[]) => postJSON<Dropped>("/api/collected/drop", { ids, state: "dropped" }),
 };

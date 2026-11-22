@@ -11,10 +11,11 @@ import { axisCodes } from "../../../shared/axes";
 import { axes, type World } from "../model";
 import { LOADING, ME_EMPTY, OBJ_STATE, OBJ_TEXT } from "../text";
 import { backNav, useMobile } from "../view";
+import { ObjFilters } from "./ObjFilters";
 import { objHref } from "./ObjTab";
 import css from "./Obj.module.css";
 
-type Props = { W: World; def: Def; vq: ObjQuery; setVq: (q: ObjQuery) => void };
+type Props = { W: World; def: Def; vq: ObjQuery; setVq: (q: ObjQuery) => void; hide?: string[] };   // hide = 이 화면이 고정한 필터(걸린 필터 칩에서 뺀다)
 const STATE_COL: ObjCol = { key: "state", label: OBJ_TEXT.state, value_type: "select", options: OBJ_STATE.map(([value, label]) => ({ value, label })) };
 // 글자 필드 값이 https:// 로 시작하면 칸에는 「원문」 한 낱말 링크(새 탭) — 긴 주소를 늘어놓지 않는다. 키 이름이 아니라 값으로 판정한다
 const href = (c: ObjCol, v: unknown) => (c.value_type === "text" && typeof v === "string" && v.startsWith("https://") ? v : "");
@@ -34,7 +35,7 @@ function Chips({ label, vals, cur, pick }: { label: string; vals: { value: strin
   );
 }
 
-export function ObjList({ W, def, vq, setVq }: Props) {
+export function ObjList({ W, def, vq, setVq, hide }: Props) {
   const mobile = useMobile();
   const [draft, setDraft] = useState(vq.q);
   useEffect(() => {
@@ -50,7 +51,8 @@ export function ObjList({ W, def, vq, setVq }: Props) {
   const first = L.data?.pages[0];
   const rc = def.policy?.route ? def.route_counts : undefined;   // 자동 분류 한 줄 — 담을 규칙이 있는 오브젝트만(건수 = /api/state definitions 그대로)
   const head = <><div className="htools"><h3 id="obj-list-h">{def.label}</h3><span className={css.count}>{first ? first.total : ""}</span></div>
-    {rc ? <p className="hint" id="obj-route">{OBJ_TEXT.routed(rc.routed, rc.partial)}</p> : null}</>;
+    {rc ? <p className="hint" id="obj-route">{OBJ_TEXT.routed(rc.routed, rc.partial)}</p> : null}
+    <ObjFilters W={W} def={def} vq={vq} setVq={setVq} first={first} hide={hide} /></>;
   if (!first) return (
     <section className={`paper hlist ${css.wrap}`} aria-labelledby="obj-list-h">{head}
       {L.isError ? <div className="empty">{OBJ_TEXT.fail} <button type="button" className="tertiary" onClick={() => void L.refetch()}>{OBJ_TEXT.retry}</button></div>
@@ -61,7 +63,7 @@ export function ObjList({ W, def, vq, setVq }: Props) {
   const byAx = Object.fromEntries(axes(W).map(a => [a.id, { code: a.code, title: a.title }]));
   const ax = (r: ObjRow) => <AxisCodes codes={axisCodes(r.axes, byAx)} />;
   const cols = first.has_state ? [...first.columns, STATE_COL] : first.columns;
-  const filtered = !!(vq.q.trim() || vq.state || Object.values(vq.f).some(Boolean));
+  const filtered = !!(vq.q.trim() || vq.state || vq.window || vq.verdict || vq.axis || Object.values(vq.f).some(Boolean));
   const sortBy = (k: string, c: ObjCol | null) => setVq({ ...vq, sort: k, dir: first.sort.key === k ? (first.sort.dir === "asc" ? "desc" : "asc") : firstDir(c) });
   const go = () => { backNav.fromList = true; backNav.y = window.scrollY; };
   const th = (k: string, label: string, c: ObjCol | null) => {

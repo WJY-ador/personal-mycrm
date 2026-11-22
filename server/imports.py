@@ -51,6 +51,8 @@ TRANSFORMS = {
     "board-mail/1": {"kind": "activity", "actions": ("read", "save", "send", "reply"), "providers": ("mail",)},
     # 축 한 장(2026-11-18 축 잇기 명세 2.2) — AI 가 이은 축별 한 장. 받는 즉시 기록(unknown·generated·ai, 인용 비적격)·그 축 항목에 axes 연결
     "axis-page/1": {"kind": "self_text"},
+    # 인박스 요약(2026-11-22 구현계획 4-3) — PC 가 대기 수집 글로 만든 AI 요약. 받는 즉시 기록(unknown·generated·ai), 사용자당 최신 하나
+    "inbox-digest/1": {"kind": "self_text"},
 }
 # 앱 하나 자동 연결(2026-11-13 명세 1.2): 허용 규칙은 사용자가 고르지 않는다 — 제품이 지원하는 모든 행동과 변환, 축 0개.
 # 무엇을 모을지는 PC 수집기 설정이 정한다. 비상 끄기는 조직 기능 스위치(imports, activity_imports 등) 그대로
@@ -62,6 +64,9 @@ POLICY_ALL_V2_MARK = "device-policy-all-v2"
 # 축 한 장(axis-page/1)을 모든 장치에 더하는 이관(2026-11-19). v2 는 「전부 허용」 장치만 골라 board-mail/1 없는 장치가 빠졌다.
 # 한 장은 PC 설정(axis_pages.dir, 기본값 없음)을 사용자가 넣어야만 만들어지므로 장치마다 막을 이유가 없다 — 다른 변환은 건드리지 않는다
 POLICY_ALL_V3_MARK = "device-policy-all-v3"
+# 인박스 요약(inbox-digest/1)을 모든 장치에 더하는 이관(2026-11-22, v3 과 같은 꼴). 요약은 PC 설정(inbox_digest.enabled, 기본 false)을
+# 사용자가 켜야만 만들어지므로 장치마다 막을 이유가 없다 — 다른 변환은 건드리지 않는다
+POLICY_ALL_V4_MARK = "device-policy-all-v4"
 ALL_BEFORE_V2 = ("board-likes/1", "self-text/1", "self-summary/1", "session-wrap/1", "collected-post/1", "board-feed/1",
                  "board-reactions/1", "board-mail/1")
 # 이관 대상 = 옛 제품 기본값 그대로인 장치(사용자가 고른 값이 아니다). 2026-11-04(22e373e) 전 기본값과 그 뒤 기본값.
@@ -81,6 +86,17 @@ AXIS_PAGE_SOURCE = "축 한 장"
 AXIS_PAGE_NOTICE = "AI 가 쓴 초안이에요. 판단 근거가 아니에요."
 AXIS_CODE_RE = re.compile(r"^[A-Z0-9-]{1,10}$")   # 축 코드(A, B-1 …) — 수집 글 axis_codes·한 장 axis_code 공용
 MAX_AXIS_CODES = 10
+# 축 한 장 내가 고친 판(2026-11-22 구현계획 2절) = 사용자가 AI 초안을 고친 글(섞인 글). 기록 author unknown·generated·mixed(인용 비적격,
+# 출처 정정 잠금 db.record_provenance_set). generation_meta.axis_page_mine = 축 항목 id. 축마다 최신 하나 — 저장하면 옛 내 판은 휴지통
+AXIS_MINE_KEY = "axis_page_mine"
+AXIS_MINE_SOURCE = "내가 고친 판"
+AXIS_MINE_NOTICE = "내가 고친 판이에요. AI 초안에서 시작한 글이라 판단 근거가 아니에요."
+# 인박스 요약(inbox-digest/1) = AI 가 만든 대기 수집 글 요약. 기록 author unknown·generated·ai(인용 비적격). 구조(주제, 항목 id)는
+# generation_meta.digest. 사용자당 최신 하나 — 새 요약을 받으면 옛 요약 기록은 영구 삭제(db._purge_record). 내 글 목록 등에서 뺀다(db._NOT_DIGEST)
+INBOX_DIGEST = db.DIGEST_TV
+INBOX_DIGEST_SOURCE = "인박스 요약"
+DIGEST_THEMES_MAX, DIGEST_NAME_CP, DIGEST_LINE_CP, DIGEST_URLS_MAX, DIGEST_INPUT_MAX = 7, 20, 80, 60, 60
+DIGEST_URL_CP = 300   # 요약의 post_url 하나(agent/contract.py 와 같은 상한, 2026-11-22 메인)
 SERVER_FEATURES = ("axis_codes",)   # 장치 GET /api/imports/device 의 features — 그 사용자에게 코드 있는 축 항목이 있을 때만 싣는다
 # 수집 글(collected_post) — 서버가 담는 자리 = 사용자 계정의 커스텀 오브젝트 key collected_posts(S2, 자동으로 만들지 않는다).
 # 장치가 덮는 필드 키(DEVICE_FIELDS)만 쓴다. 사용자가 지웠거나 꼴이 다른 필드는 건너뛰고, 필수 둘(COLLECTED_REQUIRED)이 없으면 OBJECT-MISSING.
@@ -170,7 +186,7 @@ COMMON = ("contract", "schema_revision", "source_instance_id", "original_id", "r
           "transform_version", "policy_revision")
 # 종류별 (필수, 선택) 추가 키
 KIND_KEYS = {
-    "self_text": (("body",), ("title", "source_created_at", "source_date", "activity_ref", "generation", "axis_code")),   # axis_code = axis-page/1 만
+    "self_text": (("body",), ("title", "source_created_at", "source_date", "activity_ref", "generation", "axis_code", "digest")),   # axis_code = axis-page/1 만, digest = inbox-digest/1 만
     "activity": (("action", "state", "occurred_on", "observed_on", "provider", "raw_id"), ("people", "axes")),   # observed_on = 필수 키·null 허용
     "self_summary": (("body", "generation"), ("title", "source_created_at", "source_date")),
     "collected_post": (("raw_id", "channel", "collected_on", "title", "state"),
@@ -517,14 +533,55 @@ def validate(req: dict) -> dict:
                 raise _bad("axis_code", "required")
             if not isinstance(req["axis_code"], str) or not AXIS_CODE_RE.match(req["axis_code"]):
                 raise _bad("axis_code", "format")
-            for k in ("activity_ref", "generation"):
+            for k in ("activity_ref", "generation", "digest"):
                 if k in req:
                     raise _bad(k, "unknown_field")
-        elif "axis_code" in req:
-            raise _bad("axis_code", "unknown_field")
+        elif tv == INBOX_DIGEST:   # 인박스 요약 — digest 필수, 활동 연결·생성 신고·축 코드 없음(서버가 AI 요약으로 판정한다)
+            if "digest" not in req:
+                raise _bad("digest", "required")
+            _digest(req["digest"])
+            for k in ("activity_ref", "generation", "axis_code"):
+                if k in req:
+                    raise _bad(k, "unknown_field")
+        else:
+            for k in ("axis_code", "digest"):
+                if k in req:
+                    raise _bad(k, "unknown_field")
     else:
         _generation(kind, req["generation"])
     return req
+
+
+def _digest(d):
+    """inbox-digest/1 의 digest — {themes: [{name ≤20자 한 줄, line ≤80자 한 줄, post_urls: [https URL ≤300자, 1~60]}] 1~7개, input_n 0~60, made_at 시각}.
+    post_urls 는 주제 안, 주제 사이 모두 중복 금지(한 글은 한 주제에만), 전체 60개까지(입력 상한). 이름·문장에 URL·이메일·경로 꼴 금지(_text)."""
+    _exact_keys(d, "digest", ("themes", "input_n", "made_at"))
+    th = d["themes"]
+    if not isinstance(th, list) or not 1 <= len(th) <= DIGEST_THEMES_MAX:
+        raise _bad("digest.themes", f"list_1_to_{DIGEST_THEMES_MAX}")
+    urls = set()
+    for i, t in enumerate(th):
+        path = f"digest.themes[{i}]"
+        _exact_keys(t, path, ("name", "line", "post_urls"))
+        _text(t["name"], f"{path}.name", DIGEST_NAME_CP, single_line=True)
+        _text(t["line"], f"{path}.line", DIGEST_LINE_CP, single_line=True)
+        pu = t["post_urls"]
+        if not isinstance(pu, list) or not 1 <= len(pu) <= DIGEST_URLS_MAX:
+            raise _bad(f"{path}.post_urls", f"list_1_to_{DIGEST_URLS_MAX}")
+        for j, u in enumerate(pu):
+            _post_url(u, f"{path}.post_urls[{j}]")
+            if len(u) > DIGEST_URL_CP:
+                raise _bad(f"{path}.post_urls[{j}]", "too_long")
+            if u in urls:
+                raise _bad(f"{path}.post_urls[{j}]", "duplicate")
+            urls.add(u)
+    if len(urls) > DIGEST_URLS_MAX:
+        raise _bad("digest.themes", f"post_urls_max_{DIGEST_URLS_MAX}")
+    if not _is_int(d["input_n"]) or not 0 <= d["input_n"] <= DIGEST_INPUT_MAX:
+        raise _bad("digest.input_n", f"int_0_to_{DIGEST_INPUT_MAX}")
+    if d["made_at"] is None:
+        raise _bad("digest.made_at", "required")
+    _ts(d["made_at"], "digest.made_at")
 
 
 def projection(req: dict) -> dict:
@@ -546,6 +603,8 @@ def projection(req: dict) -> dict:
         out["activity_ref"] = req.get("activity_ref")
         if "axis_code" in req:
             out["axis_code"] = req["axis_code"]
+        if "digest" in req:
+            out["digest"] = req["digest"]
     else:
         out["generation"] = req["generation"]
     return out
@@ -558,6 +617,8 @@ def _pending_payload(req: dict) -> dict:
         p["activity_ref"] = req.get("activity_ref")
         if "axis_code" in req:
             p["axis_code"] = req["axis_code"]
+        if "digest" in req:
+            p["digest"] = req["digest"]
     else:
         p["generation"] = req["generation"]
     return p
@@ -664,7 +725,7 @@ def _migrate_policy_v2(c) -> int:
     v1 이 아직 안 돈 DB(새 DB·시험)는 v1 이 DEFAULT_POLICY 로 맞추므로 여기서 건너뛴 장치도 결국 같다. 바뀐 장치는 policy_revision +1."""
     if not _one(c, "INSERT INTO schema_marks (key) VALUES (%s) ON CONFLICT (key) DO NOTHING RETURNING key", (POLICY_ALL_V2_MARK,)):
         return 0
-    new = [t for t in TRANSFORMS if t not in ALL_BEFORE_V2]
+    new = [AXIS_PAGE]   # v2 가 처음 더한 변환 그대로(뒤에 늘어난 변환은 v3, v4 … 가 모든 장치에 더한다)
     return len(_all(c, "UPDATE import_streams SET policy = jsonb_set(policy, '{transform_versions}', "
                        "(policy->'transform_versions') || (SELECT COALESCE(jsonb_agg(t), '[]'::jsonb) FROM jsonb_array_elements_text(%s) t "
                        "WHERE NOT (policy->'transform_versions') ? t)), policy_revision=policy_revision+1 "
@@ -684,12 +745,24 @@ def _migrate_policy_v3(c) -> int:
                     (AXIS_PAGE, AXIS_PAGE)))
 
 
+def _migrate_policy_v4(c) -> int:
+    """모든 장치(channel='device')의 transform_versions 에 inbox-digest/1 이 없으면 더한다. POLICY_ALL_V4_MARK 가 없을 때 한 번(v3 과 같은 꼴).
+    다른 변환, 행동, 축은 그대로. 바뀐 장치는 policy_revision +1."""
+    if not _one(c, "INSERT INTO schema_marks (key) VALUES (%s) ON CONFLICT (key) DO NOTHING RETURNING key", (POLICY_ALL_V4_MARK,)):
+        return 0
+    return len(_all(c, "UPDATE import_streams SET policy = jsonb_set(policy, '{transform_versions}', "
+                       "(policy->'transform_versions') || jsonb_build_array(%s::text)), policy_revision=policy_revision+1 "
+                       "WHERE channel='device' AND NOT (policy->'transform_versions') ? %s RETURNING id",
+                    (INBOX_DIGEST, INBOX_DIGEST)))
+
+
 def migrate_device_policy(c) -> int:
     """옛 기본 허용 규칙(OLD_DEFAULT_POLICIES) 그대로인 장치를 DEFAULT_POLICY 로 맞춘다(명세 1.2). POLICY_ALL_MARK 가 없을 때 한 번.
     사용자가 바꾼 규칙은 그대로 둔다. 바뀐 장치는 policy_revision +1(에이전트는 다음 업로드의 POLICY-STALE 에서 새 규칙을 받아
     다시 보낸다, agent/runner.py). 반환 = 바꾼 장치 수."""
     n = _migrate_policy_v2(c)
     n += _migrate_policy_v3(c)
+    n += _migrate_policy_v4(c)
     if not _one(c, "INSERT INTO schema_marks (key) VALUES (%s) ON CONFLICT (key) DO NOTHING RETURNING key", (POLICY_ALL_MARK,)):
         return n
     for old in OLD_DEFAULT_POLICIES:   # 집합 비교 = 서로 포함(@> 와 <@), 축 0개
@@ -1392,8 +1465,11 @@ def axis_overview(uid: str, axis_id: str = "") -> dict:
     {ready, axes: [{id, code, title, keywords, description, counts: {pending, kept, total}, page}]}.
     축 = 분류 역할 오브젝트의 적용·미보관·휴지통 아닌 항목(code 순 → 만든 순 → id). description = 축 항목 본문(원하는 관점).
     counts = 그 축에 붙은 수집 글(휴지통·보관(archive) 제외, total 은 버림 포함). 수집 글 오브젝트가 없으면 0.
-    page = 그 축에 붙은 최신 한 장(axis-page/1 기록, 휴지통·지움 제외) {record_id, title, at, ai: true, notice} 또는 None.
-    axis_id 를 주면 그 축 하나만 돌려주고 page.body(markdown)를 싣는다. 없는·남의 축 id = NOT-FOUND."""
+    page = 그 축에 붙은 최신 한 장(axis-page/1 기록, 휴지통·지움 제외) {record_id, title, at, ai: true, notice, mine, ai_newer} 또는 None.
+    mine = 그 축의 내가 고친 판(2026-11-22 2절) {record_id, updated_at} | None, ai_newer = 내 판보다 늦게 받은 AI 초안이 있다(서버 수신 시각).
+    AI 초안 없이 내 판만 있으면 record_id, title, at 은 내 판, ai false, notice 는 내 판 문구.
+    axis_id 를 주면 그 축 하나만 돌려주고 page.body(markdown — 내 판이 있으면 내 판)와 ai_body(AI 초안 본문 | None)를 싣는다.
+    없는·남의 축 id = NOT-FOUND."""
     axis_id = str(axis_id or "")
     if axis_id and not _ITEM_ID_RE.match(axis_id):
         raise CrmError("ARG-INVALID", "axis_id 는 축 항목 id(i_…)예요.")
@@ -1420,29 +1496,85 @@ def axis_overview(uid: str, axis_id: str = "") -> dict:
                 cnt.setdefault(r["ax"], {})[r["st"]] = r["n"]
         pages = {}
         if ids:
-            for r in _all(c, "SELECT DISTINCT ON (l.target_item_id) l.target_item_id AS ax, r.id, r.title, r.body, "
+            for r in _all(c, "SELECT DISTINCT ON (l.target_item_id) l.target_item_id AS ax, r.id, r.title, r.body, r.created, "
                              "COALESCE(r.source_created_at, r.created) AS at FROM item_links l JOIN records r ON r.user_id=l.user_id "
                              "AND r.id=l.source_record_id WHERE l.user_id=%s AND l.field_key='axes' AND l.target_item_id = ANY(%s) "
                              "AND r.generation_meta->>'transform_version'=%s AND r.deleted_at IS NULL AND r.trashed_at IS NULL "
                              "ORDER BY l.target_item_id, r.created DESC, r.id DESC", (uid, ids, AXIS_PAGE)):
                 pages[r["ax"]] = r
+        mines = _axis_mines(c, uid, ids)
     out = []
     for r in rows:
         d = r["data"] or {}
         kw = d.get("keywords")
         n = cnt.get(r["id"], {})
-        pg = pages.get(r["id"])
-        page = None
-        if pg:
-            page = {"record_id": pg["id"], "title": pg["title"], "at": _j(pg["at"]), "ai": True, "notice": AXIS_PAGE_NOTICE}
-            if axis_id:
-                page["body"] = pg["body"]
+        page = _axis_page_out(pages.get(r["id"]), mines.get(r["id"]), bool(axis_id))
         out.append({"id": r["id"], "code": r["code"], "title": r["title"],
                     "keywords": [k for k in kw if isinstance(k, str)] if isinstance(kw, list) else [],
                     "description": r["body"] or "",
                     "counts": {"pending": n.get("pending", 0), "kept": n.get("kept", 0), "total": sum(n.values())},
                     "page": page})
     return {"ready": True, "axes": out}
+
+
+def _axis_mines(c, uid, axis_ids):
+    """축 항목 id 들 → 그 축의 최신 내가 고친 판 기록(휴지통·지움 제외) {id, title, body, created}."""
+    if not axis_ids:
+        return {}
+    k = f"generation_meta->>'{AXIS_MINE_KEY}'"   # 고정 상수 키(DISTINCT ON 과 ORDER BY 가 같은 식이어야 한다)
+    return {r["ax"]: r for r in _all(c, f"SELECT DISTINCT ON ({k}) {k} AS ax, id, title, body, created FROM records WHERE user_id=%s "
+                                        f"AND {k} = ANY(%s) AND deleted_at IS NULL AND trashed_at IS NULL ORDER BY {k}, created DESC, id DESC",
+                                     (uid, list(axis_ids)))}
+
+
+def _axis_page_out(pg, mn, one):
+    if not pg and not mn:
+        return None
+    head = pg or mn
+    page = {"record_id": head["id"], "title": head["title"], "at": _j(pg["at"] if pg else mn["created"]), "ai": bool(pg),
+            "notice": AXIS_PAGE_NOTICE if pg else AXIS_MINE_NOTICE,
+            "mine": {"record_id": mn["id"], "updated_at": _j(mn["created"])} if mn else None,
+            "ai_newer": bool(pg and mn and pg["created"] > mn["created"])}
+    if one:
+        page["body"] = mn["body"] if mn else pg["body"]
+        page["ai_body"] = pg["body"] if pg else None
+    return page
+
+
+def axis_page_save(uid: str, axis_id: str, markdown, expected_updated_at=None, via: str = "web") -> dict:
+    """축 한 장 내가 고친 판 저장(2026-11-22 구현계획 2절) — 웹 POST /api/axes/<축 id>/page 와 MCP axis_page_save 가 같이 쓴다.
+    markdown = 받은 그대로 저장(다듬지 않음, 사용자 기록 쓰기 상한 db.LIMIT_BODY 바이트, 2026-11-22 메인). expected_updated_at = 지금 내 판의 updated_at
+    (첫 저장은 None·빈 값). 다르면 STALE. 저장마다 새 기록(unknown·generated·mixed, 출처 「내가 고친 판」), 옛 내 판은 휴지통.
+    기록 한도(기록 200)를 쓴다. 반환 {axis: axis_overview(uid, axis_id) 의 axes[0]}."""
+    axis_id = str(axis_id or "")
+    if not _ITEM_ID_RE.match(axis_id):
+        raise CrmError("ARG-INVALID", "axis_id 는 축 항목 id(i_…)예요.")
+    if not isinstance(markdown, str) or not markdown.strip():
+        raise CrmError("ARG-INVALID", "내 판 본문이 비었어요.")
+    if len(markdown.encode("utf-8")) > db.LIMIT_BODY or "\x00" in markdown:
+        raise CrmError("ARG-INVALID", f"내 판 본문은 {db.LIMIT_BODY // 1024} KiB 까지예요.")
+    exp = expected_updated_at or None
+    if exp is not None and not isinstance(exp, str):
+        raise CrmError("ARG-INVALID", "expected_updated_at 은 화면이 받은 mine.updated_at 그대로예요(첫 저장은 null).")
+    with tx() as c:
+        db._daily_gate(c, uid, "records")   # users 행 잠금(첫 저장 경합도 여기서 줄 선다) + 기록 한도
+        oid = db._classify_target(c, uid)
+        ax = oid and _one(c, "SELECT id, code, title FROM items WHERE user_id=%s AND object_id=%s AND id=%s AND revision > 0 "
+                             "AND archived_at IS NULL AND trashed_at IS NULL", (uid, oid, axis_id))
+        if not ax:
+            raise _nf("그 축")
+        cur = _axis_mines(c, uid, [axis_id]).get(axis_id)
+        if exp is None and cur is not None or exp is not None and (cur is None or _j(cur["created"]) != exp):
+            raise CrmError("STALE", "그사이 내 판이 바뀌었어요.", "축 한 장을 새로 열어 다시 고치세요.")
+        rid = db.new_id("r")
+        title = f"{ax['code']}. {ax['title']} — {AXIS_MINE_SOURCE}" if ax["code"] else f"{ax['title']} — {AXIS_MINE_SOURCE}"
+        hist = [{"at": db.now().isoformat(), "by": via, "author_kind": "unknown", "text_process": "generated"}]
+        c.execute("INSERT INTO records (id,user_id,title,body,source,author_kind,text_process,provenance_history,generation_kind,generation_meta) "
+                  "VALUES (%s,%s,%s,%s,%s,'unknown','generated',%s,'mixed',%s)",
+                  (rid, uid, title[:TITLE_MAX_CP], markdown, AXIS_MINE_SOURCE, Jsonb(hist), Jsonb({AXIS_MINE_KEY: axis_id, "via": via})))
+        if cur is not None:
+            db._trash_rows(c, uid, "records", [cur["id"]], "move")   # 축마다 최신 하나 — 옛 내 판은 휴지통(4-5, 복원 기한 안 되살릴 수 있다)
+    return {"axis": axis_overview(uid, axis_id)["axes"][0]}
 
 
 def collected_decisions(authorization: str, since: str = "", limit=None) -> dict:
@@ -1717,7 +1849,9 @@ def _inbox_lock(c, uid, import_id):
 
 
 def _inbox_title(p: dict) -> str:
-    """승인하면 남을 기록 제목 — 보낸 제목, 없으면 본문 첫 줄 앞 40자."""
+    """승인하면 남을 기록 제목 — 보낸 제목, 없으면 본문 첫 줄 앞 40자(인박스 요약은 「인박스 요약」)."""
+    if not (p.get("title") or "").strip() and p.get("transform_version") == INBOX_DIGEST:
+        return INBOX_DIGEST_SOURCE
     return (p.get("title") or "").strip() or p["body"].strip().splitlines()[0][:40]
 
 
@@ -1735,6 +1869,10 @@ def _approve_shape(kind: str, p: dict) -> dict:
         gm = {"transform_version": p["transform_version"], "execution": p["execution"], "reported_by": "device",
               "axis_code": p["axis_code"]}
         return {"ak": "unknown", "tp": "generated", "gk": "ai", "gm": gm, "owner": None, "src": AXIS_PAGE_SOURCE}
+    if kind == "self_text" and p.get("transform_version") == INBOX_DIGEST:
+        # 인박스 요약 = AI 가 만든 값 — 작성자 모름·생성·ai(인용 비적격). 구조(주제, 항목 id)는 승인 때 _digest_store 가 gm 에 더한다
+        gm = {"transform_version": p["transform_version"], "execution": p["execution"], "reported_by": "device"}
+        return {"ak": "unknown", "tp": "generated", "gk": "ai", "gm": gm, "owner": None, "src": INBOX_DIGEST_SOURCE}
     if kind == "self_text":
         return {"ak": "self", "tp": "verbatim", "gk": "unknown", "gm": {}, "owner": None, "src": RECORD_SOURCE_TEXT}
     g = p["generation"]
@@ -1783,7 +1921,73 @@ def _approve_in(c, uid, e, by="user") -> str:
     olds = [r["target_record_id"] for r in _all(c, "SELECT DISTINCT target_record_id FROM import_entries WHERE user_id=%s AND stream_id=%s "
                                                    "AND original_id=%s AND target_record_id IS NOT NULL", (uid, e["stream_id"], e["original_id"]))]
     db._route_hook(c, uid, sorted({rid, *olds}))
+    if p.get("transform_version") == INBOX_DIGEST:
+        _digest_store(c, uid, rid, p["digest"])
     return rid
+
+
+def _digest_store(c, uid, rid, d):
+    """새 요약 기록 rid 에 구조를 싣는다 — post_urls → 그 사용자 수집 글 항목 id(휴지통 아닌 것, 같은 URL 이 여럿이면 먼저 만든 것).
+    없는 URL 은 버리고 수(dropped_urls)를 남긴다. 그 뒤 옛 요약 기록을 영구 삭제한다(사용자당 최신 하나, 2026-11-22 4-5).
+    단 다른 원본(다른 장치)의 현재 판 기록은 남긴다 — 지우면 그 원본의 접수 행이 모두 target 없는 deleted 가 되어 _source_deleted 가
+    purged 로 보고, 그 장치의 다음 요약이 200 deleted 로 끝난다(장치가 둘인 사용자). 읽기(inbox_digest)는 최신 하나만 본다."""
+    od = _collected_obj(c, uid)
+    urls = list(dict.fromkeys(u for t in d["themes"] for u in t["post_urls"]))
+    found = {}
+    if od and urls:
+        for r in _all(c, "SELECT id, data->>'post_url' AS u FROM items WHERE user_id=%s AND object_id=%s AND data->>'post_url' = ANY(%s) "
+                         "AND revision > 0 AND trashed_at IS NULL ORDER BY created_at, id", (uid, od["id"], urls)):
+            found.setdefault(r["u"], r["id"])
+    themes = [{"name": t["name"], "line": t["line"], "item_ids": list(dict.fromkeys(found[u] for u in t["post_urls"] if u in found))}
+              for t in d["themes"]]
+    add = {"digest": {"themes": themes, "input_n": d["input_n"], "made_at": d["made_at"]},
+           "dropped_urls": sum(1 for u in urls if u not in found)}
+    c.execute("UPDATE records SET generation_meta = generation_meta || %s WHERE user_id=%s AND id=%s", (Jsonb(add), uid, rid))
+    for r in _all(c, "SELECT r.id FROM records r WHERE r.user_id=%s AND r.id<>%s AND r.generation_meta->>'transform_version'=%s "
+                     "AND NOT EXISTS (SELECT 1 FROM import_entries e WHERE e.user_id=r.user_id AND e.target_record_id=r.id "
+                     "AND e.is_current_applied)", (uid, rid, INBOX_DIGEST)):
+        db._purge_record(c, uid, r["id"])
+
+
+def inbox_digest(uid: str) -> dict:
+    """인박스 요약 읽기(2026-11-22 구현계획 4-3) — 웹 GET /api/collected/digest 와 MCP inbox_digest_get 이 같이 쓴다. 읽기만.
+    {digest: {themes: [{name, line, item_ids}], input_n, made_at} | null, pending_n, new_since, by_axis: [{code, title, item_id, pending, signal}]}.
+    digest = 최신 요약 기록(휴지통·지움 제외)의 구조 — 주제 이름, 문장은 AI 가 만든 값(근거 아님). item_ids 는 지금 휴지통·보관 아닌 항목만.
+    대기 = 수집 글 오브젝트의 적용·미보관·휴지통 아닌 항목 중 판별 pending(행 없음 포함). pending_n = 대기 수.
+    new_since = 요약에 없는(item_ids 밖) 대기 글 중 요약 기록을 받은 뒤(records.created) 생긴 것(4-5). 요약이 없으면 = pending_n.
+    by_axis = 대기 글이 axes 로 붙은 축 항목(살아 있는 것)별 대기 수와 그중 ai_grade signal 수, 대기 많은 순 → 코드 → id."""
+    with tx() as c:
+        rec = _one(c, "SELECT id, created, generation_meta FROM records WHERE user_id=%s AND generation_meta->>'transform_version'=%s "
+                      "AND deleted_at IS NULL AND trashed_at IS NULL ORDER BY created DESC, id DESC LIMIT 1", (uid, INBOX_DIGEST))
+        od = _collected_obj(c, uid)
+        pend, live, ax = [], set(), []
+        if od:
+            base = ("FROM items i LEFT JOIN collected_states s ON s.user_id=i.user_id AND s.item_id=i.id WHERE i.user_id=%s AND i.object_id=%s "
+                    "AND i.revision > 0 AND i.archived_at IS NULL AND i.trashed_at IS NULL")
+            pend = _all(c, f"SELECT i.id, i.created_at, i.data->>'ai_grade' AS g {base} AND COALESCE(s.state,'pending')='pending'",
+                        (uid, od["id"]))
+            g = (rec["generation_meta"] or {}).get("digest") if rec else None
+            want = {i for t in (g or {}).get("themes", []) for i in t.get("item_ids", [])}
+            if want:
+                live = {r["id"] for r in _all(c, f"SELECT i.id {base} AND i.id = ANY(%s)", (uid, od["id"], list(want)))}
+            sig = {r["id"] for r in pend if r["g"] == "signal"}
+            if pend:
+                ax = _all(c, "SELECT t.id, t.code, t.title, array_agg(DISTINCT l.source_item_id) AS src FROM item_links l JOIN items t "
+                             "ON t.user_id=l.user_id AND t.id=l.target_item_id WHERE l.user_id=%s AND l.field_key=%s "
+                             "AND l.source_item_id = ANY(%s) AND t.revision > 0 AND t.archived_at IS NULL AND t.trashed_at IS NULL "
+                             "GROUP BY t.id, t.code, t.title", (uid, COLLECTED_AXES_FIELD, [r["id"] for r in pend]))
+    g = (rec["generation_meta"] or {}).get("digest") if rec else None
+    digest = None
+    if g:
+        digest = {"themes": [{"name": t["name"], "line": t["line"], "item_ids": [i for i in t["item_ids"] if i in live]}
+                             for t in g["themes"]],
+                  "input_n": g["input_n"], "made_at": g["made_at"]}
+    covered = {i for t in (digest or {}).get("themes", []) for i in t["item_ids"]}
+    new_since = (sum(1 for r in pend if r["id"] not in covered and r["created_at"] > rec["created"]) if digest else len(pend))
+    by_axis = [{"code": a["code"], "title": a["title"], "item_id": a["id"], "pending": len(a["src"]),
+                "signal": sum(1 for i in a["src"] if i in sig)} for a in ax]
+    by_axis.sort(key=lambda a: (-a["pending"], a["code"] is None, a["code"] or "", a["item_id"]))
+    return {"digest": digest, "pending_n": len(pend), "new_since": new_since, "by_axis": by_axis}
 
 
 def _axis_items_by_code(c, uid, codes):

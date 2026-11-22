@@ -153,6 +153,7 @@ class ChatInjectionTests(unittest.TestCase):
             "source_create": {"kind": "url", "name": "주입 출처", "location": "https://example.invalid/x"},
             "source_reflection_save": {"source_id": self.source["id"], "kind": "reaction", "body": "주입된 생각"},
             "collected_post_decide": {"item_id": "i_AAAAAAAAAAA", "state": "dropped"},
+            "axis_page_save": {"axis_id": "i_AAAAAAAAAAA", "markdown": "주입된 한 장", "expected_updated_at": ""},
         }
 
     def finish_turn_and_get_outcomes(self):
@@ -182,7 +183,7 @@ class ChatInjectionTests(unittest.TestCase):
         listed = {a["op"]: a for a in webchat.approvals_list(self.uid, self.sid)}
         # R1: with these params these ops overwrite an existing target, so the card nests {지금, 바뀐 뒤}; the rest create (flat)
         overwriting = {"layout_set", "layout_reset", "display_name_set", "profile_set", "record_attach", "record_title_set",
-                       "collected_post_decide"}
+                       "collected_post_decide", "axis_page_save"}
         for op, row in cards.items():
             with self.subTest(op=op):
                 self.assertEqual(row["kind"], "write")
@@ -479,6 +480,15 @@ class ChatInjectionTests(unittest.TestCase):
         cpost = db.item_propose(uid, cprop["object_id"], 1, None, 0, None, "수집 제목 줄", "", {"channel": "web", "collected_on": "2026-11-12"}, [])
         db.item_decide(uid, cpost["item_id"], 0, cpost["proposal_id"], "apply")
         cid = cpost["item_id"]
+        with db.tx() as c:   # 축 한 장 내 판(2026-11-22) — 분류(축) 오브젝트의 축 항목 하나
+            axo = c.execute("SELECT id, revision FROM object_defs WHERE user_id=%s AND key='axes' AND revision > 0", (uid,)).fetchone()
+        if not axo:
+            aprop = db.definition_propose(uid, None, 0, {"key": "axes", "label": "축", "semantic_kind": "collection", "policy": {}, "fields": []})
+            db.definition_apply(uid, aprop["object_id"], aprop["proposal_id"], 0)
+            axo = {"id": aprop["object_id"], "revision": 1}
+        aitem = db.item_propose(uid, axo["id"], axo["revision"], None, 0, "A", "카드 축", "", {}, [])
+        axid = db.item_decide(uid, aitem["item_id"], 0, aitem["proposal_id"], "apply")["id"]
+        mine_at = lambda: ((imports.axis_overview(uid, axid)["axes"][0]["page"] or {}).get("mine") or {}).get("updated_at") or ""
         me = lambda: db.layout_get(uid)
         rev = lambda: db.record_get(uid, rid)["revision"]
         page = lambda: me()["layout"]["pages"]["me"]
@@ -522,6 +532,8 @@ class ChatInjectionTests(unittest.TestCase):
              "본문", "처음 생각", "본문", "카드 생각"),
             ("collected_post_decide", "collected_post_decide", lambda: {"item_id": cid, "state": "kept"},
              lambda: imports.collected_decide(uid, cid, "dropped"), "판별", "인박스", "판별", "보관"),
+            ("axis_page_save", "axis_page_save", lambda: {"axis_id": axid, "markdown": "카드 내 판", "expected_updated_at": mine_at()},
+             lambda: imports.axis_page_save(uid, axid, "사람 내 판", mine_at() or None), "내 판", "(없음 — AI 초안)", "한 장 본문", "카드 내 판"),
         ]
 
     def test_overwrite_cards_show_current_state_and_go_stale_when_it_changes(self):
@@ -666,7 +678,6 @@ class ChatInjectionTests(unittest.TestCase):
         # the import bucket keeps its own limit and behaviour
         with db.tx() as cur:
             cur.execute("DELETE FROM import_counters WHERE user_id=%s", (self.uid,))
-        import imports
         self.wait_fresh_minute()
         for _ in range(imports.LIMITS[("device", "minute", "request")][0]):
             imports._rate(a)
@@ -729,7 +740,7 @@ class ChatInjectionTests(unittest.TestCase):
         block = re.search(r"export const OP_NAME: Record<string, string> = \{(.*?)\};", text_ts, re.S)
         self.assertIsNotNone(block)
         ui_ops = set(re.findall(r"(?:^|[\s,{])([a-z_]+):\s*\"", block.group(1)))
-        self.assertEqual(len(webchat.CHAT_CARD_OPS), 39)   # 구조 추천(2026-11-18) decide 3 더함
+        self.assertEqual(len(webchat.CHAT_CARD_OPS), 40)   # 구조 추천(2026-11-18) decide 3, 축 한 장 내 판(2026-11-22) write 1 더함
         self.assertEqual(ui_ops, set(webchat.CHAT_CARD_OPS))
         self.assertEqual(agent_ops, set(webchat.CHAT_CARD_OPS))
 

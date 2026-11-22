@@ -57,8 +57,10 @@ TRANSFORMS = {
     "self-summary/1": "self_summary",
     "session-wrap/1": "self_text",   # 세션 정리 묶음(agent/sessionwrap.py) — 서버 승인 뒤 정리 기록
     "axis-page/1": "self_text",      # 축 한 장(agent/axispages.py) — 서버가 AI 초안(인용 불가)으로 받아 그 축 항목에 붙인다
+    "inbox-digest/1": "self_text",   # 수집 인박스 요약(agent/adapters/inbox_digest.py, 2026-11-22) — body = 주제 JSON, AI 값·근거 아님
 }
 AXIS_PAGE_TRANSFORM = "axis-page/1"
+INBOX_DIGEST_TRANSFORM = "inbox-digest/1"
 # 변환 버전별 허용 행동·제공자(activity 만)
 TRANSFORM_ACTIVITY = {
     "board-likes/1": {"actions": ("like",), "providers": ("sns",)},
@@ -85,7 +87,7 @@ KIND_FIELDS = {
     },
     "self_text": {
         "required": ("body",),
-        "optional": ("title", "source_created_at", "source_date", "activity_ref", "generation", "axis_code"),
+        "optional": ("title", "source_created_at", "source_date", "activity_ref", "generation", "axis_code", "digest"),
     },
     "self_summary": {
         "required": ("body", "generation"),
@@ -286,7 +288,8 @@ def validate(obj: dict, *, policy: dict | None = None) -> dict:
     else:
         _validate_self_summary(obj)
 
-    _scan_strings(obj, "", URL_FIELDS.get(kind, ()))
+    # 수집 인박스 요약의 digest 는 _validate_inbox_digest 가 따로 훑는다(post_urls 만 URL 허용, 이름·문장은 전부 차단)
+    _scan_strings({k: v for k, v in obj.items() if k != "digest"}, "", URL_FIELDS.get(kind, ()))
 
     size = len(jcs.canonical_bytes(obj))
     if size > MAX_REQUEST_BYTES:
@@ -471,6 +474,60 @@ def _validate_self_text(o: dict) -> None:
                 raise ContractError("UNKNOWN-FIELD", k)
     elif "axis_code" in o:
         raise ContractError("UNKNOWN-FIELD", "axis_code")
+    if o["transform_version"] == INBOX_DIGEST_TRANSFORM:   # 수집 인박스 요약 — digest 필수, 활동 연결·생성 신고 없음(서버와 같은 판정)
+        for k in ("activity_ref", "generation"):
+            if k in o:
+                raise ContractError("UNKNOWN-FIELD", k)
+        if "digest" not in o:
+            raise ContractError("MISSING", "digest")
+        _validate_inbox_digest(o["digest"])
+    elif "digest" in o:
+        raise ContractError("UNKNOWN-FIELD", "digest")
+
+
+# 수집 인박스 요약(inbox-digest/1, 2026-11-22 명세 4-5) — digest = {themes:[{name, line, post_urls[]}], input_n, made_at}.
+# body 는 사람이 읽는 줄(「이름: 문장」, URL 없음). 서버는 주제 1~7·URL 2000자까지 받는다 — 에이전트는 더 좁게 만든다(3~7·300자)
+DIGEST_MIN_THEMES, DIGEST_MAX_THEMES = 3, 7
+DIGEST_MAX_NAME, DIGEST_MAX_LINE = 20, 80
+DIGEST_MAX_INPUT = 60
+DIGEST_MAX_URL = 300
+
+
+def _digest_url_ok(u) -> bool:
+    return (isinstance(u, str) and u.startswith("https://") and len("https://") < len(u) <= DIGEST_MAX_URL
+            and not any(c.isspace() for c in u))
+
+
+def _validate_inbox_digest(d) -> None:
+    """주제 3~7개, 이름 20자·문장 80자 안의 한 줄(URL·이메일·경로 꼴 금지), post_urls = https 300자 안 1개 이상(이메일·경로 꼴 금지),
+    주제 안·주제 사이 중복 없음(한 글은 한 주제에만, 전체 60 이하), input_n 0~60 정수, made_at 오프셋 있는 시각. 다른 키 금지."""
+    if not isinstance(d, dict) or set(d) != {"themes", "input_n", "made_at"}:
+        raise ContractError("DIGEST", "digest")
+    n = d["input_n"]
+    if not _is_int(n) or not 0 <= n <= DIGEST_MAX_INPUT:
+        raise ContractError("DIGEST", "digest.input_n")
+    if not _valid_datetime(d["made_at"]):
+        raise ContractError("DIGEST", "digest.made_at")
+    themes = d["themes"]
+    if not isinstance(themes, list) or not DIGEST_MIN_THEMES <= len(themes) <= DIGEST_MAX_THEMES:
+        raise ContractError("DIGEST", "digest.themes")
+    seen = set()
+    for i, t in enumerate(themes):
+        at = f"digest.themes[{i}]"
+        if not isinstance(t, dict) or set(t) != {"name", "line", "post_urls"}:
+            raise ContractError("DIGEST", at)
+        for k, lim in (("name", DIGEST_MAX_NAME), ("line", DIGEST_MAX_LINE)):
+            v = t[k]
+            if (not isinstance(v, str) or not v.strip() or len(v) > lim or "\n" in v or "\r" in v or "\x00" in v):
+                raise ContractError("DIGEST", f"{at}.{k}")
+            _scan_strings(v, f"{at}.{k}")
+        urls = t["post_urls"]
+        if (not isinstance(urls, list) or not urls or len(urls) > DIGEST_MAX_INPUT
+                or not all(_digest_url_ok(u) for u in urls) or len(set(urls)) != len(urls) or seen & set(urls)):
+            raise ContractError("DIGEST", f"{at}.post_urls")
+        for j, u in enumerate(urls):
+            _scan_strings(u, f"{at}.post_urls[{j}]", (f"{at}.post_urls[{j}]",))
+        seen |= set(urls)
 
 
 def _validate_self_summary(o: dict) -> None:

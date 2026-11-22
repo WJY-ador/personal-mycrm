@@ -395,6 +395,19 @@ jobs:
           PY
           python server/test_routine_board.py
 
+      # 루틴판 써 보고 고칠 것(2026-11-22) — 인박스 요약 받기(inbox-digest/1, 옛 판 삭제, 계약) · 읽기(대기, 새로, 축별) · 기록 제외 · 정책 이관 v4
+      # · 축 한 장 내가 고친 판(낙관적 잠금, 옛 판 휴지통, ai_newer, 비적격) · 웹 경로 · 견본 대조 · MCP op(합성 PG). 이 단계에만 DATABASE_URL 을 덮어쓴다
+      - name: "④-y2 루틴판 피드백 시험 (test_routine_feedback.py)"
+        env:
+          DATABASE_URL: postgresql://postgres:crm@localhost:5432/crm_test_routine_feedback
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:crm@localhost:5432/crm", autocommit=True) as c:
+              c.execute("CREATE DATABASE crm_test_routine_feedback")
+          PY
+          python server/test_routine_feedback.py
+
       # 웹 「대화」 전송 골격(2026-11-04 PR 1) — 실제 uvicorn(스레드) + 장치 WS + SSE · 세션·턴 멱등·TURN-BUSY·재개·WS 인증·한도·스위치·30일 삭제(합성 PG).
       # 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
       - name: "④-o 웹 대화 시험 (test_webchat.py)"

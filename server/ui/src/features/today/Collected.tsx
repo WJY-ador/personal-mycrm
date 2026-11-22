@@ -9,6 +9,7 @@ import { axisMap, useAxes } from "../../shared/axes";
 import { BULK_GRADES, groups, headline } from "./collectedRows";
 import { collectedApi, type Post } from "./collectedApi";
 import { CollectedCard } from "./CollectedCard";
+import { DigestBox, pickPosts, type Pick } from "./DigestBox";
 import { LOADING } from "./text";
 import { useCollected } from "./useCollected";
 import css from "./Collected.module.css";
@@ -44,15 +45,18 @@ function Group({ grade, label, posts, act, by }: { grade: string; label: string;
 
 export function Collected() {
   const q = useQuery({ queryKey: ["collected", "pending"], queryFn: () => collectedApi.list("pending") });
-  const [linkOnly, setLinkOnly] = useState(false);
+  const dq = useQuery({ queryKey: ["collected", "digest"], queryFn: collectedApi.digest });   // 판별 뒤 refresh() 가 같이 다시 받는다
+  const [linkOnly, setLinkOnly] = useState(false), [pick, setPickRaw] = useState<Pick>(null);
   const act = useCollected();
   const by = axisMap(useAxes().data?.axes);
-  const all = q.data?.posts, posts = all ? (linkOnly ? all.filter(p => !!p.post_url) : all) : undefined;
+  const setPick = (p: Pick) => { setPickRaw(p); act.disarm(); };   // 고른 글이 바뀌면 「전부 버림」 확정 대기를 푼다
+  const all = q.data?.posts, shown = all && linkOnly ? all.filter(p => !!p.post_url) : all, posts = shown ? pickPosts(shown, dq.data, pick) : undefined;
   return (
     <section className={`paper ${css.box}`} id="collected" aria-labelledby="collected-h">
       <div className={css.head}><h3 id="collected-h">수집 인박스</h3>
-        {posts ? <span className={css.headline}>{headline(posts)}</span> : null}
+        {shown ? <span className={css.headline}>{headline(shown)}</span> : null}
         <label className={css.only}><input type="checkbox" checked={linkOnly} onChange={e => { setLinkOnly(e.target.checked); act.disarm(); }} /> 원문 링크 있는 것만</label></div>
+      {q.data?.ready ? <DigestBox d={dq.data} fail={dq.isError} posts={shown} pick={pick} setPick={setPick} /> : null}
       {act.undo ? <p className={`fok ${css.toast}`} role="status">{act.undo.text}{" "}
         <button type="button" className="tertiary" onClick={act.revert}>되돌리기</button></p>
         : <p className="fok" role="status" aria-atomic="true">{act.note}</p>}
@@ -60,7 +64,7 @@ export function Collected() {
       {q.isError && !all ? <LoadFail err={apiErr(q.error)} what="수집 인박스" />
         : !q.data || !posts ? <p className="hint">{LOADING}</p>
         : !q.data.ready ? <p className={`hint ${css.empty}`}>수집 글을 담을 자료 종류(key collected_posts)가 아직 없어요. 만들면 PC가 모은 글이 여기에 쌓여요.</p>
-        : !posts.length ? <p className={`hint ${css.empty}`}>{linkOnly && all!.length ? "원문 링크가 있는 새 수집 글이 없어요." : "새로 들어온 수집 글이 없어요. PC가 모은 글이 여기에 쌓여요."}</p>
+        : !posts.length ? <p className={`hint ${css.empty}`}>{pick && all!.length ? "고른 주제나 축에 남은 대기 글이 없어요." : linkOnly && all!.length ? "원문 링크가 있는 새 수집 글이 없어요." : "새로 들어온 수집 글이 없어요. PC가 모은 글이 여기에 쌓여요."}</p>
         : groups(posts).map(g => <Group key={g.grade || "none"} grade={g.grade} label={g.label} posts={g.posts} act={act} by={by} />)}
       {q.data?.ready ? <Kept n={q.data.counts.kept} act={act} by={by} /> : null}
     </section>

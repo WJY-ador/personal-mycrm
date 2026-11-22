@@ -19,6 +19,8 @@ in_signal, stage = "칸key:값", verdict = 칸 key. 오브젝트 칸 key 는 정
   수집 글 수, 기록 수(중복 제외, 2026-11-21 명세 수정).
 - 상세 sources 는 수집 글 ref 가 먼저, 기록 ref 가 뒤다. inflow, decided 는 소제목 순서대로 모은 뒤 한판 칸 값을 붙인다(중복 제외).
   missing_sources = 상세의 모든 참조 중 지금 보이지 않는 대상(휴지통, 보관, 지움) 수(중복 제외).
+- in.by_axis(2026-11-22) = 최근 7일 들어온 것(버림 제외)이 axes 로 붙은 축 항목(살아 있는 것)별 수. n 많은 순 → 코드 → id, 전부(자르기는 화면).
+- 목록 필터 window, verdict(db.object_list)는 filter_ids 로 같은 날짜, 판정 규칙을 쓴다.
 - AI 값(ai_*)은 판 응답에 넣지 않는다. 상세의 수집 글 ref 만 ai_summary 를 ai: true 와 함께 싣는다 — 근거가 아니다.
 """
 import datetime as _dt
@@ -65,7 +67,7 @@ def verdict_of(v):
 def _empty(ready=False, missing=()):
     col = {"lines": [], "more": 0, "unrefined": 0}
     return {"ready": ready, "missing": list(missing), "last_routine_at": None, "since": {"new_in": 0, "new_decided": 0},
-            "in": {"n_total": 0, "n_7d": 0, "signal_7d": 0, **col},
+            "in": {"n_total": 0, "n_7d": 0, "signal_7d": 0, **col, "by_axis": []},
             "decided": {"total": 0, **{k: 0 for k in VERDICTS}, **col},
             "writing": {"drafts": 0, "cards": []}}
 
@@ -123,6 +125,37 @@ def _day(row, date_field):
         except ValueError:
             pass
     return row["cday"]
+
+
+WINDOW_MAX = 90
+
+
+def filter_ids(c, uid, oid, rows, window=None, verdict=None):
+    """목록 필터(2026-11-22 1절) — rows([{id, data, cday}]) 중 맞는 id 집합. 판 숫자와 같은 규칙:
+    window = 그 오브젝트 날짜(_date_fields 첫 date 칸, 없거나 못 읽으면 created_at KST 날짜)가 KST 오늘 포함 최근 N일(미래 날짜 제외).
+    verdict = (칸 key, 분류) — verdict_of(칸 값) 가 분류와 같은 것."""
+    keep = {r["id"] for r in rows}
+    if window:
+        df = _date_fields(c, uid, [oid]).get(oid)
+        today = _today(c)
+        w0 = today - _dt.timedelta(days=int(window) - 1)
+        keep &= {r["id"] for r in rows if w0 <= _day(r, df) <= today}
+    if verdict:
+        vf, cls = verdict
+        keep &= {r["id"] for r in rows if verdict_of((r["data"] or {}).get(vf)) == cls}
+    return keep
+
+
+def _by_axis(c, uid, ids):
+    """항목들 → 축별 수 [{code, title, item_id, n}] (axes 관계, 살아 있는 축 항목만). n 많은 순 → 코드 → id."""
+    if not ids:
+        return []
+    rows = _all(c, "SELECT t.id, t.code, t.title, count(DISTINCT l.source_item_id) AS n FROM item_links l JOIN items t "
+                   "ON t.user_id=l.user_id AND t.id=l.target_item_id WHERE l.user_id=%s AND l.field_key='axes' "
+                   "AND l.source_item_id = ANY(%s) AND t.revision > 0 AND t.archived_at IS NULL AND t.trashed_at IS NULL "
+                   "GROUP BY t.id, t.code, t.title", (uid, list(ids)))
+    rows.sort(key=lambda r: (-r["n"], r["code"] is None, r["code"] or "", r["id"]))
+    return [{"code": r["code"], "title": r["title"], "item_id": r["id"], "n": r["n"]} for r in rows]
 
 
 def _items(c, uid, oid, ids=None):
@@ -199,7 +232,9 @@ def routine_board(uid, p=None):
         ins = [r for r in ins if r["id"] not in dropped]   # 버림 수집 글은 들어온 것의 숫자, 줄 어디에도 넣지 않는다
         in_day = {r["id"]: _day(r, o_in["date_field"]) for r in ins}
         sf, sv = _pair(p.get("in_signal"))
-        n_7d = sum(1 for d in in_day.values() if week0 <= d <= today)
+        in_7d = [i for i, d in in_day.items() if week0 <= d <= today]
+        n_7d = len(in_7d)
+        by_axis = _by_axis(c, uid, in_7d)
         sig = sum(1 for r in ins if sf and week0 <= in_day[r["id"]] <= today and str((r["data"] or {}).get(sf)) == sv)
 
         # 내가 정한 것
@@ -261,7 +296,8 @@ def routine_board(uid, p=None):
     dl, dm = col(dec_lines)
     return {"ready": True, "missing": [], "last_routine_at": last.isoformat() if last else None,
             "since": {"new_in": new_in, "new_decided": new_dec},
-            "in": {"n_total": len(ins), "n_7d": n_7d, "signal_7d": sig, "lines": il, "more": im, "unrefined": in_unref},
+            "in": {"n_total": len(ins), "n_7d": n_7d, "signal_7d": sig, "lines": il, "more": im, "unrefined": in_unref,
+                   "by_axis": by_axis},
             "decided": {"total": len(decs), **counts, "lines": dl, "more": dm, "unrefined": dec_unref},
             "writing": {"drafts": len(wrs), "cards": cards}}
 

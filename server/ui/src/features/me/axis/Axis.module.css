@@ -29,16 +29,50 @@
   font-size: var(--fs-2); color: var(--ai); background: var(--ai-bg); border-radius: var(--r-3); border: 1px dashed var(--cand-line); }
 .when { font-family: var(--mono); font-size: var(--fs-1); color: var(--muted); }
 .doc { font-size: var(--fs-3); line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); min-width: 0; }
-.doc > * { margin: 0; }
-.doc > * + * { margin-top: var(--sp-5); }
+.doc > *, .seg > * { margin: 0; }
+.doc > * + *, .seg > * + * { margin-top: var(--sp-5); }
 .doc h3 { font-size: var(--fs-4); font-weight: 700; line-height: 1.4; }
 .doc h4 { font-size: var(--fs-3); font-weight: 700; line-height: 1.4; }
-.doc > * + :is(h3, h4) { margin-top: var(--sp-8); }
-.doc > :is(h3, h4) + * { margin-top: var(--sp-3); }
+.seg > * + :is(h3, h4), .doc > * + .seg:has(> :is(h3, h4):first-child) { margin-top: var(--sp-8); }
+.seg > :is(h3, h4) + * { margin-top: var(--sp-3); }
+/* 내 판 머리 — AI 표시 대신(실선, 기본 글색) */
+.mine { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); align-items: baseline; margin: 0 0 var(--sp-5); padding: var(--sp-3) var(--sp-5);
+  font-size: var(--fs-2); color: var(--ink); background: var(--accent-soft); border-radius: var(--r-3); border: 1px solid var(--line); }
+/* 새 AI 초안 — 접힌 한 줄(제목 줄 누르기) */
+.newer { margin: 0 0 var(--sp-5); }
+.newer > summary { cursor: pointer; font-size: var(--fs-2); color: var(--ai); min-height: 28px; display: list-item; }
+.newer > summary:hover { color: var(--accent); }
+.newer[open] { padding: var(--sp-3) var(--sp-5) var(--sp-6); background: var(--ai-bg); border: 1px dashed var(--cand-line); border-radius: var(--r-3); }
+.newer[open] > summary { margin-bottom: var(--sp-4); }
+.newer .ai { margin-bottom: var(--sp-4); padding: 0; border: 0; background: none; }
+/* 본문 = 두 번 눌러 고치기(포커스 + Enter). 겉모양은 글, 마우스 올림·포커스에 옅은 테 */
+.editable { border-radius: var(--r-3); outline-offset: var(--sp-3); cursor: text; }
+.editable:hover { box-shadow: 0 0 0 1px var(--line); }
+.edit { display: flex; flex-direction: column; gap: var(--sp-3); }
+.ehint { margin: 0; font-size: var(--fs-1); color: var(--muted); }
+.ebox { width: 100%; box-sizing: border-box; font-family: var(--mono); font-size: var(--fs-2); line-height: 1.6; padding: var(--sp-5); resize: vertical;
+  border: 1px solid var(--accent); border-radius: var(--r-3); background: var(--card); color: var(--ink); }
+/* 사례 — 위 절 끝의 접힌 묶음. 라벨 | 내용 표 */
+.cases { display: flex; flex-direction: column; gap: var(--sp-3); }
+.case { border: 1px solid var(--line); border-radius: var(--r-3); background: var(--card); padding: var(--sp-3) var(--sp-5); white-space: normal; }
+.case > summary { cursor: pointer; font-size: var(--fs-2); font-weight: 600; min-height: 28px; display: list-item; }
+.case > summary:hover { color: var(--accent); }
+.case[open] > summary { margin-bottom: var(--sp-4); }
+.cl { font-size: var(--fs-1); font-weight: 600; color: var(--muted); margin-right: var(--sp-3); }
+.ct { border-collapse: collapse; width: 100%; font-size: var(--fs-2); }
+.ct th, .ct td { text-align: left; vertical-align: top; padding: var(--sp-3) var(--sp-4); border-top: 1px solid var(--line); }
+.ct th { width: 9.5em; font-weight: 600; color: var(--muted); white-space: nowrap; }
+.ct td { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ct td > * { margin: 0; }
+.cr { margin-top: var(--sp-4); white-space: pre-wrap; }
 .doc blockquote { border-left: 3px solid var(--line); padding-left: var(--sp-5); color: var(--muted); }
 .doc ul { padding-left: var(--sp-7); }
 .doc li + li { margin-top: var(--sp-2); }
 @media (max-width: 767px) {
   .cards { grid-template-columns: minmax(0, 1fr); }
+  .ct th { width: auto; white-space: normal; }
+  .ct tr { display: flex; flex-direction: column; border-top: 1px solid var(--line); }
+  .ct th, .ct td { border-top: 0; padding: var(--sp-2) var(--sp-3); }
+  .ebox { font-size: 16px; }
   .h { font-size: var(--fs-4); }
 }

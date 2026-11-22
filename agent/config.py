@@ -139,6 +139,11 @@ def default_config() -> dict:
         "axis_pages": {
             "dir": None,                     # 절대 경로
         },
+        # 수집 인박스 요약(2026-11-22) — 켜면 feed 의 대기 글 제목 줄·수집기 AI 요약을 summary.cli_path 구독 CLI 로 주제별 요약해
+        # inbox-digest/1 로 올린다. 무인 모델 예외 — 사용자 동의로만 켠다(기본 꺼짐). 조건은 agent/README.md
+        "inbox_digest": {
+            "enabled": False,
+        },
         # 세션 정리(2026-11-04) — 사람이 지정한 세션 정리 폴더(그 바로 아래 YYYY-MM-DD.md)만. 모델 없음. 폴더 목록은 이 PC 설정에만 둔다
         "session_wrap": {
             "enabled": False,
@@ -250,6 +255,10 @@ def validate_config(cfg: dict) -> dict:
         if (not isinstance(ap, dict) or set(ap) - {"dir"}
                 or (d is not None and (not isinstance(d, str) or not os.path.isabs(d) or "\x00" in d))):
             raise ConfigError("axis_pages")   # 경로 값은 메시지에 넣지 않는다
+    idg = cfg.get("inbox_digest")
+    if idg is not None and (not isinstance(idg, dict) or set(idg) - {"enabled"}
+                            or not isinstance(idg.get("enabled", False), bool)):
+        raise ConfigError("inbox_digest")
     tea = cfg.get("token_expires_at")
     if tea is not None and (not isinstance(tea, str) or len(tea) > 40):
         raise ConfigError("token_expires_at")

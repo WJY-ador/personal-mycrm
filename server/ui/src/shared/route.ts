@@ -7,8 +7,12 @@ import { userTabs } from "./tabs";
 export type Route = { tab: string; a: string; b: string; c: string; d: string };
 export type TabDef = { id: string; label: string; view: string; blocks: string[] };
 
+// 주소 뒤 「?쿼리」(목록 필터, 2026-11-22 루틴판 숫자 링크)는 화면 판정에 쓰지 않는다 — 떼고 나눈다. 쿼리는 hashQuery·objFilterOf 로 읽는다
+export const hashPath = (hash: string) => hash.split("?")[0];
+export const hashQuery = (hash: string) => { const i = hash.indexOf("?"); return i < 0 ? "" : hash.slice(i + 1); };
+
 export function parseHash(hash: string): Route {
-  let s = hash.replace(/^#/, "");
+  let s = hashPath(hash).replace(/^#/, "");
   try { s = decodeURIComponent(s); } catch { /* 깨진 % 꼴 — 글자 그대로 */ }
   const p = s.split("/");
   return { tab: p[0] || "", a: p[1] || "", b: p[2] || "", c: p[3] || "", d: p[4] || "" };
@@ -136,3 +140,30 @@ export function resolve(hash: string, S: AppState, lastView: Record<string, stri
 
 // 표시 이름이 비면 이름 관문(다른 화면 대신)
 export const needName = (S: AppState) => !!(S.user && "display_name" in S.user && !S.user.display_name);
+
+// 오브젝트 탭 목록 필터 쿼리(#_me/obj/<key>?window=7&verdict=<칸key>:unknown&axis=<축 item id>&state=pending&f.<칸key>=<값>) → 목록 조건.
+// 모양은 features/me ObjQuery 의 필터 부분과 같다(그 타입이 이것을 쓴다). 모르는 키·틀린 값은 버린다
+export const VERDICTS = ["right", "unknown", "partial", "wrong", "none"] as const;
+export type ObjFilter = { window?: number; verdict?: string; axis?: string; state?: string; f: Record<string, string> };
+export function objFilterOf(query: string): ObjFilter {
+  const u = new URLSearchParams(query), out: ObjFilter = { f: {} };
+  const w = Number(u.get("window"));
+  if (Number.isInteger(w) && w >= 1 && w <= 90) out.window = w;
+  const v = u.get("verdict") || "", [vf, vc] = [v.slice(0, v.lastIndexOf(":")), v.slice(v.lastIndexOf(":") + 1)];
+  if (vf && (VERDICTS as readonly string[]).includes(vc)) out.verdict = v;
+  if (u.get("axis")) out.axis = u.get("axis")!;
+  if (["pending", "kept", "dropped", "not_dropped"].includes(u.get("state") || "")) out.state = u.get("state")!;   // not_dropped = 버림 뺌(루틴판 들어온 것 링크)
+  for (const [k, val] of u) if (k.startsWith("f.") && k.length > 2 && val) out.f[k.slice(2)] = val;
+  return out;
+}
+// 목록 필터 → 주소 쿼리(루틴판 링크가 만든다). 빈 값은 뺀다
+export function objFilterQuery(F: Partial<ObjFilter>): string {
+  const u = new URLSearchParams();
+  if (F.window) u.set("window", String(F.window));
+  if (F.verdict) u.set("verdict", F.verdict);
+  if (F.axis) u.set("axis", F.axis);
+  if (F.state) u.set("state", F.state);
+  for (const [k, v] of Object.entries(F.f || {})) if (v) u.set("f." + k, v);
+  const s = u.toString();
+  return s ? "?" + s : "";
+}

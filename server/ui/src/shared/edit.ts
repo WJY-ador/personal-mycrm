@@ -28,8 +28,10 @@ export function useEditStore(ctx: UiCtx, routing = false, home = "") {
   const at = here();
   const live = edit && edit.at === at ? edit : null;
   const dirty = !!live && live.fields.some(f => live.draft[f.name] !== f.orig);
+  // 이 상자 밖 편집(축 한 장 그 자리 편집, 2026-11-22)이 알리는 「고친 게 있음」 — 미저장 보호에 같이 넣는다
+  const [ext, setExt] = useState(false);
   useEffect(() => { if (edit && edit.at !== at) setEdit(null); }, [edit, at]);
-  useEffect(() => { ctx.setDirty?.(dirty ? at : null); }, [ctx, dirty, at]);
+  useEffect(() => { ctx.setDirty?.(dirty || ext ? at : null); }, [ctx, dirty, ext, at]);
   useEffect(() => () => ctx.setDirty?.(null), [ctx]);
   useEffect(() => { if (ctx.flash) setFlash({ at: here(), text: ctx.flash.text, bad: !!ctx.flash.bad }); }, [ctx.flash]);
   // 결과 문구 — 그 주소(또는 그 아래로 replace 된 주소)에서 처음 한 번 보이고, 다른 곳으로 가면 사라진다
@@ -85,7 +87,7 @@ export function useEditStore(ctx: UiCtx, routing = false, home = "") {
   }
 
   return { edit: live, act: act && act.at === at ? act : null, flash: showFlash ? flash : null,
-    start, set, cancel, save, run, setFlash, editing: (key: string) => live?.key === key };
+    start, set, cancel, save, run, setFlash, editing: (key: string) => live?.key === key, markDirty: setExt };
 }
 
 export type EditStore = ReturnType<typeof useEditStore>;

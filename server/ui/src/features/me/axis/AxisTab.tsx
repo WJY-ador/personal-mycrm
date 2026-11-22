@@ -60,7 +60,7 @@ function Page({ W, id, q, trashOn, md }: { W: World; id: string; q: Q; trashOn: 
         </details>
       </section>
       <AxisDoc a={a} md={md} fail={q.error} />
-      {def ? <ObjList W={W} def={def} vq={vq} setVq={setVq} /> : null}
+      {def ? <ObjList W={W} def={def} vq={vq} setVq={setVq} hide={["axis"]} /> : null}
     </div>
   );
 }

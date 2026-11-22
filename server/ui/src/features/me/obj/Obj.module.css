@@ -8,6 +8,10 @@
 .cl { font-size: var(--fs-1); color: var(--muted); font-weight: 600; min-width: 3.5em; }
 button.chip { min-height: 28px; padding: var(--sp-1) var(--sp-4); background: var(--card); color: var(--ink); border-radius: var(--r-pill); }
 button.chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+/* 걸린 필터 칩 한 줄(목록 머리) — 누르면 풀린다. × 는 뜻 표시(따로 버튼 아님) */
+.on { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin: 0 0 var(--sp-4); }
+.on button.chip { display: inline-flex; align-items: center; gap: var(--sp-2); }
+.x { font-size: var(--fs-2); line-height: 1; }
 .n { font-family: var(--mono); color: var(--muted); }
 button.chip[aria-pressed="true"] .n { color: var(--accent); }
 .tw { overflow-x: auto; -webkit-overflow-scrolling: touch; }
