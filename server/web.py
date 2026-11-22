@@ -654,7 +654,8 @@ TRANSFORM_LABELS = {"board-likes/1": "좋아요 활동(바로 저장)", "self-te
                     # 수집 글(2026-11-12) — 남이 쓴 공개 글은 collected_posts 오브젝트의 항목으로 바로. 골격 활동은 명시된 행동만
                     "collected-post/1": "수집 글(바로 저장, 원문 본문은 PC)", "board-feed/1": "피드 보관 활동(바로 저장)",
                     "board-reactions/1": "반응 활동(바로 저장)", "board-mail/1": "메일 활동(바로 저장, 주소·제목 없음)",
-                    "axis-page/1": "축 한 장(바로 저장, AI 초안·인용 불가)"}
+                    "axis-page/1": "축 한 장(바로 저장, AI 초안·인용 불가)",
+                    "inbox-digest/1": "인박스 요약(바로 저장, AI 값·인용 불가)"}
 # 운영 화면 색 = 토큰 정본(TOKENS_CSS, 밝은 값 — 스크립트 0 이라 data-theme 가 붙지 않는다). 색 글자값을 여기 다시 쓰지 않는다(test_download F).
 _ADMIN_CSS = TOKENS_CSS + """
 body{font-family:system-ui,sans-serif;margin:0;color:var(--ink);background:var(--paper);line-height:1.5;font-size:14px}
@@ -2652,11 +2653,13 @@ class Web:
         return resp
 
     async def api_me_object_list(self, request):
-        """GET ?sort=&dir=asc|desc&q=&state=&cursor=&f.<select 필드 key>=<값> — 오브젝트 탭 목록 보기(50행씩). 모양은 db.object_list."""
+        """GET ?sort=&dir=asc|desc&q=&state=&cursor=&f.<select 필드 key>=<값>&window=<일수>&verdict=<칸key>:<분류> — 오브젝트 탭 목록 보기(50행씩).
+        모양은 db.object_list. window, verdict = 루틴판 숫자에서 연 필터(2026-11-22)."""
         qp, key = request.query_params, request.path_params["key"]
         filters = {k[2:]: v for k, v in qp.items() if k.startswith("f.") and v}
         return await self._core_read(request, lambda uid: db.object_list(uid, key, qp.get("sort", ""), qp.get("dir", ""), qp.get("q", ""),
-                                                                         filters, qp.get("state", ""), qp.get("cursor", "")))
+                                                                         filters, qp.get("state", ""), qp.get("cursor", ""),
+                                                                         qp.get("window", ""), qp.get("verdict", "")))
 
     async def api_me_stats(self, request):
         """GET — 「나」 통계(축 띠·히트맵·종류별·기다리는 결정). 전체 범위, 읽기만. 모양은 db.me_stats."""
@@ -2991,6 +2994,17 @@ class Web:
         """GET /api/axes[?id=<축 항목 id>] — 축 보기(2026-11-18 축 잇기). 모양 = imports.axis_overview(MCP axis_overview_get 과 같은 함수)."""
         aid = request.query_params.get("id", "")
         return await self._core_read(request, lambda uid: imports.axis_overview(uid, aid))
+
+    async def api_axis_page_save(self, request):
+        """POST /api/axes/{item_id}/page {markdown, expected_updated_at(내 판 없으면 null)} — 축 한 장 내가 고친 판 저장(2026-11-22 2절).
+        MCP axis_page_save 와 같은 함수. 반환 {axis: GET /api/axes?id= 의 axes[0]}. 어긋남 = 400 STALE, 없는·남의 축 = 404."""
+        iid = request.path_params["iid"]
+        return await self._core_write(request, "axis_page_save", {"markdown": ((str,), True), "expected_updated_at": ((str,), False)},
+                                      lambda uid, b: imports.axis_page_save(uid, iid, b["markdown"], b.get("expected_updated_at"), via="web"))
+
+    async def api_collected_digest(self, request):
+        """GET — 인박스 요약(2026-11-22 4-3). 모양 = imports.inbox_digest(ui/src/features/today/digest.sample.json, MCP inbox_digest_get 과 같은 함수)."""
+        return await self._core_read(request, imports.inbox_digest)
 
     async def api_axis_context(self, request):
         """GET /api/axes/{item_id}/context — 축 상세(활동·기록·판단·기준 연결)."""
@@ -3690,6 +3704,7 @@ class Web:
             Route("/api/inbox/{iid}/exclude", u("web:inbox_exclude", self.api_inbox_exclude), methods=["POST"]),
             Route("/api/collected", u("web:collected", self.api_collected)),
             Route("/api/collected/drop", u("web:collected_drop", self.api_collected_drop), methods=["POST"]),   # {iid} 보다 먼저
+            Route("/api/collected/digest", u("web:collected_digest", self.api_collected_digest)),   # 인박스 요약(2026-11-22) — 읽기만
             Route("/api/collected/{iid}/decide", u("web:collected_decide", self.api_collected_decide), methods=["POST"]),
             Route("/api/me/aggregate", u("web:me_aggregate", self.api_me_aggregate)),
             Route("/api/me/layout", u("web:me_layout", self.api_me_layout), methods=["GET", "PUT", "DELETE"]),   # PR ①-b 쓰기 예외(이 라우트만)
@@ -3722,6 +3737,7 @@ class Web:
             Route("/api/sources/{sid}/context", u("web:source_context", self.api_source_context)),
             Route("/api/axes", u("web:axes", self.api_axes)),   # 축 보기(2026-11-18) — 읽기만
             Route("/api/axes/{iid}/context", u("web:axis_context", self.api_axis_context)),
+            Route("/api/axes/{iid}/page", u("web:axis_page_save", self.api_axis_page_save), methods=["POST"]),   # 내가 고친 판(2026-11-22)
             Route("/admin", self.admin_index),
             Route("/admin/reauth", self.admin_reauth),
             Route("/admin/setup", self.admin_setup),

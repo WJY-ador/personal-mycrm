@@ -142,6 +142,10 @@
       "examples": [{"item_id": "i_example01", "state": "kept"}, {"item_id": "i_example02", "state": "dropped"}]},
     "axis_overview_get": {"family": "inbox", "tier": "read", "direct": false, "keywords": ["축", "관심 축", "오늘의 축", "축 한 장", "한 장", "축별 수집 글"],
       "examples": [{"axis_id": ""}, {"axis_id": "i_example01"}]},
+    "axis_page_save": {"family": "inbox", "tier": "write", "direct": false, "keywords": ["한 장 고치기", "내가 고친 판", "내 판", "축 한 장 수정", "한 장 저장"],
+      "examples": [{"axis_id": "i_example01", "markdown": "# 고친 한 장", "expected_updated_at": ""}]},
+    "inbox_digest_get": {"family": "inbox", "tier": "read", "direct": false, "keywords": ["인박스 요약", "수집 요약", "요약 주제", "대기 수집 글", "축별 대기"],
+      "examples": [{}]},
 
     "trash_list": {"family": "trash", "tier": "read", "keywords": ["휴지통", "지운 것", "삭제 목록"],
       "examples": [{"kind": ""}]},

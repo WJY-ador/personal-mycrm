@@ -121,7 +121,8 @@ APPROVAL_SESSION_LIMIT = 100
 # 구조 추천(2026-11-18) op 3개의 카드 결과는 다음 턴 approval_outcomes 에 싣지 않는다(버전 분기 없이 항상). PC 앱 0.1.7 이하의
 # agent/chat.py normalize_approval_outcomes 가 모르는 op 를 받으면 턴이 APPROVAL-OUTCOMES 로 실패해, 그 세션의 다음 턴이 전부 막힌다.
 # 카드 생성, 확정, 취소는 서버 쪽이라 그대로다. 지우는 때: 이 op 들을 아는 앱이 최소 지원 버전이 된 뒤.
-OUTCOME_SKIP_OPS = frozenset({"item_route_exclude", "item_route_include", "definition_draft_discard"})
+# 축 한 장 내 판 저장(axis_page_save, 2026-11-22)도 같은 이유로 뺀다 — 0.1.9 이하 앱이 모른다.
+OUTCOME_SKIP_OPS = frozenset({"item_route_exclude", "item_route_include", "definition_draft_discard", "axis_page_save"})
 # F8: /api/chat/mcp 본문(바이트). 기록 쓰기 상한 64 KiB(db.py) + JSON 봉투, 이스케이프 여유. 실제 글 상한은 db 쓰기 상한이 정한다.
 # 바깥 main.BodyLimit(256 KiB)과 PC 브리지 한 줄(256 KiB) 안이다. grant, 동의 경로는 CONSENT_BODY_MAX(4 KiB) 그대로
 CHAT_MCP_BODY_MAX = 96 * 1024
@@ -170,6 +171,7 @@ _WRITE_LABELS = {
     "source_reflection_save": {"source_id": "출처 ID", "kind": "종류", "body": "본문", "reflection_id": "읽고 든 생각 ID",
                                "expected_revision": "판"},
     "collected_post_decide": {"item_id": "수집 글 ID", "state": "판별"},
+    "axis_page_save": {"axis_id": "축 ID", "markdown": "한 장 본문", "expected_updated_at": "내 판 시각"},
 }
 
 
@@ -1259,6 +1261,20 @@ def _cur_record_title(c, uid, n):
     return {"기록 제목": r["title"], "기록 판": r["revision"]}
 
 
+def _cur_axis_page(c, uid, n):
+    """axis_page_save — 그 축의 지금 내가 고친 판을 새 판으로 바꾼다(imports.axis_page_save, 옛 내 판은 휴지통). 내 판이 없으면 AI 초안 표시.
+    없는·휴지통 축 = 대상 없음."""
+    oid = db._classify_target(c, uid)
+    ax = oid and _one(c, "SELECT id, title, trashed_at FROM items WHERE user_id=%s AND object_id=%s AND id=%s AND revision > 0 "
+                         "AND archived_at IS NULL FOR UPDATE", (uid, oid, n.get("axis_id")))
+    if not ax:
+        return _TARGET_MISSING
+    if ax["trashed_at"] is not None:
+        return _TARGET_TRASHED
+    mn = imports._axis_mines(c, uid, [ax["id"]]).get(ax["id"])
+    return {"축": ax["title"], "내 판": mn["body"] if mn else "(없음 — AI 초안)", "내 판 시각": imports._j(mn["created"]) if mn else ""}
+
+
 def _cur_collected(c, uid, n):
     """collected_post_decide — collected_states 의 그 항목 state 를 덮는다(imports.collected_decide, 항목 이력 한 줄·revision +1).
     행이 없으면 인박스(pending). 수집 글이 아닌 항목·없는 항목 = 대상 없음."""
@@ -1338,7 +1354,7 @@ _WRITE_CURRENT = {
     "layout_set": _cur_layout, "layout_reset": _cur_layout, "display_name_set": _cur_display_name,
     "profile_set": _cur_profile, "record_attach": _cur_record_attach, "record_title_set": _cur_record_title,
     "definition_propose": _cur_definition, "item_propose": _cur_item, "person_save": _cur_person,
-    "source_reflection_save": _cur_reflection, "collected_post_decide": _cur_collected,
+    "source_reflection_save": _cur_reflection, "collected_post_decide": _cur_collected, "axis_page_save": _cur_axis_page,
 }
 
 

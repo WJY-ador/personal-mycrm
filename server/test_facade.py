@@ -174,7 +174,7 @@ async def test_catalog():
     assert {o for o, x in facade.OPS.items() if not x.direct} == {"decide_preview"} | (mig - {"migration_receipt_get"}) | pc | LAYOUT_OPS | EDIT_OPS \
         | {"inbox_decide", "collected_post_decide", "axis_overview_get", "export_get", "answer_get"} \
         | {"structure_profile_get", "item_route_exclude", "item_route_include", "definition_draft_discard"} \
-        | {"routine_board_get", "routine_board_detail_get"}
+        | {"routine_board_get", "routine_board_detail_get"} | {"axis_page_save", "inbox_digest_get"}   # 축 한 장 내 판, 인박스 요약(2026-11-22)
     # 겉면 enum = tier 분할(겹침·빠짐 없음)
     enums = {t: tools[t].input_schema["properties"]["op"]["enum"] for t in facade.TIERS}
     allops = [o for t in facade.TIERS for o in enums[t]]

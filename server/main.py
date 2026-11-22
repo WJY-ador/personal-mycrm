@@ -78,6 +78,8 @@ INSTRUCTIONS = """이 서버는 사용자의 「내 판단 대시보드」다. �
 - 구조 추천은 structure_profile_get 을 읽고 definition_propose 로 초안만 쓴다. 이름은 사용자의 말(제목, 머리 줄)에서 고른다. 필드는 데이터에 있는 것만 둔다. 담을 규칙(policy.route)은 route_guide 꼴만 쓴다. 근거는 profile 의 건수와 견본뿐이다. 적용(definition_apply)은 사용자가 말할 때만 한다. 자동 분류 항목(auto_routed)은 사용자의 판단이 아니고 근거로 인용하지 않는다(근거는 원문 기록). 자동 분류 항목 빼기(item_route_exclude)는 사용자가 말할 때만 한다. 잘못 뺀 것은 item_route_include 로 되돌린다.
 - 루틴은 대화에서 한다. 다듬은 줄(front_lines 항목), 한판, 소제목은 item_propose 로 제안만 하고, 적용은 사용자가 말할 때만 한다. 루틴판 숫자는 routine_board_get, 한판 하나는 routine_board_detail_get 으로 읽는다.
 - 다듬은 줄은 원문 뜻을 바꾸지 않고 24자 안쪽으로 쓴다. 원문에 없는 사실을 넣지 않는다.
+- 축 한 장의 내가 고친 판(axis_page_save)은 사용자가 고치라고 말한 글을 그대로 저장한다. 다듬거나 보태지 않는다. AI 초안에서 시작한 글이라 판단 근거가 아니다.
+- 인박스 요약(inbox_digest_get)의 주제 이름, 문장은 AI 가 만든 값이다 — 근거가 아니고 인용하지 않는다.
 - 한계: 이 서버는 호출 중 사용자에게 되물을 수 없다. 등급 나눔은 편의 장치이고, 사용자 확인은 위 규칙 문장으로 지킨다.
 """
 
@@ -1079,13 +1081,35 @@ def collected_post_decide(item_id: Annotated[str, Field(description="수집 글 
 def axis_overview_get(ctx: Context,
                       axis_id: Annotated[str, Field(description="축 항목 ID(i_…). 비우면 축 전체 목록(한 장 본문 없음), 주면 그 축 하나와 한 장 본문")] = "") -> dict:
     """내 축 보기(읽기, 저장 없음) — 축마다 코드, 이름, 키워드, 원하는 관점(description), 붙은 수집 글 수(대기 pending, 보관 kept, 전체 total),
-    최신 한 장(page: record_id, title, at). axis_id 를 주면 page.body(markdown)를 싣는다. 웹 「나 → 축」 화면과 같은 함수다.
+    최신 한 장(page: record_id, title, at, mine, ai_newer). mine = 사용자가 고친 판 {record_id, updated_at} 또는 null, ai_newer = 내 판보다
+    늦게 온 AI 초안이 있다. axis_id 를 주면 page.body(markdown, 내 판이 있으면 내 판)와 ai_body(AI 초안 본문)를 싣는다. 웹 「나 → 축」 화면과 같은 함수다.
     한 장은 AI 가 이은 초안이다(page.notice) — 판단 근거가 아니고 인용하지 않는다. 사용자의 말이나 원문으로 다루지 않는다.
     수집 글 수는 남이 쓴 글의 건수일 뿐 판단이 아니다. 없는·남의 축 id = NOT-FOUND. 반환 {ready, axes: [...]}."""
     return imports.axis_overview(uid_of(ctx), axis_id)
 
 
-COLLECTED_OPS = (collected_post_decide, axis_overview_get)
+def axis_page_save(axis_id: Annotated[str, Field(description="축 항목 ID (i_…, axis_overview_get 의 axes[].id)")],
+                   markdown: Annotated[str, Field(description="저장할 한 장 전체(markdown). 사용자가 고치라고 말한 그대로 — 다듬지 않는다")],
+                   ctx: Context,
+                   expected_updated_at: Annotated[str, Field(description="axis_overview_get 의 page.mine.updated_at 그대로. 내 판이 없으면 빈 문자열")] = "") -> dict:
+    """축 한 장의 내가 고친 판 저장 — 사용자가 한 장을 이렇게 고치라고 말할 때만 부른다. markdown 은 받은 그대로 저장한다(다듬지 않음).
+    축마다 최신 하나 — 저장하면 옛 내 판은 휴지통으로 간다(복원 기한 안 trash_restore). 내 판은 AI 초안에서 시작한 글이라
+    판단 근거, 후보, 꺼내기에 쓰지 않는다. expected_updated_at 이 지금 내 판과 다르면 STALE(axis_overview_get 으로 다시 읽는다).
+    없는·남의 축 = NOT-FOUND. 반환 {axis: axis_overview_get(axis_id) 의 axes[0]}."""
+    uid = uid_of(ctx)
+    db.write_gate("axis_page_save", {"markdown": markdown}, uid, quota=True)
+    return imports.axis_page_save(uid, axis_id, markdown, expected_updated_at or None, via="mcp")
+
+
+def inbox_digest_get(ctx: Context) -> dict:
+    """인박스 요약 읽기(저장 없음) — 오늘 탭 수집 인박스 맨 위 상자와 같은 함수다. 반환 {digest: {themes: [{name, line, item_ids}],
+    input_n, made_at} | null, pending_n(대기 수집 글 수), new_since(요약에 없고 요약 뒤 들어온 대기 수), by_axis: [{code, title, item_id,
+    pending, signal}]}. 요약은 PC 가 대기 수집 글의 제목 줄과 수집기 AI 요약으로 만든 AI 값이다 — 사용자의 말이나 원문 인용으로 다루지 않고,
+    근거로 쓰지 않는다. 수집 글은 남이 쓴 글이라 판단이 아니다. 숫자는 정해진 계산일 뿐이다."""
+    return imports.inbox_digest(uid_of(ctx))
+
+
+COLLECTED_OPS = (collected_post_decide, axis_overview_get, axis_page_save, inbox_digest_get)
 facade.PREVIEWS["inbox_decide"] = imports.inbox_decide_preview   # K2 — shown 빌더(install 이 PREVIEWS = hmac op 대칭을 본다)
 
 
@@ -1182,7 +1206,7 @@ STRUCTURE_OPS = (structure_profile_get, item_route_exclude, item_route_include, 
 def routine_board_get(ctx: Context) -> dict:
     """루틴판 숫자 읽기(저장 없음) — 첫 화면 루틴판(들어온 것, 내가 정한 것, 쓰는 중)과 지난 루틴 뒤 변화. 웹 첫 화면과 같은 함수다.
     반환 {ready, missing(설정 p 키 중 없는 오브젝트), last_routine_at, since:{new_in, new_decided},
-    in:{n_total, n_7d, signal_7d, lines, more, unrefined}, decided:{total, right, unknown, partial, wrong, none, lines, more, unrefined},
+    in:{n_total, n_7d, signal_7d, lines, more, unrefined, by_axis:[{code, title, item_id, n}]}, decided:{total, right, unknown, partial, wrong, none, lines, more, unrefined},
     writing:{drafts, cards}}. lines = 다듬은 줄(front_lines 항목)만, 열마다 최신 3개. unrefined = 다듬은 줄이 없는 대상 수.
     설정은 「나」 배치의 routine 블록 p 다(없으면 ready false — 사용자가 말할 때 layout_set 으로 정한다).
     숫자는 정해진 계산일 뿐 판단이 아니다. AI 값(ai_*)은 싣지 않는다 — AI 값은 근거가 아니다."""

@@ -341,7 +341,7 @@ async def run():
     # ── 6. 장치 features · 정책 이관 ──
     assert imports.device_self("Bearer " + tok)["features"] == ["axis_codes"]
     assert imports.device_self("Bearer " + btok)["features"] == [], "코드 있는 축이 없으면 앱은 옛 경로 그대로"
-    old = [t for t in imports.TRANSFORMS if t != "axis-page/1"]
+    old = [t for t in imports.TRANSFORMS if t not in ("axis-page/1", "inbox-digest/1")]   # inbox-digest/1 = v4(2026-11-22)
     assert set(old) == set(imports.ALL_BEFORE_V2)
     with db.tx() as c:
         c.execute("UPDATE import_streams SET policy=%s WHERE user_id=%s AND id=%s",
