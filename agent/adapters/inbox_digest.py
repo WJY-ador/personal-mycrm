@@ -8,8 +8,9 @@
   입력 집합 해시가 지난 요약과 다름 · KST 하루 6회 이하 · 600초 종료 기준 남은 시간 220초 이상. 하나라도 안 맞으면 skipped 에 이유.
 - 모델 호출은 agent/summary.py 의 격리 그대로(도구·MCP 끔, 1턴, 최소 환경변수, 빈 작업 폴더, 토큰 안 넘김). 시간 제한 150초.
 - 출력 검증(키·길이·post_url 이 입력에 있는지) 실패면 버린다. 한 글이 여러 주제에 있으면 앞 주제에만 둔다.
-- 로컬 계정 식별자 대조(runner.stage_self_text)는 주제 이름·문장만 본다 — post_url 은 이미 수집 글로 가는 남의 글 주소다. 같은 입력이 그날 실패했으면 다시 부르지 않는다(입력이 바뀌면 다시).
-- 올리기 = self_text 장치 업로드, 원본 하나(중복 기준 「inbox-digest」) — 새 요약은 같은 원본의 새 개정. 서버가 post_url 을 항목 id 로 바꾼다.
+- 로컬 계정 식별자 대조(runner.stage_self_text)는 제목·body(주제 이름·문장)만 본다 — post_url 은 이미 수집 글로 가는 남의 글 주소다. 같은 입력이 그날 실패했으면 다시 부르지 않는다(입력이 바뀌면 다시).
+- 올리기 = self_text 장치 업로드, 원본 하나(중복 기준 「inbox-digest」) — 새 요약은 같은 원본의 새 개정. body = 「이름: 문장」 줄(URL 없음),
+  digest 키 = {themes:[{name, line, post_urls}], input_n, made_at}. 서버가 post_url 을 항목 id 로 바꾼다.
 - 실행 결과에는 수와 이유만 남긴다(URL·제목·경로 없음). 시험은 모의 실행기로만 한다.
 """
 from __future__ import annotations
@@ -161,9 +162,9 @@ def parse_output(stdout: bytes, urls: set) -> list:
     return out
 
 
-def body_of(themes: list, input_n: int, made_at: str) -> str:
-    return json.dumps({"themes": themes, "input_n": input_n, "made_at": made_at}, ensure_ascii=False,
-                      sort_keys=True, separators=(",", ":"))
+def body_of(themes: list) -> str:
+    """사람이 읽는 본문 — 주제마다 「이름: 문장」 한 줄. URL 은 넣지 않는다(digest 키에만)."""
+    return "\n".join(f"{t['name']}: {t['line']}" for t in themes)
 
 
 def _day_count(st, day: str) -> int:
@@ -249,16 +250,17 @@ def collect(st, cfg: dict, counts: dict | None = None, *, paths, exec_runner=Non
     except DigestError as e:
         return fail(str(e))
     made_at = now().replace(microsecond=0).isoformat()
-    fields = {"title": TITLE, "body": body_of(themes, len(items), made_at), "source_created_at": made_at}
+    digest = {"themes": themes, "input_n": len(items), "made_at": made_at}
+    fields = {"title": TITLE, "body": body_of(themes), "source_created_at": made_at, "digest": digest}
     try:
-        contract._validate_inbox_digest(fields["body"])
+        contract._validate_inbox_digest(digest)
     except contract.ContractError:
         return fail("contract")
     counts = counts if counts is not None else _runner.new_counts()
     execution = "attended" if cfg.get("_execution") == "attended" else "unattended"
     ok = _runner.stage_self_text(st, cfg, adapter_name=ADAPTER, dedupe_key=DEDUPE_KEY, fingerprint=DEDUPE_KEY,
                                  kind="self_text", transform_version=TRANSFORM, execution=execution, fields=fields,
-                                 counts=counts, identity_text=" ".join(t["name"] + " " + t["line"] for t in themes))
+                                 counts=counts, identity_text=fields["title"] + " " + fields["body"])
     if not ok:
         return fail("not-staged")                       # 격리(로컬 계정 식별자 대조 등) — 같은 날 같은 입력은 다시 부르지 않는다
     st.cursor_set(SHA_CURSOR, sha)

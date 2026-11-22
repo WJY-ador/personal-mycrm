@@ -239,8 +239,8 @@ def stage_self_text(st, cfg, *, adapter_name: str, dedupe_key: str, fingerprint:
                     transform_version: str, execution: str, fields: dict, counts: dict,
                     identity_text: str | None = None) -> bool:
     """자기 글·요약 요청 생성. 로컬 추가 대조(규칙 7): 매핑에 있는 계정 식별자가 본문에 있으면 격리.
-    identity_text = 대조할 글(기본 제목+본문). 수집 인박스 요약은 post_url(이미 collected-post/1 로 가는 남의 글 주소,
-    작성자 핸들이 들어 있다)을 빼고 주제 이름·문장만 대조한다."""
+    identity_text = 대조할 글(기본 제목+본문). 수집 인박스 요약은 digest 의 post_url(이미 collected-post/1 로 가는 남의 글 주소,
+    작성자 핸들이 들어 있다)을 대조하지 않는다 — 기본값(제목+본문 = 주제 이름·문장)을 그대로 넘긴다."""
     text = identity_text if identity_text is not None else " ".join(str(fields.get(k) or "") for k in ("title", "body"))
     for acct in st.known_account_ids():
         if len(acct) >= 3 and acct in text:

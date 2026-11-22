@@ -193,16 +193,17 @@ class InputAndIsolationTest(_Base):
         self.assertTrue(r["staged"], r)
 
     def test_full_inbox_with_long_urls_stages(self):
-        # 실제 글 주소 길이(150자 안팎) 60개 — body 가 8000자를 넘어도 이 변환의 상한(32KB) 안이라 올라간다
+        # 실제 글 주소 길이(150자 안팎) 60개 — URL 은 digest 키에만 실려 body 상한(8000자)과 무관하고 요청 상한(64KB) 안
         write_jsonl(self.feed, [row(i, post_url=f"https://example.invalid/feed/update/{i:04d}-" + "x" * 110)
                                 for i in range(60)])
         r = self.go(MockCLI())
         self.assertTrue(r["staged"], r)
-        body = self.pending()[0]["body"]
-        self.assertGreater(len(body), 8000)
+        obj = self.pending()[0]
+        self.assertEqual(sum(len(t["post_urls"]) for t in obj["digest"]["themes"]), 60)
+        self.assertNotIn("https://", obj["body"])
 
     def test_handle_in_post_url_not_quarantined(self):
-        # likes·reactions 로 아는 계정의 핸들이 수집 글 주소에 들어 있어도 요약은 격리하지 않는다(대조는 주제 이름·문장만)
+        # likes·reactions 로 아는 계정의 핸들이 수집 글 주소에 들어 있어도 요약은 격리하지 않는다(대조는 제목·body 만)
         self.st.person_hmac("hn_SynthSpace01", "synthnet", "synth_handle", lambda: "h" * 64)
         write_jsonl(self.feed, [row(i, post_url=f"https://example.invalid/@synth_handle/post/{i}") for i in range(3)])
         r = self.go(MockCLI())
@@ -233,7 +234,7 @@ class OutputTest(_Base):
     def staged_body(self):
         p = self.pending()
         self.assertEqual(len(p), 1)
-        return p[0], json.loads(p[0]["body"])
+        return p[0], p[0]["digest"]
 
     def test_success_shape(self):
         write_jsonl(self.feed, [row(i) for i in range(5)])
@@ -247,6 +248,8 @@ class OutputTest(_Base):
         self.assertTrue(body["made_at"].endswith("+09:00"))
         self.assertEqual({u for t in body["themes"] for u in t["post_urls"]},
                          {f"https://example.invalid/idg/{i}" for i in range(5)})
+        # body = 사람이 읽는 줄(「이름: 문장」, URL 없음)
+        self.assertEqual(obj["body"], "\n".join(f"{t['name']}: {t['line']}" for t in body["themes"]))
         contract.validate(obj)
 
     def test_new_digest_is_new_revision_of_same_original(self):
@@ -285,7 +288,7 @@ class OutputTest(_Base):
                {"name": "다", "line": "셋", "post_urls": [u[3], u[0]]}]
         r = self.go(MockCLI([(0, out_of(dup), b"")]))
         self.assertTrue(r["staged"], r)
-        self.assertEqual([t["post_urls"] for t in json.loads(self.pending()[0]["body"])["themes"]],
+        self.assertEqual([t["post_urls"] for t in self.pending()[0]["digest"]["themes"]],
                          [[u[0], u[1]], [u[2]], [u[3]]])
         self.st.conn.execute("UPDATE revisions SET status='accepted' WHERE status='pending'")
         write_jsonl(self.feed, rows(0, 1, 2, 3, 4))
@@ -309,55 +312,58 @@ class OutputTest(_Base):
 
 
 class ContractTest(unittest.TestCase):
-    def obj(self, body=None, **over):
-        b = body if body is not None else {"themes": [{"name": f"주제{k}", "line": "가짜 한 문장",
-                                                     "post_urls": [f"https://example.invalid/{k}"]} for k in range(3)],
-                                           "input_n": 3, "made_at": "2026-11-22T09:00:00+09:00"}
+    def digest(self, **over):
+        d = {"themes": [{"name": f"주제{k}", "line": "가짜 한 문장", "post_urls": [f"https://example.invalid/{k}"]}
+                        for k in range(3)], "input_n": 3, "made_at": "2026-11-22T09:00:00+09:00"}
+        d.update(over)
+        return d
+
+    def obj(self, digest=None, **over):
         o = {"contract": "canon-inbox/1", "schema_revision": 2, "source_instance_id": "is_" + "5a" * 12,
              "original_id": "o_" + "1" * 32, "revision": "v_" + "2" * 32, "previous_revision": None,
              "execution": "attended", "policy_revision": 1, "kind": "self_text", "transform_version": "inbox-digest/1",
-             "title": "인박스 요약", "body": b if isinstance(b, str) else json.dumps(b, ensure_ascii=False)}
+             "title": "인박스 요약", "body": "주제0: 가짜 한 문장\n주제1: 가짜 한 문장\n주제2: 가짜 한 문장",
+             "digest": digest if digest is not None else self.digest()}
         o.update(over)
-        return o
+        return {k: v for k, v in o.items() if v is not ...}
 
     def code(self, obj, code, field):
         with self.assertRaises(ContractError) as cm:
             contract.validate(obj)
         self.assertEqual((cm.exception.code, cm.exception.field), (code, field))
 
-    def body(self, **over):
-        b = json.loads(self.obj()["body"])
-        b.update(over)
-        return b
-
-    def test_valid_and_url_only_here(self):
+    def test_valid_and_digest_only_here(self):
         contract.validate(self.obj())
-        # URL 예외는 inbox-digest/1 body 뿐 — 다른 self_text 는 그대로 차단
-        self.code(self.obj(transform_version="self-text/1", body="본문 https://example.invalid/x"), "BLOCKED-URL", "body")
+        self.code(self.obj(digest=...), "MISSING", "digest")
+        self.code(self.obj(transform_version="self-text/1"), "UNKNOWN-FIELD", "digest")
+        # body 는 다른 self_text 와 같다 — URL 차단, 8000자 상한
+        self.code(self.obj(body="본문 https://example.invalid/x"), "BLOCKED-URL", "body")
+        self.code(self.obj(body="가" * 8001), "TOO-LONG", "body")
 
     def test_shape(self):
-        t = self.body()["themes"]
-        self.code(self.obj("not json"), "DIGEST", "body")
-        self.code(self.obj(self.body(extra=1)), "DIGEST", "body")
-        self.code(self.obj(self.body(input_n=61)), "DIGEST", "body.input_n")
-        self.code(self.obj(self.body(made_at="2026-11-22T09:00:00")), "DIGEST", "body.made_at")
-        self.code(self.obj(self.body(themes=t[:2])), "DIGEST", "body.themes")
-        self.code(self.obj(self.body(themes=[dict(t[0], name="가" * 21)] + t[1:])), "DIGEST", "body.themes[0].name")
-        self.code(self.obj(self.body(themes=[dict(t[0], line="줄\n바꿈")] + t[1:])), "DIGEST", "body.themes[0].line")
-        self.code(self.obj(self.body(themes=[dict(t[0], line="www.example.com 참고")] + t[1:])), "BLOCKED-URL",
-                  "body.themes[0].line")
-        self.code(self.obj(self.body(themes=[dict(t[0], post_urls=["http://example.invalid/x"])] + t[1:])), "DIGEST",
-                  "body.themes[0].post_urls")
-        self.code(self.obj(self.body(themes=[dict(t[0], post_urls=[])] + t[1:])), "DIGEST", "body.themes[0].post_urls")
-        self.code(self.obj(self.body(themes=[t[0], dict(t[1], post_urls=t[0]["post_urls"]), t[2]])), "DIGEST",
-                  "body.themes[1].post_urls")                                    # 한 글은 한 주제에만
-        self.code(self.obj(self.body(themes=[dict(t[0], post_urls=["https://example.invalid/" + "a" * 300])] + t[1:])),
-                  "DIGEST", "body.themes[0].post_urls")
+        t = self.digest()["themes"]
+        d = self.digest
+        self.code(self.obj("not object"), "DIGEST", "digest")
+        self.code(self.obj(d(extra=1)), "DIGEST", "digest")
+        self.code(self.obj(d(input_n=61)), "DIGEST", "digest.input_n")
+        self.code(self.obj(d(made_at="2026-11-22T09:00:00")), "DIGEST", "digest.made_at")
+        self.code(self.obj(d(themes=t[:2])), "DIGEST", "digest.themes")
+        self.code(self.obj(d(themes=[dict(t[0], name="가" * 21)] + t[1:])), "DIGEST", "digest.themes[0].name")
+        self.code(self.obj(d(themes=[dict(t[0], line="줄\n바꿈")] + t[1:])), "DIGEST", "digest.themes[0].line")
+        self.code(self.obj(d(themes=[dict(t[0], line="www.example.com 참고")] + t[1:])), "BLOCKED-URL",
+                  "digest.themes[0].line")
+        self.code(self.obj(d(themes=[dict(t[0], post_urls=["http://example.invalid/x"])] + t[1:])), "DIGEST",
+                  "digest.themes[0].post_urls")
+        self.code(self.obj(d(themes=[dict(t[0], post_urls=[])] + t[1:])), "DIGEST", "digest.themes[0].post_urls")
+        self.code(self.obj(d(themes=[t[0], dict(t[1], post_urls=t[0]["post_urls"]), t[2]])), "DIGEST",
+                  "digest.themes[1].post_urls")                                  # 한 글은 한 주제에만
+        self.code(self.obj(d(themes=[dict(t[0], post_urls=["https://example.invalid/" + "a" * 300])] + t[1:])),
+                  "DIGEST", "digest.themes[0].post_urls")
         self.code(self.obj(generation={"method": "none"}), "UNKNOWN-FIELD", "generation")
         self.code(self.obj(axis_code="A"), "UNKNOWN-FIELD", "axis_code")
-        # 이메일·경로 꼴은 body 에서도 막는다
-        self.code(self.obj(self.body(themes=[dict(t[0], post_urls=["https://example.invalid/x a@b.example.com"])] + t[1:])),
-                  "DIGEST", "body.themes[0].post_urls")
+        # post_urls 도 이메일·경로 꼴은 막는다(URL 꼴만 허용)
+        self.code(self.obj(d(themes=[dict(t[0], post_urls=["https://example.invalid/u/a@b.example.com"])] + t[1:])),
+                  "BLOCKED-EMAIL", "digest.themes[0].post_urls[0]")
 
 
 class ConfigTest(unittest.TestCase):

@@ -87,7 +87,7 @@ KIND_FIELDS = {
     },
     "self_text": {
         "required": ("body",),
-        "optional": ("title", "source_created_at", "source_date", "activity_ref", "generation", "axis_code"),
+        "optional": ("title", "source_created_at", "source_date", "activity_ref", "generation", "axis_code", "digest"),
     },
     "self_summary": {
         "required": ("body", "generation"),
@@ -288,10 +288,8 @@ def validate(obj: dict, *, policy: dict | None = None) -> dict:
     else:
         _validate_self_summary(obj)
 
-    url_ok = URL_FIELDS.get(kind, ())
-    if tv == INBOX_DIGEST_TRANSFORM:
-        url_ok = url_ok + ("body",)   # 수집 인박스 요약 body 의 post_urls — 꼴은 _validate_inbox_digest 가 봤다. 이메일·경로 꼴은 그대로 차단
-    _scan_strings(obj, "", url_ok)
+    # 수집 인박스 요약의 digest 는 _validate_inbox_digest 가 따로 훑는다(post_urls 만 URL 허용, 이름·문장은 전부 차단)
+    _scan_strings({k: v for k, v in obj.items() if k != "digest"}, "", URL_FIELDS.get(kind, ()))
 
     size = len(jcs.canonical_bytes(obj))
     if size > MAX_REQUEST_BYTES:
@@ -443,9 +441,7 @@ def _validate_dates_pair(o: dict) -> None:
 
 
 def _validate_self_common(o: dict) -> None:
-    # 수집 인박스 요약 body 는 URL 목록이 든 JSON 이라 글자 상한을 바이트 상한(32KB)까지 올린다(바이트 상한은 그대로)
-    max_cp = DIGEST_MAX_BODY_CODEPOINTS if o.get("transform_version") == INBOX_DIGEST_TRANSFORM else MAX_BODY_CODEPOINTS
-    _check_text(o["body"], "body", max_cp, MAX_BODY_BYTES, allow_null=False)
+    _check_text(o["body"], "body", MAX_BODY_CODEPOINTS, MAX_BODY_BYTES, allow_null=False)
     if "title" in o:
         # 제목은 있으면 비지 않은 한 줄 문자열(null 금지 — 없으면 키를 뺀다)
         _check_text(o["title"], "title", MAX_TITLE_CODEPOINTS, MAX_TITLE_CODEPOINTS * 4, allow_null=False)
@@ -478,19 +474,23 @@ def _validate_self_text(o: dict) -> None:
                 raise ContractError("UNKNOWN-FIELD", k)
     elif "axis_code" in o:
         raise ContractError("UNKNOWN-FIELD", "axis_code")
-    if o["transform_version"] == INBOX_DIGEST_TRANSFORM:
+    if o["transform_version"] == INBOX_DIGEST_TRANSFORM:   # 수집 인박스 요약 — digest 필수, 활동 연결·생성 신고 없음(서버와 같은 판정)
         for k in ("activity_ref", "generation"):
             if k in o:
                 raise ContractError("UNKNOWN-FIELD", k)
-        _validate_inbox_digest(o["body"])
+        if "digest" not in o:
+            raise ContractError("MISSING", "digest")
+        _validate_inbox_digest(o["digest"])
+    elif "digest" in o:
+        raise ContractError("UNKNOWN-FIELD", "digest")
 
 
-# 수집 인박스 요약(inbox-digest/1, 2026-11-22) — body = JSON 문자열 {themes:[{name, line, post_urls[]}], input_n, made_at}
+# 수집 인박스 요약(inbox-digest/1, 2026-11-22 명세 4-5) — digest = {themes:[{name, line, post_urls[]}], input_n, made_at}.
+# body 는 사람이 읽는 줄(「이름: 문장」, URL 없음). 서버는 주제 1~7·URL 2000자까지 받는다 — 에이전트는 더 좁게 만든다(3~7·300자)
 DIGEST_MIN_THEMES, DIGEST_MAX_THEMES = 3, 7
 DIGEST_MAX_NAME, DIGEST_MAX_LINE = 20, 80
 DIGEST_MAX_INPUT = 60
-DIGEST_MAX_URL = 300                     # 요약에 싣는 post_url 길이 상한(60개 × 300 + 주제 글이 body 상한 안에 들게)
-DIGEST_MAX_BODY_CODEPOINTS = MAX_BODY_BYTES
+DIGEST_MAX_URL = 300
 
 
 def _digest_url_ok(u) -> bool:
@@ -498,26 +498,22 @@ def _digest_url_ok(u) -> bool:
             and not any(c.isspace() for c in u))
 
 
-def _validate_inbox_digest(body: str) -> None:
-    """주제 3~7개, 이름 20자·문장 80자 안의 한 줄(URL·이메일·경로 꼴 금지), post_urls = https 300자 안 1개 이상,
-    주제 안·주제 사이 중복 없음(한 글은 한 주제에만), input_n 0~60 정수, made_at 오프셋 있는 시각. 다른 키 금지."""
-    try:
-        d = json.loads(body)
-    except ValueError:
-        raise ContractError("DIGEST", "body") from None
+def _validate_inbox_digest(d) -> None:
+    """주제 3~7개, 이름 20자·문장 80자 안의 한 줄(URL·이메일·경로 꼴 금지), post_urls = https 300자 안 1개 이상(이메일·경로 꼴 금지),
+    주제 안·주제 사이 중복 없음(한 글은 한 주제에만, 전체 60 이하), input_n 0~60 정수, made_at 오프셋 있는 시각. 다른 키 금지."""
     if not isinstance(d, dict) or set(d) != {"themes", "input_n", "made_at"}:
-        raise ContractError("DIGEST", "body")
+        raise ContractError("DIGEST", "digest")
     n = d["input_n"]
     if not _is_int(n) or not 0 <= n <= DIGEST_MAX_INPUT:
-        raise ContractError("DIGEST", "body.input_n")
+        raise ContractError("DIGEST", "digest.input_n")
     if not _valid_datetime(d["made_at"]):
-        raise ContractError("DIGEST", "body.made_at")
+        raise ContractError("DIGEST", "digest.made_at")
     themes = d["themes"]
     if not isinstance(themes, list) or not DIGEST_MIN_THEMES <= len(themes) <= DIGEST_MAX_THEMES:
-        raise ContractError("DIGEST", "body.themes")
+        raise ContractError("DIGEST", "digest.themes")
     seen = set()
     for i, t in enumerate(themes):
-        at = f"body.themes[{i}]"
+        at = f"digest.themes[{i}]"
         if not isinstance(t, dict) or set(t) != {"name", "line", "post_urls"}:
             raise ContractError("DIGEST", at)
         for k, lim in (("name", DIGEST_MAX_NAME), ("line", DIGEST_MAX_LINE)):
@@ -529,6 +525,8 @@ def _validate_inbox_digest(body: str) -> None:
         if (not isinstance(urls, list) or not urls or len(urls) > DIGEST_MAX_INPUT
                 or not all(_digest_url_ok(u) for u in urls) or len(set(urls)) != len(urls) or seen & set(urls)):
             raise ContractError("DIGEST", f"{at}.post_urls")
+        for j, u in enumerate(urls):
+            _scan_strings(u, f"{at}.post_urls[{j}]", (f"{at}.post_urls[{j}]",))
         seen |= set(urls)
 
 
