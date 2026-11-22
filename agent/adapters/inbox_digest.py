@@ -2,11 +2,13 @@
 
 - 입력 = feed JSONL(설정 adapters.feed.input_path)의 대기(status pending) 수집 글 중 수집일 최신 60개. 항목마다
   {post_url, 제목 줄, 작성자 표시, 채널, 축 코드, ai.grade, ai.summary} 만. 원문 본문은 보내지 않는다(제목 줄 = 첫 줄, 수집 글과 같은 규칙).
-  글자 값(제목 줄·작성자 표시·AI 요약)은 항목당 합쳐 300자 안으로 자른다. post_url 은 대조용이라 자르지 않는다(https 아니면 항목을 뺀다).
+  글자 값(제목 줄·작성자 표시·AI 요약)은 항목당 합쳐 300자 안으로 자른다. post_url 은 대조용이라 자르지 않는다 — https 가 아니거나
+  300자를 넘거나 계약 차단 꼴(이메일·경로)이 있으면 항목을 뺀다. feed 어댑터가 보내지 않는 source(채널 매핑 null·없음)도 뺀다.
 - 돌릴 조건(전부): inbox_digest.enabled true(기본 false, 동의) · summary.cli_path 있음 · 장치 허용 규칙에 inbox-digest/1 ·
   입력 집합 해시가 지난 요약과 다름 · KST 하루 6회 이하 · 600초 종료 기준 남은 시간 220초 이상. 하나라도 안 맞으면 skipped 에 이유.
 - 모델 호출은 agent/summary.py 의 격리 그대로(도구·MCP 끔, 1턴, 최소 환경변수, 빈 작업 폴더, 토큰 안 넘김). 시간 제한 150초.
-- 출력 검증(키·길이·post_url 이 입력에 있는지) 실패면 버린다. 같은 입력이 그날 실패했으면 다시 부르지 않는다(입력이 바뀌면 다시).
+- 출력 검증(키·길이·post_url 이 입력에 있는지) 실패면 버린다. 한 글이 여러 주제에 있으면 앞 주제에만 둔다.
+- 로컬 계정 식별자 대조(runner.stage_self_text)는 주제 이름·문장만 본다 — post_url 은 이미 수집 글로 가는 남의 글 주소다. 같은 입력이 그날 실패했으면 다시 부르지 않는다(입력이 바뀌면 다시).
 - 올리기 = self_text 장치 업로드, 원본 하나(중복 기준 「inbox-digest」) — 새 요약은 같은 원본의 새 개정. 서버가 post_url 을 항목 id 로 바꾼다.
 - 실행 결과에는 수와 이유만 남긴다(URL·제목·경로 없음). 시험은 모의 실행기로만 한다.
 """
@@ -56,6 +58,14 @@ def _cut(text, limit: int):
     return text[:limit].rstrip() if isinstance(text, str) else None
 
 
+def _url_sendable(url: str) -> bool:
+    try:
+        contract._scan_strings(url, "post_url", ("post_url",))
+    except contract.ContractError:
+        return False
+    return True
+
+
 def build_inputs(feed_path: str, chans: dict) -> list:
     """feed JSONL → 대기 글 항목(수집일 최신 MAX_INPUT 개). 같은 id 는 파일의 마지막 행(feed 어댑터와 같다). 결정적."""
     last, order = {}, []
@@ -76,18 +86,20 @@ def build_inputs(feed_path: str, chans: dict) -> list:
         url = _collected.post_url_of(row.get("post_url"))
         day = _collected.kst_date(row.get("collected_at"))
         title = _collected.title_of(row.get("text"))
-        if url is None or day is None or title is None:
-            continue
         src = row.get("source")
         channel = chans.get(src if isinstance(src, str) else "")
+        # feed 어댑터가 서버로 보내는 글만(채널 매핑 null·없음 = 보내지 않는 source). URL 은 계약 차단 꼴(이메일·경로)이 없고 300자 안
+        if (url is None or day is None or title is None or channel not in contract.CHANNELS
+                or len(url) > contract.DIGEST_MAX_URL or not _url_sendable(url)):
+            continue
         ai = _collected.ai_of(row) or {}
         title = _cut(title, TITLE_LIMIT)
         author = _cut(_collected.clean_text(row.get("author"), contract.MAX_AUTHOR_DISPLAY, single_line=True),
                       AUTHOR_LIMIT)
         left = ITEM_TEXT_LIMIT - len(title) - len(author or "")
         summary = _cut(ai.get("summary"), max(0, left)) or None
-        item = {"post_url": url, "title": title, "author": author, "channel": channel if channel in contract.CHANNELS
-                else None, "axes": _collected.axis_codes_of(row), "grade": ai.get("grade"), "summary": summary}
+        item = {"post_url": url, "title": title, "author": author, "channel": channel,
+                "axes": _collected.axis_codes_of(row), "grade": ai.get("grade"), "summary": summary}
         picked.append(((day, pos), item))
     picked.sort(key=lambda x: x[0], reverse=True)
     return [it for _, it in picked[:MAX_INPUT]]
@@ -125,7 +137,7 @@ def parse_output(stdout: bytes, urls: set) -> list:
     themes = inner["themes"]
     if not contract.DIGEST_MIN_THEMES <= len(themes) <= contract.DIGEST_MAX_THEMES:
         raise DigestError("theme-count")
-    out = []
+    out, seen = [], set()
     for t in themes:
         if not isinstance(t, dict) or set(t) != {"name", "line", "post_urls"}:
             raise DigestError("theme-shape")
@@ -141,7 +153,11 @@ def parse_output(stdout: bytes, urls: set) -> list:
             raise DigestError("blocked-text")
         if not pu or not all(isinstance(u, str) and u in urls for u in pu):
             raise DigestError("unknown-url")
-        out.append({"name": name, "line": line, "post_urls": list(dict.fromkeys(pu))})
+        keep = [u for u in dict.fromkeys(pu) if u not in seen]    # 한 글은 앞 주제에만 — body 길이와 글 수 칩을 맞춘다
+        if not keep:
+            raise DigestError("empty-theme")
+        seen.update(keep)
+        out.append({"name": name, "line": line, "post_urls": keep})
     return out
 
 
@@ -176,7 +192,7 @@ def collect(st, cfg: dict, counts: dict | None = None, *, paths, exec_runner=Non
         return out
     feed = (cfg.get("adapters") or {}).get("feed") or {}
     feed_path = feed.get("input_path")
-    if not (isinstance(feed_path, str) and os.path.isabs(os.path.expanduser(feed_path))):
+    if not feed.get("enabled") or not (isinstance(feed_path, str) and os.path.isabs(os.path.expanduser(feed_path))):
         out["skipped"] = "no-feed"
         return out
     try:
@@ -185,8 +201,8 @@ def collect(st, cfg: dict, counts: dict | None = None, *, paths, exec_runner=Non
         out["skipped"] = "feed-unreadable"
         return out
     out["input_n"] = len(items)
-    if not items:
-        out["skipped"] = "empty"
+    if len(items) < contract.DIGEST_MIN_THEMES:
+        out["skipped"] = "too-few"                     # 주제 3개(한 글은 한 주제에만)를 만들 수 없다 — 모델을 부르지 않는다
         return out
     sha = input_sha(items)
     if st.cursor_get(SHA_CURSOR) == sha:
@@ -242,7 +258,7 @@ def collect(st, cfg: dict, counts: dict | None = None, *, paths, exec_runner=Non
     execution = "attended" if cfg.get("_execution") == "attended" else "unattended"
     ok = _runner.stage_self_text(st, cfg, adapter_name=ADAPTER, dedupe_key=DEDUPE_KEY, fingerprint=DEDUPE_KEY,
                                  kind="self_text", transform_version=TRANSFORM, execution=execution, fields=fields,
-                                 counts=counts)
+                                 counts=counts, identity_text=" ".join(t["name"] + " " + t["line"] for t in themes))
     if not ok:
         return fail("not-staged")                       # 격리(로컬 계정 식별자 대조 등) — 같은 날 같은 입력은 다시 부르지 않는다
     st.cursor_set(SHA_CURSOR, sha)

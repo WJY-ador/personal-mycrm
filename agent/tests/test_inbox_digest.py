@@ -31,7 +31,11 @@ def row(i, **over):
 
 
 def themes_for(urls, n=3):
-    return [{"name": f"주제 {k}", "line": f"가짜 주제 {k} 한 문장", "post_urls": urls[k::n] or urls[:1]} for k in range(n)]
+    return [{"name": f"주제 {k}", "line": f"가짜 주제 {k} 한 문장", "post_urls": urls[k::n]} for k in range(n)]
+
+
+def rows(*ids, **over):
+    return [row(i, **over) for i in ids]
 
 
 def out_of(themes, fence=False):
@@ -91,7 +95,7 @@ class _Base(unittest.TestCase):
 class GateTest(_Base):
     def test_default_off(self):
         self.assertFalse(_config.default_config()["inbox_digest"]["enabled"])
-        write_jsonl(self.feed, [row(1)])
+        write_jsonl(self.feed, rows(1, 2, 3))
         cli = MockCLI()
         c = self.cfg()
         c.pop("inbox_digest")
@@ -100,7 +104,7 @@ class GateTest(_Base):
         self.assertEqual(cli.calls, [])
 
     def test_needs_cli_policy_feed(self):
-        write_jsonl(self.feed, [row(1)])
+        write_jsonl(self.feed, rows(1, 2, 3))
         cli = MockCLI()
         summ = dict(self.cfg()["summary"], cli_path=None)
         self.assertEqual(self.go(cli, self.cfg(summary=summ))["skipped"], "no-cli")
@@ -108,12 +112,16 @@ class GateTest(_Base):
         adapters = self.cfg()["adapters"]
         adapters["feed"] = dict(adapters["feed"], input_path=None)
         self.assertEqual(self.go(cli, self.cfg(adapters=adapters))["skipped"], "no-feed")
-        write_jsonl(self.feed, [row(1, status="kept"), row(2, status="dropped")])
-        self.assertEqual(self.go(cli)["skipped"], "empty")
+        write_jsonl(self.feed, [row(1, status="kept"), row(2, status="dropped"), row(3), row(4)])
+        self.assertEqual(self.go(cli)["skipped"], "too-few")               # 대기 2건 — 주제 3개를 만들 수 없다
+        adapters = self.cfg()["adapters"]
+        adapters["feed"] = dict(adapters["feed"], enabled=False)
+        write_jsonl(self.feed, rows(1, 2, 3))
+        self.assertEqual(self.go(cli, self.cfg(adapters=adapters))["skipped"], "no-feed")   # feed 를 끄면 요약도 안 한다
         self.assertEqual(cli.calls, [])
 
     def test_time_left(self):
-        write_jsonl(self.feed, [row(1)])
+        write_jsonl(self.feed, rows(1, 2, 3))
         cli = MockCLI()
         clock = lambda: 1000.0   # noqa: E731
         r = self.go(cli, process_started=1000.0 - 381, clock=clock)      # 남은 219초
@@ -126,21 +134,21 @@ class GateTest(_Base):
     def test_daily_limit_and_unchanged(self):
         cli = MockCLI()
         for i in range(6):
-            write_jsonl(self.feed, [row(j) for j in range(i + 1)])
-            self.st.conn.execute("UPDATE revisions SET status='accepted'")   # 앞 판 접수(전송 대기 아님)
+            write_jsonl(self.feed, [row(j) for j in range(i + 3)])
+            self.st.conn.execute("UPDATE revisions SET status='accepted' WHERE status='pending'")   # 앞 판 접수(전송 대기 아님)
             r = self.go(cli)
             self.assertTrue(r["staged"], r)
         self.assertEqual(self.go(cli)["skipped"], "unchanged")              # 입력 그대로 → 부르지 않는다
-        self.st.conn.execute("UPDATE revisions SET status='accepted'")
+        self.st.conn.execute("UPDATE revisions SET status='accepted' WHERE status='pending'")
         write_jsonl(self.feed, [row(j) for j in range(9)])
         self.assertEqual(self.go(cli)["skipped"], "daily-limit")
         self.assertEqual(len(cli.calls), 6)
 
     def test_waiting_previous_not_called(self):
-        write_jsonl(self.feed, [row(1)])
+        write_jsonl(self.feed, rows(1, 2, 3))
         cli = MockCLI()
         self.assertTrue(self.go(cli)["staged"])
-        write_jsonl(self.feed, [row(1), row(2)])
+        write_jsonl(self.feed, rows(1, 2, 3, 4))
         self.assertEqual(self.go(cli)["skipped"], "waiting")              # 앞 요약이 아직 전송 대기
         self.assertEqual(len(cli.calls), 1)
 
@@ -170,8 +178,43 @@ class InputAndIsolationTest(_Base):
         self.assertEqual(items[1]["channel"], "reddit")
         self.assertEqual(items[1]["axes"], ["C"])
 
+    def test_only_rows_feed_would_send(self):
+        adapters = self.cfg()["adapters"]
+        adapters["feed"] = dict(adapters["feed"], channels={"reddit": "reddit", "hidden": None})
+        write_jsonl(self.feed, rows(1, 2, 3) + [
+            row(10, source="hidden"),                                      # 채널 매핑 null = 보내지 않는 source
+            row(11, source="unknown-src"),                                 # 매핑 없음
+            row(12, post_url="https://example.invalid/@who@mail.example.com/p"),   # 계약 이메일 꼴
+            row(13, post_url="https://example.invalid/" + "a" * 300)])     # 300자 넘음
+        cli = MockCLI()
+        r = self.go(cli, self.cfg(adapters=adapters))
+        urls = {it["post_url"] for it in json.loads(cli.calls[0]["stdin"].decode("utf-8"))}
+        self.assertEqual(urls, {f"https://example.invalid/idg/{i}" for i in (1, 2, 3)})
+        self.assertTrue(r["staged"], r)
+
+    def test_full_inbox_with_long_urls_stages(self):
+        # 실제 글 주소 길이(150자 안팎) 60개 — body 가 8000자를 넘어도 이 변환의 상한(32KB) 안이라 올라간다
+        write_jsonl(self.feed, [row(i, post_url=f"https://example.invalid/feed/update/{i:04d}-" + "x" * 110)
+                                for i in range(60)])
+        r = self.go(MockCLI())
+        self.assertTrue(r["staged"], r)
+        body = self.pending()[0]["body"]
+        self.assertGreater(len(body), 8000)
+
+    def test_handle_in_post_url_not_quarantined(self):
+        # likes·reactions 로 아는 계정의 핸들이 수집 글 주소에 들어 있어도 요약은 격리하지 않는다(대조는 주제 이름·문장만)
+        self.st.person_hmac("hn_SynthSpace01", "synthnet", "synth_handle", lambda: "h" * 64)
+        write_jsonl(self.feed, [row(i, post_url=f"https://example.invalid/@synth_handle/post/{i}") for i in range(3)])
+        r = self.go(MockCLI())
+        self.assertTrue(r["staged"], r)
+        self.st.conn.execute("UPDATE revisions SET status='accepted' WHERE status='pending'")
+        write_jsonl(self.feed, rows(4, 5, 6))
+        named = lambda u: (0, out_of([dict(t, line="synth_handle 의 글") for t in themes_for(u)]), b"")   # noqa: E731
+        r = self.go(MockCLI([named]))
+        self.assertEqual(r["failed"], "not-staged")                    # 주제 문장에 들어가면 격리
+
     def test_isolation(self):
-        write_jsonl(self.feed, [row(1)])
+        write_jsonl(self.feed, rows(1, 2, 3))
         cli = MockCLI()
         self.go(cli)
         call = cli.calls[0]
@@ -207,11 +250,11 @@ class OutputTest(_Base):
         contract.validate(obj)
 
     def test_new_digest_is_new_revision_of_same_original(self):
-        write_jsonl(self.feed, [row(1)])
+        write_jsonl(self.feed, rows(1, 2, 3))
         self.go(MockCLI())
         first = self.pending()[0]
-        self.st.conn.execute("UPDATE revisions SET status='accepted'")
-        write_jsonl(self.feed, [row(1), row(2)])
+        self.st.conn.execute("UPDATE revisions SET status='accepted' WHERE status='pending'")
+        write_jsonl(self.feed, rows(1, 2, 3, 4))
         self.go(MockCLI())
         second = [o for o in self.pending() if o["revision"] != first["revision"]][0]
         self.assertEqual(second["original_id"], first["original_id"])
@@ -235,17 +278,32 @@ class OutputTest(_Base):
             self.assertEqual((r["staged"], r["failed"]), (False, reason.strip()), reason)
         self.assertEqual(self.pending(), [])
 
+    def test_url_kept_in_first_theme_only(self):
+        write_jsonl(self.feed, rows(0, 1, 2, 3))
+        u = [f"https://example.invalid/idg/{i}" for i in range(4)]
+        dup = [{"name": "가", "line": "하나", "post_urls": [u[0], u[1]]}, {"name": "나", "line": "둘", "post_urls": [u[1], u[2]]},
+               {"name": "다", "line": "셋", "post_urls": [u[3], u[0]]}]
+        r = self.go(MockCLI([(0, out_of(dup), b"")]))
+        self.assertTrue(r["staged"], r)
+        self.assertEqual([t["post_urls"] for t in json.loads(self.pending()[0]["body"])["themes"]],
+                         [[u[0], u[1]], [u[2]], [u[3]]])
+        self.st.conn.execute("UPDATE revisions SET status='accepted' WHERE status='pending'")
+        write_jsonl(self.feed, rows(0, 1, 2, 3, 4))
+        allsame = [{"name": "가", "line": "하나", "post_urls": [u[0]]}, {"name": "나", "line": "둘", "post_urls": [u[0]]},
+                   {"name": "다", "line": "셋", "post_urls": [u[1]]}]
+        self.assertEqual(self.go(MockCLI([(0, out_of(allsame), b"")]))["failed"], "empty-theme")
+
     def test_failed_input_not_retried_same_day(self):
-        write_jsonl(self.feed, [row(1)])
+        write_jsonl(self.feed, rows(1, 2, 3))
         cli = MockCLI([(1, b"", b"boom"), (0, b"not json", b""), subprocess.TimeoutExpired("x", 150)])
         self.assertEqual(self.go(cli)["failed"], "exit-1")
         self.assertEqual(self.go(cli)["skipped"], "failed-today")
         self.assertEqual(len(cli.calls), 1)
-        write_jsonl(self.feed, [row(1), row(2)])                       # 입력이 바뀌면 다시 부른다
+        write_jsonl(self.feed, rows(1, 2, 3, 4))                       # 입력이 바뀌면 다시 부른다
         self.assertEqual(self.go(cli)["failed"], "output-not-json")
-        write_jsonl(self.feed, [row(3)])
+        write_jsonl(self.feed, rows(5, 6, 7))
         self.assertEqual(self.go(cli)["failed"], "timeout")
-        write_jsonl(self.feed, [row(4)])
+        write_jsonl(self.feed, rows(8, 9, 10))
         self.assertEqual(self.go(MockCLI([(1, b"", b"Not logged in")]))["failed"], "login")
         self.assertEqual(self.pending(), [])
 
@@ -291,6 +349,10 @@ class ContractTest(unittest.TestCase):
         self.code(self.obj(self.body(themes=[dict(t[0], post_urls=["http://example.invalid/x"])] + t[1:])), "DIGEST",
                   "body.themes[0].post_urls")
         self.code(self.obj(self.body(themes=[dict(t[0], post_urls=[])] + t[1:])), "DIGEST", "body.themes[0].post_urls")
+        self.code(self.obj(self.body(themes=[t[0], dict(t[1], post_urls=t[0]["post_urls"]), t[2]])), "DIGEST",
+                  "body.themes[1].post_urls")                                    # 한 글은 한 주제에만
+        self.code(self.obj(self.body(themes=[dict(t[0], post_urls=["https://example.invalid/" + "a" * 300])] + t[1:])),
+                  "DIGEST", "body.themes[0].post_urls")
         self.code(self.obj(generation={"method": "none"}), "UNKNOWN-FIELD", "generation")
         self.code(self.obj(axis_code="A"), "UNKNOWN-FIELD", "axis_code")
         # 이메일·경로 꼴은 body 에서도 막는다
@@ -337,7 +399,7 @@ class RunOnceTest(unittest.TestCase):
         self.th.cleanup()
 
     def test_digest_uploads_after_posts(self):
-        write_jsonl(self.feed, [row(i) for i in range(3)])
+        write_jsonl(self.feed, rows(0, 1, 2))
         cli = MockCLI()
         res = runner.run_once(self.th.paths, ks=self.ks, exec_runner=cli)
         self.assertTrue(res["inbox_digest"]["staged"], res["inbox_digest"])
@@ -353,7 +415,7 @@ class RunOnceTest(unittest.TestCase):
         cfg = _config.load(self.th.paths)
         cfg["inbox_digest"] = {"enabled": False}
         _config.save(self.th.paths, cfg)
-        write_jsonl(self.feed, [row(1)])
+        write_jsonl(self.feed, rows(1, 2, 3))
         cli = MockCLI()
         res = runner.run_once(self.th.paths, ks=self.ks, exec_runner=cli)
         self.assertEqual(res["inbox_digest"]["skipped"], "disabled")

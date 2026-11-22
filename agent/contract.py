@@ -443,7 +443,9 @@ def _validate_dates_pair(o: dict) -> None:
 
 
 def _validate_self_common(o: dict) -> None:
-    _check_text(o["body"], "body", MAX_BODY_CODEPOINTS, MAX_BODY_BYTES, allow_null=False)
+    # 수집 인박스 요약 body 는 URL 목록이 든 JSON 이라 글자 상한을 바이트 상한(32KB)까지 올린다(바이트 상한은 그대로)
+    max_cp = DIGEST_MAX_BODY_CODEPOINTS if o.get("transform_version") == INBOX_DIGEST_TRANSFORM else MAX_BODY_CODEPOINTS
+    _check_text(o["body"], "body", max_cp, MAX_BODY_BYTES, allow_null=False)
     if "title" in o:
         # 제목은 있으면 비지 않은 한 줄 문자열(null 금지 — 없으면 키를 뺀다)
         _check_text(o["title"], "title", MAX_TITLE_CODEPOINTS, MAX_TITLE_CODEPOINTS * 4, allow_null=False)
@@ -487,16 +489,18 @@ def _validate_self_text(o: dict) -> None:
 DIGEST_MIN_THEMES, DIGEST_MAX_THEMES = 3, 7
 DIGEST_MAX_NAME, DIGEST_MAX_LINE = 20, 80
 DIGEST_MAX_INPUT = 60
+DIGEST_MAX_URL = 300                     # 요약에 싣는 post_url 길이 상한(60개 × 300 + 주제 글이 body 상한 안에 들게)
+DIGEST_MAX_BODY_CODEPOINTS = MAX_BODY_BYTES
 
 
 def _digest_url_ok(u) -> bool:
-    return (isinstance(u, str) and u.startswith("https://") and len("https://") < len(u) <= MAX_POST_URL
+    return (isinstance(u, str) and u.startswith("https://") and len("https://") < len(u) <= DIGEST_MAX_URL
             and not any(c.isspace() for c in u))
 
 
 def _validate_inbox_digest(body: str) -> None:
-    """주제 3~7개, 이름 20자·문장 80자 안의 한 줄(URL·이메일·경로 꼴 금지), post_urls = https 1개 이상·중복 없음,
-    input_n 0~60 정수, made_at 오프셋 있는 시각. 다른 키 금지."""
+    """주제 3~7개, 이름 20자·문장 80자 안의 한 줄(URL·이메일·경로 꼴 금지), post_urls = https 300자 안 1개 이상,
+    주제 안·주제 사이 중복 없음(한 글은 한 주제에만), input_n 0~60 정수, made_at 오프셋 있는 시각. 다른 키 금지."""
     try:
         d = json.loads(body)
     except ValueError:
@@ -511,6 +515,7 @@ def _validate_inbox_digest(body: str) -> None:
     themes = d["themes"]
     if not isinstance(themes, list) or not DIGEST_MIN_THEMES <= len(themes) <= DIGEST_MAX_THEMES:
         raise ContractError("DIGEST", "body.themes")
+    seen = set()
     for i, t in enumerate(themes):
         at = f"body.themes[{i}]"
         if not isinstance(t, dict) or set(t) != {"name", "line", "post_urls"}:
@@ -522,8 +527,9 @@ def _validate_inbox_digest(body: str) -> None:
             _scan_strings(v, f"{at}.{k}")
         urls = t["post_urls"]
         if (not isinstance(urls, list) or not urls or len(urls) > DIGEST_MAX_INPUT
-                or not all(_digest_url_ok(u) for u in urls) or len(set(urls)) != len(urls)):
+                or not all(_digest_url_ok(u) for u in urls) or len(set(urls)) != len(urls) or seen & set(urls)):
             raise ContractError("DIGEST", f"{at}.post_urls")
+        seen |= set(urls)
 
 
 def _validate_self_summary(o: dict) -> None:
