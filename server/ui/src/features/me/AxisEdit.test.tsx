@@ -91,3 +91,21 @@ test("내 판 = 「내가 고친 판」 머리(AI 표시 없음) · 새 AI 초�
   await click(nw.querySelector("summary"));
   expect(nw.open).toBe(true);
 });
+
+test("미저장 보호 — 내용이 바뀐 동안만 setDirty(주소), 되돌리면 풀림 · Esc 로 닫으면 풀림", async () => {
+  const { setDirty } = await import("../../test/showMe");
+  const el = await showMe("#_me/axis/a1", meState());
+  await key(doc(el), "Enter");
+  const ta = el.querySelector("#axis-edit textarea") as HTMLTextAreaElement;
+  expect(ta.id).toBe("hedit-input");
+  setDirty.mockClear();
+  await type(ta, "바뀐 글");
+  expect(setDirty).toHaveBeenLastCalledWith("#_me/axis/a1");
+  await type(ta, MD);
+  expect(setDirty).toHaveBeenLastCalledWith(null);
+  await type(ta, "또 바뀐 글");
+  expect(setDirty).toHaveBeenLastCalledWith("#_me/axis/a1");
+  await key(ta, "Escape");
+  expect(setDirty).toHaveBeenLastCalledWith(null);
+  expect(posts()).toEqual([]);
+});

@@ -1,9 +1,10 @@
 // 한 장 그 자리 편집(2026-11-22 구현계획 2절) — 버튼 없이: 저장 = Cmd/Ctrl+Enter 또는 바깥 누르기(바뀌었을 때만), 취소 = Esc.
 // 상자엔 저장 원문 그대로(「# 」 머리 포함, 사례 변환 전). 저장은 받은 그대로 「내가 고친 판」 하나로(다듬지 않음).
 // 한글 조합 중(isComposing) 키는 무시. 끝내기는 한 번만(Esc 뒤 바깥 누르기, 저장 뒤 바깥 누르기가 겹치지 않게).
-// 충돌(STALE)·실패 = 쓰던 글을 상자에 그대로 두고 한 줄 안내.
+// 충돌(STALE)·실패 = 쓰던 글을 상자에 그대로 두고 한 줄 안내. 바뀐 동안 = 미저장 보호(edit 스토어 markDirty), 상자 id = hedit-input(「계속 편집」이 돌아온다).
 import { useEffect, useRef, useState } from "react";
 import { apiErr } from "../../../shared/api";
+import { useEdit } from "../../../shared/edit";
 import { AXES_QK, axesApi } from "../../../shared/axes";
 import { postMsg } from "../../../shared/postErr";
 import { queryClient } from "../../../shared/queries";
@@ -35,6 +36,11 @@ export function AxisEdit({ itemId, orig, expected, done }: Props) {
     }
   };
   const ref = useRef(commit); ref.current = commit;
+  // 미저장 보호 — 내용이 바뀐 동안만 껍데기에 알린다. 저장 성공·Esc·바깥 누르기로 닫히면(언마운트) 푼다
+  const { markDirty } = useEdit();
+  const changed = text !== orig;
+  useEffect(() => { markDirty(changed); }, [changed, markDirty]);
+  useEffect(() => () => markDirty(false), [markDirty]);
 
   useEffect(() => {
     const n = area.current;
@@ -53,7 +59,7 @@ export function AxisEdit({ itemId, orig, expected, done }: Props) {
   return (
     <div ref={box} className={css.edit} id="axis-edit">
       <p className={css.ehint} id="axis-edit-hint">{busy ? T.saving : T.editHint}</p>
-      <textarea ref={area} className={css.ebox} value={text} disabled={busy} aria-label={T.editLabel} aria-describedby="axis-edit-hint axis-edit-err"
+      <textarea ref={area} id="hedit-input" className={css.ebox} value={text} disabled={busy} aria-label={T.editLabel} aria-describedby="axis-edit-hint axis-edit-err"
         rows={Math.min(40, Math.max(12, text.split("\n").length + 2))} onChange={e => setText(e.target.value)} onKeyDown={key} />
       <p className="ferr" id="axis-edit-err" role="alert" aria-atomic="true">{err}</p>
     </div>

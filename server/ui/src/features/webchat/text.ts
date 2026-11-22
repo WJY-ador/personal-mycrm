@@ -51,7 +51,7 @@ export const BUSY_NEW = "답이 끝난 뒤 새 대화를 시작할 수 있어요
 // 확인 카드 — 확인 카드 대상 op(server/webchat.py CHAT_CARD_OPS) 39개 = decide 23 + purge 1 + write 15(AI 하나로 A3, 구조 추천 2026-11-18 decide 3 더함). 모르는 op = op 이름 그대로.
 // 키 집합은 서버, agent/chat_approval_context.py 와 같아야 한다(server/test_chat_injection.py 가 대조한다)
 export const OP_NAME: Record<string, string> = {
-  record_edit: "기록 고치기", record_provenance_set: "기록 작성자 표시 바꾸기", candidate_decide: "판단 후보 정하기",
+  record_edit: "기록 고치기", axis_page_save: "축 한 장 내 판 저장하기", record_provenance_set: "기록 작성자 표시 바꾸기", candidate_decide: "판단 후보 정하기",
   definition_archive: "자료 종류 보관하기", definition_restore: "자료 종류 보관 풀기", person_delete: "사람 지우기",
   source_reflection_review: "읽고 든 생각 검토 표시 바꾸기", source_reflection_delete: "읽고 든 생각 지우기",
   trash_move: "휴지통으로 옮기기", trash_restore: "휴지통에서 되살리기",
