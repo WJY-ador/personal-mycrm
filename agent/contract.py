@@ -57,8 +57,10 @@ TRANSFORMS = {
     "self-summary/1": "self_summary",
     "session-wrap/1": "self_text",   # 세션 정리 묶음(agent/sessionwrap.py) — 서버 승인 뒤 정리 기록
     "axis-page/1": "self_text",      # 축 한 장(agent/axispages.py) — 서버가 AI 초안(인용 불가)으로 받아 그 축 항목에 붙인다
+    "inbox-digest/1": "self_text",   # 수집 인박스 요약(agent/adapters/inbox_digest.py, 2026-11-22) — body = 주제 JSON, AI 값·근거 아님
 }
 AXIS_PAGE_TRANSFORM = "axis-page/1"
+INBOX_DIGEST_TRANSFORM = "inbox-digest/1"
 # 변환 버전별 허용 행동·제공자(activity 만)
 TRANSFORM_ACTIVITY = {
     "board-likes/1": {"actions": ("like",), "providers": ("sns",)},
@@ -286,7 +288,10 @@ def validate(obj: dict, *, policy: dict | None = None) -> dict:
     else:
         _validate_self_summary(obj)
 
-    _scan_strings(obj, "", URL_FIELDS.get(kind, ()))
+    url_ok = URL_FIELDS.get(kind, ())
+    if tv == INBOX_DIGEST_TRANSFORM:
+        url_ok = url_ok + ("body",)   # 수집 인박스 요약 body 의 post_urls — 꼴은 _validate_inbox_digest 가 봤다. 이메일·경로 꼴은 그대로 차단
+    _scan_strings(obj, "", url_ok)
 
     size = len(jcs.canonical_bytes(obj))
     if size > MAX_REQUEST_BYTES:
@@ -471,6 +476,54 @@ def _validate_self_text(o: dict) -> None:
                 raise ContractError("UNKNOWN-FIELD", k)
     elif "axis_code" in o:
         raise ContractError("UNKNOWN-FIELD", "axis_code")
+    if o["transform_version"] == INBOX_DIGEST_TRANSFORM:
+        for k in ("activity_ref", "generation"):
+            if k in o:
+                raise ContractError("UNKNOWN-FIELD", k)
+        _validate_inbox_digest(o["body"])
+
+
+# 수집 인박스 요약(inbox-digest/1, 2026-11-22) — body = JSON 문자열 {themes:[{name, line, post_urls[]}], input_n, made_at}
+DIGEST_MIN_THEMES, DIGEST_MAX_THEMES = 3, 7
+DIGEST_MAX_NAME, DIGEST_MAX_LINE = 20, 80
+DIGEST_MAX_INPUT = 60
+
+
+def _digest_url_ok(u) -> bool:
+    return (isinstance(u, str) and u.startswith("https://") and len("https://") < len(u) <= MAX_POST_URL
+            and not any(c.isspace() for c in u))
+
+
+def _validate_inbox_digest(body: str) -> None:
+    """주제 3~7개, 이름 20자·문장 80자 안의 한 줄(URL·이메일·경로 꼴 금지), post_urls = https 1개 이상·중복 없음,
+    input_n 0~60 정수, made_at 오프셋 있는 시각. 다른 키 금지."""
+    try:
+        d = json.loads(body)
+    except ValueError:
+        raise ContractError("DIGEST", "body") from None
+    if not isinstance(d, dict) or set(d) != {"themes", "input_n", "made_at"}:
+        raise ContractError("DIGEST", "body")
+    n = d["input_n"]
+    if not _is_int(n) or not 0 <= n <= DIGEST_MAX_INPUT:
+        raise ContractError("DIGEST", "body.input_n")
+    if not _valid_datetime(d["made_at"]):
+        raise ContractError("DIGEST", "body.made_at")
+    themes = d["themes"]
+    if not isinstance(themes, list) or not DIGEST_MIN_THEMES <= len(themes) <= DIGEST_MAX_THEMES:
+        raise ContractError("DIGEST", "body.themes")
+    for i, t in enumerate(themes):
+        at = f"body.themes[{i}]"
+        if not isinstance(t, dict) or set(t) != {"name", "line", "post_urls"}:
+            raise ContractError("DIGEST", at)
+        for k, lim in (("name", DIGEST_MAX_NAME), ("line", DIGEST_MAX_LINE)):
+            v = t[k]
+            if (not isinstance(v, str) or not v.strip() or len(v) > lim or "\n" in v or "\r" in v or "\x00" in v):
+                raise ContractError("DIGEST", f"{at}.{k}")
+            _scan_strings(v, f"{at}.{k}")
+        urls = t["post_urls"]
+        if (not isinstance(urls, list) or not urls or len(urls) > DIGEST_MAX_INPUT
+                or not all(_digest_url_ok(u) for u in urls) or len(set(urls)) != len(urls)):
+            raise ContractError("DIGEST", f"{at}.post_urls")
 
 
 def _validate_self_summary(o: dict) -> None:

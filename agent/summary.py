@@ -52,8 +52,9 @@ def _subprocess_runner(argv, *, stdin_bytes, env, cwd, timeout):
     return p.returncode, p.stdout, p.stderr
 
 
-def build_argv(cli_path: str) -> list:
-    return [cli_path, "-p", PROMPT, "--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+def build_argv(cli_path: str, prompt: str = PROMPT) -> list:
+    """격리 실행 인자. prompt 만 바꿔 쓸 수 있다(수집 인박스 요약 agent/adapters/inbox_digest.py 가 같은 격리를 쓴다)."""
+    return [cli_path, "-p", prompt, "--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
             "--setting-sources", "project", "--permission-mode", "dontAsk", "--max-turns", "1", "--output-format", "json"]
 
 
