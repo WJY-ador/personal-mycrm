@@ -26,7 +26,8 @@ test("화면 고르기 — 탭 줄 · 사용자 탭 · 옛 화면 · 모르면 �
   expect(pick("#nope")).toEqual(["me", ["", "", ""], "_me", null, true]);
   expect(pick("#_me/principle/p1")).toEqual(["me", ["principle", "p1", ""], "_me", null, true]);
   expect(pick("#_me/obj/notes/x1")).toEqual(["me", ["obj", "notes", "x1"], "_me", null, true]);
-  expect(pick("#_me/board/b1")).toEqual(["me", ["board", "b1", ""], "_me", null, true]);   // 한판 상세(루틴판) — 「나」 화면이 그린다
+  expect(pick("#_me/board/b1")).toEqual(["me", ["board", "b1", ""], "_me", null, true]);
+  expect(pick("#_me/obj/notes?window=7&verdict=v%3Aunknown")).toEqual(["me", ["obj", "notes", ""], "_me", null, true]);   // 필터 쿼리는 화면 판정에서 뗀다(2026-11-22)   // 한판 상세(루틴판) — 「나」 화면이 그린다
   expect(pick("#_today/inbox/i1")).toEqual(["today", ["today", "inbox", "i1"], "_today", null, true]);
   expect(pick("#_inbox/applied")).toEqual(["today", ["inbox", "applied"], "_today", null, true]);
   expect(pick("#t-001/r9")).toEqual(["sheet", ["t-001", "record", "journal", "r9"], "_setup", "objects", false]);

@@ -56,7 +56,7 @@ export function Collected() {
       <div className={css.head}><h3 id="collected-h">수집 인박스</h3>
         {shown ? <span className={css.headline}>{headline(shown)}</span> : null}
         <label className={css.only}><input type="checkbox" checked={linkOnly} onChange={e => { setLinkOnly(e.target.checked); act.disarm(); }} /> 원문 링크 있는 것만</label></div>
-      {q.data?.ready ? <DigestBox d={dq.data} fail={dq.isError} posts={all} pick={pick} setPick={setPick} /> : null}
+      {q.data?.ready ? <DigestBox d={dq.data} fail={dq.isError} posts={shown} pick={pick} setPick={setPick} /> : null}
       {act.undo ? <p className={`fok ${css.toast}`} role="status">{act.undo.text}{" "}
         <button type="button" className="tertiary" onClick={act.revert}>되돌리기</button></p>
         : <p className="fok" role="status" aria-atomic="true">{act.note}</p>}

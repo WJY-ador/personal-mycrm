@@ -35,9 +35,9 @@ export const axesApi = {
     const ai = p.mine && typeof p.ai_body === "string" ? { at: p.at || "", markdown: p.ai_body } : null;
     return { record_id: p.record_id, updated_at: p.at || "", markdown: p.body, mine: p.mine || null, ai_newer: !!p.ai_newer, ai };
   },
-  // 내 판 저장 — 받은 글 그대로(다듬지 않음). expected = 지금 내 판의 updated_at(처음이면 null). 다르면 STALE
+  // 내 판 저장 — 받은 글 그대로(다듬지 않음). expected = 지금 내 판의 updated_at(처음이면 null). 다르면 400 STALE. 반환 = 고친 뒤 축 하나
   save: (itemId: string, markdown: string, expected: string | null) =>
-    postJSON<{ mine: AxisMine }>(`/api/axes/${enc(itemId)}/page`, { markdown, expected_updated_at: expected }),
+    postJSON<{ axis: RawAxis }>(`/api/axes/${enc(itemId)}/page`, { markdown, expected_updated_at: expected }),
 };
 // 수집 글 목록 보기(GET /api/me/objects/<key>)의 축 필터 — 쿼리 꼴은 이 한 줄에만 둔다
 export const axisParam = (itemId: string): [string, string] => ["f.axes", itemId];

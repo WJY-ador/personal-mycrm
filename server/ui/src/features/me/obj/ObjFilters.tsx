@@ -1,7 +1,6 @@
 // 목록 머리의 「걸린 필터」 칩 한 줄(2026-11-22 구현계획 1절) — 최근 N일 · 판정 · 축 · 상태 · 선택 칸 값. 칩을 누르면 그 필터만 풀린다(따로 버튼 없음).
-// 주소에 필터 쿼리(?window=7…)가 남아 있으면 같이 뗀다(새로 고침해도 풀린 그대로). 주소 바꾸기는 replaceState — 화면 이동, 맨 위로 없음.
+// 주소에 남은 필터 쿼리(?window=7…)는 ObjTab 의 setVq 가 뗀다(새로 고침해도 풀린 그대로).
 import type { Def } from "../../../shared/state";
-import { hashPath, hashQuery } from "../../../shared/route";
 import type { ObjList, ObjQuery } from "../meApi";
 import { axes, type World } from "../model";
 import { OBJ_STATE, OBJ_TEXT } from "../text";
@@ -37,10 +36,7 @@ export function filterChips(W: World, def: Def, vq: ObjQuery, first: ObjList | u
 export function ObjFilters({ W, def, vq, setVq, first, hide = [] }: { W: World; def: Def; vq: ObjQuery; setVq: (q: ObjQuery) => void; first: ObjList | undefined; hide?: string[] }) {
   const chips = filterChips(W, def, vq, first).filter(c => !hide.includes(c.key));
   if (!chips.length) return null;
-  const off = (c: Chip) => {
-    setVq(c.off(vq));
-    if (hashQuery(location.hash)) history.replaceState(history.state, "", location.pathname + location.search + hashPath(location.hash));
-  };
+  const off = (c: Chip) => setVq(c.off(vq));   // 주소 쿼리 떼기는 setVq(ObjTab)가 한다
   return (
     <div className={css.on} role="group" aria-label={OBJ_TEXT.on} id="obj-filters">
       {chips.map(c => <button key={c.key} type="button" className={`chip ${css.chip}`} aria-pressed="true" title={OBJ_TEXT.off}

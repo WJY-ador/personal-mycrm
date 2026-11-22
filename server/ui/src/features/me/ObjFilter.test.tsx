@@ -59,3 +59,11 @@ test("축 칩 링크 — 최근 7일 + 축(목록 조회 f.axes) · 축 이름�
   expect(lists()).toEqual(["/api/me/objects/collected_posts?window=7&f.axes=ax1"]);
   expect(text(el, "#obj-filters button")[1]).toMatch(/^축: /);
 });
+
+test("목록 막대의 칸 값 칩을 손으로 풀어도 주소 쿼리를 뗀다(새로 고침에 다시 걸리지 않게)", async () => {
+  const el = await showMe("#_me/obj/pivots?f.stage=draft", S());
+  const bar = [...el.querySelectorAll("button[aria-pressed='true']")].find(b => !b.closest("#obj-filters"))!;
+  await click(bar);
+  expect(location.hash).toBe("#_me/obj/pivots");
+  expect(lists().at(-1)).toBe("/api/me/objects/pivots");
+});

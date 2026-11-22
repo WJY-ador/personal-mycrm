@@ -44,7 +44,7 @@ function View({ a, p, md }: { a: AxisSum; p: AxisPage; md: Md }) {
   const [editing, setEditing] = useState(false);
   const k = "axis-" + a.item_id;
   if (editing) return <><Head p={p} /><AxisEdit itemId={a.item_id} orig={p.markdown} expected={p.mine?.updated_at ?? null} done={() => setEditing(false)} /></>;
-  const start = (e: React.SyntheticEvent) => { if (!(e.target as Element).closest("summary, a, table")) setEditing(true); };
+  const start = (e: React.SyntheticEvent) => { if (!(e.target as Element).closest("summary, a")) setEditing(true); };
   return <>
     <Head p={p} />
     <Newer p={p} md={md} k={k} />
