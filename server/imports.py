@@ -96,6 +96,7 @@ AXIS_MINE_NOTICE = "내가 고친 판이에요. AI 초안에서 시작한 글이
 INBOX_DIGEST = db.DIGEST_TV
 INBOX_DIGEST_SOURCE = "인박스 요약"
 DIGEST_THEMES_MAX, DIGEST_NAME_CP, DIGEST_LINE_CP, DIGEST_URLS_MAX, DIGEST_INPUT_MAX = 7, 20, 80, 60, 60
+DIGEST_URL_CP = 300   # 요약의 post_url 하나(agent/contract.py 와 같은 상한, 2026-11-22 메인)
 SERVER_FEATURES = ("axis_codes",)   # 장치 GET /api/imports/device 의 features — 그 사용자에게 코드 있는 축 항목이 있을 때만 싣는다
 # 수집 글(collected_post) — 서버가 담는 자리 = 사용자 계정의 커스텀 오브젝트 key collected_posts(S2, 자동으로 만들지 않는다).
 # 장치가 덮는 필드 키(DEVICE_FIELDS)만 쓴다. 사용자가 지웠거나 꼴이 다른 필드는 건너뛰고, 필수 둘(COLLECTED_REQUIRED)이 없으면 OBJECT-MISSING.
@@ -552,8 +553,8 @@ def validate(req: dict) -> dict:
 
 
 def _digest(d):
-    """inbox-digest/1 의 digest — {themes: [{name ≤20자 한 줄, line ≤80자 한 줄, post_urls: [https URL 1~60]}] 1~7개, input_n 0~60, made_at 시각}.
-    post_urls 는 전체 고유 60개까지(입력 상한). 이름·문장에 URL·이메일·경로 꼴 금지(_text)."""
+    """inbox-digest/1 의 digest — {themes: [{name ≤20자 한 줄, line ≤80자 한 줄, post_urls: [https URL ≤300자, 1~60]}] 1~7개, input_n 0~60, made_at 시각}.
+    post_urls 는 주제 안, 주제 사이 모두 중복 금지(한 글은 한 주제에만), 전체 60개까지(입력 상한). 이름·문장에 URL·이메일·경로 꼴 금지(_text)."""
     _exact_keys(d, "digest", ("themes", "input_n", "made_at"))
     th = d["themes"]
     if not isinstance(th, list) or not 1 <= len(th) <= DIGEST_THEMES_MAX:
@@ -569,9 +570,11 @@ def _digest(d):
             raise _bad(f"{path}.post_urls", f"list_1_to_{DIGEST_URLS_MAX}")
         for j, u in enumerate(pu):
             _post_url(u, f"{path}.post_urls[{j}]")
-        if len(set(pu)) != len(pu):
-            raise _bad(f"{path}.post_urls", "duplicate")
-        urls.update(pu)
+            if len(u) > DIGEST_URL_CP:
+                raise _bad(f"{path}.post_urls[{j}]", "too_long")
+            if u in urls:
+                raise _bad(f"{path}.post_urls[{j}]", "duplicate")
+            urls.add(u)
     if len(urls) > DIGEST_URLS_MAX:
         raise _bad("digest.themes", f"post_urls_max_{DIGEST_URLS_MAX}")
     if not _is_int(d["input_n"]) or not 0 <= d["input_n"] <= DIGEST_INPUT_MAX:

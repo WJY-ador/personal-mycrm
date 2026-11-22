@@ -253,7 +253,11 @@ async def run():
         ({"digest": {**DIGEST, "themes": [{**DIGEST["themes"][0], "post_urls": ["http://example.com/x"]}]}},
          "digest.themes[0].post_urls[0]: https_required"),
         ({"digest": {**DIGEST, "themes": [{**DIGEST["themes"][0], "post_urls": [url(1), url(1)]}]}},
-         "digest.themes[0].post_urls: duplicate"),
+         "digest.themes[0].post_urls[1]: duplicate"),
+        ({"digest": {**DIGEST, "themes": [DIGEST["themes"][0], {**DIGEST["themes"][1], "post_urls": [url(3), url(2)]}]}},
+         "digest.themes[1].post_urls[1]: duplicate"),   # 주제 사이 중복(한 글은 한 주제에만)
+        ({"digest": {**DIGEST, "themes": [{**DIGEST["themes"][0], "post_urls": ["https://example.com/" + "a" * 281]}]}},
+         "digest.themes[0].post_urls[0]: too_long"),
         ({"digest": {**DIGEST, "themes": [{**DIGEST["themes"][0], "post_urls": [url(i) for i in range(31)]},
                                           {**DIGEST["themes"][1], "post_urls": [url(i) for i in range(100, 131)]}]}},
          "digest.themes: post_urls_max_60"),
