@@ -20,16 +20,16 @@ export const RT = {
   cardMeta: (c: RoutineCard) => [c.n_posts ? `글 ${c.n_posts}` : "", c.n_records ? `결정 ${c.n_records}` : ""].filter(Boolean).join(", ") || "출처 없음",
   since: (n: number, m: number, k: number) => `지난 루틴 뒤 들어온 것 ${n}, 정한 것 ${m}. 다듬을 것 ${k}. 대화에서 '루틴 하자'`,
 };
-// 큰 숫자 → 그 오브젝트 탭 목록에 필터를 건 주소(2026-11-22). 들어온 것 = 최근 7일 · 내가 정한 것 = 판정 미확인 · 쓰는 중 = stage 칸 값
+// 큰 숫자 → 그 오브젝트 탭 목록에 필터를 건 주소(2026-11-22). 들어온 것 = 최근 7일 + 버림 뺌(판 숫자와 목록 건수가 같게) · 내가 정한 것 = 판정 미확인 · 쓰는 중 = stage 칸 값
 const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 const listHref = (key: string, F: Partial<ObjFilter>) => (key ? objHref(key) + objFilterQuery(F) : "");
 export function bigHrefs(p: Record<string, unknown>) {
   const vf = str(p.verdict), [sf, sv] = str(p.stage).split(":").map(x => x.trim());
   return {
-    in: listHref(str(p.in), { window: 7 }),
+    in: listHref(str(p.in), { window: 7, state: "not_dropped" }),
     decided: vf ? listHref(str(p.decided), { verdict: `${vf}:unknown` }) : "",
     writing: listHref(str(p.writing), sf && sv ? { f: { [sf]: sv } } : {}),
-    axis: (id: string) => listHref(str(p.in), { window: 7, axis: id }),
+    axis: (id: string) => listHref(str(p.in), { window: 7, axis: id, state: "not_dropped" }),
   };
 }
 export const AXES_MAX = 5;

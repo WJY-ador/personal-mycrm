@@ -152,7 +152,7 @@ export function objFilterOf(query: string): ObjFilter {
   const v = u.get("verdict") || "", [vf, vc] = [v.slice(0, v.lastIndexOf(":")), v.slice(v.lastIndexOf(":") + 1)];
   if (vf && (VERDICTS as readonly string[]).includes(vc)) out.verdict = v;
   if (u.get("axis")) out.axis = u.get("axis")!;
-  if (["pending", "kept", "dropped"].includes(u.get("state") || "")) out.state = u.get("state")!;
+  if (["pending", "kept", "dropped", "not_dropped"].includes(u.get("state") || "")) out.state = u.get("state")!;   // not_dropped = 버림 뺌(루틴판 들어온 것 링크)
   for (const [k, val] of u) if (k.startsWith("f.") && k.length > 2 && val) out.f[k.slice(2)] = val;
   return out;
 }

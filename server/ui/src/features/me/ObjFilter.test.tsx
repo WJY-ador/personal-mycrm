@@ -29,6 +29,7 @@ test("주소 쿼리 — 화면 판정에서 떼고, 필터로 읽는다(틀린 �
     .toEqual({ window: 7, verdict: "verdict:unknown", axis: "ax1", state: "kept", f: { stage: "draft" } });
   expect(objFilterOf("window=0&verdict=verdict:maybe&state=nope")).toEqual({ f: {} });
   expect(objFilterOf("window=91")).toEqual({ f: {} });
+  expect(objFilterOf("window=7&state=not_dropped")).toEqual({ window: 7, state: "not_dropped", f: {} });
   expect(objFilterQuery({ window: 7, axis: "ax1" })).toBe("?window=7&axis=ax1");
   expect(objFilterQuery({})).toBe("");
 });
@@ -58,6 +59,15 @@ test("축 칩 링크 — 최근 7일 + 축(목록 조회 f.axes) · 축 이름�
   const el = await showMe("#_me/obj/collected_posts?window=7&axis=ax1", ax ? { ...st, items: [...st.items, { id: "ax1", object_id: ax.id, code: "A", title: "가짜 축", revision: 1, data: {}, links: [] }] } : st);
   expect(lists()).toEqual(["/api/me/objects/collected_posts?window=7&f.axes=ax1"]);
   expect(text(el, "#obj-filters button")[1]).toMatch(/^축: /);
+});
+
+test("들어온 것 링크 — 최근 7일 + 버림 뺌(목록 조회 state=not_dropped), 칩 「버림 뺌」 누르면 풀린다", async () => {
+  const el = await showMe("#_me/obj/pivots?window=7&state=not_dropped", S());
+  expect(lists()).toEqual(["/api/me/objects/pivots?state=not_dropped&window=7"]);
+  expect(text(el, "#obj-filters button")).toEqual(["최근 7일×", "버림 뺌×"]);
+  await click(el.querySelectorAll("#obj-filters button")[1]);
+  expect(text(el, "#obj-filters button")).toEqual(["최근 7일×"]);
+  expect(lists().at(-1)).toBe("/api/me/objects/pivots?window=7");
 });
 
 test("목록 막대의 칸 값 칩을 손으로 풀어도 주소 쿼리를 뗀다(새로 고침에 다시 걸리지 않게)", async () => {

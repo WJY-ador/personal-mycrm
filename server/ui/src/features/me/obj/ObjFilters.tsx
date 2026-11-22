@@ -22,7 +22,8 @@ export function filterChips(W: World, def: Def, vq: ObjQuery, first: ObjList | u
     const a = axes(W).find(x => x.id === vq.axis);
     out.push({ key: "axis", text: `${OBJ_TEXT.axis}: ${a?.code || a?.title || "?"}`, off: q => ({ ...q, axis: undefined }) });
   }
-  if (vq.state) out.push({ key: "state", text: `${OBJ_TEXT.state}: ${OBJ_STATE.find(s => s[0] === vq.state)?.[1] || vq.state}`, off: q => ({ ...q, state: "" }) });
+  if (vq.state) out.push({ key: "state", text: vq.state === "not_dropped" ? OBJ_TEXT.notDropped
+    : `${OBJ_TEXT.state}: ${OBJ_STATE.find(s => s[0] === vq.state)?.[1] || vq.state}`, off: q => ({ ...q, state: "" }) });
   for (const [k, v] of Object.entries(vq.f)) {
     if (!v) continue;
     const fl = first?.filters.find(x => x.key === k);
