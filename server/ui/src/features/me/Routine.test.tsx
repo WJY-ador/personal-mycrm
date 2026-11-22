@@ -35,7 +35,7 @@ test("세 열 — 큰 숫자 = n_7d · unknown · drafts, 뜻 한 줄, 판정 �
   const el = await showMe("#_me/summary", meState());
   const rt = el.querySelector("#routine")!;
   expect(text(rt, "h3")).toEqual(["들어온 것", "내가 정한 것", "쓰는 중"]);
-  expect(text(rt, "b")).toEqual(["9", "5", "2"]);
+  expect(text(rt, "h3 + p b")).toEqual(["9", "5", "2"]);
   expect(rt.querySelector("#rt-in")!.textContent).toContain("이번 주 읽은 글, 그중 신호 3");
   expect(rt.querySelector("#rt-decided")!.textContent).toContain("결과를 아직 확인 안 한 결정판정 없음 2");
   expect(rt.querySelector("#rt-writing")!.textContent).toContain("이렇게 해야 한다로 정리 중");
@@ -89,4 +89,20 @@ test("오브젝트 탭 항목 페이지 — 한판 오브젝트(routine p.writin
   hideMe(); queryClient.clear(); LAY = () => lay({});
   el = await showMe("#_me/obj/publications/b1", S);
   expect(el.querySelector("#board-link")).toBeNull();   // 블록 설정이 없으면 링크 없음
+});
+
+test("큰 숫자 = 필터 걸린 목록 링크(최근 7일 · 판정 미확인 · stage 값) · 축별 수 한 줄(많은 순 5, 외 N) · 칩 = 최근 7일 + 그 축", async () => {
+  LAY = () => lay({ ...P, verdict: "verdict", stage: "stage:draft" });
+  ROUTINE = () => { const b = BOARD(); b.in.by_axis = [1, 6, 3, 2, 5, 4, 0].map((n, i) => ({ code: "X" + i, title: "가짜 축 " + i, item_id: "ax" + i, n })); return b; };
+  const el = await showMe("#_me/summary", meState());
+  const big = [...el.querySelectorAll("#routine h3 + p a")].map(a => [a.textContent, a.getAttribute("href")]);
+  expect(big).toEqual([["9", "#_me/obj/collected_posts?window=7"], ["5", "#_me/obj/pivots?verdict=verdict%3Aunknown"], ["2", "#_me/obj/publications?f.stage=draft"]]);
+  const ax = el.querySelector("#rt-axes")!;
+  expect([...ax.querySelectorAll("a")].map(a => a.textContent)).toEqual(["X16", "X45", "X54", "X23", "X32"]);   // n 0 은 빼고 많은 순 5
+  expect(ax.querySelector("a")!.getAttribute("href")).toBe("#_me/obj/collected_posts?window=7&axis=ax1");
+  expect(ax.textContent).toContain("외 1");
+  expect(el.querySelectorAll("#routine button").length).toBe(0);
+  hideMe(); queryClient.clear(); LAY = () => lay();   // verdict, stage 설정이 없으면 = 판정 숫자는 글, 쓰는 중은 필터 없는 목록
+  const el2 = await showMe("#_me/summary", meState());
+  expect([...el2.querySelectorAll("#routine h3 + p a")].map(a => a.getAttribute("href"))).toEqual(["#_me/obj/collected_posts?window=7", "#_me/obj/publications"]);
 });

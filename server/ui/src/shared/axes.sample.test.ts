@@ -21,7 +21,8 @@ test("서버 꼴 → 화면 꼴(axesApi 한 곳)", async () => {
     pending: 3, kept: 1, total: 5, page: { record_id: "r_page_a", updated_at: "2026-11-18T05:00:00+00:00" } });
   expect(o.axes[1].page).toBeNull();
   reply(sample.one);
-  expect(await axesApi.page("i_axis_a")).toEqual({ record_id: "r_page_a", updated_at: "2026-11-18T05:00:00+00:00", markdown: sample.one.axes[0].page.body });
+  expect(await axesApi.page("i_axis_a")).toEqual({ record_id: "r_page_a", updated_at: "2026-11-18T05:00:00+00:00", markdown: sample.one.axes[0].page.body,
+    mine: sample.one.axes[0].page.mine, ai_newer: true, ai: { at: "2026-11-18T05:00:00+00:00", markdown: sample.one.axes[0].page.ai_body } });
   reply(sample.overview);   // 본문 없는 응답 = 한 장 없음
   expect(await axesApi.page("i_axis_b1")).toBeNull();
 });

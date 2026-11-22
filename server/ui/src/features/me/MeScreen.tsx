@@ -5,6 +5,7 @@
 import { useEffect, useLayoutEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ScreenProps } from "../../shared/ctx";
+import { hashPath } from "../../shared/route";
 import { Back } from "./Back";
 import { Board } from "./board/Board";
 import { AxisBand } from "./AxisBand";
@@ -62,7 +63,7 @@ export function MeScreen({ ctx, blocks, layoutDefault, md }: Props) {
   useLayoutEffect(() => { if (redirect) location.replace(redirect); }, [redirect]);
   const center = solo || (a === "obj" && c) ? here() : sel ? `#_me/${t}/${sel.id}` : "";
   // 껍데기가 아직 이 주소를 그리지 않았거나(내가 방금 replace) 이번에 replace 하는 중이면 결과 문구를 「보였다」고 치지 않는다
-  const settled = !redirect && here() === (a ? `#_me/${a}${b ? "/" + b : ""}${c ? "/" + c : ""}` : "#_me");
+  const settled = !redirect && hashPath(here()) === (a ? `#_me/${a}${b ? "/" + b : ""}${c ? "/" + c : ""}` : "#_me");
   const edit = useEditStore(ctx, !settled, "#_me"), view = useViewStore(center);
   const open = a === "obj" ? c : b;   // 1열 목록으로 돌아오면 그 자리로
   useEffect(() => { if (mobile && !open && !solo && backNav.y) { window.scrollTo(0, backNav.y); backNav.y = 0; } }, [mobile, open, solo]);

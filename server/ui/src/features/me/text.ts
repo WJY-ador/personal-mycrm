@@ -37,6 +37,7 @@ export const OBJ_STATE: [string, string][] = [["pending", "대기"], ["kept", "�
 export const OBJ_TEXT = {
   search: "제목 검색", state: "상태", title: "제목", link: "원문", more: "더 보기", none: "조건에 맞는 항목이 없어요.",
   fail: "목록을 불러오지 못했어요.", retry: "다시 불러오기", back: "목록으로", gone: "이 오브젝트 탭은 없어요. 보관했거나 이름이 바뀌었을 수 있어요.",
+  window: (n: number) => `최근 ${n}일`, axis: "축", on: "걸린 필터", off: "눌러서 풀기",   // 목록 머리 걸린 필터 칩(2026-11-22)
   routed: (n: number, m: number) => `자동 분류 ${n}건, 분류 못 함 ${m}건`,   // 담을 규칙이 있는 오브젝트만(2026-11-18 구조추천)
   board: "한판으로 보기",   // 루틴판 한판 오브젝트 항목 페이지 링크(2026-11-21)
 };
@@ -45,6 +46,10 @@ export const AXIS_TEXT = {
   list: "축", empty: "축이 아직 없어요. 축 항목이 생기면 여기에 보여요.", pending: "대기", kept: "보관", hasPage: "한 장 있음",
   back: "축 목록", page: "한 장", aiMark: "AI가 쓴 초안이에요. 판단 근거가 아니에요.", noPage: "아직 한 장이 없어요.",
   updated: (t: string) => `${t} 갱신`, fold: "원하는 관점과 키워드", keywords: "키워드", noBody: "원하는 관점이 아직 없어요.",
+  // 한 장 그 자리 편집·내 판·사례(2026-11-22)
+  mineMark: "내가 고친 판 · ", aiNewer: (t: string) => `새 AI 초안이 왔어요${t ? `(${t})` : ""}`, aiNone: "AI 초안 본문을 불러오지 못했어요.",
+  editTip: "두 번 누르거나 Enter 로 고치기", editHint: "저장 Cmd+Enter · 취소 Esc", saving: "저장하고 있어요…", editLabel: "한 장 마크다운",
+  stale: "다른 곳에서 먼저 바뀌었어요. 쓰던 글은 상자에 그대로 있어요. 복사해 두고 새로 고침해 주세요.", caseMark: "사례",
 };
 // 자동 분류 항목 페이지(2026-11-18 구조추천 명세 6.5) — 표시, 근거 원문, 빼기
 export const ROUTE_TEXT = {

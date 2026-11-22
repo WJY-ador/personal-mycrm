@@ -1,0 +1,28 @@
+/* 인박스 요약 상자 — 기존 토큰만. AI 요약은 무채색(--ai, --ai-bg), 고른 줄·칩 = 주색 옅은 바탕(목록 필터 칩과 같은 꼴) */
+.box { margin-top: var(--sp-6); padding: var(--sp-6) var(--sp-7); background: var(--ai-bg); border: 1px dashed var(--cand-line); border-radius: var(--r-4); }
+.head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-2) var(--sp-4); }
+.head h4 { margin: 0; font-size: var(--fs-3); font-weight: 600; color: var(--ink); }
+.when { font-size: var(--fs-1); color: var(--muted); }
+.newer { margin: var(--sp-3) 0 0; font-size: var(--fs-2); color: var(--muted); }
+.themes { list-style: none; margin: var(--sp-4) 0 0; padding: 0; display: flex; flex-direction: column; }
+button.theme { display: flex; align-items: baseline; gap: var(--sp-4); width: 100%; min-height: 0; text-align: left; padding: var(--sp-3) var(--sp-4);
+  background: transparent; border: 0; border-top: 1px solid var(--line); border-radius: var(--r-3); color: var(--ink); font: inherit; font-size: var(--fs-2); cursor: pointer;
+  justify-content: flex-start; white-space: normal; }
+.themes li:first-child button.theme { border-top: 0; }
+button.theme b { flex: none; font-weight: 700; }
+.line { flex: 1 1 auto; min-width: 0; color: var(--ink); overflow-wrap: anywhere; }
+.n { flex: none; font-family: var(--mono); font-size: var(--fs-1); }
+button.theme:hover, button.theme:focus-visible { background: var(--card); }
+button.theme[aria-pressed="true"] { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.axes { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-5); padding-top: var(--sp-4); border-top: 1px solid var(--line); }
+button.ax { display: inline-flex; align-items: baseline; gap: var(--sp-3); min-height: 28px; padding: var(--sp-1) var(--sp-4); background: var(--card); color: var(--ink);
+  border-radius: var(--r-pill); font-size: var(--fs-1); }
+button.ax b { font-family: var(--mono); font-weight: 600; }
+.sig { color: var(--accent); }
+button.ax[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.fail { margin-top: var(--sp-4); }
+@media (max-width: 767px) {
+  .box { padding: var(--sp-5); }
+  button.theme { flex-wrap: wrap; gap: var(--sp-1) var(--sp-3); }
+  .line { flex-basis: 100%; order: 3; }
+}

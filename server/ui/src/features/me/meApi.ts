@@ -35,10 +35,11 @@ export type ObjList = {
   filters: { key: string; label: string; values: { value: string; label: string; n: number }[] }[]; states: Record<string, number> | null;
   rows: ObjRow[]; total: number; next_cursor: string | null;
 };
-export type ObjQuery = { sort: string; dir: string; q: string; f: Record<string, string>; state: string; axis?: string };   // axis = 축 화면의 축 item id
+// axis = 축 item id(축 화면, 루틴판 축 칩) · window = 최근 N일 · verdict = "<칸key>:<분류>"(루틴판 숫자 링크 — 주소 쿼리 정본 = shared/route objFilterOf)
+export type ObjQuery = { sort: string; dir: string; q: string; f: Record<string, string>; state: string; axis?: string; window?: number; verdict?: string };
 const objParams = (p: ObjQuery, cursor: string) => {
   const u = new URLSearchParams();
-  for (const [k, v] of [["sort", p.sort], ["dir", p.dir], ["q", p.q.trim()], ["state", p.state], ["cursor", cursor]]) if (v) u.set(k, v);
+  for (const [k, v] of [["sort", p.sort], ["dir", p.dir], ["q", p.q.trim()], ["state", p.state], ["window", p.window ? String(p.window) : ""], ["verdict", p.verdict || ""], ["cursor", cursor]]) if (v) u.set(k, v);
   for (const [k, v] of Object.entries(p.f)) if (v) u.set("f." + k, v);
   if (p.axis) u.set(...axisParam(p.axis));
   const s = u.toString();
@@ -88,11 +89,13 @@ export type RouteInfo = { item_id: string; object_id: string; record_id: string;
 // kind 는 JSON 견본 대조 때문에 string 으로 둔다(item|record, post|record). AI 값은 상세의 수집 글 ai_summary 하나뿐(ai = true)
 export type RoutineLine = { date: string | null; text: string; target: { kind: string; id: string; object_key: string; item_id?: string | null } };
 type RoutineCol = { lines: RoutineLine[]; more: number; unrefined: number };
+// 들어온 것 축별 수(최근 7일 수집 글, 2026-11-22) — 축 칩 한 줄
+export type RoutineAxis = { code: string | null; title: string | null; item_id: string; n: number };
 // n_posts, n_records = 소제목 출처의 수집 글 수, 기록 수(중복 제외) — 카드 「글 N, 결정 M」
 export type RoutineCard = { item_id: string; key_line: string; date: string | null; n_subheads: number; n_sources: number; n_posts: number; n_records: number };
 export type Routine = {
   ready: boolean; missing: string[]; last_routine_at: string | null; since: { new_in: number; new_decided: number };
-  in: RoutineCol & { n_total: number; n_7d: number; signal_7d: number };
+  in: RoutineCol & { n_total: number; n_7d: number; signal_7d: number; by_axis: RoutineAxis[] };
   decided: RoutineCol & { total: number; right: number; unknown: number; partial: number; wrong: number; none: number };
   writing: { drafts: number; cards: RoutineCard[] };
 };

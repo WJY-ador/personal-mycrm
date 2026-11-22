@@ -1,7 +1,7 @@
 // 축 잇기(2026-11-18 명세 4절) 서버 접점 — 축 보기(GET /api/axes) · 축 한 장(GET /api/axes?id=<축 item id> 의 page.body) · 수집 글 목록의 축 필터 쿼리 꼴.
 // 「나」 축 탭과 오늘 탭 「오늘의 축」이 같이 쓴다(features 끼리 import 금지라 여기 한 벌). 응답 모양 정본 = server/imports.py axis_overview. 견본 = axes.sample.json.
 import { useQuery } from "@tanstack/react-query";
-import { getJSON } from "./api";
+import { getJSON, postJSON } from "./api";
 
 // 화면이 쓰는 꼴(AxisSum·AxisPage). 서버 응답 꼴(Raw*)은 아래 axesApi 한 곳에서만 바꾼다 — 서버 꼴이 바뀌면 여기만 고친다.
 export type AxisSum = {
@@ -9,9 +9,14 @@ export type AxisSum = {
   pending: number; kept: number; total: number; page: { record_id: string; updated_at: string } | null;
 };
 export type AxesOverview = { axes: AxisSum[] };
-export type AxisPage = { record_id: string; updated_at: string; markdown: string };
+// 한 장(2026-11-22 구현계획 2절) — 내 판이 있으면 markdown = 내 판(서버가 내 판을 먼저 읽는다). mine = 내 판 기록(없으면 null).
+// ai_newer = 내 판보다 늦게 온 AI 초안이 있다 · ai = 최신 AI 초안(내 판이 있을 때만, 펼쳐 보기용)
+export type AxisMine = { record_id: string; updated_at: string };
+export type AxisPage = { record_id: string; updated_at: string; markdown: string; mine: AxisMine | null; ai_newer: boolean;
+  ai: { at: string; markdown: string } | null };
 // 서버 응답(GET /api/axes[?id=], imports.axis_overview — MCP axis_overview_get 과 같은 함수). id 를 주면 그 축 하나 + page.body(markdown)
-type RawPage = { record_id: string; title: string | null; at: string | null; ai: boolean; notice: string; body?: string };
+type RawPage = { record_id: string; title: string | null; at: string | null; ai: boolean; notice: string; body?: string;
+  mine?: AxisMine | null; ai_newer?: boolean; ai_body?: string };   // ai_body = 내 판이 있을 때 최신 AI 초안 본문(at = 그 AI 초안 시각)
 export type RawAxis = { id: string; code: string | null; title: string | null; keywords: string[]; description: string;
   counts: { pending: number; kept: number; total: number }; page: RawPage | null };
 export type RawAxes = { ready: boolean; axes: RawAxis[] };
@@ -26,8 +31,13 @@ export const axesApi = {
   // 한 장 = 그 축의 최신 한 장 기록 본문. 없으면 null(실패 아님)
   page: async (itemId: string): Promise<AxisPage | null> => {
     const p = (await getJSON<RawAxes>(`/api/axes?id=${enc(itemId)}`)).axes?.[0]?.page;
-    return p && typeof p.body === "string" ? { record_id: p.record_id, updated_at: p.at || "", markdown: p.body } : null;
+    if (!p || typeof p.body !== "string") return null;
+    const ai = p.mine && typeof p.ai_body === "string" ? { at: p.at || "", markdown: p.ai_body } : null;
+    return { record_id: p.record_id, updated_at: p.at || "", markdown: p.body, mine: p.mine || null, ai_newer: !!p.ai_newer, ai };
   },
+  // 내 판 저장 — 받은 글 그대로(다듬지 않음). expected = 지금 내 판의 updated_at(처음이면 null). 다르면 STALE
+  save: (itemId: string, markdown: string, expected: string | null) =>
+    postJSON<{ mine: AxisMine }>(`/api/axes/${enc(itemId)}/page`, { markdown, expected_updated_at: expected }),
 };
 // 수집 글 목록 보기(GET /api/me/objects/<key>)의 축 필터 — 쿼리 꼴은 이 한 줄에만 둔다
 export const axisParam = (itemId: string): [string, string] => ["f.axes", itemId];

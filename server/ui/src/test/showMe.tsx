@@ -14,7 +14,7 @@ let el: HTMLDivElement | null = null, root: Root | null = null;
 
 export async function showMe(hash: string, state: object, flash: { text: string } | null = null) {
   history.replaceState(null, "", hash);
-  const [, a = "", b = "", c = ""] = hash.replace(/^#/, "").split("/");
+  const [, a = "", b = "", c = ""] = hash.split("?")[0].replace(/^#/, "").split("/");   // 「?필터」 쿼리는 껍데기처럼 떼고 나눈다(shared/route hashPath)
   if (!el) { el = document.createElement("div"); document.body.append(el); root = createRoot(el); }
   const Me = SCREENS.me;
   await act(async () => root!.render(<QueryClientProvider client={queryClient}>
