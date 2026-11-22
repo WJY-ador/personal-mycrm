@@ -14,7 +14,10 @@
      "target": {"kind": "item", "id": "i_samplepost1", "object_key": "collected_posts", "item_id": "i_samplepost1"}}
    ],
    "more": 2,
-   "unrefined": 6
+   "unrefined": 6,
+   "by_axis": [
+    {"code": "A", "title": "견본 축 하나", "item_id": "i_sampleaxisa", "n": 4}
+   ]
   },
   "decided": {
    "total": 12,
