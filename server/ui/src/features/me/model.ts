@@ -59,7 +59,7 @@ export function tabRows(W: World, tab: MeTab): TabRow[] {
   if (tab === "source") return (W.S.sources || []).map(s => ({ id: s.id, title: s.name, code: "", meta: SRC_KIND[s.kind] || s.kind, x: s }));
   const d = stdDef(W, tab);
   return d ? sorted(itemsOf(W, d.id)).map(it => ({ id: it.id, title: it.title || "(제목 없음)", code: it.code,
-    meta: tab === "principle" ? (it.decision === "confirmed" ? "확정" : it.decision === "excluded" ? "반영 안 함" : "확정 전") : "", x: it })) : [];
+    meta: tab === "principle" ? (it.decision === "confirmed" ? "확정" : it.decision === "excluded" ? "남기지 않음" : "확정 전") : "", x: it })) : [];
 }
 
 // 하위 탭 건수 — 그 종류 전체(못 읽은 종류는 null = 숫자 없음). t = 고정 탭 또는 오브젝트 탭(obj:<key>)

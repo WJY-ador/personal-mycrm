@@ -81,7 +81,7 @@ test("새 항목 제안 [제외] = 카드가 사라짐 → 정의 주소 + 결�
 
 test("판단 문장 — 필터(개수) · 최신순 · 아직 안 정함 = 대조 경로 · 정한 문장 = 근거 원문 · 옛 #structure/<결정> 주소", async () => {
   const el = await show("cand", "pending");
-  expect(text(el, 'nav[aria-label="결정 고르기"] a')).toEqual(["확정한 판단1", "아직 안 정함2", "반영 안 함1", "전부4"]);
+  expect(text(el, 'nav[aria-label="결정 고르기"] a')).toEqual(["확정한 판단1", "아직 안 정함2", "남기지 않음1", "전부4"]);
   expect(text(el, ".asset-card .top")[1]).toContain("AI 미확정");
   expect(el.querySelector(".asset-card .chip.flag svg")!.getAttribute("aria-label")).toBe("주의");
   expect(text(el, ".asset-card .top")[1]).toContain("AI 문안");

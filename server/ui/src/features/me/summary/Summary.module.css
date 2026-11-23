@@ -3,11 +3,11 @@
 .firstRecord { margin: 0 0 var(--sp-7); padding: var(--sp-6) var(--sp-7); min-width: 0; background: var(--card); border: 1px solid var(--line); border-radius: var(--r-4); }
 .firstRecord h2 { margin: 0 0 var(--sp-3); font-size: var(--fs-4); line-height: 1.4; }
 .firstRecord p { margin: var(--sp-2) 0; }
-.firstRecord ol { display: flex; flex-wrap: wrap; gap: var(--sp-2) 1.7rem; margin: var(--sp-4) 0; padding-left: var(--sp-9); }
-.firstRecord li { padding-right: var(--sp-1); }
-.webChatNote { color: var(--muted); font-size: var(--fs-2); }
-.helpLink { display: inline-flex; align-items: center; min-height: 40px; margin-top: var(--sp-1); padding: var(--sp-2) var(--sp-5); border: 1px solid var(--line); border-radius: var(--r-3); color: var(--accent); font-size: var(--fs-2); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; transition: border-color .12s, background-color .12s, color .12s; }
-.helpLink:hover { border-color: var(--accent); background: var(--accent-soft); }
+.copyRow { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-4); margin: var(--sp-4) 0 0; }
+.copyLabel { flex: none; min-width: 5.5rem; font-size: var(--fs-2); font-weight: 600; color: var(--muted); }
+.copyValue { flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; user-select: all; font-family: var(--mono); font-size: var(--fs-2); padding: var(--sp-2) var(--sp-4);
+  background: var(--paper); border: 1px solid var(--line); border-radius: var(--r-3); color: var(--ink); }
+.copySay { font-size: var(--fs-2); color: var(--muted); }
 .blk { background: var(--card); border: 1px solid var(--line); border-radius: var(--r-4); padding: var(--sp-6) var(--sp-7); min-width: 0; }
 .blk.full { grid-column: 1 / -1; }
 .blk > header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: var(--sp-1) var(--sp-5); margin: 0 0 var(--sp-5); }
@@ -49,4 +49,3 @@
   .sum { grid-template-columns: minmax(0, 1fr); }
   .kinds li { grid-template-columns: minmax(0, 5rem) minmax(2rem, 1fr) 2rem; gap: var(--sp-3); }
 }
-@media (prefers-reduced-motion: reduce) { .helpLink { transition: none; } }

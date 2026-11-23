@@ -6,6 +6,7 @@ import { queryClient } from "../../shared/queries";
 import { calls, click, flush, installFetch, json, serve, text } from "../../test/fakeServer";
 import { installMedia, JOURNAL, layout, meState, STATS } from "../../test/meFixture";
 import { hideMe, showMe, type } from "../../test/showMe";
+import { tabHref } from "./SubTabs";
 
 const CH = [{ value: "linkedin", label: "LinkedIn" }, { value: "reddit", label: "Reddit" }];
 const def = (id: string, key: string, label: string, fields: object[] = []) => ({ id, key, label, std_id: null, archived_at: null, fields });
@@ -38,9 +39,10 @@ const lists = () => calls.filter(c => c.url.startsWith("/api/me/objects/")).map(
 
 test("하위 탭 — 오브젝트마다 하나(이름 = label, 사람·출처 앞, 건수 = 항목 수) · 커스텀 탭 없음", async () => {
   const el = await showMe("#_me/summary", S());
-  expect(text(el, "nav a").map(t => t!.replace(/\d/g, ""))).toEqual(["요약", "기준", "결정", "축", "수집 글", "확인된 결과", "사람", "출처"]);
-  expect([...el.querySelectorAll("nav a")].map(a => a.getAttribute("href")).slice(4, 6)).toEqual(["#_me/obj/collected_posts", "#_me/obj/verified_results"]);
-  expect(text(el, "nav a")[4]).toBe("수집 글2");
+  // 하위 탭 = 셀렉트(2026-11-23) — 옵션 글자 = 이름 (건수), 값 = 탭 id(주소는 SubTabs tabHref)
+  expect(text(el, "nav option").map(t => t!.replace(/ \(\d+\)$/, ""))).toEqual(["요약", "기준", "결정", "축", "수집 글", "확인된 결과", "사람", "출처"]);
+  expect([...el.querySelectorAll("nav option")].map(o => tabHref((o as HTMLOptionElement).value)).slice(4, 6)).toEqual(["#_me/obj/collected_posts", "#_me/obj/verified_results"]);
+  expect(text(el, "nav option")[4]).toBe("수집 글 (2)");
   // 종류별 건수 — 오브젝트마다 한 칸, 그 탭으로
   const kinds = [...el.querySelectorAll("#me-summary li a")].map(a => [a.textContent, a.getAttribute("href")]);
   expect(kinds).toContainEqual(["수집 글", "#_me/obj/collected_posts"]);
@@ -121,8 +123,8 @@ test("템플릿 계보 계정(std_id 없음 + template_slot author@1:<key>) — 
   const old = (d: { id: string; std_id: string | null; key: string }) => ({ ...d, key: KEY[d.id], std_id: null, template_slot: "author@1:" + KEY[d.id] });
   const st = meState({ definitions: [...base.definitions.map(old), def("od_cp", "collected_posts", "수집 글", FIELDS)], items: S().items });
   const el = await showMe("#_me/principle/p1", st);
-  expect(text(el, "nav a").map(t => t!.replace(/\d/g, ""))).toEqual(["요약", "기준", "결정", "축", "수집 글", "사람", "출처"]);
-  expect(text(el, "nav a").slice(1, 4)).toEqual(["기준2", "결정0", "축2"]);
+  expect(text(el, "nav option").map(t => t!.replace(/ \(\d+\)$/, ""))).toEqual(["요약", "기준", "결정", "축", "수집 글", "사람", "출처"]);
+  expect(text(el, "nav option").slice(1, 4)).toEqual(["기준 (2)", "결정 (0)", "축 (2)"]);
   expect(text(el, "#home-list li a .ht")).toEqual(["P-1 담당이 먼저", "두 번째 기준"]);
   await showMe("#_me/item/a2", st);
   expect(location.hash).toBe("#_me/axis/a2");

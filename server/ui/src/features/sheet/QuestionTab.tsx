@@ -1,4 +1,4 @@
-// 질문형 탭(옛 renderQuestionTab·pickQuestions·sheetSections·recentRecords) — 질문 고르기 줄 + 질문 한 장(확정한 판단 · 아직 안 정한 문장 · 반영 안 함 · 연결된 글).
+// 질문형 탭(옛 renderQuestionTab·pickQuestions·sheetSections·recentRecords) — 질문 고르기 줄 + 질문 한 장(확정한 판단 · 아직 안 정한 문장 · 남기지 않음 · 연결된 글).
 // blocks = 탭이 고른 조각(sheet·candidates·next·journal). 결정은 판단 검토 화면([원문과 대조하기])에서만.
 import { DecisionBadge, OriginBadge } from "../../shared/CandChips";
 import { clip, qNo } from "../../shared/clip";
@@ -26,7 +26,7 @@ function Sheet({ S, tabId, q, open }: { S: AppState; tabId: string; q: Question;
           <div className="cta"><p className="hint">남기기 전까진 확정한 판단이 아니에요.</p>
             <a className="btn primary" href={`#${tabId}/review/${q.id}/${wait[0].id}`}>원문과 대조하기({wait.length}개)</a></div></>
           : <div className="empty">{cs.length ? "정할 문장이 남아 있지 않아요." : "아직 이 질문에 뽑힌 문장이 없어요. 내 글에서 판단을 뽑으면 여기에 떠요."}</div>}</section>
-      {off.length ? <details className="fold"><summary>반영 안 함 문장 보기({off.length}개)</summary><div className="cards">{off.map(c =>
+      {off.length ? <details className="fold"><summary>남기지 않은 문장 보기({off.length}개)</summary><div className="cards">{off.map(c =>
         <div className="card cand" key={c.id}><p className="sent">{c.text}</p><div className="labels"><OriginBadge c={c} /><DecisionBadge status={c.status} /></div>
           <EvLine S={S} c={c} open={open} /></div>)}</div></details> : null}
       {recs.length ? <section className="sec"><h3>연결된 글<span className="count">{recs.length}</span></h3>

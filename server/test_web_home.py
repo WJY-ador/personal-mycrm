@@ -11,7 +11,7 @@ G. API 견본 대조(R2) — ui/src/shared/state.sample.json ⊆ /api/state · u
 C·D. 대화 서랍(PR ②-b B5 · ③-0.2)은 React(R3 2026-11-03) — server/ui/src/features/chat/store.test.ts·ChatRoot.test.tsx(Vitest).
    판단 검토(원문과 대조하기)도 React — server/ui/src/features/review/ReviewScreen.test.tsx.
 F. 휴지통 PR-1 화면(정적 — 스위치·페이지 동작은 Vitest shared/route.test.ts): 스위치 S.switches.trash 켜짐일 때만 [삭제]·Setup 「휴지통」 · 꺼짐 = 현행 · 기준 [남기기]+[삭제] · 후보 [삭제] 0 ·
-   r4 §8 문구 · 휴지통 행(종류·제목·삭제 시각·복원 가능 기한)·더 보기·복원·영구 삭제·기한 이후 · 「반영 안 함」 한 표현 · 근거 이용 불가.
+   r4 §8 문구 · 휴지통 행(종류·제목·삭제 시각·복원 가능 기한)·더 보기·복원·영구 삭제·기한 이후 · 화면 낱말 남기지 않기, 남기지 않음(반영 안 함 0) · 근거 이용 불가.
 E. test_tools.py 에서 옮겨 온 app.html 정적 단언(③-0.2 A1~A5·B1~B4 — 문의 esc·계정 메뉴·구조 정의·LABELS·24h 화면·라이트 기본·셰이더·동의·재인증).
 """
 import asyncio
@@ -232,8 +232,10 @@ def test_static_trash():
         assert "TRASH_ASK = " not in t and 'from "../../shared/item"' in t, (f, "삭제 문구 사본 0")
     code = "\n".join(l for l in item.splitlines() if not l.lstrip().startswith("//"))
     assert "처리 중" not in code and "재시도 중" not in code and "예정" not in code, "「영구 삭제 처리 중·재시도 중·예정」 화면 상태 0(r4 §8)"
-    assert "남기지 않" not in html, "「남기지 않음·않기·않았어요」 0 — 표현은 「반영 안 함」 하나"
-    print("OK — 휴지통 정적(스위치 = shared/route · 접점·r4 §8 문구 한 벌 shared/item.ts · 사본 0 · 처리 중 상태 0 · 반영 안 함) 통과")
+    screen = [p.relative_to(UI) for p in UI.rglob("*") if p.suffix in (".ts", ".tsx") and ".test." not in p.name]
+    old = [str(p) for p in screen if "반영 안 함" in ui_text(*p.parts) or "반영 안 한" in ui_text(*p.parts)]
+    assert screen and not old, ("화면 낱말은 서버와 같이 남기지 않기(버튼), 남기지 않음(상태) — 옛 표현 반영 안 함, 반영 안 한 0", old)
+    print("OK — 휴지통 정적(스위치 = shared/route · 접점·r4 §8 문구 한 벌 shared/item.ts · 사본 0 · 처리 중 상태 0 · 낱말 남기지 않기, 남기지 않음) 통과")
 
 
 def test_static_moved():

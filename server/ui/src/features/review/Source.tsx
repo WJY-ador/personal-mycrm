@@ -1,5 +1,5 @@
 // 근거 원문 — 근거 구절이 든 문단 ±1(나머지는 흐리게) + 「전체 원문 보기」. 구절이 원문에 없으면 경고(결정 버튼은 잠긴 채),
-// 문단 경계에 걸치면 전체 원문만. 원문을 못 받으면 경고(결정 잠김). 옛 app.html renderReview 의 fetchRec 갈래 그대로.
+// 문단 경계에 걸치면 전체 원문만. 원문을 못 받으면 경고(결정 잠김). 옛 app.html renderReview 의 fetchRec 갈래 그대로. 카드마다 하나라 id 에 후보 id 를 붙인다.
 import type { ReactNode } from "react";
 import type { ApiError } from "../../shared/api";
 import { md, mdhm } from "../../shared/date";
@@ -20,7 +20,7 @@ type Props = { S: AppState; c: Cand; j?: Journal; fail: ApiError | null; w: Word
 
 export function Source({ S, c, j, fail, w }: Props) {
   const head = (t: string, meta?: string) => (
-    <div className={css.srchead}><h3 id="source-title">{t}</h3>{meta && <span className="recmeta">{meta}</span>}</div>
+    <div className={css.srchead}><h4 id={"source-title-" + c.id}>{t}</h4>{meta && <span className="recmeta">{meta}</span>}</div>
   );
   let body: ReactNode;
   if (fail) {
@@ -51,5 +51,5 @@ export function Source({ S, c, j, fail, w }: Props) {
       );
     }
   }
-  return <section className={css.src} id="rvsrc" aria-labelledby="source-title">{body}</section>;
+  return <section className={css.src} id={"rvsrc-" + c.id} aria-labelledby={"source-title-" + c.id}>{body}</section>;
 }
