@@ -13,6 +13,7 @@ export const LOADERS: Record<string, () => Promise<Screen>> = {
   review: one(() => import("../features/review/ReviewScreen"), "ReviewScreen"),
   migration: one(() => import("../features/migration/MigrationScreen"), "MigrationScreen"),
   pc: one(() => import("../features/pc/PcScreen"), "PcScreen"),                            // 설정 「이 PC」(앱 다리 한 줄 — 연결 장치 화면 대신)
+  connect: one(() => import("../features/connect/ConnectScreen"), "ConnectScreen"),       // 설정 AI 앱 연결(MCP 주소, 연결 방법, 첫 마디)
   activity: one(() => import("../features/activity/ActivityScreen"), "ActivityScreen"),   // 활동 목록·하나·축 하나(args = [activity|axis, …])
   objects: one(() => import("../features/objects/ObjectsScreen"), "ObjectsScreen"),        // 자료 종류 색인·사람·출처·읽고 든 생각(args = [a, b, c])
   today: one(() => import("../features/today/TodayScreen"), "TodayScreen"),                // 오늘·저장 승인 대기(args = [today, a, b] | [inbox, 상태])

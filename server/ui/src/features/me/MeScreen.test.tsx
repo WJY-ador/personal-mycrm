@@ -38,21 +38,20 @@ test("요약 = 레이아웃 regions.summary 순서 · 레지스트리 밖 블록
   expect(posts()).toEqual([]);
 });
 
-test("기록을 성공적으로 모두 읽어 0건일 때만 첫 기록 안내와 실제 도움말 링크를 보인다", async () => {
+test("기록을 성공적으로 모두 읽어 0건일 때만 첫 기록 카드(입력칸)를 보인다", async () => {
   const empty = { ...meState(), journal: [], journal_next_before: null };
   let el = await showMe("#_me/summary", empty);
   const intro = el.querySelector("#first-record-intro");
   expect(intro).toBeTruthy();
-  // 첫 기록 카드(2026-11-23) — 한 줄 안내, MCP 주소와 첫 마디를 글자로, [복사] 둘(복사 동작은 FirstRecord.test.tsx)
-  expect(intro!.querySelector("p")!.textContent).toContain("Claude나 ChatGPT에 이 주소를 커넥터로 더하고 첫 마디를 보내요.");
+  // 첫 기록 카드(2026-11-23 4차) — 입력칸 하나와 [남기기]. MCP 주소, 복사 버튼, 링크는 없다(설정 AI 앱 연결 쪽으로). 동작은 FirstRecord.test.tsx
+  expect(intro!.querySelector("label")!.textContent).toBe("오늘 있었던 일이나 생각을 한 줄 적어 보세요");
+  expect(intro!.querySelectorAll("textarea").length).toBe(1);
+  expect(text(intro!, "button")).toEqual(["남기기"]);
   expect(intro!.textContent).not.toContain("PC 연결");
-  expect(intro!.querySelector("#first-record-mcp")!.textContent).toBe(location.origin + "/mcp");
-  expect(intro!.querySelector("#first-record-say")!.textContent).toBe("오늘 있었던 일 기록 남길게.");
-  expect(text(intro!, "button")).toEqual(["복사", "복사"]);
-  const help = intro!.querySelector("a");
-  expect(help?.tagName).toBe("A");
-  expect(help?.getAttribute("href")).toBe("/help");
-  expect(help?.hasAttribute("target")).toBe(false);
+  expect(intro!.querySelector("#first-record-mcp")).toBeNull();
+  expect(intro!.querySelector("#first-record-say")).toBeNull();
+  expect(intro!.querySelector("a")).toBeNull();
+  expect(el.querySelector("#me-summary")).toBeTruthy();   // 요약의 다른 블록은 그대로 아래에
   expect(posts()).toEqual([]);
 
   hideMe();

@@ -1,39 +1,55 @@
-// 첫 기록 카드(2026-11-23) — 기록이 하나도 없을 때 요약 맨 위. 조건은 Summary 가 본다(첫 글이 생기면 사라진다). 닫기 없음, 브라우저 저장소 안 씀.
-// MCP 주소와 첫 마디(guides/09 2절)를 글자로 보이고 [복사]. 복사 결과는 그 자리 한 줄(role=status, 처음부터 두고 글자만 채운다).
-// 복사를 못 하면(권한 없음, 지원 안 함) 화면의 글자를 직접 골라 복사하게 안내한다
-import { useState } from "react";
+// 첫 기록 카드(2026-11-23 4차) — 글이 0편일 때 요약 맨 위에 입력칸 하나, [남기기] 하나. 그릴지는 Summary 가 본다(글 0편 또는 방금 여기서 저장함).
+// 저장 = [남기기] 또는 Cmd/Ctrl+Enter(한글 조합 중 키는 무시, 빈 글은 안 보냄) → POST /api/records {text}. 쓰기와 상태 다시 받기는 편집 장치의 run.
+// 저장 뒤엔 이 화면에 머무는 동안 저장됨 한 줄과 AI 앱 연결 링크(saved 는 Summary 의 컴포넌트 상태). 적은 동안 = 미저장 보호(markDirty).
+// 입력칸 id = hedit-input(미저장 대화창의 계속 편집이 포커스를 돌려준다, AxisEdit 와 같다). 응답을 못 받으면(연결 끊김, 15초) 저장 여부를 모른다고 알린다(다시 누르면 두 번 저장될 수 있다). 브라우저 저장소는 쓰지 않는다
+import { useEffect, useRef, useState } from "react";
+import { useEdit } from "../../../shared/edit";
+import { postMsg } from "../../../shared/postErr";
+import { meApi } from "../meApi";
 import css from "./Summary.module.css";
 
-export const FIRST_SAY = "오늘 있었던 일 기록 남길게.";
-export const COPY_OK = "복사했어요";
-export const COPY_FAIL = "복사하지 못했어요. 직접 골라 복사해 주세요.";
+export const FIRST_LABEL = "오늘 있었던 일이나 생각을 한 줄 적어 보세요";
+export const FIRST_HELP = "적은 그대로 내 글로 저장돼요.";
+export const FIRST_SAVE = "남기기";
+export const FIRST_SAVED = "첫 글을 저장했어요. AI 앱을 연결하면 이 글에서 판단을 뽑을 수 있어요.";
+export const FIRST_CONNECT = "AI 앱 연결";
+export const FIRST_UNKNOWN = "저장됐는지 확인하지 못했어요. 새로 고침해 확인해 주세요.";
+const timeout = () => (typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(15000) : undefined);
 
-function CopyRow({ id, label, value }: { id: string; label: string; value: string }) {
-  const [say, setSay] = useState("");
-  const copy = async () => {
+export function FirstRecord({ saved, onSaved }: { saved: boolean; onSaved: () => void }) {
+  const { act, run, markDirty } = useEdit();
+  const [text, setText] = useState("");
+  const area = useRef<HTMLTextAreaElement>(null), link = useRef<HTMLAnchorElement>(null), sending = useRef(false);
+  const busy = !!act?.busy, empty = !text.trim();
+  useEffect(() => { area.current?.focus(); }, []);   // 처음 그려질 때(이름 관문 저장 뒤 첫 화면 포함) 입력칸에
+  useEffect(() => { markDirty(!saved && !empty); }, [saved, empty, markDirty]);
+  useEffect(() => () => markDirty(false), [markDirty]);
+  useEffect(() => { if (saved) link.current?.focus(); }, [saved]);   // 입력칸이 사라지므로 다음 할 일(연결 링크)로
+
+  const save = async () => {
+    if (sending.current || saved || busy || !text.trim()) return;   // 연타, 빈 글, 저장 뒤 = 요청 0
+    sending.current = true;
+    const t = text;
     try {
-      if (!navigator.clipboard?.writeText) throw new Error("no clipboard");
-      await navigator.clipboard.writeText(value);
-      setSay(COPY_OK);
-    } catch { setSay(COPY_FAIL); }
+      await run(async () => { await meApi.recordAdd(t, timeout()); setText(""); onSaved(); },   // 다시 받기 전에 저장됨으로(글이 생기면 카드 조건이 거짓이 된다)
+        FIRST_SAVED, e => (e.code === "OFFLINE" ? FIRST_UNKNOWN : postMsg(e)));
+    } finally { sending.current = false; }
+  };
+  const key = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.nativeEvent.isComposing) return;
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void save(); }
   };
   return (
-    <div className={css.copyRow}>
-      <span className={css.copyLabel}>{label}</span>
-      <code className={css.copyValue} id={id}>{value}</code>
-      <button type="button" onClick={() => void copy()} aria-label={`${label} 복사`}>복사</button>
-      <span className={css.copySay} role="status">{say}</span>
-    </div>
-  );
-}
-
-export function FirstRecord() {
-  return (
-    <section className={css.firstRecord} id="first-record-intro" aria-labelledby="first-record-title">
-      <h2 id="first-record-title">첫 기록을 남겨 보세요</h2>
-      <p>Claude나 ChatGPT에 이 주소를 커넥터로 더하고 첫 마디를 보내요. 자세한 것은 <a href="/help">도움말</a>에서 볼 수 있어요.</p>
-      <CopyRow id="first-record-mcp" label="MCP 주소" value={location.origin + "/mcp"} />
-      <CopyRow id="first-record-say" label="첫 마디" value={FIRST_SAY} />
+    <section className={css.firstRecord} id="first-record-intro" aria-labelledby={saved ? undefined : "first-record-label"}>
+      {!saved && <form className="fform" noValidate onSubmit={e => { e.preventDefault(); void save(); }}>
+        <label id="first-record-label" htmlFor="hedit-input">{FIRST_LABEL}</label>
+        <textarea ref={area} id="hedit-input" value={text} disabled={busy} aria-describedby="first-record-help first-record-err"
+          onChange={e => setText(e.target.value)} onKeyDown={key} />
+        <p className="hint" id="first-record-help">{FIRST_HELP}</p>
+        <div className="frow"><button className="primary" type="submit" disabled={busy || empty}>{FIRST_SAVE}</button></div>
+      </form>}
+      <p className="ferr" id="first-record-err" role="alert" aria-atomic="true">{saved ? "" : act?.err}</p>
+      <p className="fok" role="status" aria-atomic="true">{saved && <>{FIRST_SAVED} <a ref={link} href="#_setup/connect">{FIRST_CONNECT}</a></>}</p>
     </section>
   );
 }

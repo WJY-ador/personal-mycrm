@@ -1,0 +1,6 @@
+/* 복사 줄(shared/CopyRow) — 이름, 값 글자(통째로 골라지게), [복사], 결과 한 줄. 첫 기록 카드(Summary.module.css)에서 옮김 */
+.copyRow { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-4); margin: var(--sp-4) 0 0; }
+.copyLabel { flex: none; min-width: 5.5rem; font-size: var(--fs-2); font-weight: 600; color: var(--muted); }
+.copyValue { flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; user-select: all; font-family: var(--mono); font-size: var(--fs-2); padding: var(--sp-2) var(--sp-4);
+  background: var(--paper); border: 1px solid var(--line); border-radius: var(--r-3); color: var(--ink); }
+.copySay { font-size: var(--fs-2); color: var(--muted); }

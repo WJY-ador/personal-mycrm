@@ -45,6 +45,7 @@ test("화면 고르기 — 탭 줄 · 사용자 탭 · 옛 화면 · 모르면 �
   expect(pick("#_setup/map")).toEqual(["map", ["map"], "_setup", "map", true]);
   expect(pick("#_setup/migration/pl1")).toEqual(["migration", ["pl1"], "_setup", "migration", true]);
   expect(pick("#_setup/help")).toEqual(["help", [], "_setup", "help", true]);
+  expect(pick("#_setup/connect")).toEqual(["connect", [], "_setup", "connect", true]);   // AI 앱 연결(2026-11-23 4차)
   expect(go("#t-001", { ...S, read: { tabs: { ok: false } } } as AppState).screen).toBe("me");   // 탭 설정 못 읽음 = 사용자 탭 없음
 });
 
@@ -62,7 +63,7 @@ test("휴지통 스위치 — 꺼짐·필드 없음 = 페이지 0 · 켜짐 = Se
   const pages = (sw: object) => setupPages({ ...S, switches: sw } as AppState).map(p => p[0]);
   expect(pages({ converse: true })).not.toContain("trash");
   expect(pages({ trash: false })).not.toContain("trash");
-  expect(pages({ trash: true })).toEqual(["layout", "structure", "objects", "pc", "map", "help", "migration", "trash"]);
+  expect(pages({ trash: true })).toEqual(["layout", "structure", "objects", "pc", "connect", "map", "help", "migration", "trash"]);
   expect(go("#_setup/trash", { ...S, switches: { trash: true } } as AppState).screen).toBe("trash");
 });
 
@@ -72,9 +73,9 @@ test("옛 「연결 장치」 주소는 「이 PC」로 — 연결 장치 페이
   expect(go("#_setup/pc").screen).toBe("pc");
 });
 
-test("설정 줄의 고급 설정 구역 — 이 PC, 문의 및 개인정보만 밖, 나머지 쪽(휴지통 포함)은 고급 설정 안, 기본 쪽 = 이 PC", () => {
+test("설정 줄의 고급 설정 구역 — 이 PC, AI 앱 연결, 문의 및 개인정보만 밖(이 순서), 나머지 쪽(휴지통 포함)은 고급 설정 안, 기본 쪽 = 이 PC", () => {
   const pages = setupPages({ ...S, switches: { trash: true } } as AppState).map(p => p[0]);
-  expect(pages.filter(p => !isSetupAdvanced(p))).toEqual(["pc", "help"]);
+  expect(pages.filter(p => !isSetupAdvanced(p))).toEqual(["pc", "connect", "help"]);
   expect(pages.filter(isSetupAdvanced)).toEqual(["layout", "structure", "objects", "map", "migration", "trash"]);
   expect(SETUP_HOME).toBe("pc");
   expect(isSetupAdvanced(SETUP_HOME)).toBe(false);

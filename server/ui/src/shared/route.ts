@@ -84,14 +84,15 @@ function navReplace(R: Route, S: AppState): string {
 
 // Setup 페이지 줄 — 휴지통은 스위치 켜짐일 때만. 꺼짐이면 #_setup/trash 는 기본 쪽(이 PC)으로 돌린다
 // 「연결 장치」는 사용자 화면에서 없앴다(2026-11-13 앱 하나 자동 연결) — 「이 PC」 한 줄. 옛 주소 #_setup/devices 는 이 PC 로
+// AI 앱 연결(2026-11-23 4차) = 이 PC 바로 뒤(접지 않는 쪽 순서 = 이 배열 순서: 이 PC, AI 앱 연결, 문의 및 개인정보)
 const SETUP_PAGES: [string, string][] = [["layout", "페이지 레이아웃"], ["structure", "내 구조 설정"], ["objects", "자료 종류"], ["pc", "이 PC"],
-  ["map", "지도"], ["help", "문의 및 개인정보"], ["migration", "이관"]];
+  ["connect", "AI 앱 연결"], ["map", "지도"], ["help", "문의 및 개인정보"], ["migration", "이관"]];
 export const setupPages = (S: AppState) => (S.switches?.trash ? SETUP_PAGES.concat([["trash", "휴지통"]]) : SETUP_PAGES);
-// 설정 줄의 접힌 구역 "고급 설정"(2026-11-23). 이 PC, 문의 및 개인정보만 늘 보이고 나머지 쪽은 고급 설정 안. 첫 쪽과 모르는 쪽 = 이 PC
+// 설정 줄의 접힌 구역 "고급 설정"(2026-11-23). 이 PC, AI 앱 연결, 문의 및 개인정보만 늘 보이고 나머지 쪽은 고급 설정 안. 첫 쪽과 모르는 쪽 = 이 PC
 export const SETUP_HOME = "pc";
-const SETUP_BASIC = new Set([SETUP_HOME, "help"]);
+const SETUP_BASIC = new Set([SETUP_HOME, "connect", "help"]);
 export const isSetupAdvanced = (page: string) => !SETUP_BASIC.has(page);
-const SETUP_SCREEN: Record<string, string> = { layout: "layout", structure: "defs", pc: "pc", map: "map", trash: "trash", migration: "migration", help: "help" };
+const SETUP_SCREEN: Record<string, string> = { layout: "layout", structure: "defs", pc: "pc", connect: "connect", map: "map", trash: "trash", migration: "migration", help: "help" };
 
 // 자료 종류 — 활동·축 상세는 「활동」 화면, 그 밖(색인·사람·출처·읽고 든 생각)은 「자료 종류」 화면
 const objScreen = (a: string, b: string, c: string): [string, string[]] => (a === "activity" || a === "axis" ? ["activity", [a, b, c]] : ["objects", [a, b, c]]);

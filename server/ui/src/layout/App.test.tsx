@@ -221,8 +221,8 @@ test("상태 한 벌 → 탭 줄·머리글·바닥 · 설정 페이지 줄 · �
   expect($("foot").textContent).toBe("불러온 시각 11월 3일 10:05.");
   expect($("subnav").hidden).toBe(false);
   expect($("subnav").querySelector("a.on")!.textContent).toBe("문의 및 개인정보");
-  // 이 PC, 문의 및 개인정보는 밖, 나머지는 접힌 구역 고급 설정 안(2026-11-23). 접혀도 링크는 DOM 에 있다
-  expect(text($("subnav"), ":scope > .wrap > a")).toEqual(["이 PC", "문의 및 개인정보"]);   // 휴지통 = 스위치 켜짐만 · 운영 링크 = 관리자만
+  // 이 PC, AI 앱 연결, 문의 및 개인정보는 밖(2026-11-23 4차), 나머지는 접힌 구역 고급 설정 안(2026-11-23). 접혀도 링크는 DOM 에 있다
+  expect(text($("subnav"), ":scope > .wrap > a")).toEqual(["이 PC", "AI 앱 연결", "문의 및 개인정보"]);   // 휴지통 = 스위치 켜짐만 · 운영 링크 = 관리자만
   expect(text($("subnav"), "details.setup-adv > summary")).toEqual(["고급 설정"]);
   expect(text($("subnav"), "details.setup-adv a")).toEqual(["페이지 레이아웃", "내 구조 설정", "자료 종류", "지도", "이관"]);
   expect(($("subnav").querySelector("details") as HTMLDetailsElement).open).toBe(false);   // 지금 쪽(문의)이 고급 설정 밖 = 접힘
@@ -232,6 +232,34 @@ test("상태 한 벌 → 탭 줄·머리글·바닥 · 설정 페이지 줄 · �
   await click($("view").querySelector('[data-open="mine"]'));
   expect(($("desk-dlg") as HTMLDialogElement).open).toBe(true);
   expect($("desk-dlg-title").textContent).toBe("내 문의");
+});
+
+test("설정 AI 앱 연결 쪽 — 접지 않는 줄에서 켜지고, 고급 설정은 접힌 채, 쪽 화면 = MCP 주소와 연결 방법", async () => {
+  await start("#_setup/connect");
+  expect(location.hash).toBe("#_setup/connect");
+  expect($("subnav").querySelector("a.on")!.textContent).toBe("AI 앱 연결");
+  expect($("subnav").querySelector("a.on")!.getAttribute("href")).toBe("#_setup/connect");
+  expect(($("subnav").querySelector("details") as HTMLDetailsElement).open).toBe(false);
+  expect($("view").querySelector("h2")!.textContent).toBe("AI 앱 연결");
+  expect($("view").querySelector("#connect-mcp")!.textContent).toBe(location.origin + "/mcp");
+  expect(calls.map(c => c.url)).toEqual(["/api/state"]);
+});
+
+test("이름 관문 저장 뒤 첫 화면 — 글 0편이면 첫 기록 카드의 입력칸에 포커스", async () => {
+  const fresh = { ...ST, user: { ...ST.user, display_name: "" }, journal: [], journal_next_before: null };
+  state = fresh;
+  serve((url, method) => {
+    if (url === "/api/me/name" && method === "POST") { state = { ...fresh, user: { ...fresh.user, display_name: "새 이름" } }; return json(200, {}); }
+    return url === "/api/state" ? json(200, state) : json(404, { code: "NOT-FOUND", msg: "" });
+  });
+  await start("#_me");
+  const input = $("name-gate-input") as HTMLInputElement;
+  expect(document.activeElement).toBe(input);
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "새 이름"); input.dispatchEvent(new Event("input", { bubbles: true })); });
+  await act(async () => { ($("name-gate-form") as HTMLFormElement).requestSubmit(); });
+  for (let i = 0; i < 6; i++) await flush();
+  expect($("view").querySelector("#first-record-intro")).toBeTruthy();
+  expect(document.activeElement).toBe($("view").querySelector("#first-record-intro textarea"));
 });
 
 test("관리자 — Setup 줄 끝에 운영 관리·운영 콘솔 · 문의 자리 없음", async () => {
