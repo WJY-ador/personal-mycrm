@@ -6,15 +6,17 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { queryClient } from "../../../shared/queries";
 import { calls, click, flush, installFetch, json, serve } from "../../../test/fakeServer";
 import { installMedia, layout, meState, STATS } from "../../../test/meFixture";
-import { hideMe, reload, setDirty, showMe, type } from "../../../test/showMe";
+import { hideMe, setDirty, showMe, type } from "../../../test/showMe";
 import { FIRST_CONNECT, FIRST_HELP, FIRST_LABEL, FIRST_SAVED, FIRST_UNKNOWN } from "./FirstRecord";
 
 const EMPTY = { ...meState(), journal: [], journal_next_before: null };
 const ONE = meState();   // 글 1편(다시 받은 뒤)
+let inval: ReturnType<typeof vi.spyOn>;
 let post: (body: unknown) => Response | Promise<Response> = () => json(200, { id: "r_new", title: "첫 글", created: "2026-11-23T03:00:00Z" });
 beforeEach(() => {
   installFetch(); installMedia(false); queryClient.clear();
-  reload.mockClear(); setDirty.mockClear();
+  setDirty.mockClear();
+  inval = vi.spyOn(queryClient, "invalidateQueries");   // 저장 뒤 다시 받기 = 껍데기 reload 와 같은 모든 조회 무효화
   post = () => json(200, { id: "r_new", title: "첫 글", created: "2026-11-23T03:00:00Z" });
   serve((url, method) => {
     if (url === "/api/records" && method === "POST") return post(calls.at(-1)!.body);
@@ -23,7 +25,7 @@ beforeEach(() => {
     return json(404, { code: "NOT-FOUND", msg: "" });
   });
 });
-afterEach(() => { hideMe(); vi.unstubAllGlobals(); });
+afterEach(() => { hideMe(); vi.unstubAllGlobals(); inval.mockRestore(); });
 const posts = () => calls.filter(c => c.method !== "GET");
 const card = (el: Element) => el.querySelector("#first-record-intro");
 const area = (el: Element) => el.querySelector("#first-record-intro textarea") as HTMLTextAreaElement;
@@ -34,7 +36,7 @@ test("모양 — 입력칸 하나(라벨), 한 줄 설명, [남기기] 하나(�
   const el = await showMe("#_me/summary", EMPTY);
   const c = card(el)!;
   expect(c.querySelector("label")!.textContent).toBe(FIRST_LABEL);
-  expect(c.querySelector("label")!.getAttribute("for")).toBe("hedit-input");
+  expect(c.querySelector("label")!.getAttribute("for")).toBe("first-record-input");
   expect(c.querySelector(".hint")!.textContent).toBe(FIRST_HELP);
   expect([...c.querySelectorAll("button")].map(b => b.textContent)).toEqual(["남기기"]);
   expect(save(el).disabled).toBe(true);
@@ -60,7 +62,7 @@ test("저장 — 본문 그대로 {text} 하나, 저장 중 잠금, 다시 받�
   expect(posts().length).toBe(1);
   await act(async () => { done(json(200, { id: "r_new", title: "첫 글", created: "2026-11-23T03:00:00Z" })); });
   await flush(); await flush();
-  expect(reload).toHaveBeenCalledTimes(1);
+  expect(inval).toHaveBeenCalledTimes(1);
   const c = card(el)!;
   expect(c.querySelector("textarea")).toBeNull();
   expect(c.querySelector("[role=status]")!.textContent).toBe(`${FIRST_SAVED} ${FIRST_CONNECT}`);
@@ -120,7 +122,7 @@ test("서버 거절 = 서버 문구 그 자리, 글은 그대로, 다시 누를 
   expect(area(el).value).toBe("긴 글");
   expect(area(el).disabled).toBe(false);
   expect(save(el).disabled).toBe(false);
-  expect(reload).not.toHaveBeenCalled();
+  expect(inval).not.toHaveBeenCalled();
   expect(setDirty).toHaveBeenLastCalledWith("#_me/summary");
 });
 
@@ -133,4 +135,40 @@ test("응답을 못 받음(연결 끊김) = 저장 여부를 모른다는 한 �
   expect(area(el).value).toBe("끊긴 글");
   expect(save(el).disabled).toBe(false);
   expect(card(el)!.querySelector("[role=status]")!.textContent).toBe("");
+});
+
+// 나 머리의 표시 이름 편집(공용 편집 장치, 칸 id hedit-input)과 부딪치지 않는다 — 이름 칸이 열려 있어도 저장 1건, id 겹침 0, 저장 중 이름을 눌러도 잠금 유지
+const nameBtn = (el: Element) => el.querySelector(".hhead button[title='눌러서 고치기']") as HTMLButtonElement;
+test("이름 편집 칸이 열린 채 [남기기] = 저장 요청 1건과 저장됨, 입력칸 id 는 이름 칸과 겹치지 않는다", async () => {
+  const el = await showMe("#_me/summary", EMPTY);
+  await type(area(el), "이름 칸이 열린 채 적은 글");
+  await click(nameBtn(el));
+  expect(el.querySelectorAll("#hedit-input").length).toBe(1);   // 이름 칸 하나뿐
+  expect(el.querySelector(".hhead #hedit-input")).toBeTruthy();
+  expect(area(el).id).toBe("first-record-input");
+  expect(el.querySelectorAll("#first-record-input").length).toBe(1);
+  expect(el.querySelector("label[for='first-record-input']")!.textContent).toBe(FIRST_LABEL);
+  await click(save(el));
+  expect(posts()).toEqual([{ url: "/api/records", method: "POST", body: { text: "이름 칸이 열린 채 적은 글" } }]);
+  expect(card(el)!.querySelector("[role=status]")!.textContent).toBe(`${FIRST_SAVED} ${FIRST_CONNECT}`);
+  expect(el.querySelector(".hhead #hedit-input")).toBeTruthy();   // 이름 칸은 그대로 열려 있다
+});
+
+test("저장 중에 이름을 눌러도 입력칸과 버튼은 잠긴 채, 다시 눌러도 요청 1건", async () => {
+  let done!: (r: Response) => void;
+  post = () => new Promise<Response>(r => { done = r; });
+  const el = await showMe("#_me/summary", EMPTY);
+  await type(area(el), "저장 중");
+  await click(save(el));
+  expect(posts().length).toBe(1);
+  await click(nameBtn(el));
+  expect(el.querySelector(".hhead #hedit-input")).toBeTruthy();
+  expect(area(el).disabled).toBe(true);
+  expect(save(el).disabled).toBe(true);
+  await key(area(el), { metaKey: true });
+  expect(posts().length).toBe(1);
+  await act(async () => { done(json(200, { id: "r_new", title: "저장 중", created: "2026-11-23T03:00:00Z" })); });
+  await flush(); await flush();
+  expect(card(el)!.querySelector("[role=status]")!.textContent).toBe(`${FIRST_SAVED} ${FIRST_CONNECT}`);
+  expect(posts().length).toBe(1);
 });

@@ -128,8 +128,9 @@ async function fetchState({ signal }: { signal: AbortSignal }): Promise<AppState
   return r.json() as Promise<AppState>;
 }
 
-export async function reload(): Promise<boolean> {
-  await queryClient.invalidateQueries();
+// keep = 키 머리가 이것인 조회만 빼고 무효화한다(꺼진 조회의 낡음 표시는 그대로). 글자가 아니면(콜백 인자 등) 전부
+export async function reload(keep?: unknown): Promise<boolean> {
+  await queryClient.invalidateQueries(typeof keep === "string" ? { predicate: q => q.queryKey[0] !== keep } : undefined);
   const st = queryClient.getQueryState<AppState | null>(STATE_KEY);
   return st?.status === "success" && !!st.data;
 }

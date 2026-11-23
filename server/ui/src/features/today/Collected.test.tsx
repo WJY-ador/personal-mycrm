@@ -73,6 +73,7 @@ test("펼침 — 제목 줄 · AI 요약 넷(as-is, to-be, 운영, 요점) + 「
   oneCol();
   const el = await show();
   expect(el.querySelector("#collected-reader")).toBeNull();
+  expect(el.querySelector("#collected[data-scroll]")).toBeNull();   // 한 칸은 페이지 스크롤 그대로
   const u1 = el.querySelector('li[data-id="u1"]')!;
   await click(u1.querySelector("button[aria-expanded]"));
   expect(u1.querySelector("button[aria-expanded]")!.getAttribute("aria-expanded")).toBe("true");
@@ -137,6 +138,10 @@ test("두 칸 — 읽기 판 빈 상태, 줄(진짜 button, Enter, Space) 누르
   const el = await show();
   expect(reader(el).textContent).toBe("왼쪽에서 글을 누르면 여기에 요약이 보여요.");
   expect(el.querySelector("#collected #collected-reader")).toBeNull();   // 읽기 판은 인박스 밖 오른쪽 칸
+  const box = el.querySelector("#collected[data-scroll]")!;   // 두 칸 = 왼쪽 상자 안에서 스크롤, 묶음과 보관함이 그 안에
+  expect(box.querySelectorAll("li[data-id]")).toHaveLength(6);
+  expect(box.querySelector("details")).not.toBeNull();
+  expect(box.contains(el.querySelector("#home-list"))).toBe(false);
   const f = face(el, "s1") as HTMLButtonElement;
   expect([f.tagName, f.type, f.getAttribute("aria-controls"), f.hasAttribute("aria-expanded")]).toEqual(["BUTTON", "button", "collected-reader", false]);
   expect(f.querySelector("button")).toBeNull();   // 버튼 안에 버튼 없음
@@ -197,4 +202,20 @@ test("보관함 글 고르기 = 읽기 판에 버림만, 수집 글을 담을 �
   hideScreen(); queryClient.clear(); READY = false;
   const e2 = await show();
   expect(e2.querySelector("#collected-reader")).toBeNull();
+});
+
+test("거르기로 숨은 고른 글을 읽기 판에서 판별하면 다음 글로 넘어가지 않고 빈 상태, 보이는 글은 다음 글 그대로", async () => {
+  PEND = PEND.map(p => (p.id === "s1" ? { ...p, post_url: null } : p));
+  const el = await show();
+  await click(face(el, "s1"));
+  await click(el.querySelector("#collected input[type=checkbox]"));
+  expect(row(el, "s1")).toBeNull();
+  expect(reader(el).querySelector("b")!.textContent).toBe("s1 작성자");   // 숨어도 읽기 판에는 남는다
+  await click(byText(reader(el), "button", "보관")[0]);
+  expect(posts().at(-1)!.url).toBe("/api/collected/s1/decide");
+  expect(reader(el).textContent).toBe("왼쪽에서 글을 누르면 여기에 요약이 보여요.");
+  expect(current(el)).toEqual([]);
+  await click(face(el, "n2"));
+  await click(byText(reader(el), "button", "버림")[0]);
+  expect(current(el)).toEqual(["n1"]);   // 보이는 글은 같은 묶음 다음 글 규칙 그대로
 });

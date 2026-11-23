@@ -44,10 +44,18 @@ button.face[aria-current="true"] .line { font-weight: 600; }
 .kept { margin-top: var(--sp-9); }
 .kept > summary { cursor: pointer; font-weight: 600; color: var(--muted); }
 /* 읽기 판 — 격자 칸 자체를 붙인다(감싸면 붙지 않는다). 칸 안에서 스크롤 */
-.pane { position: sticky; top: var(--sp-6); align-self: start; max-height: calc(100vh - 2 * var(--sp-6)); overflow-y: auto; margin-bottom: 0;
+.pane { position: sticky; top: var(--sp-6); align-self: start; max-height: max(20rem, 68vh); overflow-y: auto; margin-bottom: 0;
   padding: var(--sp-7) var(--sp-8); font-size: var(--fs-3); min-width: 0; }
 .paneEmpty { min-height: 8rem; display: flex; align-items: center; margin: 0; }
 .paneHead { margin: 0; }
+/* 두 칸의 왼쪽 상자 — 읽기 판과 같은 높이 기준으로 자기 안에서 스크롤(머리, 요약 상자도 같이 올라가 목록이 화면을 가장 많이 쓴다).
+   잘린 줄이 상자 끝에 보여 스크롤 상자임을 알린다. 결과 줄(되돌리기, 오류)은 상자 위에 붙어 목록 깊은 곳에서도 보인다 */
+/* 높이 = 화면 높이의 68%(위에 머리글과 오늘의 축 띠가 있어, 첫 화면에 상자 아래 끝과 그 아래 구역 머리가 보이게), 낮은 화면에서도 20rem 아래로 줄이지 않는다. 읽기 판과 같은 값 */
+.box[data-scroll] { max-height: max(20rem, 68vh); overflow-y: auto; }
+/* 결과 줄은 상자 위 가장자리에 붙인다(상자 위 안쪽 여백 --sp-8 만큼 올림). 보일 때만 아래 여백과 선, 비면 띠가 없다 */
+.box[data-scroll] .bar { position: sticky; top: calc(-1 * var(--sp-8)); z-index: 1; background: var(--card); }
+.box[data-scroll] .bar:has(> :not(:empty)) { padding: var(--sp-3) 0; margin-bottom: var(--sp-3); border-bottom: 1px solid var(--line); }
+.box[data-scroll] .bar :global(.fok) { margin: 0; }
 .pane .acts { padding-top: var(--sp-4); }
 /* 버튼 줄의 글자 시작을 위 작성자 줄, 아래 요약 상자의 왼쪽 끝에 맞춘다 — 버튼 안쪽 여백(--sp-6)과 테두리(1px)만큼 왼쪽으로. 누르는 넓이는 그대로 */
 .pane .acts { margin-left: calc(-1 * var(--sp-6) - 1px); }

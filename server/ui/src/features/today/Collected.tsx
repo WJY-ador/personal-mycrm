@@ -3,6 +3,7 @@
 // 판별 정본은 서버(state pending → kept|dropped). 수집 글은 남의 글이고 판단 근거가 아니다 — 명조를 쓰지 않는다.
 // 2026-11-23 두 칸: 넓은 화면(900 초과) = 왼쪽 #collected(요약 상자, 묶음의 촘촘한 줄, 보관함) | 오른쪽 읽기 판(Reader).
 // 한 칸(900 이하) = 읽기 판 없이 줄 아래 펼침. 문턱은 useOneCol 과 CSS 가 같은 값. 고른 글은 화면 상태로만(주소에 남기지 않는다).
+// 두 칸에서는 왼쪽 상자(data-scroll)가 읽기 판과 같은 높이로 자기 안에서 스크롤한다(수백 건이어도 아래 목록이 밀려나지 않게). 결과 줄(되돌리기)은 상자 위에 붙는다.
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { apiErr } from "../../shared/api";
@@ -64,15 +65,15 @@ export function Collected() {
   useEffect(() => { at.current = cur.at; if (curId !== sel) setSel(curId); });   // 빠진 글 → 다음 글(또는 빈 상태)로 고른 글을 옮긴다
   const c: RowCtx = { by, busy: act.busy, wide: two, sel: curId, choose: setSel, decide: act.decide };
   const box = (
-    <section className={`paper ${css.box}`} id="collected" aria-labelledby="collected-h">
+    <section className={`paper ${css.box}`} id="collected" aria-labelledby="collected-h" data-scroll={two ? "" : undefined}>
       <div className={css.head}><h3 id="collected-h">수집 인박스</h3>
         {shown ? <span className={css.headline}>{headline(shown)}</span> : null}
         <label className={css.only}><input type="checkbox" checked={linkOnly} onChange={e => { setLinkOnly(e.target.checked); act.disarm(); }} /> 원문 링크 있는 것만</label></div>
       {q.data?.ready ? <DigestBox d={dq.data} fail={dq.isError} posts={shown} pick={pick} setPick={setPick} /> : null}
-      {act.undo ? <p className={`fok ${css.toast}`} role="status">{act.undo.text}{" "}
+      <div className={css.bar}>{act.undo ? <p className={`fok ${css.toast}`} role="status">{act.undo.text}{" "}
         <button type="button" className="tertiary" onClick={act.revert}>되돌리기</button></p>
         : <p className="fok" role="status" aria-atomic="true">{act.note}</p>}
-      {act.err ? <p className="ferr" role="alert">{act.err}</p> : null}
+        {act.err ? <p className="ferr" role="alert">{act.err}</p> : null}</div>
       {q.isError && !all ? <LoadFail err={apiErr(q.error)} what="수집 인박스" />
         : !q.data || !posts ? <p className="hint">{LOADING}</p>
         : !q.data.ready ? <p className={`hint ${css.empty}`}>수집 글을 담을 자료 종류(key collected_posts)가 아직 없어요. 만들면 PC가 모은 글이 여기에 쌓여요.</p>

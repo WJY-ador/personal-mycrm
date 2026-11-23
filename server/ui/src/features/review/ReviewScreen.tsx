@@ -2,15 +2,16 @@
 // 껍데기가 넘기는 args = [탭 id, 목록 키, 후보 자리, 돌아갈 주소, 돌아가기 문구](돌아갈 곳은 껍데기 라우터가 기억). 후보 자리가 목록의 후보면
 // 들어올 때 그 카드로 스크롤하고 포커스한다. 옛 숫자 idx, end, 빈 자리, 이미 정한 후보는 목록 맨 위로 본다(주소는 고쳐 쓰지 않는다).
 // 저장 = 호출 하나(confirm, exclude, edit_confirm) → 상태를 다시 받아 그린다. 정한 카드는 목록에서 빠지고, 결과 한 줄은 다음 카드 위(없으면 머리)에,
-// 포커스는 다음 카드(없으면 머리)로 간다. 저장 중엔 모든 카드의 결정을 잠근다.
+// 포커스는 다음 카드(없으면 머리)로 간다. 저장 중엔 모든 카드의 결정을 잠근다(요청과 다시 받기가 끝날 때까지, 새 상태가 와도 풀지 않는다).
+// 저장 뒤 다시 받기는 원문(journal)을 뺀다. 결정은 글 본문을 바꾸지 않는다. 충돌, 새로 고침, 표지 갱신은 원문도 다시 받는다.
 // 서버 msg 는 그대로 보인다(CONFLICT 는 서버 문구 + 고치던 문장). 응답 유실은 상태 변화만으로 해당 요청의 저장 여부를 증명할 수 없어 불확실로 남긴다.
 // 미저장 보호 = 고친 카드의 등록부(후보 id → 고치기 시작한 주소). 하나라도 남으면 그 주소를 ctx.setDirty, 모두 깨끗할 때만 null.
 // 고친 문장을 저장한 것은 edit_confirm 성공뿐 — 남기기, 남기지 않기는 등록을 풀지 않는다(다시 받기에 성공하면 카드가 사라지며 풀린다).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiErr } from "../../shared/api";
 import type { ScreenProps, UiCtx } from "../../shared/ctx";
-import { candidateDecide } from "../../shared/journal";
-import { readOk, type AppState, type Cand } from "../../shared/state";
+import { candidateDecide, JOURNAL } from "../../shared/journal";
+import { readOk, type Cand } from "../../shared/state";
 import { Card } from "./Card";
 import { PartFail } from "../../shared/PartFail";
 import { CONFLICT_TEXT, NO_QUESTION, SAVE_FAIL, SAVING, UNKNOWN, unsavedEdit, WORDS as w } from "./text";
@@ -49,7 +50,7 @@ const goCard = (id: string, lead = false) => {
 export function ReviewScreen({ ctx }: ScreenProps) {
   const S = ctx.state!, [, qid = "", key = "", back = "#", backText = ""] = ctx.args || [];
   const [say, setSay] = useState<Say>({ text: "", at: "", scope: "" });
-  const [lockS, setLockS] = useState<AppState | null>(null);   // 저장 중 = 잠근 때의 상태 — 새 상태가 오면 저절로 풀린다
+  const [busy, setBusy] = useState(false);   // 저장 중 = 결정 요청이 진행 중(다시 받기까지). 어느 길로 끝나도 finally 에서 푼다
   // 이 화면에 있는 동안만 머리글의 막대, 범례, 질문 줄을 숨긴다(Review.module.css 의 body.review-screen, 디자인 2 C3). 빈, 못 읽음 상태도 같다
   useEffect(() => { document.body.classList.add("review-screen"); return () => document.body.classList.remove("review-screen"); }, []);
   const mark = useDirtyCards(ctx);
@@ -111,36 +112,39 @@ export function ReviewScreen({ ctx }: ScreenProps) {
 
   // saved = 카드에 저장 성공 알림(기준 바꾸기) · baseRev = 카드 기준 문장의 revision(고친 문장 저장만 이것으로 충돌 검사, 남기기, 남기지 않기는 보이는 최신 revision)
   async function decide(c: Cand, action: string, text: string | undefined, saved: () => void, baseRev: number) {
+    if (busy) return;
     const rev = action === "edit_confirm" ? baseRev : c.revision;
     const i = wait.findIndex(x => x.id === c.id), nextId = wait[i + 1]?.id || "";
     const here = (t: Partial<Say>) => setSay({ text: "", at: c.id, scope: qid, ...t });
     const ack = () => { if (action === "edit_confirm") { saved(); mark(c.id, false); } };   // 고친 문장 저장만 — 다시 받기 전에 푼다
-    const done = async (msg: string) => {   // 저장됨(또는 충돌) — 상태를 다시 받아 그린다. 못 받으면 문구만 그 카드에
+    const done = async (msg: string, keep?: string) => {   // 저장됨(또는 충돌) — 상태를 다시 받아 그린다. 못 받으면 문구만 그 카드에
       after.current = { id: c.id, nextId }; flash.current = msg;
-      if (!(await ctx.reload())) { after.current = null; flash.current = null; here({ text: msg }); setLockS(null); }
+      if (!(await ctx.reload(keep))) { after.current = null; flash.current = null; here({ text: msg }); }
     };
-    here({ text: SAVING }); setLockS(S);
+    here({ text: SAVING }); setBusy(true);
     const body = { candidate_id: c.id, action, ...(Number.isInteger(rev) ? { expected_revision: rev } : {}), ...(action === "edit_confirm" ? { text } : {}) };
     try {
-      await candidateDecide(body, typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(15000) : undefined);
-    } catch (e) {
-      const er = apiErr(e);
-      if (er.code === "UNAUTHORIZED") return;
-      if (er.code === "OFFLINE") {
-        // 응답 유실 뒤 상태 변화만으로 이 요청의 저장 여부를 증명할 수 없다. 다른 기기의 같은 결정일 수도 있다.
-        here({ err: UNKNOWN }); setLockS(null);
+      try {
+        await candidateDecide(body, typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(15000) : undefined);
+      } catch (e) {
+        const er = apiErr(e);
+        if (er.code === "UNAUTHORIZED") return;
+        if (er.code === "OFFLINE") {
+          // 응답 유실 뒤 상태 변화만으로 이 요청의 저장 여부를 증명할 수 없다. 다른 기기의 같은 결정일 수도 있다.
+          here({ err: UNKNOWN });
+          return;
+        }
+        if (er.code === "CONFLICT") return await done((er.msg || CONFLICT_TEXT) + (action === "edit_confirm" && text !== c.text ? unsavedEdit(text || "") : ""));
+        here({ err: er.msg || SAVE_FAIL });
         return;
       }
-      if (er.code === "CONFLICT") return done((er.msg || CONFLICT_TEXT) + (action === "edit_confirm" && text !== c.text ? unsavedEdit(text || "") : ""));
-      here({ err: er.msg || SAVE_FAIL }); setLockS(null);
-      return;
-    }
-    ack();   // 저장됨 — edit_confirm 이면 카드 기준을 바꾸고 등록을 푼다
-    await done(w.saved(action));
+      ack();   // 저장됨 — edit_confirm 이면 카드 기준을 바꾸고 등록을 푼다
+      await done(w.saved(action), JOURNAL);   // 저장됨 = 본문은 그대로, 원문은 다시 받지 않는다
+    } finally { setBusy(false); }
   }
   // 결정 영역 설명은 목록 머리에 한 문장(디자인 2 C3) — 남기면 어디로 가는지 + 남기지 않음이 지우지 않는다는 것
   const dest = byRec ? `남기면 ${w.mine}에 들어가고(${NO_QUESTION}), ${w.keepNote}` : `남기면 이 질문의 ${w.mine}에 들어가고, ${w.keepNote}`;
-  const locked = lockS === S;
+  const locked = busy;
   const of = (c: Cand, lead: boolean) => (shown && shown.at === c.id && !!shown.lead === lead ? shown : null);
   return (
     <div className={css.review}>{head(wait.length, true)}

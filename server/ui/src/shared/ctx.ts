@@ -5,7 +5,7 @@
 import type { AppState } from "./state";
 
 export type UiCtx = {
-  reload: () => Promise<unknown>;
+  reload: (keep?: string) => Promise<unknown>;   // keep = 다시 받지 않을 조회 키의 머리(그 쓰기로 바뀌지 않는 조회, 대조 화면의 결정 뒤 원문). 없으면 전부
   state?: AppState;
   args?: string[];
   setDirty?: (at: string | null) => void;

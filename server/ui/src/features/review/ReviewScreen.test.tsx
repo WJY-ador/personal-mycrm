@@ -11,6 +11,7 @@ import { WORDS } from "./text";
 import { queryClient } from "../../shared/queries";
 import type { AppState } from "../../shared/state";
 import { calls, click, flush, installFetch, json, serve } from "../../test/fakeServer";
+import { reload as appReload, reloadState, useAppState } from "../../layout/useAppState";
 
 const BODY = "# 도입 회고\n\n첫 문단이다.\n\n고객은 입력 담당을 먼저 정했다. 그게 맞았다.\n\n셋째 문단.\n\n넷째 문단은 멀다.";
 const J = { id: "r1", title: "도입 회고", body: BODY, revision: 1, author_kind: "self", meta: { created: "2026-11-02T01:00:00Z", source: "파일:a.md", question_id: "q1" } };
@@ -142,14 +143,15 @@ test("주소 — 빈 자리, 옛 숫자, 넘친 숫자, end, 정한 판단 = 주
 test("남기기 — 호출 하나(expected_revision), 저장 중 모든 카드 잠금, 새 상태 → 카드가 빠지고 다음 카드 위에 결과 한 줄 + 다음 카드로 포커스, 주기 갱신은 그대로", async () => {
   let done!: (r: Response) => void;
   POST = () => new Promise(r => { done = r; });
-  reload.mockImplementation(async () => { S = state([cand("c_1", { status: "confirmed" }), cand("c_2")]); return true; });
-  await show(state([cand("c_1"), cand("c_2")]), "c_1");
+  reload.mockImplementation(async () => { S = state([cand("c_1", { status: "confirmed" }), cand("c_2", { revision: 5 })]); return true; });
+  await show(state([cand("c_1"), cand("c_2", { revision: 5 })]), "c_1");
   await click(btn("남기기"));
   expect(posts().map(c => c.body)).toEqual([{ candidate_id: "c_1", action: "confirm", expected_revision: 2 }]);
   expect(stat("c_1")).toBe("저장하고 있어요…");
   expect([...el.querySelectorAll("button")].every(b => b.disabled)).toBe(true);   // 다른 카드도 잠긴다
   await act(async () => done(json(200, {}))); await flush();
   expect(reload).toHaveBeenCalledTimes(1);
+  expect(reload).toHaveBeenCalledWith("journal");   // 저장 뒤 다시 받기는 원문을 뺀다
   await redraw();
   expect(location.hash).toBe("#q/review/q1/c_1");   // 주소는 고치지 않는다
   expect(ids()).toEqual(["c_2"]);
@@ -159,7 +161,7 @@ test("남기기 — 호출 하나(expected_revision), 저장 중 모든 카드 �
   expect(document.activeElement).toBe(card("c_2"));
   expect(btn("남기기").disabled).toBe(false);
   sentBtn("c_2").focus();
-  await show(state([cand("c_2")]), "c_1");   // 주기 갱신 — 결과 한 줄과 포커스를 다시 내지 않는다
+  await show(state([cand("c_2", { revision: 5 })]), "c_1");   // 주기 갱신 — 결과 한 줄과 포커스를 다시 내지 않는다
   expect(document.activeElement).toBe(sentBtn("c_2"));
   expect(posts()).toHaveLength(1);
 });
@@ -184,10 +186,10 @@ test("결정 뒤 스크롤 — 결과 한 줄이 화면 밖이면 그 줄로 스
 });
 
 test("목록 마지막 카드를 정하면 결과 한 줄은 머리에, 포커스는 머리말로, 앞 카드는 그대로", async () => {
-  reload.mockImplementation(async () => { S = state([cand("c_1"), cand("c_2", { status: "excluded" })]); return true; });
-  await show(state([cand("c_1"), cand("c_2")]), "c_2");
+  reload.mockImplementation(async () => { S = state([cand("c_1"), cand("c_2", { status: "excluded", revision: 5 })]); return true; });
+  await show(state([cand("c_1"), cand("c_2", { revision: 4 })]), "c_2");
   await click(inCard("c_2", "남기지 않기"));
-  expect(posts().at(-1)!.body).toEqual({ candidate_id: "c_2", action: "exclude", expected_revision: 2 });
+  expect(posts().at(-1)!.body).toEqual({ candidate_id: "c_2", action: "exclude", expected_revision: 4 });   // 그 카드의 revision(첫 카드 것 아님)
   await redraw();
   expect(ids()).toEqual(["c_1"]);
   expect(el.querySelector("#save-status")!.textContent).toBe("남기지 않음으로 표시했어요.");
@@ -206,6 +208,7 @@ test("문장 눌러 고치기 · 충돌 = 서버 문구 + 고치던 문장 · �
   await click(btn("고친 문장으로 남기기")); await redraw();
   expect(posts().at(-1)!.body).toEqual({ candidate_id: "c_1", action: "edit_confirm", expected_revision: 2, text: "고친 문장" });
   expect(stat()).toBe("다른 곳에서 먼저 바뀌었어요(서버). 고치던 문장은 저장되지 않았어요: 고친 문장");   // 카드가 남으면 그 카드에
+  expect(reload.mock.calls.at(-1)).toEqual([undefined]);   // 충돌 = 저장 안 됨, 원문까지 전부 다시 받는다
   expect(btn("남기지 않기")).toBeUndefined();   // 편집 칸이 열린 동안엔 결정 버튼이 없다 — 취소하면 다시 보인다
   await click(btn("취소"));
   POST = () => json(400, { code: "CANDIDATE-REVIEW", msg: "근거가 바뀌었어요." });
@@ -407,8 +410,8 @@ test("미저장 보호 — 동시에 고친 카드 둘: 하나를 풀어도 다�
 });
 
 test("미저장 보호 — 나열 화면에서 두 카드를 같이 고쳐도 카드마다 등록, 한 카드의 저장은 다른 카드의 초안과 등록을 건드리지 않는다", async () => {
-  reload.mockImplementation(async () => { S = state([cand("c_1", { status: "confirmed", text: "하나" }), cand("c_2")]); return true; });
-  await show(state([cand("c_1"), cand("c_2")]), "c_1");
+  reload.mockImplementation(async () => { S = state([cand("c_1", { status: "confirmed", text: "하나", revision: 4 }), cand("c_2", { revision: 6 })]); return true; });
+  await show(state([cand("c_1"), cand("c_2", { revision: 6 })]), "c_1");
   await click(sentBtn("c_1")); await typeIn(card("c_1").querySelector("textarea")!, "하나");
   await click(sentBtn("c_2")); await typeIn(card("c_2").querySelector("textarea")!, "둘");
   expect(setDirty).toHaveBeenLastCalledWith("#q/review/q1/c_1");
@@ -455,7 +458,7 @@ test("문장 눌러 고치기 — 문장은 버튼(Enter, Space), 편집 칸은 
 
 test("편집 칸이 열린 동안엔 그 카드의 [남기기] [남기지 않기]를 숨긴다: 보이는 버튼은 편집 칸의 둘뿐, 취소하면 다시 보인다, 다른 카드는 그대로, 등록은 취소하거나 떠날 때까지 남는다", async () => {
   const shown = (id: string) => [...card(id).querySelectorAll("button")].filter(b => !b.closest("[hidden]")).map(b => b.textContent);
-  await show(state([cand("c_1"), cand("c_2")]), "c_1");
+  await show(state([cand("c_1"), cand("c_2", { revision: 9 })]), "c_1");
   expect(shown("c_1")).toEqual(["담당을 먼저 정한다 c_1", "남기기", "남기지 않기"]);
   await click(sentBtn());
   await typeIn(card("c_1").querySelector("textarea")!, "고친 문장");
@@ -475,7 +478,7 @@ test("편집 칸이 열린 동안엔 그 카드의 [남기기] [남기지 않기
   await typeIn(card("c_1").querySelector("textarea")!, "또 고친 문장");
   setDirty.mockClear();
   await click(inCard("c_2", "남기지 않기"));   // 다른 카드의 결정은 이 카드의 초안과 등록을 건드리지 않는다
-  expect(posts().at(-1)!.body).toMatchObject({ candidate_id: "c_2", action: "exclude" });
+  expect(posts().at(-1)!.body).toMatchObject({ candidate_id: "c_2", action: "exclude", expected_revision: 9 });
   expect(setDirty).not.toHaveBeenCalledWith(null);
   expect(card("c_1").querySelector("textarea")!.value).toBe("또 고친 문장");
   act(() => root.unmount());   // 화면을 떠나면 해제
@@ -571,4 +574,77 @@ test.each([
   expect(el.querySelector("[data-candidate-id]")).not.toBeNull();
   expect(err()).toBe("저장 여부를 확인하지 못했어요. 새로 고침해 확인해 주세요.");
   expect(stat()).not.toContain("남겼어요");
+});
+
+test("결정마다 그 카드의 revision 을 보낸다: 남기기, 남기지 않기, 고친 문장으로 남기기 모두 첫 카드가 아닌 카드에서도", async () => {
+  POST = () => json(200, {});
+  reload.mockResolvedValue(false);   // 다시 받지 못함 — 카드가 그대로 남아 이어서 누를 수 있다
+  await show(state([cand("c_1", { revision: 2 }), cand("c_2", { revision: 7 }), cand("c_3", { revision: 11 })]), "c_1");
+  await click(inCard("c_2", "남기지 않기"));
+  expect(posts().at(-1)!.body).toEqual({ candidate_id: "c_2", action: "exclude", expected_revision: 7 });
+  await click(inCard("c_3", "남기기"));
+  expect(posts().at(-1)!.body).toEqual({ candidate_id: "c_3", action: "confirm", expected_revision: 11 });
+  await click(sentBtn("c_2")); await typeIn(card("c_2").querySelector("textarea")!, "둘 고침");
+  await click(inCard("c_2", "고친 문장으로 남기기"));
+  expect(posts().at(-1)!.body).toEqual({ candidate_id: "c_2", action: "edit_confirm", expected_revision: 7, text: "둘 고침" });
+  await click(inCard("c_1", "남기기"));
+  expect(posts().at(-1)!.body).toEqual({ candidate_id: "c_1", action: "confirm", expected_revision: 2 });
+  expect(posts()).toHaveLength(4);
+});
+
+test("저장 중 잠금은 요청이 끝날 때까지: 저장 중에 새 상태(표지 갱신)가 와도 다른 카드는 꺼져 있다, 충돌 뒤 다시 받기에 실패해도 풀린다", async () => {
+  let done!: (r: Response) => void;
+  POST = () => new Promise(r => { done = r; });
+  reload.mockImplementation(async () => { S = state([cand("c_1", { status: "confirmed" }), cand("c_2", { revision: 5 })]); return true; });
+  await show(state([cand("c_1"), cand("c_2", { revision: 5 })]), "c_1");
+  await click(inCard("c_1", "남기기"));
+  await show(state([cand("c_1"), cand("c_2", { revision: 5 })]), "c_1");   // 요청이 가는 중에 표지 갱신이 새 상태 객체를 가져왔다
+  const offs = () => [inCard("c_2", "남기기"), inCard("c_2", "남기지 않기"), sentBtn("c_2")].map(b => b.disabled);
+  expect(offs()).toEqual([true, true, true]);
+  expect(inCard("c_1", "남기기").disabled).toBe(true);
+  await act(async () => done(json(200, {}))); await flush();
+  await redraw();
+  expect(ids()).toEqual(["c_2"]);
+  expect(lead("c_2")).toBe("확정한 판단으로 남겼어요.");
+  expect(offs()).toEqual([false, false, false]);
+  reload.mockResolvedValue(false);   // 충돌 뒤 다시 받기 실패
+  await click(inCard("c_2", "남기지 않기"));
+  await show(state([cand("c_2", { revision: 6 })]), "c_1");
+  expect(offs()).toEqual([true, true, true]);
+  await act(async () => done(json(409, { code: "CONFLICT", msg: "다른 곳에서 먼저 바뀌었어요(서버)." }))); await flush();
+  expect(stat("c_2")).toBe("다른 곳에서 먼저 바뀌었어요(서버).");
+  expect(offs()).toEqual([false, false, false]);
+});
+
+// 껍데기의 실제 reload 와 상태 조회(useAppState)를 그대로 쓴다 — 가짜 서버의 요청 기록으로 무엇을 다시 받았는지 센다
+test("결정 뒤에는 상태만 다시 받고 남은 카드의 근거 원문은 다시 받지 않는다: 들어올 때 글마다 한 번, 새로 고침(전체 다시 받기)은 원문도 다시", async () => {
+  let srv = state([cand("c_1"), cand("c_2", { record_id: "r2", revision: 5 }), cand("c_3", { record_id: "r3", revision: 8 })]);
+  serve((url, m) => (m === "POST" ? json(200, {}) : url === "/api/state" ? json(200, srv)
+    : url.startsWith("/api/journal?id=") ? json(200, { ...J, id: url.split("=")[1] }) : json(404, {})));
+  const R = SCREENS.review;
+  function Host() {
+    const st = useAppState().S;
+    return st ? <R ctx={{ reload: appReload, setDirty, state: st, args: ["q", "q1", "", "#q/q1", "질문으로 돌아가기"] }} /> : null;
+  }
+  history.replaceState(null, "", "#q/review/q1/");
+  await act(async () => root.render(<QueryClientProvider client={queryClient}><Host /></QueryClientProvider>));
+  for (let i = 0; i < 4; i++) await flush();
+  const stateGets = () => calls.filter(c => c.method === "GET" && c.url === "/api/state").length;
+  const journalGets = () => calls.filter(c => c.method === "GET" && c.url.startsWith("/api/journal")).map(c => c.url).sort();
+  expect(ids()).toEqual(["c_1", "c_2", "c_3"]);
+  expect(stateGets()).toBe(1);
+  expect(journalGets()).toEqual(["/api/journal?id=r1", "/api/journal?id=r2", "/api/journal?id=r3"]);   // 글마다 한 번
+  srv = state([cand("c_1", { status: "confirmed", revision: 3 }), cand("c_2", { record_id: "r2", revision: 5 }), cand("c_3", { record_id: "r3", revision: 8 })]);
+  await click(inCard("c_1", "남기기"));
+  for (let i = 0; i < 3; i++) await flush();
+  expect(posts().map(c => c.body)).toEqual([{ candidate_id: "c_1", action: "confirm", expected_revision: 2 }]);
+  expect(stateGets()).toBe(2);   // 상태는 다시 받는다
+  expect(journalGets()).toEqual(["/api/journal?id=r1", "/api/journal?id=r2", "/api/journal?id=r3"]);   // 원문은 다시 받지 않는다
+  expect(ids()).toEqual(["c_2", "c_3"]);
+  expect(lead("c_2")).toBe("확정한 판단으로 남겼어요.");
+  expect(inCard("c_2", "남기기").disabled).toBe(false);
+  await act(async () => { await reloadState(); });   // 머리글 새로 고침 = 떠 있는 조회 전부(남은 카드의 원문 포함)
+  for (let i = 0; i < 3; i++) await flush();
+  expect(stateGets()).toBe(3);
+  expect(journalGets()).toEqual(["/api/journal?id=r1", "/api/journal?id=r2", "/api/journal?id=r2", "/api/journal?id=r3", "/api/journal?id=r3"]);
 });
