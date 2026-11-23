@@ -1,6 +1,6 @@
 // 주소 판정(옛 app.html route·pickTab·navReplace·renderSetup·setupPages — 옛 test_web_home.py test_static·test_trash_switch 를 실행 시험으로)
 import { expect, test } from "vitest";
-import { resolve, setupPages, type View } from "./route";
+import { isSetupAdvanced, resolve, SETUP_HOME, setupPages, type View } from "./route";
 import type { AppState } from "./state";
 
 const S = {
@@ -16,7 +16,7 @@ test("옛 묶음 주소 = 새 자리로 replace", () => {
   expect(["#_obj", "#_settings", "#_settings/structure", "#_devices", "#map", "#_inbox", "#_inbox/i1", "#today", "#home/x", "#structure/defs",
     "#structure/d1/p1", "#structure/d2/x1", "#_setup/nope", "#_setup/trash"].map(h => rep(h)))
     .toEqual(["#_setup/objects", "#_setup/structure", "#_setup/structure", "#_setup/pc", "#_setup/map", "#_today", "#_today/inbox/i1", "#_today",
-      "#_today", "#_setup/structure", "#_me/principle/p1", "#_me/obj/notes/x1", "#_setup/layout", "#_setup/layout"]);
+      "#_today", "#_setup/structure", "#_me/principle/p1", "#_me/obj/notes/x1", "#_setup/pc", "#_setup/pc"]);   // 모르는 쪽 = 기본 쪽 이 PC(2026-11-23)
   expect([rep("#structure/d1/n1"), rep("#structure/d1"), rep("#map/review/q1/c1"), rep("#today/review/q1/c1"), rep("#_inbox/applied")]).toEqual([undefined, undefined, undefined, undefined, undefined]);
 });
 
@@ -37,13 +37,15 @@ test("화면 고르기 — 탭 줄 · 사용자 탭 · 옛 화면 · 모르면 �
   expect(pick("#structure/d1")).toEqual(["structure", ["d1", ""], "_setup", "objects", false]);
   expect(pick("#_obj/person/p9")).toEqual(["objects", ["person", "p9", ""], "_setup", "objects", true]);
   expect(pick("#_obj/activity/a1")).toEqual(["activity", ["activity", "a1", ""], "_setup", "objects", true]);
-  expect(pick("#_setup")).toEqual(["layout", [], "_setup", "layout", true]);
+  expect(pick("#_setup")).toEqual(["pc", [], "_setup", "pc", true]);   // 첫 쪽 = 이 PC(2026-11-23)
+  expect(pick("#_setup/layout")).toEqual(["layout", [], "_setup", "layout", true]);   // 쪽 주소는 그대로
   expect(pick("#_setup/objects/axis/x1")).toEqual(["activity", ["axis", "x1", ""], "_setup", "objects", true]);
   expect(pick("#_setup/objects/source/s1")).toEqual(["objects", ["source", "s1", ""], "_setup", "objects", true]);
   expect(pick("#_setup/structure")).toEqual(["defs", [], "_setup", "structure", true]);
   expect(pick("#_setup/map")).toEqual(["map", ["map"], "_setup", "map", true]);
   expect(pick("#_setup/migration/pl1")).toEqual(["migration", ["pl1"], "_setup", "migration", true]);
   expect(pick("#_setup/help")).toEqual(["help", [], "_setup", "help", true]);
+  expect(pick("#_setup/connect")).toEqual(["connect", [], "_setup", "connect", true]);   // AI 앱 연결(2026-11-23 4차)
   expect(go("#t-001", { ...S, read: { tabs: { ok: false } } } as AppState).screen).toBe("me");   // 탭 설정 못 읽음 = 사용자 탭 없음
 });
 
@@ -61,7 +63,7 @@ test("휴지통 스위치 — 꺼짐·필드 없음 = 페이지 0 · 켜짐 = Se
   const pages = (sw: object) => setupPages({ ...S, switches: sw } as AppState).map(p => p[0]);
   expect(pages({ converse: true })).not.toContain("trash");
   expect(pages({ trash: false })).not.toContain("trash");
-  expect(pages({ trash: true })).toEqual(["layout", "structure", "objects", "pc", "map", "help", "migration", "trash"]);
+  expect(pages({ trash: true })).toEqual(["layout", "structure", "objects", "pc", "connect", "map", "help", "migration", "trash"]);
   expect(go("#_setup/trash", { ...S, switches: { trash: true } } as AppState).screen).toBe("trash");
 });
 
@@ -69,4 +71,12 @@ test("옛 「연결 장치」 주소는 「이 PC」로 — 연결 장치 페이
   expect(go("#_setup/devices")).toEqual({ replace: "#_setup/pc" });
   expect(setupPages(S).map(p => p[0])).not.toContain("devices");
   expect(go("#_setup/pc").screen).toBe("pc");
+});
+
+test("설정 줄의 고급 설정 구역 — 이 PC, AI 앱 연결, 문의 및 개인정보만 밖(이 순서), 나머지 쪽(휴지통 포함)은 고급 설정 안, 기본 쪽 = 이 PC", () => {
+  const pages = setupPages({ ...S, switches: { trash: true } } as AppState).map(p => p[0]);
+  expect(pages.filter(p => !isSetupAdvanced(p))).toEqual(["pc", "connect", "help"]);
+  expect(pages.filter(isSetupAdvanced)).toEqual(["layout", "structure", "objects", "map", "migration", "trash"]);
+  expect(SETUP_HOME).toBe("pc");
+  expect(isSetupAdvanced(SETUP_HOME)).toBe(false);
 });

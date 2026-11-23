@@ -1,26 +1,42 @@
-/* 수집 인박스 — 기존 토큰만(디자인 2: 한 색 고동 --accent, AI 는 무채색 --ai). 수집 글은 남의 글이라 명조(--prose)를 쓰지 않는다. */
-.box { padding: var(--sp-8) var(--sp-9); margin-bottom: var(--sp-10); }
+/* 수집 인박스 — 기존 토큰만(디자인 2: 한 색 고동 --accent, AI 는 무채색 --ai). 수집 글은 남의 글이라 명조(--prose)를 쓰지 않는다.
+   2026-11-23 두 칸: .split = 왼쪽 인박스(.box) | 오른쪽 읽기 판(.pane, 화면에 붙어 따라오고 칸 안에서 스크롤). 900 이하 한 칸(useOneCol 과 같은 값). */
+.split { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: var(--sp-7); align-items: start; margin-bottom: var(--sp-10); }
+.solo { margin-bottom: var(--sp-10); }
+.split > .box, .solo > .box { margin-bottom: 0; }
+.box { padding: var(--sp-8) var(--sp-9); margin-bottom: var(--sp-10); min-width: 0; }
 .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-4) var(--sp-7); }
 .head h3 { margin: 0; font-size: var(--fs-4); }
 .headline { color: var(--muted); font-size: var(--fs-3); }
 .only { margin-left: auto; font-size: var(--fs-2); color: var(--muted); display: inline-flex; align-items: center; gap: var(--sp-2); }
 .toast { display: flex; align-items: center; gap: var(--sp-3); }
 .empty { min-height: 4rem; display: flex; align-items: center; }
-.group { margin-top: var(--sp-8); }
+.group { margin-top: var(--sp-7); }
 .ghead { display: flex; align-items: center; gap: var(--sp-4); border-bottom: 1px solid var(--line); padding-bottom: var(--sp-2); }
 .ghead h4 { margin: 0; font-size: var(--fs-3); font-weight: 600; color: var(--accent); }
 .ghead :global(button) { margin-left: auto; }
-.cards { list-style: none; margin: 0; padding: 0; }
-.card { border-bottom: 1px solid var(--line); padding: var(--sp-5) 0; }
-.face { display: block; width: 100%; text-align: left; background: transparent; border: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; }
-.face:hover { color: inherit; }
-.face:hover .line { color: var(--accent); }
-.top { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); font-size: var(--fs-2); }
-.author { font-weight: 600; color: var(--ink); }
+/* 촘촘한 줄 — 줄 버튼(작성자 줄 + 한 줄) | 판별 버튼. 펼침(한 칸)은 줄 아래 전체 폭 */
+.rows { list-style: none; margin: 0; padding: 0; }
+.row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 0 var(--sp-3); border-bottom: 1px solid var(--line); padding: var(--sp-1) 0; }
+.row > .detail { grid-column: 1 / -1; margin: var(--sp-1) 0 var(--sp-3); }
+button.face { display: block; width: 100%; min-height: 0; text-align: left; white-space: normal; background: transparent; border: 0; border-radius: var(--r-2);
+  padding: var(--sp-2) var(--sp-3); color: inherit; font: inherit; font-weight: inherit; cursor: pointer; }
+button.face:hover { color: inherit; background: var(--accent-soft); }
+button.face:hover .line { color: var(--accent); }
+/* 고른 줄 — 바탕만이 아니라 왼쪽 막대와 굵은 한 줄로도 구분한다(색만으로 구분하지 않는다) */
+button.face[aria-current="true"] { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+button.face[aria-current="true"] .line { font-weight: 600; }
+/* 두 칸의 줄은 끌어서 읽기 판에 놓는다(누름으로는 안 바뀐다) — 잡는 손 모양 */
+button.face[draggable="true"] { cursor: grab; }
+button.face[draggable="true"]:active { cursor: grabbing; }
+.top { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-3); font-size: var(--fs-1); }
+.author { font-weight: 600; color: var(--ink); font-size: var(--fs-2); }
 .date { color: var(--muted); }
-.line { display: block; margin-top: var(--sp-2); font-size: var(--fs-3); line-height: 1.55; overflow-wrap: anywhere; }
-.aitag { margin-right: var(--sp-3); }
-.acts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); margin-top: var(--sp-3); }
+.line { display: block; margin-top: var(--sp-1); font-size: var(--fs-2); line-height: 1.45; overflow-wrap: anywhere; }
+.aitag { margin-right: var(--sp-2); }
+.acts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-2); padding-top: var(--sp-2); }
+@media (min-width: 768px) {
+  .row .acts :global(button) { min-height: 28px; padding: 0 var(--sp-4); }
+}
 .detail { margin-top: var(--sp-4); padding: var(--sp-5) var(--sp-6); background: var(--ai-bg); border-radius: var(--r-3); font-size: var(--fs-3); }
 .titleLine { margin: 0 0 var(--sp-4); font-weight: 600; overflow-wrap: anywhere; }
 .ai { color: var(--ink); }
@@ -30,3 +46,33 @@
 .points { margin: 0; padding-left: var(--sp-8); }
 .kept { margin-top: var(--sp-9); }
 .kept > summary { cursor: pointer; font-weight: 600; color: var(--muted); }
+/* 읽기 판 — 격자 칸 자체를 붙인다(감싸면 붙지 않는다). 칸 안에서 스크롤 */
+.pane { position: sticky; top: var(--sp-6); align-self: start; max-height: max(20rem, 68vh); overflow-y: auto; margin-bottom: 0;
+  padding: var(--sp-7) var(--sp-8); font-size: var(--fs-3); min-width: 0; }
+.paneEmpty { min-height: 8rem; display: flex; align-items: center; margin: 0; }
+.paneHead { margin: 0; }
+/* 끄는 동안 놓을 자리 — 점선 테두리(안쪽으로 그려 칸 크기는 그대로)와 문구. 색만으로 구분하지 않는다.
+   글이 떠 있으면 문구는 판 위 띠(칸 안에서 스크롤해도 위에 붙는다), 빈 판이면 빈 문구 자리를 대신한다 */
+.pane[data-drop] { outline: 2px dashed var(--accent); outline-offset: -2px; }
+.dropHint { position: sticky; top: calc(-1 * var(--sp-7)); z-index: 1; margin: calc(-1 * var(--sp-7)) calc(-1 * var(--sp-8)) var(--sp-4);
+  padding: var(--sp-4) var(--sp-8); background: var(--accent-soft); color: var(--accent); font-weight: 600; font-size: var(--fs-3); }
+.dropHint.paneEmpty { position: static; margin: 0; padding: 0; background: transparent; }
+/* 두 칸의 왼쪽 상자 — 읽기 판과 같은 높이 기준으로 자기 안에서 스크롤(머리, 요약 상자도 같이 올라가 목록이 화면을 가장 많이 쓴다).
+   잘린 줄이 상자 끝에 보여 스크롤 상자임을 알린다. 결과 줄(되돌리기, 오류)은 상자 위에 붙어 목록 깊은 곳에서도 보인다 */
+/* 높이 = 화면 높이의 68%(위에 머리글과 오늘의 축 띠가 있어, 첫 화면에 상자 아래 끝과 그 아래 구역 머리가 보이게), 낮은 화면에서도 20rem 아래로 줄이지 않는다. 읽기 판과 같은 값 */
+.box[data-scroll] { max-height: max(20rem, 68vh); overflow-y: auto; }
+/* 결과 줄은 상자 위 가장자리에 붙인다(상자 위 안쪽 여백 --sp-8 만큼 올림). 보일 때만 아래 여백과 선, 비면 띠가 없다 */
+.box[data-scroll] .bar { position: sticky; top: calc(-1 * var(--sp-8)); z-index: 1; background: var(--card); }
+.box[data-scroll] .bar:has(> :not(:empty)) { padding: var(--sp-3) 0; margin-bottom: var(--sp-3); border-bottom: 1px solid var(--line); }
+.box[data-scroll] .bar :global(.fok) { margin: 0; }
+.pane .acts { padding-top: var(--sp-4); }
+/* 버튼 줄의 글자 시작을 위 작성자 줄, 아래 요약 상자의 왼쪽 끝에 맞춘다 — 버튼 안쪽 여백(--sp-6)과 테두리(1px)만큼 왼쪽으로. 누르는 넓이는 그대로 */
+.pane .acts { margin-left: calc(-1 * var(--sp-6) - 1px); }
+@media (max-width: 900px) {
+  .split { grid-template-columns: minmax(0, 1fr); }
+  .pane { display: none; }
+}
+@media (max-width: 767px) {
+  .row { grid-template-columns: minmax(0, 1fr); }
+  .row .acts { padding: 0 var(--sp-3) var(--sp-2); margin-left: calc(-1 * var(--sp-6) - 1px); }
+}

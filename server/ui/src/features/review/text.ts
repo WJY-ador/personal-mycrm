@@ -4,16 +4,15 @@ export { CONFLICT_TEXT } from "../../shared/postErr";
 export { FIXHINT } from "../../shared/Tech";
 export { NO_QUESTION } from "../../shared/clip";
 
-const SAVED: Record<string, string> = { confirm: "확정한 판단으로 남겼어요.", edit_confirm: "고친 문장을 확정한 판단으로 남겼어요.", exclude: "반영 안 함으로 표시했어요." };
+const SAVED: Record<string, string> = { confirm: "확정한 판단으로 남겼어요.", edit_confirm: "고친 문장을 확정한 판단으로 남겼어요.", exclude: "남기지 않음으로 표시했어요." };
 export const WORDS = {
   record: "내 글", mine: "확정한 판단",
   recGone: "찾을 수 없는 글", recMissing: "글이 지워졌거나 찾을 수 없어요.",
   emptyHint: "새 글에서 판단을 뽑으면 여기에 떠요.",
   cardTitle: "검토할 판단",
-  keepNote: "반영 안 함으로 둬도 판단 문장과 원문은 삭제되지 않아요.",
-  group: "판단 결정", confirm: "남기기",
+  keepNote: "남기지 않음으로 둬도 판단 문장과 원문은 삭제되지 않아요.",
+  group: "판단 결정", confirm: "남기기", exclude: "남기지 않기",
   editLabel: "확정한 판단으로 남길 문장", editHint: "판단 문장을 고쳐요.",
-  navLabel: "판단 이동",
   mismatch: "이 판단의 근거 구절이 저장된 원문과 일치하지 않아 남길 수 없어요.",
   oldMark: "쓸 당시 표기",
   saved: (a: string) => SAVED[a] || "",

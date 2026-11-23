@@ -76,7 +76,7 @@ export const firstLine = (s: string | null | undefined) => (String(s || "").spli
 export function oldErrText(e: ApiError): string {
   if (e.code === "CONFLICT") return "다른 곳에서 먼저 바뀌었어요. 최신 내용을 다시 불러왔으니 확인하고 다시 해 주세요.";
   if (e.code === "OFFLINE") return OFFLINE;
-  if (e.code === "CANDIDATE-REVIEW") return `${e.msg || "근거 글이 인용 조건에 맞지 않아 남길 수 없어요."} 반영 안 함으로는 표시할 수 있어요.`;
+  if (e.code === "CANDIDATE-REVIEW") return `${e.msg || "근거 글이 인용 조건에 맞지 않아 남길 수 없어요."} 남기지 않음으로는 표시할 수 있어요.`;
   const m = String(e.msg || "저장하지 못했어요.").trim();
   return `${/[.?!요]$/.test(m) ? m : m + "."} 고친 뒤 다시 해 주세요.`;
 }

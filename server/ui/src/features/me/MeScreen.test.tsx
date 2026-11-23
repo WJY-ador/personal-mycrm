@@ -28,28 +28,30 @@ test("요약 = 레이아웃 regions.summary 순서 · 레지스트리 밖 블록
   LAYOUT = layout(["decision", ...TABS.filter(t => t !== "decision")], ["recent", "kinds", "nope", "heatmap"]);
   const el = await showMe("#_me/summary", meState());
   expect(text(el, "#me-summary h3")).toEqual(["최근 변경", "종류별 건수", "13주 글과 활동"]);
-  expect(text(el, "nav a").map(t => t!.replace(/\d/g, ""))).toEqual(["결정", "요약", "기준", "축", "사람", "출처"]);
+  // 하위 탭 = 셀렉트 하나(2026-11-23) — 옵션 순서 = 레이아웃, 글자 = 이름과 건수, 지금 탭이 고른 값. 옵션에는 자물쇠를 그릴 수 없다
+  expect(text(el, "nav option").map(t => t!.replace(/ \(\d+\)$/, ""))).toEqual(["결정", "요약", "기준", "축", "사람", "출처"]);
+  expect((el.querySelector("nav select") as HTMLSelectElement).value).toBe("summary");
   expect(el.querySelector("#me-summary")!.textContent).toContain("기준 2");
-  expect(el.querySelectorAll("nav a svg[role=img][aria-label=표준]").length).toBe(5);   // 자물쇠 = 접근성 이름 「표준」(결정·기준·축·사람·출처)
   expect(el.querySelectorAll("#me-summary svg[aria-label=표준]").length).toBe(5);
   expect(el.querySelectorAll("#me-summary button").length).toBe(0);
   expect(el.querySelector("svg[aria-label^='13주']")!.getAttribute("aria-label")).toContain("합 2");
   expect(posts()).toEqual([]);
 });
 
-test("기록을 성공적으로 모두 읽어 0건일 때만 첫 기록 안내와 실제 도움말 링크를 보인다", async () => {
+test("기록을 성공적으로 모두 읽어 0건일 때만 첫 기록 카드(입력칸)를 보인다", async () => {
   const empty = { ...meState(), journal: [], journal_next_before: null };
   let el = await showMe("#_me/summary", empty);
   const intro = el.querySelector("#first-record-intro");
   expect(intro).toBeTruthy();
-  expect(intro!.textContent).toContain("ChatGPT나 Claude");
-  expect(intro!.querySelector("p")!.textContent).toContain("ChatGPT나 Claude에 MyCRM을 연결한 대화");
-  expect(intro!.querySelector("p")!.textContent).not.toContain("PC 연결");
-  expect(intro!.querySelectorAll("p")[1].textContent).toContain("웹의 AI는 본인 PC 연결");
-  const help = intro!.querySelector("a");
-  expect(help?.tagName).toBe("A");
-  expect(help?.getAttribute("href")).toBe("/help");
-  expect(help?.hasAttribute("target")).toBe(false);
+  // 첫 기록 카드(2026-11-23 4차) — 입력칸 하나와 [남기기]. MCP 주소, 복사 버튼, 링크는 없다(설정 AI 앱 연결 쪽으로). 동작은 FirstRecord.test.tsx
+  expect(intro!.querySelector("label")!.textContent).toBe("오늘 있었던 일이나 생각을 한 줄 적어 보세요");
+  expect(intro!.querySelectorAll("textarea").length).toBe(1);
+  expect(text(intro!, "button")).toEqual(["남기기"]);
+  expect(intro!.textContent).not.toContain("PC 연결");
+  expect(intro!.querySelector("#first-record-mcp")).toBeNull();
+  expect(intro!.querySelector("#first-record-say")).toBeNull();
+  expect(intro!.querySelector("a")).toBeNull();
+  expect(el.querySelector("#me-summary")).toBeTruthy();   // 요약의 다른 블록은 그대로 아래에
   expect(posts()).toEqual([]);
 
   hideMe();
@@ -76,7 +78,7 @@ test("레이아웃 못 받음 = 기본 배치(server/layout_registry.json defaul
   expect(text(el, "#me-summary h3")).toEqual(["13주 글과 활동", "종류별 건수", "기다리는 결정", "최근 변경"]);
   expect(def.regions.summary.map(s => s.c)).toEqual(["heatmap", "kinds", "waiting", "recent"]);
   expect(el.textContent).toContain("통계를 불러오지 못했어요. 새로 고침해 주세요.");
-  expect(text(el, "nav a").length).toBe(def.tabs.length);
+  expect(text(el, "nav option").length).toBe(def.tabs.length);
 });
 
 test("기준 탭 진입(넓은 화면) = 연결 최다 항목으로 주소 replace · 옛 #_me/item/<id> = 그 항목의 탭 · 모르는 탭 = 첫 탭", async () => {
@@ -142,4 +144,21 @@ test("1열(좁은 폭) 첫 진입 = 목록만(주소 그대로) · 상세 = [목
   el = await showMe("#_me/principle/p2", meState());
   expect(el.querySelector("#home-list")).toBeNull();
   expect(text(el, ".hback button")).toEqual(["목록"]);
+});
+
+test("보기 셀렉트 — 이름(label), 고르면 그 탭 주소, 상세 단독 화면 = 고르지 않은 옵션이 고른 값", async () => {
+  let el = await showMe("#_me/summary", meState());
+  const sel = el.querySelector("nav[aria-label='나 보기'] select") as HTMLSelectElement;
+  expect(el.querySelector(`label[for='${sel.id}']`)!.textContent).toBe("보기");
+  expect([...sel.options].map(o => o.value)).not.toContain("");   // 지금 탭이 목록에 있으면 고르지 않은 옵션 없음
+  const { act } = await import("react");
+  await act(async () => { sel.value = "principle"; sel.dispatchEvent(new Event("change", { bubbles: true })); });
+  expect(location.hash).toBe("#_me/principle");
+  hideMe();
+  el = await showMe("#_me/journal/r1", meState());
+  const solo = el.querySelector("nav select") as HTMLSelectElement;
+  expect(solo.value).toBe("");
+  expect(solo.options[0].textContent).toBe("보기 고르기");
+  expect(solo.options[0].disabled).toBe(true);
+  expect(posts()).toEqual([]);
 });

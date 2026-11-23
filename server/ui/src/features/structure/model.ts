@@ -1,11 +1,11 @@
 // 구조 화면이 상태(S)에서 읽는 것 — 옛 defById·objLabel·eventLabel·promoOf·linkCount·incomingCounts·fieldVal·dataSummary 와 같은 규칙. 문구는 글자 그대로.
 import type { AppState, Def, Field, Item } from "../../shared/state";
 
-export const FILTERS: [string, string][] = [["confirmed", "확정한 판단"], ["pending", "아직 안 정함"], ["excluded", "반영 안 함"], ["all", "전부"]];
-export const STCHIP: Record<string, [string, string]> = { confirmed: ["st-mine", "확정한 판단"], pending: ["st-wait", "아직 안 정함"], excluded: ["st-off", "반영 안 함"] };
+export const FILTERS: [string, string][] = [["confirmed", "확정한 판단"], ["pending", "아직 안 정함"], ["excluded", "남기지 않음"], ["all", "전부"]];
+export const STCHIP: Record<string, [string, string]> = { confirmed: ["st-mine", "확정한 판단"], pending: ["st-wait", "아직 안 정함"], excluded: ["st-off", "남기지 않음"] };
 export const NOCARD: Record<string, string> = { confirmed: "아직 확정한 판단이 없어요. 검토할 판단을 원문과 대조해 남기면 여기에 쌓여요.",
-  pending: "정할 문장이 남아 있지 않아요.", excluded: "반영 안 함으로 둔 문장이 없어요.", all: "아직 뽑힌 문장이 없어요. 내 글에서 판단을 뽑으면 여기에 떠요." };
-export const ITEM_SAVED: Record<string, string> = { apply: "적용했어요.", confirm: "남겼어요.", exclude: "반영 안 함으로 표시했어요.", pending: "아직 안 정함으로 돌렸어요.",
+  pending: "정할 문장이 남아 있지 않아요.", excluded: "남기지 않음으로 둔 문장이 없어요.", all: "아직 뽑힌 문장이 없어요. 내 글에서 판단을 뽑으면 여기에 떠요." };
+export const ITEM_SAVED: Record<string, string> = { apply: "적용했어요.", confirm: "남겼어요.", exclude: "남기지 않음으로 표시했어요.", pending: "아직 안 정함으로 돌렸어요.",
   discard: "제안을 제외했어요." };
 export { CONFLICT_TEXT } from "../../shared/postErr";
 export const TAB = "structure";   // 옛 BASE.structure — 대조 경로·카드 주소의 탭 id

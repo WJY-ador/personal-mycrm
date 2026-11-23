@@ -17,6 +17,6 @@ export function ReviewNote({ review }: { review: string | null }) {
   return (
     <p className="recheck"><span className="chip flag">확정 전 재검토</span>
       {text}
-      {` ${fix ? fix + " " : ""}반영 안 함이나 아직 안 정함으로 둘 수는 있어요.`}</p>
+      {` ${fix ? fix + " " : ""}남기지 않음이나 아직 안 정함으로 둘 수는 있어요.`}</p>
   );
 }

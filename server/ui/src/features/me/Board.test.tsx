@@ -32,7 +32,7 @@ test("세 단 — 기호 a, b(들어온 것) → c, d(내가 정한 것) · 소�
   const el = await showMe("#_me/board/b1", meState());
   expect(calls.some(c => c.url === "/api/me/routine/b1")).toBe(true);
   expect(location.hash).toBe("#_me/board/b1");   // 다른 탭으로 넘기지 않는다
-  expect(el.querySelector("nav a[aria-current=page]")!.getAttribute("href")).toBe("#_me/summary");
+  expect((el.querySelector("nav select") as HTMLSelectElement).value).toBe("summary");   // 하위 탭 = 셀렉트(2026-11-23)
   expect(el.querySelector("#board-detail h2")!.textContent).toBe("가짜 핵심 한 줄");
   expect(el.querySelector("#board-detail .hback a")!.getAttribute("href")).toBe("#_me/summary");
   expect(text(el, "#board-grid h4")).toEqual(["들어온 것", "내가 정한 것", "이렇게 나왔다"]);

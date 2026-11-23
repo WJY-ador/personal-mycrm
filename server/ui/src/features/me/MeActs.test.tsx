@@ -19,12 +19,12 @@ const posts = () => calls.filter(c => c.method === "POST");
 const S = (trash: boolean, items: unknown[] = meState().items) => meState({ switches: { trash }, user: { display_name: "홍길동", nav: "new" }, items });
 const withDecision = (d: string): unknown[] => meState().items.map(it => (it.id === "p1" ? { ...it, decision: d } : it));
 
-test("휴지통 꺼짐 — 기준 = 옛 버튼(글자만 「반영 안 함」) · [삭제] 0", async () => {
+test("휴지통 꺼짐 — 기준 = 옛 버튼(글자만 「남기지 않기」) · [삭제] 0", async () => {
   for (const s of [S(false)]) {
     let el = await showMe("#_me/principle/p1", { ...s, items: withDecision("pending") });
-    expect(btns(el)).toEqual(["남기기", "반영 안 함"]);
+    expect(btns(el)).toEqual(["남기기", "남기지 않기"]);
     el = await showMe("#_me/principle/p1", { ...s, items: withDecision("confirmed") });
-    expect(btns(el)).toEqual(["반영 안 함", "되돌리기"]);
+    expect(btns(el)).toEqual(["남기지 않기", "되돌리기"]);
     el = await showMe("#_me/principle/p1", { ...s, items: withDecision("excluded") });
     expect(btns(el)).toEqual(["남기기", "되돌리기"]);
     el = await showMe("#_me/journal/r1", s);
@@ -46,7 +46,15 @@ test("휴지통 켜짐 — 기준 [남기기]+[삭제](확정이면 [삭제]만)
   el = await showMe("#_me/axis/a1", S(true));
   expect(btns(el)).toEqual(["삭제"]);
   el = await showMe("#_me/cand/c1", S(true));
-  expect(btns(el)).toEqual(["남기기", "고쳐서 남기기", "반영 안 함"]);
+  expect(btns(el)).toEqual(["남기기", "남기지 않기"]);   // 문장 고치기는 버튼이 아니라 문장을 눌러서
+});
+
+test("판단 버튼 둘 — 재검토 표시가 있으면 [남기지 않기] 하나, 이미 정한 판단은 버튼 0", async () => {
+  const one = (x: object) => ({ ...S(true), candidates: [{ ...meState().candidates[0], ...x }] });
+  let el = await showMe("#_me/cand/c1", one({ review: "external" }));
+  expect(btns(el)).toEqual(["남기지 않기"]);
+  el = await showMe("#_me/cand/c1", one({ status: "excluded" }));
+  expect(btns(el)).toEqual([]);
 });
 
 test("[삭제] — 확인창(r4 §8 글자 그대로) · 취소 = 요청 0 · 확인 = 종류·ID·revision → 목록 주소 + 「휴지통으로 옮겼어요.」", async () => {
@@ -81,20 +89,20 @@ test("[삭제] 축 정책 차단 = 서버 장치 안내 그대로 · 이동 0", 
   expect(location.hash).toBe("#_me/axis/a1");
 });
 
-test("판단 [남기기] = 그 자리 문구 · [반영 안 함] = 목록 주소 + 결과 한 줄 · 실패 = 원인 + 다음 행동", async () => {
+test("판단 [남기기] = 그 자리 문구 · [남기지 않기] = 목록 주소 + 결과 한 줄 · 실패 = 원인 + 다음 행동", async () => {
   let el = await showMe("#_me/cand/c1", S(true));
   await click(btn(el, "남기기"));
   expect(posts().at(-1)).toEqual({ url: "/api/candidate/decide", method: "POST", body: { candidate_id: "c1", action: "confirm", expected_revision: 1 } });
   expect(el.querySelector("#home-detail .fok")!.textContent).toBe("확정한 판단으로 남겼어요.");
   el = await showMe("#_me/cand/c1", S(true));
-  await click(btn(el, "반영 안 함"));
+  await click(btn(el, "남기지 않기"));
   expect(location.hash).toBe("#_me");
   el = await showMe("#_me", S(true));
-  expect(el.querySelector("#core-msg")!.textContent).toBe("반영 안 함으로 표시했어요. 목록에서 빠졌어요.");
+  expect(el.querySelector("#core-msg")!.textContent).toBe("남기지 않음으로 표시했어요. 목록에서 빠졌어요.");
   POST = () => json(400, { code: "CANDIDATE-REVIEW", msg: "근거 글이 남이 쓴 글이에요." });
   el = await showMe("#_me/cand/c1", S(true));
   await click(btn(el, "남기기"));
-  expect(el.querySelector("#home-detail .ferr")!.textContent).toBe("근거 글이 남이 쓴 글이에요. 반영 안 함으로는 표시할 수 있어요.");
+  expect(el.querySelector("#home-detail .ferr")!.textContent).toBe("근거 글이 남이 쓴 글이에요. 남기지 않음으로는 표시할 수 있어요.");
 });
 
 test("껍데기 결과 한 줄(ctx.flash — 새 탐색 수락 등) = 머리에 한 번", async () => {

@@ -1,13 +1,18 @@
 // 수집 인박스(2026-11-13 명세 3절) — 등급 묶음 순서·묶음 안 정렬 · 머리 문구 · 「원문 링크 있는 것만」 · 카드(AI 요약 표시·제목 줄 대신) ·
 // 펼침(AI 요약 넷 + 원문 본문 없음 안내) · 보관·버림 = 판별 POST(expected_revision) → 목록에서 빠짐 + 되돌리기(직전 상태) ·
 // 전부 버림 = 두 번 눌러 확정 · 보관함 = 접힘, 열면 kept 조회, 버튼은 버림만 · 빈 상태(오브젝트 없음·글 없음).
+// 2026-11-23 두 칸: 넓은 화면 = 오른쪽 읽기 판(고른 줄 aria-current), 판별 뒤 같은 묶음 다음 글, 다시 받아도 유지.
+// 6차: 줄을 읽기 판에 끌어 놓거나(dragstart → dragover → drop) 줄에서 Enter 로 고른다. 마우스 누름, Space 로는 안 바뀐다.
+// 한 칸(900 이하) = 읽기 판 없이 줄 아래 펼침.
 import { act } from "react";
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { queryClient } from "../../shared/queries";
 import { calls, click, flush, installFetch, json, serve, text } from "../../test/fakeServer";
 import { installMedia } from "../../test/meFixture";
 import { byText, hideScreen, showScreen } from "../../test/showScreen";
 import { NO_BODY } from "./collectedRows";
+import { DRAG_TYPE } from "./follow";
+import { TOUCH_Q } from "./useOneCol";
 
 type P = Record<string, unknown>;
 const post = (id: string, grade: string | null, on: string, extra: P = {}): P => ({
@@ -18,6 +23,35 @@ const S = { user: { nav: "new" }, switches: {}, activity_ui: { actions: {}, prov
 const show = () => showScreen("today", "#_today", ["today", "", ""], S);
 const posts = () => calls.filter(c => c.method === "POST");
 const cards = (el: Element) => text(el, "#collected > section li b");
+const row = (el: Element, id: string) => el.querySelector(`#collected li[data-id="${id}"]`)!;
+const face = (el: Element, id: string) => row(el, id).querySelector("button[data-face]");
+const reader = (el: Element) => el.querySelector("#collected-reader")!;
+const current = (el: Element) => [...el.querySelectorAll('#collected button[aria-current="true"]')].map(b => b.closest("li")!.getAttribute("data-id"));
+const EMPTY = "왼쪽 글을 여기로 끌어 놓으면 요약이 보여요.";
+// jsdom 에는 DragEvent, DataTransfer 가 없다 — 가짜 dataTransfer 를 붙인 Event 를 보낸다(React 는 이름과 nativeEvent.dataTransfer 만 본다)
+type DT = { types: string[]; data: Record<string, string>; setData(t: string, v: string): void; getData(t: string): string; effectAllowed: string; dropEffect: string };
+const dt = (): DT => ({ types: [], data: {}, setData(t, v) { this.data[t] = v; if (!this.types.includes(t)) this.types.push(t); }, getData(t) { return this.data[t] || ""; }, effectAllowed: "", dropEffect: "" });
+async function fire(target: Element, type: string, d: DT) {
+  const ev = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, "dataTransfer", { value: d });
+  await act(async () => { target.dispatchEvent(ev); });
+  return ev;
+}
+// 끌어 놓기 한 번: 줄 face 에서 dragstart → 읽기 판에 dragover, drop → face 에 dragend
+async function dragTo(el: Element, id: string) {
+  const d = dt(), f = face(el, id)!;
+  await fire(f, "dragstart", d);
+  await fire(reader(el), "dragover", d);
+  await fire(reader(el), "drop", d);
+  await fire(f, "dragend", d);
+  await flush();
+}
+async function key(t: Element, k: string) {
+  await act(async () => { for (const type of ["keydown", "keyup"]) t.dispatchEvent(new KeyboardEvent(type, { key: k, bubbles: true, cancelable: true })); });
+  await flush();
+}
+// 한 칸(900 이하) — 시험 도우미 installMedia 는 767 질의만 맞추므로 여기서 900 질의를 직접 맞춘다
+const oneCol = () => vi.stubGlobal("matchMedia", (q: string) => ({ matches: q.includes("900"), media: q, addEventListener() {}, removeEventListener() {} }));
 
 beforeEach(() => {
   installFetch(); installMedia(false); queryClient.clear();
@@ -61,7 +95,11 @@ test("묶음 순서(신호, 소식, 노이즈, 등급 없음) · 묶음 안 coll
 });
 
 test("펼침 — 제목 줄 · AI 요약 넷(as-is, to-be, 운영, 요점) + 「AI 요약」 표시 · 원문 본문 없음 안내", async () => {
+  // 한 칸(900 이하)에서 줄 아래로 펼친다, 읽기 판은 없다
+  oneCol();
   const el = await show();
+  expect(el.querySelector("#collected-reader")).toBeNull();
+  expect(el.querySelector("#collected[data-scroll]")).toBeNull();   // 한 칸은 페이지 스크롤 그대로
   const u1 = el.querySelector('li[data-id="u1"]')!;
   await click(u1.querySelector("button[aria-expanded]"));
   expect(u1.querySelector("button[aria-expanded]")!.getAttribute("aria-expanded")).toBe("true");
@@ -70,6 +108,10 @@ test("펼침 — 제목 줄 · AI 요약 넷(as-is, to-be, 운영, 요점) + 「
   expect(text(u1, "ul li")).toEqual(["요점 하나", "요점 둘"]);
   expect(u1.textContent).toContain("u1 제목 줄");
   expect(u1.textContent).toContain(NO_BODY);
+  expect(u1.querySelector("button[aria-expanded]")!.getAttribute("aria-controls")).toBe(u1.querySelector("[id^=collected-detail-]")!.id);
+  await click(u1.querySelector("button[aria-expanded]"));
+  expect(u1.querySelector("dl")).toBeNull();
+  expect(posts()).toEqual([]);
 });
 
 test("보관 = 판별 POST(expected_revision) → 목록에서 빠짐 + 되돌리기 = 직전 상태(pending)로 판별", async () => {
@@ -104,7 +146,7 @@ test("보관함 — 접힘(건수만), 열면 kept 조회, 카드 버튼은 버�
   await flush();
   expect(calls.some(c => c.url === "/api/collected?state=kept")).toBe(true);
   const k1 = d.querySelector('li[data-id="k1"]')!;
-  expect(text(k1, "button:not([aria-expanded])")).toEqual(["버림"]);
+  expect(text(k1, "button:not([data-face])")).toEqual(["버림"]);
 });
 
 test("빈 상태 — 수집 글 없음 · 담을 자료 종류 없음(보관함 숨김)", async () => {
@@ -116,4 +158,157 @@ test("빈 상태 — 수집 글 없음 · 담을 자료 종류 없음(보관함 
   el = await show();
   expect(el.querySelector("#collected")!.textContent).toContain("key collected_posts");
   expect(el.querySelector("#collected details")).toBeNull();
+});
+
+test("두 칸 — 읽기 판 빈 상태, 줄(진짜 button)을 끌어 놓으면 읽기 판에 그 글 + 고른 줄 aria-current, 다른 줄로 바뀜, 쓰기 없음", async () => {
+  const el = await show();
+  expect(reader(el).textContent).toBe(EMPTY);
+  expect(el.querySelector("#collected #collected-reader")).toBeNull();   // 읽기 판은 인박스 밖 오른쪽 칸
+  const box = el.querySelector("#collected[data-scroll]")!;   // 두 칸 = 왼쪽 상자 안에서 스크롤, 묶음과 보관함이 그 안에
+  expect(box.querySelectorAll("li[data-id]")).toHaveLength(6);
+  expect(box.querySelector("details")).not.toBeNull();
+  expect(box.contains(el.querySelector("#home-list"))).toBe(false);
+  const f = face(el, "s1") as HTMLButtonElement;
+  expect([f.tagName, f.type, f.getAttribute("aria-controls"), f.hasAttribute("aria-expanded"), f.getAttribute("draggable")]).toEqual(["BUTTON", "button", "collected-reader", false, "true"]);
+  expect(f.querySelector("button")).toBeNull();   // 버튼 안에 버튼 없음
+  // 판별 버튼과 원문 링크는 face 밖 형제라 끌기가 그 위에서 시작되지 않는다. 링크의 기본 끌기도 끈다
+  const acts = row(el, "s1").querySelector("button:not([data-face])")!.parentElement!;
+  expect(f.contains(acts)).toBe(false);
+  expect(acts.querySelectorAll("[draggable=true]")).toHaveLength(0);
+  expect(acts.querySelector("a.link")!.getAttribute("draggable")).toBe("false");
+  await dragTo(el, "s1");
+  expect(current(el)).toEqual(["s1"]);
+  const r = reader(el);
+  expect(r.querySelector("b")!.textContent).toBe("s1 작성자");
+  expect(r.textContent).toContain("LinkedIn");
+  expect(r.textContent).toContain("11월 10일 게시");
+  expect(r.textContent).toContain("s1 제목 줄");
+  expect(r.textContent).toContain(NO_BODY);
+  expect(text(r, "button")).toEqual(["보관", "버림"]);
+  expect((r.querySelector("a.link") as HTMLAnchorElement).getAttribute("href")).toBe("https://x.example/s1");
+  expect(row(el, "s1").querySelector("dl")).toBeNull();   // 두 칸에서는 줄 아래로 펼치지 않는다
+  await dragTo(el, "u1");
+  expect(current(el)).toEqual(["u1"]);
+  expect(text(reader(el), "dt")).toEqual(["as-is", "to-be", "운영"]);
+  expect(text(reader(el), "dd")).toEqual(["지금 꼴", "다음 꼴", "운영 메모"]);
+  expect(text(reader(el), "ul li")).toEqual(["요점 하나", "요점 둘"]);
+  expect(reader(el).querySelector(".chip.o-ai")!.textContent).toBe("AI 요약");
+  expect(reader(el).querySelector("a.link")).toBeNull();
+  expect(posts()).toEqual([]);
+});
+
+test("두 칸 — 줄 마우스 누름, Space 로는 읽기 판이 안 바뀌고 Enter 로 바뀜", async () => {
+  const el = await show();
+  const f = face(el, "s1")!;
+  await act(async () => { f.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); f.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })); });
+  await click(f);
+  expect(current(el)).toEqual([]);
+  expect(reader(el).textContent).toBe(EMPTY);
+  await key(f, " ");
+  expect(current(el)).toEqual([]);
+  expect(reader(el).textContent).toBe(EMPTY);
+  await key(f, "Enter");
+  expect(current(el)).toEqual(["s1"]);
+  expect(reader(el).querySelector("b")!.textContent).toBe("s1 작성자");
+  await dragTo(el, "n2");
+  await click(face(el, "s2"));   // 고른 뒤에도 누름은 읽기 판을 안 바꾼다
+  expect(current(el)).toEqual(["n2"]);
+  expect(posts()).toEqual([]);
+});
+
+test("두 칸 + 터치 기기(hover: none, pointer: coarse) — 줄 누름으로 읽기 판에 그 글, 끌기도 남음", async () => {
+  vi.stubGlobal("matchMedia", (q: string) => ({ matches: q === TOUCH_Q, media: q, addEventListener() {}, removeEventListener() {} }));
+  const el = await show();
+  expect(el.querySelector("#collected-reader")).not.toBeNull();   // 넓은 화면 = 두 칸 그대로
+  expect(face(el, "s1")!.getAttribute("draggable")).toBe("true");
+  await click(face(el, "s1"));
+  expect(current(el)).toEqual(["s1"]);
+  expect(reader(el).querySelector("b")!.textContent).toBe("s1 작성자");
+  await click(face(el, "u1"));
+  expect(current(el)).toEqual(["u1"]);
+  expect(row(el, "u1").querySelector("dl")).toBeNull();   // 줄 아래 펼침이 아니라 읽기 판
+  expect(posts()).toEqual([]);
+});
+
+test("두 칸 — 끄는 동안만 놓을 자리 표시(테두리 표시 + 문구), 줄 끌기 자료가 없는 놓기는 무시", async () => {
+  const el = await show();
+  const d = dt(), f = face(el, "s1")!;
+  await fire(f, "dragstart", d);
+  expect(d.getData(DRAG_TYPE)).toBe("s1");
+  expect(reader(el).hasAttribute("data-drop")).toBe(true);
+  expect(reader(el).textContent).toBe("여기에 놓으면 요약이 보여요");   // 빈 판이면 빈 문구 대신
+  expect((await fire(reader(el), "dragover", d)).defaultPrevented).toBe(true);   // 놓을 수 있다
+  await fire(f, "dragend", d);   // 놓지 않고 끝냄(Esc, 다른 곳)
+  expect(reader(el).hasAttribute("data-drop")).toBe(false);
+  expect(reader(el).textContent).toBe(EMPTY);
+  expect(current(el)).toEqual([]);
+  // 링크, 글자 같은 다른 끌기 = 놓기를 받지 않는다
+  const other = dt(); other.setData("text/plain", "s2");
+  expect((await fire(reader(el), "dragover", other)).defaultPrevented).toBe(false);
+  await fire(reader(el), "drop", other);
+  expect(current(el)).toEqual([]);
+  // 글이 떠 있을 때 끌면 문구는 판 위 띠로, 글은 그대로 보인다
+  await dragTo(el, "s1");
+  const d2 = dt();
+  await fire(face(el, "n1")!, "dragstart", d2);
+  expect(reader(el).querySelector("p")!.textContent).toBe("여기에 놓으면 요약이 보여요");
+  expect(reader(el).querySelector("b")!.textContent).toBe("s1 작성자");
+  await fire(reader(el), "drop", d2);
+  expect(reader(el).hasAttribute("data-drop")).toBe(false);   // 놓으면 dragend 전에도 표시를 거둔다
+  expect(current(el)).toEqual(["n1"]);
+  expect(posts()).toEqual([]);
+});
+
+test("읽기 판 판별 = 같은 묶음 다음 글, 마지막이면 빈 상태, 고르지 않은 줄 버튼은 읽기 판을 안 바꿈, 다시 받아도 고른 글 유지", async () => {
+  const el = await show();
+  await dragTo(el, "s1");
+  await click(byText(row(el, "n2"), "button", "보관")[0]);
+  expect(posts().map(c => c.url)).toEqual(["/api/collected/n2/decide"]);
+  expect(current(el)).toEqual(["s1"]);
+  expect(reader(el).querySelector("b")!.textContent).toBe("s1 작성자");
+  await click(byText(reader(el), "button", "보관")[0]);
+  expect(posts().at(-1)).toEqual({ url: "/api/collected/s1/decide", method: "POST", body: { state: "kept", expected_revision: 3 } });
+  expect(row(el, "s1")).toBeNull();
+  expect(current(el)).toEqual(["s2"]);
+  expect(reader(el).querySelector("b")!.textContent).toBe("s2 작성자");
+  expect(byText(el, "#collected button", "되돌리기")).toHaveLength(1);   // 되돌리기 5초 그대로
+  await click(byText(reader(el), "button", "버림")[0]);
+  expect(posts().at(-1)!.body).toEqual({ state: "dropped", expected_revision: 3 });
+  expect(reader(el).textContent).toBe(EMPTY);   // 신호 묶음의 마지막 글이었다
+  expect(document.activeElement).toBe(reader(el));
+  await key(face(el, "n1")!, "Enter");
+  await act(async () => { await queryClient.invalidateQueries({ queryKey: ["collected"] }); });
+  await flush();
+  expect(current(el)).toEqual(["n1"]);
+  expect(reader(el).querySelector("b")!.textContent).toBe("n1 작성자");
+});
+
+test("보관함 글 고르기 = 읽기 판에 버림만, 수집 글을 담을 자료 종류가 없으면 읽기 판 칸도 없음", async () => {
+  const el = await show();
+  const d = el.querySelector("#collected details") as HTMLDetailsElement;
+  await act(async () => { d.open = true; d.dispatchEvent(new Event("toggle")); });
+  await flush();
+  await flush();
+  await dragTo(el, "k1");
+  expect(current(el)).toEqual(["k1"]);
+  expect(text(reader(el), "button")).toEqual(["버림"]);
+  hideScreen(); queryClient.clear(); READY = false;
+  const e2 = await show();
+  expect(e2.querySelector("#collected-reader")).toBeNull();
+});
+
+test("거르기로 숨은 고른 글을 읽기 판에서 판별하면 다음 글로 넘어가지 않고 빈 상태, 보이는 글은 다음 글 그대로", async () => {
+  PEND = PEND.map(p => (p.id === "s1" ? { ...p, post_url: null } : p));
+  const el = await show();
+  await dragTo(el, "s1");
+  await click(el.querySelector("#collected input[type=checkbox]"));
+  expect(row(el, "s1")).toBeNull();
+  expect(reader(el).querySelector("b")!.textContent).toBe("s1 작성자");   // 숨어도 읽기 판에는 남는다
+  await click(byText(reader(el), "button", "보관")[0]);
+  expect(posts().at(-1)!.url).toBe("/api/collected/s1/decide");
+  expect(reader(el).textContent).toBe(EMPTY);
+  expect(current(el)).toEqual([]);
+  await dragTo(el, "n2");
+  await click(byText(reader(el), "button", "버림")[0]);
+  expect(current(el)).toEqual(["n1"]);   // 보이는 글은 같은 묶음 다음 글 규칙 그대로
 });

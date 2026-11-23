@@ -62,6 +62,8 @@ export const meApi = {
   objList: (key: string, p: ObjQuery, cursor = "") => getJSON<ObjList>(`/api/me/objects/${enc(key)}${objParams(p, cursor)}`),
   // 쓰기 — 기존 경로
   name: (display_name: string) => postJSON("/api/me/name", { display_name }),
+  // 첫 기록 카드(2026-11-23 4차) — 웹에서 내 글 하나(본문만 보낸다. 작성자, 가공 방식, 출처는 서버가 정한다). signal = 시간 제한(못 받으면 OFFLINE)
+  recordAdd: (text: string, signal?: AbortSignal) => postJSON<{ id: string; title: string; created: string }>("/api/records", { text }, signal),
   reflection: (id: string, body: object) => postJSON(`/api/reflections/${enc(id)}`, body),
   review: (id: string, reviewed: boolean, expected_revision: number) => postJSON(`/api/reflections/${enc(id)}/review`, { reviewed, expected_revision }),
   candidate: (body: CandDecide) => candidateDecide(body),

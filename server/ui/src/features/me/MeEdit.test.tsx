@@ -1,4 +1,4 @@
-// 「나」 쓰기 — 수기 수정(항목 제목·본문 [저장] 1번 · 내 글 제목·본문) + 기존 편집(표시 이름·읽고 든 생각·고쳐서 남기기).
+// 「나」 쓰기 — 수기 수정(항목 제목·본문 [저장] 1번 · 내 글 제목·본문) + 기존 편집(표시 이름·읽고 든 생각·판단 문장 눌러 고치기).
 // 쓰기는 [저장]을 눌렀을 때만(입력·취소·Esc = 요청 0) · 고친 동안 setDirty(주소) · 실패 = 서버 msg·action 그대로 · CONFLICT = 다시 받기.
 import { act } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -132,7 +132,7 @@ test("남이 쓴 글 = 제목·본문 고치기 없음", async () => {
   expect(el.querySelector("#home-detail svg[aria-label='고치기']")).toBeNull();   // 고칠 수 없으면 연필도 없다
 });
 
-test("기존 편집 — 표시 이름 · 읽고 든 생각(저장 = 확인 전) · 고쳐서 남기기", async () => {
+test("기존 편집 — 표시 이름 · 읽고 든 생각(저장 = 확인 전) · 판단 문장 눌러 고치기(저장 = 고친 문장으로 확정)", async () => {
   let el = await showMe("#_me/summary", meState());
   await click(el.querySelector(".hhead button"));
   await type(input(el), "새 이름");
@@ -144,9 +144,29 @@ test("기존 편집 — 표시 이름 · 읽고 든 생각(저장 = 확인 전) 
   await save(el);
   expect(posts().at(-1)).toEqual({ url: "/api/reflections/f1", method: "POST", body: { source_id: "s1", kind: "summary", body: "고친 생각", expected_revision: 2 } });
   el = await showMe("#_me/cand/c1", meState());
-  await click(btn(el, "고쳐서 남기기"));
+  await click(el.querySelector("#home-detail h2 button[title='눌러서 고치기']"));
+  expect([...el.querySelectorAll("#home-detail .hacts button")].map(b => b.textContent)).toEqual(["저장", "취소"]);   // 편집 중엔 결정 버튼을 숨긴다
+  expect(el.querySelector("label[for='hedit-input']")!.textContent).toBe("확정한 판단으로 남길 문장");
   await type(input(el), "고친 판단");
   await save(el);
   expect(posts().at(-1)).toEqual({ url: "/api/candidate/decide", method: "POST", body: { candidate_id: "c1", action: "edit_confirm", text: "고친 판단", expected_revision: 1 } });
   await flush();
+});
+
+test("판단 문장 눌러 고치기 — Enter 로 열림, Esc = 취소(요청 0), 재검토 표시가 있거나 이미 정한 판단은 문장을 고칠 수 없다", async () => {
+  let el = await showMe("#_me/cand/c1", meState());
+  const sent = el.querySelector<HTMLButtonElement>("#home-detail h2 button[title='눌러서 고치기']")!;
+  expect(sent.textContent).toBe("담당 먼저");
+  expect(sent.querySelector("svg[aria-label='고치기']")).not.toBeNull();   // 연필 표시는 다른 눌러 고치기와 같은 모양
+  await click(sent);
+  await type(input(el), "고치다 만 문장");
+  await act(async () => { input(el).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+  expect(el.querySelector("#hedit-input")).toBeNull();
+  expect(posts()).toEqual([]);
+  const st = (x: object) => meState({ candidates: [{ ...meState().candidates[0], ...x }] });
+  el = await showMe("#_me/cand/c1", st({ review: "external" }));
+  expect(el.querySelector("#home-detail h2 button")).toBeNull();
+  expect(el.querySelector("#home-detail h2")!.textContent).toBe("담당 먼저");
+  el = await showMe("#_me/cand/c1", st({ status: "confirmed" }));
+  expect(el.querySelector("#home-detail h2 button")).toBeNull();
 });

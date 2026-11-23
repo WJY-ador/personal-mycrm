@@ -5,7 +5,7 @@ import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { queryClient } from "../shared/queries";
 import { calls, flush, installFetch, json, serve } from "../test/fakeServer";
-import { useAutoRefresh } from "./useAppState";
+import { reload, useAutoRefresh } from "./useAppState";
 
 let roots: Root[] = [];
 let listCalls = 0;
@@ -166,4 +166,19 @@ test("숨은 동안 보류된 다시 받기는 그사이 상태 revision이 표�
   expect({ markers: markers(), listCalls }).toEqual({ markers: 2, listCalls: 2 });   // 다음 표지도 2지만 보류분은 한 번 처리
   await tick();
   expect({ markers: markers(), listCalls }).toEqual({ markers: 3, listCalls: 2 });   // 한 번뿐
+});
+
+test("reload(keep) = 키 머리가 keep 인 조회만 빼고 무효화한다(꺼진 조회도 낡음 표시), 인자가 없거나 글자가 아니면 전부", async () => {
+  queryClient.setQueryData(["journal", "r1"], { id: "r1" });
+  queryClient.setQueryData(["me", "stats"], { n: 1 });
+  queryClient.setQueryData(["state"], { revision: 1 });
+  await reload("journal");
+  expect(queryClient.getQueryState(["journal", "r1"])!.isInvalidated).toBe(false);
+  expect(queryClient.getQueryState(["me", "stats"])!.isInvalidated).toBe(true);   // 결정 뒤 나 화면에 돌아가면 다시 받는다
+  expect(queryClient.getQueryState(["state"])!.isInvalidated).toBe(true);
+  await reload({ type: "click" });   // 콜백 인자로 들어온 값 = 전부
+  expect(queryClient.getQueryState(["journal", "r1"])!.isInvalidated).toBe(true);
+  queryClient.setQueryData(["journal", "r1"], { id: "r1" });
+  await reload();
+  expect(queryClient.getQueryState(["journal", "r1"])!.isInvalidated).toBe(true);
 });

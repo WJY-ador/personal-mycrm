@@ -1,4 +1,4 @@
-// 질문·기록 탭(옛 test_web_home 정적 절의 기록 화면 재검토 표시·축 칩 + 화면 동작, R5b-1) — 질문 고르기 · 한 장(확정·미정·반영 안 함·연결된 글) ·
+// 질문·기록 탭(옛 test_web_home 정적 절의 기록 화면 재검토 표시·축 칩 + 화면 동작, R5b-1) — 질문 고르기 · 한 장(확정·미정·남기지 않음·연결된 글) ·
 // [원문과 대조하기] 경로 · 다음 할 일 · 첫 화면 · 기록 탭 출처 필터·원문·축 칩·재검토 · 원문 대화창(인용 mark).
 import { act } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -11,7 +11,7 @@ beforeEach(() => { installFetch(); queryClient.clear(); serve(url => (url.starts
 afterEach(() => { hideScreen(); vi.unstubAllGlobals(); });
 const q = (s: object = structState(), blocks = "sheet candidates next", sel = "") => showScreen("sheet", "#q", ["q", "question", blocks, sel], s);
 
-test("질문 한 장 — 고르기 줄(미결정 수) · 확정한 판단 · 아직 안 정한 문장 + 대조 경로 · 반영 안 함 접힘 · 연결된 글", async () => {
+test("질문 한 장 — 고르기 줄(미결정 수) · 확정한 판단 · 아직 안 정한 문장 + 대조 경로 · 남기지 않음 접힘 · 연결된 글", async () => {
   const el = await q();
   expect(text(el, "nav.subtabs a")).toEqual(["Q1 도구보다 담당이 먼저인가?1", "Q2 두 번째 질문"]);
   expect(el.querySelector("nav.subtabs a.on")!.getAttribute("href")).toBe("#q/q1");
@@ -20,8 +20,8 @@ test("질문 한 장 — 고르기 줄(미결정 수) · 확정한 판단 · 아
   expect(el.querySelector(".card.mine .labels")!.textContent).toBe("확정한 판단AI가 쓴 문장");
   expect(el.querySelector(".cta a")!.getAttribute("href")).toBe("#q/review/q1/c2");
   expect(el.querySelector(".cta a")!.textContent).toBe("원문과 대조하기(1개)");
-  expect(el.querySelector("details.fold summary")!.textContent).toBe("반영 안 함 문장 보기(1개)");
-  expect(el.querySelector("details.fold .labels")!.textContent).toBe("내가 쓴 메모, 내가 고침반영 안 함");
+  expect(el.querySelector("details.fold summary")!.textContent).toBe("남기지 않은 문장 보기(1개)");
+  expect(el.querySelector("details.fold .labels")!.textContent).toBe("내가 쓴 메모, 내가 고침남기지 않음");
   expect(el.querySelector(".nextline .txt")!.textContent).toBe("기록 1편을 남겨 보세요.");
   expect(el.querySelector(".nextline .say")!.textContent).toContain("기록 남기자라고 말하기");
   // 근거 → 원문 대화창(같은 조회 키) — 인용 구간 mark

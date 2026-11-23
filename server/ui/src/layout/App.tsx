@@ -12,7 +12,7 @@ import { mdhm } from "../shared/date";
 import { PartFail } from "../shared/PartFail";
 import { needName, resolve, type View } from "../shared/route";
 import { readOk } from "../shared/state";
-import { LOADING as LOADING_TEXT } from "../shared/words";
+import { LOADING as LOADING_TEXT, LOADING_SLOW } from "../shared/words";
 import { OfflineBand, TabsBand } from "./Bands";
 import { LeaveDialog } from "./LeaveDialog";
 import { SCREENS } from "./registry";
@@ -23,7 +23,17 @@ import { reload, reloadState, useAppState, useAutoRefresh } from "./useAppState"
 import { useHash } from "./useHash";
 import { useHeader } from "./useHeader";
 
-const LOADING = <p className="hint">{LOADING_TEXT}</p>;
+// 불러오는 중 한 줄 + 3초 넘으면 느린 응답 안내(2026-11-23). 안내 자리(role=status)는 처음부터 두고 글자만 채운다 — 읽기 프로그램이 알린다.
+// fromPage = 첫 상태를 기다릴 때 — 뼈대 #boot(CSS 3초 지연)와 같은 때 보이게 쪽 열린 시각부터 잰다. 화면 지연 불러오기는 그때부터 3초
+export function Loading({ fromPage = false }: { fromPage?: boolean }) {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setSlow(true), Math.max(0, 3000 - (fromPage ? performance.now() : 0)));
+    return () => clearTimeout(t);
+  }, [fromPage]);
+  return <p className="hint">{LOADING_TEXT}<span className="slow" role="status">{slow ? LOADING_SLOW : ""}</span></p>;
+}
+const LOADING = <Loading />;
 const at = (id: string, node: ReactNode) => { const el = document.getElementById(id); return el ? createPortal(node, el) : null; };
 type Shown = Exclude<View, { replace: string }>;
 const isShown = (v: View | null): v is Shown => !!v && "tab" in v;
@@ -86,7 +96,7 @@ export function App() {
   const ctx = useMemo<UiCtx>(() => ({ reload, done, setDirty, state: S || undefined, args, flash: shownFlash }),
     [S, argsKey, shownFlash, done, setDirty]);   // args 는 argsKey(글자)로 본다 — 같은 주소면 같은 ctx
 
-  if (!S) return failed ? at("bands", <OfflineBand loadedAt="" />) : LOADING;
+  if (!S) return failed ? at("bands", <OfflineBand loadedAt="" />) : <Loading fromPage />;
   const metaOk = readOk(S, "meta"), loadedAt = mdhm(S.generated);
   const name = gate ? "name" : shown?.screen || "";
   const Screen = SCREENS[name];

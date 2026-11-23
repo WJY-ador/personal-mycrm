@@ -1,5 +1,6 @@
 // 여러 화면이 같이 쓰는 낱말 한 벌 — 「불러오는 중」 한 줄(껍데기·화면) · 읽고 든 생각 종류(「나」·자료 종류) · 빈 목록(「나」·오늘)
 export const LOADING = "불러오는 중이에요…";
+export const LOADING_SLOW = "서버 응답을 기다리고 있어요. 서버가 쉬다 깨는 중이면 30~60초 걸려요.";   // 불러오는 중이 3초 넘을 때(뼈대 #boot 는 global.css 에 같은 문장)
 export const REFL_KIND: Record<string, string> = { summary: "내 요약", reaction: "내 반응" };
 export const ME_EMPTY = "아직 표시할 데이터가 없어요. 데이터가 들어오면 여기서 볼 수 있어요.";   // 「나」·오늘 빈 목록
 export const AI_MARK = "AI 요약";   // AI 가 만든 값 표시(수집 인박스 카드, 「나」 항목 필드) — 사용자의 말이 아니다

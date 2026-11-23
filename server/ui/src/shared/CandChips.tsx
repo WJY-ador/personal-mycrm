@@ -7,7 +7,7 @@ export function OriginBadge({ c }: { c: Pick<Cand, "origin" | "edited_by_user"> 
 
 export function DecisionBadge({ status }: { status: string }) {
   if (status === "confirmed") return <span className="badge b-mine">확정한 판단</span>;
-  if (status === "excluded") return <span className="badge b-off">반영 안 함</span>;
+  if (status === "excluded") return <span className="badge b-off">남기지 않음</span>;
   return <span className="badge b-wait">아직 안 정함</span>;
 }
 

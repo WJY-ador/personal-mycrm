@@ -111,6 +111,17 @@ nav.subtabs a:hover { color: var(--ink); }
 nav.subtabs a.on { background: var(--card); color: var(--ink); font-weight: 600; border-color: var(--ink); }
 nav.subtabs a .n { font-family: var(--mono); font-size: var(--fs-1); color: var(--warn); }
 nav.subtabs a .n.m { color: var(--muted); }
+/* 설정 줄의 접힌 구역 "고급 설정"(2026-11-23) — 요약 줄은 링크와 같은 알약, 펼치면 안의 링크가 같은 줄에 이어진다(좁으면 줄바꿈) */
+nav#subnav .wrap { align-items: flex-start; }   /* 설정 줄 — 고급 설정을 펼쳐도 밖 알약은 제 높이 */
+nav.subtabs details.setup-adv { min-width: 0; max-width: 100%; }
+nav.subtabs details.setup-adv > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: var(--sp-2); border: 1px dashed var(--line);
+  color: var(--muted); font-size: var(--fs-2); padding: var(--sp-2) var(--sp-5); border-radius: var(--r-pill); margin-right: var(--sp-2); }
+nav.subtabs details.setup-adv > summary::-webkit-details-marker { display: none; }
+nav.subtabs details.setup-adv > summary::after { content: "▾"; font-size: var(--fs-1); }
+nav.subtabs details.setup-adv[open] > summary::after { content: "▴"; }
+nav.subtabs details.setup-adv > summary:hover { color: var(--ink); }
+nav.subtabs details.setup-adv[open] > summary { color: var(--ink); border-style: solid; }
+nav.subtabs details.setup-adv > div { display: inline-flex; flex-wrap: wrap; gap: var(--sp-2); vertical-align: top; }
 
 /* 띠 — 화면 전체에 걸리는 것만 */
 .bands { padding-top: var(--sp-6); }
@@ -124,6 +135,13 @@ nav.subtabs a .n.m { color: var(--muted); }
 .band.update .update-acts { display: flex; flex-wrap: wrap; gap: var(--sp-4); }
 
 main#view { padding-top: var(--sp-7); padding-bottom: var(--sp-9); }
+/* 느린 응답 안내(2026-11-23) — 불러오는 중 줄이 3초 넘게 보이면 한 줄을 더 보인다. 뼈대(app.html #boot)는 CSS 지연, 앱(layout/App Loading)은 타이머.
+   두 문장은 shared/words.ts LOADING_SLOW 와 같다(App.test.tsx 가 본다). 움직임 없이 한 번에 나타난다 */
+#boot::after { content: "서버 응답을 기다리고 있어요. 서버가 쉬다 깨는 중이면 30~60초 걸려요."; display: block; margin-top: var(--sp-2); visibility: hidden;
+  animation: boot-slow 0s 3s forwards; }
+@keyframes boot-slow { to { visibility: visible; } }
+.hint .slow { display: block; }
+.hint .slow:not(:empty) { margin-top: var(--sp-2); }
 
 /* 판 — 흰 카드 한 장 */
 .paper { background: var(--card); border: 1px solid var(--line); border-radius: var(--r-4); padding: var(--sp-8) var(--sp-9); margin-bottom: var(--sp-7); }
@@ -406,6 +424,7 @@ dialog .db { padding: var(--sp-6) var(--sp-8); max-height: 72vh; overflow: auto;
   .steps { grid-template-columns: 1fr; }
   .doc { padding: var(--sp-6); }
   button, nav.subtabs a { min-height: 36px; }
+  nav.subtabs details.setup-adv > summary { min-height: 36px; }
   button.axpage, button.refresh { min-height: 28px; }
   textarea { font-size: 16px; }
   .acts { position: sticky; bottom: 0; background: var(--card); padding: var(--sp-5) 0 var(--sp-5); }

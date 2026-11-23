@@ -15,6 +15,8 @@ import { calls, click, flush, installFetch, json, serve, text } from "../test/fa
 import { installMedia } from "../test/meFixture";
 import { LOADERS, SCREENS } from "./registry";
 import { useAutoRefresh } from "./useAppState";
+import { Loading } from "./App";
+import { LOADING, LOADING_SLOW } from "../shared/words";
 
 const ST = { user: { display_name: "홍길동", nav: "new", email: "hong@example.com" }, switches: { trash: false }, generated: "2026-11-03T01:05:00Z",
   inbox: { pending: 2 }, tabs: [], journal: [], candidates: [], questions: [], items: [], item_proposals: [], definitions: [] };
@@ -219,7 +221,11 @@ test("상태 한 벌 → 탭 줄·머리글·바닥 · 설정 페이지 줄 · �
   expect($("foot").textContent).toBe("불러온 시각 11월 3일 10:05.");
   expect($("subnav").hidden).toBe(false);
   expect($("subnav").querySelector("a.on")!.textContent).toBe("문의 및 개인정보");
-  expect(text($("subnav"), "a")).toEqual(["페이지 레이아웃", "내 구조 설정", "자료 종류", "이 PC", "지도", "문의 및 개인정보", "이관"]);   // 휴지통 = 스위치 켜짐만 · 운영 링크 = 관리자만
+  // 이 PC, AI 앱 연결, 문의 및 개인정보는 밖(2026-11-23 4차), 나머지는 접힌 구역 고급 설정 안(2026-11-23). 접혀도 링크는 DOM 에 있다
+  expect(text($("subnav"), ":scope > .wrap > a")).toEqual(["이 PC", "AI 앱 연결", "문의 및 개인정보"]);   // 휴지통 = 스위치 켜짐만 · 운영 링크 = 관리자만
+  expect(text($("subnav"), "details.setup-adv > summary")).toEqual(["고급 설정"]);
+  expect(text($("subnav"), "details.setup-adv a")).toEqual(["페이지 레이아웃", "내 구조 설정", "자료 종류", "지도", "이관"]);
+  expect(($("subnav").querySelector("details") as HTMLDetailsElement).open).toBe(false);   // 지금 쪽(문의)이 고급 설정 밖 = 접힘
   expect(($("setup-link") as HTMLAnchorElement).getAttribute("href")).toBe("#_setup");
   expect(document.body.classList.contains("navnew-screen")).toBe(true);
   expect($("view").textContent).toContain("문의 및 개인정보");
@@ -228,11 +234,42 @@ test("상태 한 벌 → 탭 줄·머리글·바닥 · 설정 페이지 줄 · �
   expect($("desk-dlg-title").textContent).toBe("내 문의");
 });
 
+test("설정 AI 앱 연결 쪽 — 접지 않는 줄에서 켜지고, 고급 설정은 접힌 채, 쪽 화면 = MCP 주소와 연결 방법", async () => {
+  await start("#_setup/connect");
+  expect(location.hash).toBe("#_setup/connect");
+  expect($("subnav").querySelector("a.on")!.textContent).toBe("AI 앱 연결");
+  expect($("subnav").querySelector("a.on")!.getAttribute("href")).toBe("#_setup/connect");
+  expect(($("subnav").querySelector("details") as HTMLDetailsElement).open).toBe(false);
+  expect($("view").querySelector("h2")!.textContent).toBe("AI 앱 연결");
+  expect($("view").querySelector("#connect-mcp")!.textContent).toBe(location.origin + "/mcp");
+  expect(calls.map(c => c.url)).toEqual(["/api/state"]);
+});
+
+test("이름 관문 저장 뒤 첫 화면 — 글 0편이면 첫 기록 카드의 입력칸에 포커스", async () => {
+  const fresh = { ...ST, user: { ...ST.user, display_name: "" }, journal: [], journal_next_before: null };
+  state = fresh;
+  serve((url, method) => {
+    if (url === "/api/me/name" && method === "POST") { state = { ...fresh, user: { ...fresh.user, display_name: "새 이름" } }; return json(200, {}); }
+    return url === "/api/state" ? json(200, state) : json(404, { code: "NOT-FOUND", msg: "" });
+  });
+  await start("#_me");
+  const input = $("name-gate-input") as HTMLInputElement;
+  expect(document.activeElement).toBe(input);
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "새 이름"); input.dispatchEvent(new Event("input", { bubbles: true })); });
+  await act(async () => { ($("name-gate-form") as HTMLFormElement).requestSubmit(); });
+  for (let i = 0; i < 6; i++) await flush();
+  expect($("view").querySelector("#first-record-intro")).toBeTruthy();
+  expect(document.activeElement).toBe($("view").querySelector("#first-record-intro textarea"));
+});
+
 test("관리자 — Setup 줄 끝에 운영 관리·운영 콘솔 · 문의 자리 없음", async () => {
   state = { ...ST, user: { ...ST.user, admin: true } };
   await start("#_setup", true);
   const links = [...$("subnav").querySelectorAll("a")].map(a => [a.textContent, a.getAttribute("href")]);
   expect(links.slice(-2)).toEqual([["운영 관리", "/admin/setup"], ["운영 콘솔", "/admin"]]);
+  expect(text($("subnav"), "details a")).not.toContain("운영 관리");   // 운영 링크는 접지 않는다
+  expect(location.hash).toBe("#_setup");   // 첫 쪽 = 이 PC(주소는 그대로, 2026-11-23)
+  expect($("subnav").querySelector("a.on")!.textContent).toBe("이 PC");
   expect(document.getElementById("ui-desk")).toBeNull();
   expect($("acct-menu").querySelector('[data-acct="send"]')).toBeNull();
 });
@@ -241,6 +278,7 @@ test("옛 주소 = replace · 판단 검토의 돌아갈 곳 = 그 탭에서 마
   await start("#_obj");
   expect(location.hash).toBe("#_setup/objects");
   expect($("subnav").querySelector("a.on")!.textContent).toBe("자료 종류");
+  expect(($("subnav").querySelector("details") as HTMLDetailsElement).open).toBe(true);   // 지금 쪽이 고급 설정 안 = 펼침
   await go("#_settings");
   expect(location.hash).toBe("#_setup/structure");
   await go("#journal");
@@ -498,8 +536,8 @@ test("느린 자동 poll이 검토 카드 편집 중 완료돼도 review 초안 
     expect($("view").textContent).toContain("원문과 대조하기");
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
     expect(stateCalls).toBe(2);
-    await click([...$("view").querySelectorAll("button")].find(b => b.textContent === "고쳐서 남기기")!);
-    const edit = $("rvtext") as HTMLTextAreaElement;
+    await click($("view").querySelector("button[title='눌러서 고치기']"));   // 대조 카드 문장 눌러 고치기(2026-11-23), 편집 칸 id = rvtext-<후보 id>
+    const edit = $("rvtext-c_test") as HTMLTextAreaElement;
     const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
     await act(async () => { setValue.call(edit, "검토 중 미저장 문장"); edit.dispatchEvent(new Event("input", { bubbles: true })); });
     await flush();
@@ -508,12 +546,12 @@ test("느린 자동 poll이 검토 카드 편집 중 완료돼도 review 초안 
     await act(async () => { finishPoll(json(200, { ...reviewState, revision: 2, user: { ...ST.user, display_name: "새 표시 이름" } })); });
     await flush();
     expect(queryClient.getQueryData(["state"])).toMatchObject({ user: { display_name: "새 표시 이름" } });
-    expect(($("rvtext") as HTMLTextAreaElement).value).toBe("검토 중 미저장 문장");
+    expect(($("rvtext-c_test") as HTMLTextAreaElement).value).toBe("검토 중 미저장 문장");
     expect(($("leave-dlg") as HTMLDialogElement).open).toBe(false);
     await go("#_today");
     expect(location.hash).toBe("#q/review/q_test/c_test");
     expect(($("leave-dlg") as HTMLDialogElement).open).toBe(true);
-    expect(($("rvtext") as HTMLTextAreaElement).value).toBe("검토 중 미저장 문장");
+    expect(($("rvtext-c_test") as HTMLTextAreaElement).value).toBe("검토 중 미저장 문장");
   } finally { vi.useRealTimers(); }
 });
 
@@ -890,4 +928,55 @@ test("AI 하나로 A1, A2: 웹 AI가 켜져 있으면 탭 줄의 대화 버튼�
   await start("#_me");
   expect($("ui-chatnav").textContent).not.toContain("AI");
   expect($("ui-chatnav").textContent).not.toBe("");   // 옛 서랍 진입(버튼 또는 장치 없음 안내)은 그대로
+});
+
+test("설정 줄의 고급 설정 구역 — 사용자가 접고 펴기, 고급 설정 쪽으로 옮기면 다시 펼친다", async () => {
+  await start("#_setup/help");
+  const det = () => $("subnav").querySelector("details") as HTMLDetailsElement;
+  expect(det().open).toBe(false);
+  await act(async () => { det().open = true; det().dispatchEvent(new Event("toggle")); });
+  expect(det().open).toBe(true);
+  await act(async () => { det().open = false; det().dispatchEvent(new Event("toggle")); });
+  expect(det().open).toBe(false);
+  await go("#_setup/map");
+  expect(det().open).toBe(true);
+  expect($("subnav").querySelector("a.on")!.textContent).toBe("지도");
+});
+
+test("느린 응답 — 불러오는 중이 3초 넘으면 한 줄(role=status 자리는 처음부터), 첫 상태는 쪽 열린 시각부터 잰다", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const el = document.createElement("div");
+  document.body.append(el);
+  const r = createRoot(el);
+  try {
+    await act(async () => r.render(<Loading />));
+    expect(el.textContent).toBe(LOADING);
+    expect(el.querySelector("[role=status]")!.textContent).toBe("");
+    await act(async () => { vi.advanceTimersByTime(2999); });
+    expect(el.querySelector("[role=status]")!.textContent).toBe("");
+    await act(async () => { vi.advanceTimersByTime(1); });
+    expect(el.querySelector("[role=status]")!.textContent).toBe(LOADING_SLOW);
+    vi.spyOn(performance, "now").mockReturnValue(1000);
+    await act(async () => r.render(<Loading key="page" fromPage />));
+    expect(el.querySelector("[role=status]")!.textContent).toBe("");
+    await act(async () => { vi.advanceTimersByTime(2000); });
+    expect(el.querySelector("[role=status]")!.textContent).toBe(LOADING_SLOW);
+  } finally { act(() => r.unmount()); el.remove(); vi.useRealTimers(); vi.restoreAllMocks(); }
+});
+
+// 뼈대 #boot 의 3초 뒤 줄(CSS ::after)은 시험 DOM 이 CSS 를 비워 동작은 못 본다 — 문장이 화면 낱말과 같은지만 본다(arch.test.ts 처럼 파일을 직접 읽는다)
+test("뼈대 #boot 느린 응답 줄 = LOADING_SLOW 와 같은 문장, 3초 지연", () => {
+  type Fs = { readFileSync(f: string, e: "utf-8"): string };
+  const proc = (globalThis as unknown as { process: { getBuiltinModule(n: string): Fs; cwd(): string } }).process;
+  const css = proc.getBuiltinModule("node:fs").readFileSync(`${proc.cwd()}/src/shared/global.css`, "utf-8");
+  const rule = css.match(/#boot::after \{([^}]*)\}/)![1];
+  expect(rule).toContain(`content: "${LOADING_SLOW}";`);
+  expect(rule).toMatch(/animation: boot-slow 0s 3s forwards;/);
+  expect(page).toContain('<p class="hint" id="boot">');
+});
+
+test("상태를 못 받음 띠 — 서버가 쉬다 깨는 중일 수 있다는 한 문장", async () => {
+  state = null;
+  await start("#_setup/help");
+  expect($("bands").textContent).toContain("서버 상태를 불러오지 못했어요. 서버가 쉬다 깨는 중일 수 있어요. 잠시 뒤 새로 고침해 주세요.");
 });

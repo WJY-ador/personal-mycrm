@@ -1,4 +1,5 @@
-/* 판단 검토(원문과 대조하기) — 옛 app.html 대조 규칙을 옮김(R3). ≥1000px 2열(왼 후보·결정 / 오른 근거 원문 sticky), 좁으면 한 열: 질문 → 문장 → 근거 → 결정.
+/* 판단 검토(원문과 대조하기) — 옛 app.html 대조 규칙을 옮김(R3). 2026-11-23: 범위의 미결 문장을 카드로 세로 나열. 머리(제목, 질문, 결정 설명 한 번) 아래 카드들.
+   카드 하나 ≥1000px 2열(왼 문장, 결정 / 오른 근거 원문), 좁으면 한 열: 문장 → 근거 → 결정. 카드 사이는 가는 실선.
    디자인 2 C1, C3(2026-11-12): 상자를 빼고 큰 간격(--sp-10, --sp-11)과 가는 실선으로 구역을 나눈다.
    글자 역할 넷: 읽는 글(판단 문장, 근거 원문), 화면 제목, 라벨(질문, 근거 원문 제목, 남길지 정하기, 버튼), 보조(날짜, 설명, 쓴 쪽 표시).
    판단 문장과 근거 원문(사람이 쓴 글)만 명조(--prose, 디자인 2 D6). 굵기 600은 화면 제목과 판단 문장에만 쓴다. 건수와 날짜는 본문 글꼴 tabular-nums. 점선은 AI 후보 하나의 뜻(판단 문장 옆 세로줄)만 갖는다.
@@ -10,12 +11,28 @@
 .head h2 { font-size: var(--fs-5); margin: 0; font-weight: 600; }
 .pos { color: var(--muted); font-size: var(--fs-2); margin: 0; font-variant-numeric: tabular-nums; }
 .head a { margin-left: auto; }
+.scope { margin-bottom: var(--sp-10); }
 .head :global(a.link), .row :global(a.link), .row :global(a.btn.primary) { font-weight: 500; }
 
+/* 카드 — 사이는 가는 실선. 앞 카드가 빠진 결과 한 줄(lead)은 카드 위 */
+.item { position: relative; margin-bottom: var(--sp-10); scroll-margin-top: var(--sp-8); }   /* 주소로 들어와 스크롤해도 카드 윗선이 화면 위에 걸리지 않게 */
+.item:focus-visible { outline-offset: var(--sp-4); }   /* 포커스 윤곽과 근거 원문 글 사이 여백(전역 2px 대신) */
+/* 카드 사이 구분선 — 카드 테두리가 아니라 카드 사이 간격 한가운데(위 카드 끝에서 --sp-10, 이 카드 글에서 --sp-10, 전과 같은 자리).
+   그래서 포커스 윤곽(outline-offset --sp-4) 안에 들어오지 않는다. 간격 = 위 카드 margin-bottom 과 겹치는 margin-top(--sp-10 두 배) */
+.item + .item { margin-top: calc(var(--sp-10) * 2); }
+.item + .item::before { content: ""; position: absolute; left: 0; right: 0; top: calc(-1 * var(--sp-10)); border-top: 1px solid var(--line); }
+.lead { font-size: var(--fs-2); color: var(--muted); margin: 0 0 var(--sp-6); }
+.lead:empty { margin: 0; }
+.lead { scroll-margin-top: var(--sp-8); }   /* 결정 뒤 이 줄로 스크롤할 때 위 여백 */
 /* 판단 문장 — 상자 없이. 질문은 라벨, 문장은 화면에서 가장 큰 글(머리글 날짜 1.6rem 보다 크게, 좁은 화면은 아래 1.3rem > 날짜 1.25rem) */
 .card { margin-bottom: var(--sp-10); }
 .q { font-size: var(--fs-3); color: var(--muted); font-weight: 500; margin: 0 0 var(--sp-5); }
 .sent { font-family: var(--prose); font-size: 1.75rem; line-height: 1.45; letter-spacing: -.01em; margin: 0; font-weight: 600; color: var(--ink); }
+/* 눌러서 고치는 문장 — 모양은 shared Edit.module.css 의 값 버튼(.hval, 글자는 이 p 에서 물려받는다)과 연필. 꺼진 동안(원문 확인 전, 저장 중)은 글처럼, 연필은 숨긴다 */
+.sent > button:disabled, .sent > button:disabled:hover { border: 0; background: none; box-shadow: none; color: inherit; cursor: default; }
+.sent > button:disabled svg { visibility: hidden; }
+.tail { white-space: nowrap; }   /* 마지막 낱말 + 연필 — 연필만 다음 줄로 떨어지지 않게 */
+.sent > button:hover .tail svg, .sent > button:focus-visible .tail svg { color: var(--accent); }   /* 연필이 버튼 바로 아래가 아니라 shared 의 가리킴 색 규칙 대신 */
 .card :global(.labels) { margin: 0; padding-top: var(--sp-5); gap: var(--sp-6); }   /* 테두리 없는 표시 둘(내가 쓴 메모, AI 문안)이 한 구절로 읽히지 않게 */
 .card :global(.labels .badge), .card :global(.labels .chip) { background: none; border: 0; border-radius: 0; padding: 0; font-size: var(--fs-2); font-weight: 400; color: var(--muted); }
 .card :global(.labels .badge)::before { display: none; }
@@ -25,7 +42,7 @@
 
 /* 근거 원문 — 상자 없이 문서처럼. 형광펜(mark)은 전역 그대로 */
 .srchead { display: flex; justify-content: space-between; align-items: baseline; gap: var(--sp-3); margin-bottom: var(--sp-6); flex-wrap: wrap; }
-.srchead h3 { margin: 0; font-size: var(--fs-3); font-weight: 500; color: var(--muted); }
+.srchead h4 { margin: 0; font-size: var(--fs-3); font-weight: 500; color: var(--muted); }
 .srchead :global(.recmeta) { margin: 0; font-variant-numeric: tabular-nums; }
 .src { margin-bottom: var(--sp-10); }
 .src :global(.doc) { background: none; border: 0; border-radius: 0; padding: 0; font-family: var(--prose); font-size: 1.0625rem; line-height: 1.85; color: var(--ink); }
@@ -38,19 +55,17 @@
 .fold { margin-top: var(--sp-8); }
 .src :global(details.tech) { margin-top: var(--sp-4); }
 
-/* 남길지 정하기 — 상자 대신 위쪽 가는 실선. 결정 버튼 셋은 같은 색, 순서(남기기, 고쳐서 남기기, 반영 안 함)와 폭만 다르다(D2) */
-.act { border-top: 1px solid var(--line); padding-top: var(--sp-8); }
-.act h3 { margin: 0; font-size: var(--fs-3); font-weight: 500; color: var(--muted); }
-.dest { font-size: var(--fs-2); color: var(--muted); margin: var(--sp-2) 0 var(--sp-7); line-height: 1.6; }
-.act .decide { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-5); }
+/* 남길지 정하기 — 상자 없이. 결정 버튼 둘은 같은 색, 순서(남기기, 남기지 않기)와 폭만 다르다(D2). 설명 한 문장(.dest)은 목록 머리에 한 번 */
+.dest { font-size: var(--fs-2); color: var(--muted); margin: var(--sp-2) 0 0; line-height: 1.6; }
+.act .decide { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: var(--sp-5); }
 .act .decide button { min-height: 44px; font-size: var(--fs-3); font-weight: 500; background: transparent; color: var(--ink);
   border: 1px solid color-mix(in srgb, var(--ink) 30%, transparent); }
 .act .decide button:hover { border-color: var(--accent); color: var(--accent); }
 /* 꺼진 버튼은 실선 — 전역 button:disabled 의 점선을 덮는다(점선은 AI 후보만) */
 .review .act button:disabled, .review .act button:disabled:hover { border: 1px solid var(--line); background: transparent; color: var(--muted); }
-.review .act button.tertiary:disabled, .review .act button.tertiary:disabled:hover,
-.review .nav button:disabled, .review .nav button:disabled:hover { border: 1px solid transparent; }
-.edit { margin-top: var(--sp-8); }
+.review .edit button:disabled, .review .edit button:disabled:hover { border: 1px solid var(--line); background: transparent; color: var(--muted); }
+.review .edit button.tertiary:disabled, .review .edit button.tertiary:disabled:hover { border: 1px solid transparent; }
+.edit { margin-top: var(--sp-6); }
 .edit label { display: block; font-size: var(--fs-3); font-weight: 500; }
 .edit :global(.hint) { margin: 0 0 var(--sp-3); }
 .edit textarea { display: block; width: 100%; font: inherit; font-size: var(--fs-4); line-height: 1.6; padding: var(--sp-5); border: 1px solid var(--line); border-radius: var(--r-3); background: var(--card); color: var(--ink); }
@@ -59,8 +74,6 @@
 .status { font-size: var(--fs-2); color: var(--muted); margin: var(--sp-4) 0 0; }
 .act :global(.blocked) { font-weight: 500; }
 .status:empty, .act :global(.blocked):empty { margin: 0; }
-.nav { display: flex; gap: var(--sp-3); justify-content: flex-start; align-items: center; margin: var(--sp-8) 0 var(--sp-3); flex-wrap: wrap; }
-.nav :global(.hint) { flex-basis: 100%; margin: 0; }
 
 /* 끝, 빈 상태 — 상자 없이 한 줄 제목과 글 */
 :global(.paper).done { background: none; border: 0; border-radius: 0; padding: var(--sp-8) 0 var(--sp-10); }
@@ -69,19 +82,16 @@
 .row { display: flex; gap: var(--sp-4); justify-content: flex-start; flex-wrap: wrap; margin-top: var(--sp-8); }
 .row > .link { align-self: center; display: inline-flex; align-items: center; min-height: 44px; padding: var(--sp-4) var(--sp-2); }
 @media (min-width: 1000px) {
-  .review { display: grid; grid-template-columns: minmax(0, 1fr) 440px; column-gap: var(--sp-11);
-    grid-template-areas: "head head" "card src" "act src" "nav src"; grid-template-rows: auto auto auto 1fr; }
-  .review > .head { grid-area: head; }
-  .review > .card { grid-area: card; }
-  .review > .act { grid-area: act; }
-  .review > .nav { grid-area: nav; align-self: start; }
-  .review > .src { grid-area: src; position: sticky; top: .8rem; align-self: start; max-height: calc(100vh - 2rem); overflow: auto; margin-bottom: 0;
-    border-left: 1px solid var(--line); padding-left: var(--sp-10); }
+  .item { display: grid; grid-template-columns: minmax(0, 1fr) 440px; column-gap: var(--sp-11);
+    grid-template-areas: "lead lead" "card src" "act src"; grid-template-rows: auto auto 1fr; }
+  .item > .lead { grid-area: lead; }
+  .item > .card { grid-area: card; }
+  .item > .act { grid-area: act; align-self: start; }
+  .item > .src { grid-area: src; align-self: start; margin-bottom: 0; border-left: 1px solid var(--line); padding-left: var(--sp-10); }
 }
 @media (max-width: 767px) {
   .head { margin-bottom: var(--sp-9); }
   .sent { font-size: 1.3rem; }
   .act .decide { grid-template-columns: 1fr 1fr; background: var(--paper); }   /* 전역 .acts(3열, 좁은 화면 sticky 의 card 바탕)보다 구체적으로 — 묶음 CSS 순서와 무관 */
-  .act .decide > :first-child { grid-column: 1 / -1; }
   .edit :global(.acts) { position: static; padding: 0; background: none; }
 }
