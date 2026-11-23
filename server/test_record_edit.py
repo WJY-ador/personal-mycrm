@@ -10,6 +10,8 @@
 4) 웹: POST /api/records/{id}/body(공통 앞·뒤를 뺀 한 구간) · /title · /api/item/edit(propose+apply 한 트랜잭션, 확정 유지, 이력 한 줄)
    · /body/preview(R2 — 쓰기 없음, 저장과 같은 판정: 끼워 넣기·같은 구절 여러 번·연결 걸린 겹침 잠금·CONFLICT, 문구 = 서버)
    · 401 · Origin 403 · 모양 400 · via web
+4b) 웹 첫 화면 글쓰기: POST /api/records(401, Origin 403, 모양 400, 빈 글, PAYLOAD-LIMIT, NAME-REQUIRED, 일일 한도,
+   서버 고정값 self, verbatim, 결정 표시 없음, 출처 웹에서 입력, 본문의 다른 키 무시, 같은 주소 GET 그대로)
 5) provenance_history via · 옛 DB 업그레이드(records.revision 없음 → 1)
 """
 import asyncio
@@ -435,6 +437,106 @@ async def test_web_preview(uid):
     ok("웹 본문 미리보기(저장과 같은 판정 — 끼워 넣기·같은 구절 여러 번·연결 걸린 겹침 잠금·결정 잠금·CONFLICT·바뀐 곳 없음 · 쓰기 0 · 401·Origin 403·모양 400 · 문구 = 서버)")
 
 
+# ── 4b) 웹 첫 화면 글쓰기 POST /api/records ──────────────
+
+async def test_web_record_add(uid):
+    """세션 401, Origin 403, 모양 400, 빈 글 400, 길이 PAYLOAD-LIMIT, 이름 관문 403, 일일 한도, 서버 고정값, 같은 주소 GET 그대로."""
+    site = main.site
+    real = site.dev, site.dev_user
+    origin = {"origin": PUBLIC}
+
+    def count():
+        with db.tx() as c:
+            return c.execute("SELECT count(*) AS n FROM records WHERE user_id=%s", (uid,)).fetchone()["n"]
+
+    def row(rid):
+        with db.tx() as c:
+            return c.execute("SELECT title,body,source,source_id,question_id,author_kind,text_process,decision_owner FROM records "
+                             "WHERE user_id=%s AND id=%s", (uid, rid)).fetchone()
+
+    def used(name, code, who=None):
+        who = uid if who is None else who
+        return sum(n for (_, u, nm, cd), n in db.usage_snapshot().items() if u == who and nm == name and cd == code)
+
+    lim0 = db.DAILY_LIMITS["records"]
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url=PUBLIC) as h:
+            n0 = count()
+            # 세션 없음
+            site.dev, site.dev_user = False, ""
+            a0 = used("web:record_add", "UNAUTHORIZED", "")
+            r = await h.post("/api/records", json={"text": "로그인 없이"}, headers=origin)
+            assert r.status_code == 401 and r.json()["code"] == "UNAUTHORIZED", r.text
+            assert used("web:record_add", "UNAUTHORIZED", "") == a0 + 1, "사용 집계 이름 web:record_add"
+            site.dev, site.dev_user = True, MAIN
+            # 다른 Origin, Origin 없음
+            for hdr in ({"origin": "https://evil.example"}, {}):
+                r = await h.post("/api/records", json={"text": "다른 사이트"}, headers=hdr)
+                assert r.status_code == 403 and r.json()["code"] == "ORIGIN", (hdr, r.text)
+            # 모양
+            for bad in ({}, {"text": 3}, {"text": None}, {"text": "글", "title": 3}, {"title": "제목만"}, ["글"]):
+                r = await h.post("/api/records", json=bad, headers=origin)
+                assert r.status_code == 400 and r.json()["code"] == "ARG-INVALID", (bad, r.text)
+            r = await h.post("/api/records", content=b"not json", headers={**origin, "content-type": "application/json"})
+            assert r.status_code == 400 and r.json()["code"] == "ARG-INVALID", r.text
+            # 빈 글
+            for empty in ("", "   \n\t "):
+                r = await h.post("/api/records", json={"text": empty}, headers=origin)
+                assert r.status_code == 400 and r.json()["code"] == "ARG-INVALID", (empty, r.text)
+            # 길이 한도(db.WRITE_LIMITS["record_add"] 그대로)
+            for big in ({"text": "a" * (db.LIMIT_BODY + 1)}, {"text": "글", "title": "a" * (db.LIMIT_TEXT + 1)}):
+                r = await h.post("/api/records", json=big, headers=origin)
+                assert r.status_code == 400 and r.json()["code"] == "PAYLOAD-LIMIT", r.text[:200]
+            # 표시 이름 관문
+            with db.tx() as c:
+                c.execute("UPDATE users SET display_name=NULL WHERE id=%s", (uid,))
+            try:
+                r = await h.post("/api/records", json={"text": "이름 없이"}, headers=origin)
+                assert r.status_code == 403 and r.json()["code"] == "NAME-REQUIRED", r.text
+            finally:
+                db.display_name_set(uid, "수정 시험")
+            assert count() == n0, "거절은 쓰지 않는다"
+            # 성공: 받은 그대로 저장, 서버 고정값, 본문의 다른 키는 무시
+            text = "  첫 글이에요.\n둘째 줄은 그대로  \n"
+            ok0 = used("web:record_add", "OK")
+            r = await h.post("/api/records", json={"text": text, "author_kind": "external", "text_process": "structured",
+                                                   "decision_owner": "self", "source": "가짜 출처", "question_id": "q_none",
+                                                   "source_name": "가짜", "source_kind": "file", "user_id": "u_other"}, headers=origin)
+            assert r.status_code == 200, r.text
+            assert r.headers.get("cache-control") == "no-store"
+            j = r.json()
+            assert set(j) == {"id", "title", "created"} and j["title"] == "첫 글이에요." and j["created"], j
+            got = row(j["id"])
+            assert got["body"] == text, "글은 받은 그대로"
+            assert (got["source"], got["author_kind"], got["text_process"], got["decision_owner"], got["source_id"], got["question_id"]) \
+                == ("웹에서 입력", "self", "verbatim", None, None, None), got
+            assert used("web:record_add", "OK") == ok0 + 1
+            r = await h.post("/api/records", json={"text": "본문만 있는 글", "title": " 내 제목 "}, headers=origin)
+            assert r.status_code == 200 and r.json()["title"] == "내 제목", r.text
+            assert row(r.json()["id"])["title"] == "내 제목"
+            assert count() == n0 + 2
+            # 일일 한도: MCP record_add 와 같은 records 한도(경계 바로 앞은 통과, 넘으면 RATE-LIMIT)
+            db.DAILY_LIMITS["records"] = count() + 1
+            r = await h.post("/api/records", json={"text": "한도 안"}, headers=origin)
+            assert r.status_code == 200, r.text
+            r = await h.post("/api/records", json={"text": "한도 밖"}, headers=origin)
+            assert r.status_code == 400 and r.json()["code"] == "RATE-LIMIT", r.text
+            db.DAILY_LIMITS["records"] = lim0
+            assert count() == n0 + 3
+            # 같은 주소 GET 은 그대로(읽기, 모양, 사용 집계 이름 web:records)
+            g0 = used("web:records", "OK")
+            r = await h.get("/api/records?limit=1")
+            assert r.status_code == 200 and set(r.json()) == {"records", "next_before"}, r.text
+            assert len(r.json()["records"]) == 1 and r.json()["next_before"], r.json()
+            assert used("web:records", "OK") == g0 + 1 and count() == n0 + 3
+            r = await h.get("/api/records?before=bad")
+            assert r.status_code == 400 and r.json()["code"] == "ARG-INVALID", r.text
+    finally:
+        db.DAILY_LIMITS["records"] = lim0
+        site.dev, site.dev_user = real
+    ok("웹 첫 화면 글쓰기(401, Origin 403, 모양 400, 빈 글, PAYLOAD-LIMIT, NAME-REQUIRED, 일일 한도, 고정값 self verbatim 출처 웹에서 입력, 다른 키 무시, GET 그대로)")
+
+
 # ── 5) 출처 via · 옛 DB 업그레이드 ─────────────────────
 
 async def test_provenance_and_upgrade(uid):
@@ -469,6 +571,7 @@ async def run():
         await test_title(uid)
         await test_web(uid)
         await test_web_preview(uid)
+        await test_web_record_add(uid)
         await test_provenance_and_upgrade(uid)
     finally:
         cleanup()

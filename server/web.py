@@ -2265,6 +2265,15 @@ class Web:
         return await self._core_write(request, "record_title_set", {"expected_revision": ((int,), True), "title": ((str,), True)},
                                       lambda uid, b: db.record_title_set(uid, rid, b["title"], b["expected_revision"], via="web"))
 
+    async def api_record_add(self, request):
+        """POST /api/records {text, title(선택)} — 웹 첫 화면 글쓰기. MCP record_add 와 같은 db.record_add(제목 만들기, 일일 한도, 자동 분류).
+        작성자 self, 가공 방식 verbatim, 결정 표시 없음, 출처 연결 없음, 질문 없음은 서버가 고정한다. 본문의 다른 키는 쓰지 않는다.
+        글은 받은 그대로 저장한다. 반환 = {id, title, created}(MCP record_add 와 같은 꼴)."""
+        def add(uid, b):
+            r = db.record_add(uid, b.get("title") or "", b["text"], source="웹에서 입력")
+            return {"id": r["id"], "title": r["title"], "created": r["created"]}
+        return await self._core_write(request, "record_add", {"text": ((str,), True), "title": ((str,), False)}, add)
+
     async def api_item_edit(self, request):
         """POST /api/item/edit {item_id, expected_revision, title, body} — 항목 인라인 편집 [저장] 1번(제안+적용 한 트랜잭션)."""
         return await self._core_write(request, "item_edit", {"item_id": ((str,), True), "expected_revision": ((int,), True),
@@ -3661,6 +3670,7 @@ class Web:
             Route("/api/state/revision", u("web:state_revision", self.api_state_revision)),
             Route("/api/journal", u("web:journal", self.api_journal)),
             Route("/api/records", u("web:records", self.api_records)),   # PR① 홈 기록 「더 보기」 — 읽기만
+            Route("/api/records", u("web:record_add", self.api_record_add), methods=["POST"]),   # 웹 첫 화면 글쓰기(같은 주소, POST 만)
             Route("/api/records/{rid}/body", u("web:record_body", self.api_record_body), methods=["POST"]),   # 수기 수정 A0′
             Route("/api/records/{rid}/body/preview", u("web:record_body_preview", self.api_record_body_preview), methods=["POST"]),   # 쓰기 없음 — 저장 전 확인
             Route("/api/records/{rid}/title", u("web:record_title", self.api_record_title), methods=["POST"]),
