@@ -3,6 +3,7 @@
 import type { Post } from "./collectedApi";
 
 export const READER_ID = "collected-reader";
+export const DRAG_TYPE = "application/x-mycrm-collected";   // 줄을 읽기 판으로 끌 때만 쓰는 끌기 자료 종류(글, 링크, 파일을 놓아도 읽기 판은 안 바뀐다)
 export type At = { g: string; i: number };            // g = 묶음 열쇠(등급, 등급 없음 = "none", 보관함 = "kept"), i = 묶음 안 순번
 export type Lane = { key: string; posts: Post[] };
 
