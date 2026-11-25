@@ -3,13 +3,16 @@
 // 넓은 화면(2026-11-23 6차) = 줄을 읽기 판에 끌어 놓거나 줄에서 Enter 를 누르면 읽기 판에 그 글(고른 줄 = aria-current + 왼쪽 막대).
 // 마우스 누름과 Space 로는 읽기 판이 안 바뀐다(누름 실수 방지). 단 주 포인터가 터치인 기기(touch, 16-1)는 끌어 놓기가 안 돼 누름으로 띄운다. 끌기는 줄 버튼(face)에서만 시작한다 — 판별 버튼과 원문 링크는 face 밖 형제라 끌리지 않는다.
 // 한 칸 = 줄 아래 펼침(Detail, 읽기 판과 같은 부품). 남의 글이라 명조(--prose)를 쓰지 않는다.
-import { useState, type DragEvent, type KeyboardEvent } from "react";
+// 2026-11-25: 한 칸에서 펼친 글에 AI 긴 요약이 없으면 읽기 판과 같은 요청(useLong)을 보내고 펼친 자리에 같은 상태 한 줄. 접으면 기다림만 멈추고,
+// 다시 펴면 목록 확인부터(요약이 생겼으면 요청 없음). 상태 줄(LongNote)은 읽기 판과 같이 쓴다 — AI 값이 아니라 AI 표시를 붙이지 않는다.
+import { useState, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
 import { AxisCodes } from "../../shared/AxisCodes";
 import { axisCodes } from "../../shared/axes";
 import { dOnly } from "../../shared/date";
-import { AI_MARK, CHANNEL, NO_BODY, safeUrl } from "./collectedRows";
+import { AI_MARK, CHANNEL, LONG_TEXT, NO_BODY, hasLong, safeUrl } from "./collectedRows";
 import type { Post } from "./collectedApi";
 import { DRAG_TYPE, READER_ID } from "./follow";
+import { useLong, type Long } from "./useLong";
 import css from "./Collected.module.css";
 
 export type By = Record<string, { code: string | null; title: string }>;
@@ -19,20 +22,37 @@ export type RowCtx = { by: By; busy: boolean; wide: boolean; touch: boolean; sel
 
 const AiTag = () => <span className={`chip o-ai ${css.aitag}`}>{AI_MARK}</span>;
 
-// 제목 줄, AI 요약 넷(as-is, to-be, 운영, 요점), 원문 본문은 서버에 없다는 한 줄 — 줄 아래 펼침과 읽기 판이 같이 쓴다
-export function Detail({ p, id }: { p: Post; id?: string }) {
+// 제목 줄, AI 요약 넷(as-is, to-be, 운영, 요점), 원문 본문은 서버에 없다는 한 줄 — 줄 아래 펼침과 읽기 판이 같이 쓴다.
+// note = 요약이 없을 때 그 자리에 둘 한 줄(읽기 판의 요약 만들기 상태)
+export function Detail({ p, id, note }: { p: Post; id?: string; note?: ReactNode }) {
   const rows: [string, string | null][] = [["as-is", p.ai.as_is], ["to-be", p.ai.to_be], ["운영", p.ai.ops]];
   const pts = (p.ai.points || []).filter(Boolean);
-  const any = rows.some(([, v]) => v) || pts.length > 0;
+  const any = hasLong(p);
   return (
     <div className={css.detail} id={id}>
       <p className={css.titleLine}>{p.title || "(제목 줄 없음)"}</p>
       {any ? <div className={css.ai}><p className={css.aihead}><AiTag /> AI가 만든 요약이에요. 내 말이나 원문 인용이 아니에요.</p>
         <dl className="kv">{rows.filter(([, v]) => v).map(([k, v]) => <div key={k} className={css.kvrow}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>
-        {pts.length ? <><p className={css.sub}>요점</p><ul className={css.points}>{pts.map((x, i) => <li key={i}>{x}</li>)}</ul></> : null}</div> : null}
+        {pts.length ? <><p className={css.sub}>요점</p><ul className={css.points}>{pts.map((x, i) => <li key={i}>{x}</li>)}</ul></> : null}</div> : note}
       <p className="hint">{NO_BODY}</p>
     </div>
   );
+}
+
+// 요약 만들기 상태 한 줄 — 실패(fail)만 [다시 만들기]
+export function LongNote({ st, again }: { st: Long; again: () => void }) {
+  if (st === "none") return null;
+  return (
+    <p className={`hint ${css.long}`} role="status" data-long={st}>{LONG_TEXT[st]}
+      {st === "fail" ? <>{" "}<button type="button" className="secondary small" onClick={again}>다시 만들기</button></> : null}</p>
+  );
+}
+
+// 한 칸 펼침 — 펼칠 때마다 마운트된다(접으면 요청 기다림 정리). n = 다시 만들기 차례
+function Open({ p, id }: { p: Post; id: string }) {
+  const [n, setN] = useState(1);
+  const st = useLong(p, { id: p.id, n });
+  return <Detail p={p} id={id} note={<LongNote st={st} again={() => setN(n + 1)} />} />;
 }
 
 export function PostHead({ p, by }: { p: Post; by: By }) {
@@ -72,7 +92,7 @@ export function CollectedRow({ p, c }: { p: Post; c: RowCtx }) {
         <span className={css.line}>{p.ai.summary ? <AiTag /> : null}{p.ai.summary || p.title || "(제목 줄 없음)"}</span>
       </button>
       <PostActs p={p} busy={c.busy} act={s => void c.decide(p, s)} />
-      {!c.wide && open ? <Detail p={p} id={did} /> : null}
+      {!c.wide && open ? <Open p={p} id={did} /> : null}
     </li>
   );
 }

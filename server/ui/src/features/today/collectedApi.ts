@@ -16,6 +16,9 @@ export type Dropped = { dropped: string[]; skipped: string[] };
 export type Theme = { name: string; line: string; item_ids: string[] };
 export type DigestAxis = { code: string | null; title: string | null; item_id: string; pending: number; signal: number };
 export type Digest = { digest: { themes: Theme[]; input_n: number; made_at: string } | null; pending_n: number; new_since: number; by_axis: DigestAxis[] };
+// 읽기 판 긴 요약 작업(2026-11-25 구현계획 1절) — POST /api/jobs {kind: "collected_long", text: 항목 id} = 201 {id}(같은 항목의 열린 작업이면 그 작업) ·
+// GET /api/jobs/<id>?wait=30 = 상태(queued, leased, running 동안 롱폴). 끝 = confirmed(서버가 항목 ai_* 를 이미 씀) · failed(reason_code) 등. 응답 정본 = server/db.py _job_out
+export type LongJob = { id: string; status: string; reason_code: string | null; created_at: string };
 
 const enc = encodeURIComponent;
 export const BULK_MAX = 200;   // 묶음 버림 한 번에(서버 상한과 같다)
@@ -24,4 +27,6 @@ export const collectedApi = {
   decide: (id: string, state: string, expected_revision: number) => postJSON<Decided>(`/api/collected/${enc(id)}/decide`, { state, expected_revision }),
   digest: () => getJSON<Digest>("/api/collected/digest"),
   drop: (ids: string[]) => postJSON<Dropped>("/api/collected/drop", { ids, state: "dropped" }),
+  long: (id: string) => postJSON<{ id: string }>("/api/jobs", { kind: "collected_long", text: id }),
+  job: (jid: string) => getJSON<LongJob>(`/api/jobs/${enc(jid)}?wait=30`),
 };

@@ -3,7 +3,9 @@
 // 전부 버림 = 두 번 눌러 확정 · 보관함 = 접힘, 열면 kept 조회, 버튼은 버림만 · 빈 상태(오브젝트 없음·글 없음).
 // 2026-11-23 두 칸: 넓은 화면 = 오른쪽 읽기 판(고른 줄 aria-current), 판별 뒤 같은 묶음 다음 글, 다시 받아도 유지.
 // 6차: 줄을 읽기 판에 끌어 놓거나(dragstart → dragover → drop) 줄에서 Enter 로 고른다. 마우스 누름, Space 로는 안 바뀐다.
-// 한 칸(900 이하) = 읽기 판 없이 줄 아래 펼침.
+// 한 칸(900 이하) = 읽기 판 없이 줄 아래 펼침. 펼친 글에 요약이 없으면 같은 요청과 상태 줄(2026-11-25).
+// 2026-11-25 긴 요약: 고른 글(끌어 놓기, Enter, 터치 누름)에 요약이 없으면 POST /api/jobs collected_long → 기다림 → 끝나면 목록을 다시 받아 채움.
+// 판별 뒤 자동으로 넘어온 글은 보내지 않는다. 상태 문구(만드는 중, 2분 넘게 queued, NO-DEVICE, long-short, 그 밖 실패(needs_check, expired 포함) + 다시 만들기).
 import { act } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { queryClient } from "../../shared/queries";
@@ -19,9 +21,17 @@ const post = (id: string, grade: string | null, on: string, extra: P = {}): P =>
   id, revision: 3, title: `${id} 제목 줄`, channel: "linkedin", author_display: `${id} 작성자`, post_url: `https://x.example/${id}`, posted_on: "2026-11-10",
   collected_on: on, axes: [], ai: { grade, summary: null, as_is: null, to_be: null, ops: null, points: null }, state: "pending", decided_by: null, decided_at: null, ...extra });
 let PEND: P[] = [], KEPT: P[] = [], READY = true;
+// 긴 요약 작업 가짜 — POST /api/jobs = JOB_POST, GET /api/jobs/j1 = JOB(HOLD 면 release 를 부를 때까지 응답을 쥔다)
+const LONG: P = { as_is: "지금 꼴 긴 요약", to_be: "다음 꼴 긴 요약", ops: null, points: ["긴 요약 요점"] };
+const job = (status: string, extra: P = {}): P => ({ id: "j1", session_id: "s-j1", kind: "collected_long", status, input_version: 1, attempts: 0, reason_code: null,
+  created_at: new Date().toISOString(), expires_at: "2026-11-26T00:00:00+00:00", terminal_at: null, ...extra });
+let JOB_POST: () => Response = () => json(201, { id: "j1", session_id: "s-j1" }), JOB: P = job("queued"), HOLD = false;
+let release: ((r: Response) => void) | null = null;
 const S = { user: { nav: "new" }, switches: {}, activity_ui: { actions: {}, providers: {}, pending_days: 30 }, inbox: { pending: 0 }, journal: [] };
 const show = () => showScreen("today", "#_today", ["today", "", ""], S);
-const posts = () => calls.filter(c => c.method === "POST");
+const posts = () => calls.filter(c => c.method === "POST" && c.url !== "/api/jobs");   // 판별 쓰기(긴 요약 요청은 jobs() 로 따로 본다)
+const jobs = () => calls.filter(c => c.method === "POST" && c.url === "/api/jobs").map(c => c.body);
+const longReq = (...ids: string[]) => ids.map(text => ({ kind: "collected_long", text }));
 const cards = (el: Element) => text(el, "#collected > section li b");
 const row = (el: Element, id: string) => el.querySelector(`#collected li[data-id="${id}"]`)!;
 const face = (el: Element, id: string) => row(el, id).querySelector("button[data-face]");
@@ -55,12 +65,14 @@ const oneCol = () => vi.stubGlobal("matchMedia", (q: string) => ({ matches: q.in
 
 beforeEach(() => {
   installFetch(); installMedia(false); queryClient.clear();
-  READY = true;
+  READY = true; JOB = job("queued"); HOLD = false; release = null; JOB_POST = () => json(201, { id: "j1", session_id: "s-j1" });
   PEND = [post("n1", "news", "2026-11-11"), post("s2", "signal", "2026-11-12"), post("s1", "signal", "2026-11-12"),
     post("z1", "noise", "2026-11-09"), post("u1", null, "2026-11-12", { post_url: null, ai: { grade: null, summary: "AI가 쓴 한 줄", as_is: "지금 꼴", to_be: "다음 꼴", ops: "운영 메모", points: ["요점 하나", "요점 둘"] } }),
     post("n2", "news", "2026-11-12")];
   KEPT = [post("k1", "signal", "2026-11-01", { state: "kept" })];
   serve((url, m) => {
+    if (m === "POST" && url === "/api/jobs") return JOB_POST();
+    if (url === "/api/jobs/j1?wait=30") return HOLD ? new Promise<Response>(r => { release = r; }) : json(200, JOB);
     if (m === "POST" && url.endsWith("/decide")) { PEND = PEND.filter(p => p.id !== url.split("/")[3]); return json(200, { item_id: url.split("/")[3], state: "kept", revision: 4, decided_at: null }); }
     if (m === "POST" && url === "/api/collected/drop") return json(200, { dropped: ["n2", "n1"], skipped: [] });
     if (url === "/api/collected?state=pending") return json(200, { ready: READY, posts: PEND, counts: { pending: PEND.length, kept: KEPT.length } });
@@ -194,7 +206,8 @@ test("두 칸 — 읽기 판 빈 상태, 줄(진짜 button)을 끌어 놓으면 
   expect(text(reader(el), "ul li")).toEqual(["요점 하나", "요점 둘"]);
   expect(reader(el).querySelector(".chip.o-ai")!.textContent).toBe("AI 요약");
   expect(reader(el).querySelector("a.link")).toBeNull();
-  expect(posts()).toEqual([]);
+  expect(posts()).toEqual([]);   // 판별 쓰기 없음
+  expect(jobs()).toEqual(longReq("s1"));   // 요약이 없는 s1 만 긴 요약 요청, 요약이 있는 u1 은 안 보낸다
 });
 
 test("두 칸 — 줄 마우스 누름, Space 로는 읽기 판이 안 바뀌고 Enter 로 바뀜", async () => {
@@ -214,6 +227,7 @@ test("두 칸 — 줄 마우스 누름, Space 로는 읽기 판이 안 바뀌고
   await click(face(el, "s2"));   // 고른 뒤에도 누름은 읽기 판을 안 바꾼다
   expect(current(el)).toEqual(["n2"]);
   expect(posts()).toEqual([]);
+  expect(jobs()).toEqual(longReq("s1", "n2"));   // 누름, Space 는 요청도 없다
 });
 
 test("두 칸 + 터치 기기(hover: none, pointer: coarse) — 줄 누름으로 읽기 판에 그 글, 끌기도 남음", async () => {
@@ -228,6 +242,7 @@ test("두 칸 + 터치 기기(hover: none, pointer: coarse) — 줄 누름으로
   expect(current(el)).toEqual(["u1"]);
   expect(row(el, "u1").querySelector("dl")).toBeNull();   // 줄 아래 펼침이 아니라 읽기 판
   expect(posts()).toEqual([]);
+  expect(jobs()).toEqual(longReq("s1"));   // 터치 누름 = 고르기라 요청
 });
 
 test("두 칸 — 끄는 동안만 놓을 자리 표시(테두리 표시 + 문구), 줄 끌기 자료가 없는 놓기는 무시", async () => {
@@ -257,6 +272,7 @@ test("두 칸 — 끄는 동안만 놓을 자리 표시(테두리 표시 + 문�
   expect(reader(el).hasAttribute("data-drop")).toBe(false);   // 놓으면 dragend 전에도 표시를 거둔다
   expect(current(el)).toEqual(["n1"]);
   expect(posts()).toEqual([]);
+  expect(jobs()).toEqual(longReq("s1", "n1"));
 });
 
 test("읽기 판 판별 = 같은 묶음 다음 글, 마지막이면 빈 상태, 고르지 않은 줄 버튼은 읽기 판을 안 바꿈, 다시 받아도 고른 글 유지", async () => {
@@ -271,6 +287,8 @@ test("읽기 판 판별 = 같은 묶음 다음 글, 마지막이면 빈 상태, 
   expect(row(el, "s1")).toBeNull();
   expect(current(el)).toEqual(["s2"]);
   expect(reader(el).querySelector("b")!.textContent).toBe("s2 작성자");
+  expect(reader(el).querySelector("[data-long]")!.textContent).toBe("끌어 놓으면 요약을 만들어요.");   // 자동으로 넘어온 글 = 요청 없음
+  expect(jobs()).toEqual(longReq("s1"));
   expect(byText(el, "#collected button", "되돌리기")).toHaveLength(1);   // 되돌리기 5초 그대로
   await click(byText(reader(el), "button", "버림")[0]);
   expect(posts().at(-1)!.body).toEqual({ state: "dropped", expected_revision: 3 });
@@ -281,6 +299,7 @@ test("읽기 판 판별 = 같은 묶음 다음 글, 마지막이면 빈 상태, 
   await flush();
   expect(current(el)).toEqual(["n1"]);
   expect(reader(el).querySelector("b")!.textContent).toBe("n1 작성자");
+  expect(jobs()).toEqual(longReq("s1", "n1"));
 });
 
 test("보관함 글 고르기 = 읽기 판에 버림만, 수집 글을 담을 자료 종류가 없으면 읽기 판 칸도 없음", async () => {
@@ -311,4 +330,133 @@ test("거르기로 숨은 고른 글을 읽기 판에서 판별하면 다음 글
   await dragTo(el, "n2");
   await click(byText(reader(el), "button", "버림")[0]);
   expect(current(el)).toEqual(["n1"]);   // 보이는 글은 같은 묶음 다음 글 규칙 그대로
+});
+
+const note = (el: Element) => reader(el).querySelector("[data-long]");
+
+test("긴 요약 — 끌어 놓으면 요청 → 만드는 중(AI 표시 없음) → confirmed 뒤 목록을 다시 받아 읽기 판에 AI 요약", async () => {
+  HOLD = true;
+  const el = await show();
+  await dragTo(el, "s1");
+  expect(jobs()).toEqual(longReq("s1"));
+  expect(calls.filter(c => c.url === "/api/jobs/j1?wait=30")).toHaveLength(1);
+  expect(note(el)!.textContent).toBe("PC에서 요약을 만드는 중이에요.");
+  expect(note(el)!.getAttribute("role")).toBe("status");
+  expect(reader(el).querySelector(".chip.o-ai")).toBeNull();   // 상태 줄은 AI 값이 아니다
+  expect(text(reader(el), "button")).toEqual(["보관", "버림"]);   // 기다리는 동안 다시 만들기 없음
+  PEND = PEND.map(p => (p.id === "s1" ? { ...p, ai: { ...(p.ai as P), ...LONG } } : p));
+  await act(async () => { release!(json(200, job("confirmed"))); });
+  await flush(); await flush();
+  expect(note(el)).toBeNull();
+  expect(text(reader(el), "dd")).toEqual(["지금 꼴 긴 요약", "다음 꼴 긴 요약"]);
+  expect(text(reader(el), "ul li")).toEqual(["긴 요약 요점"]);
+  expect(reader(el).querySelector(".chip.o-ai")!.textContent).toBe("AI 요약");
+  expect(jobs()).toHaveLength(1);   // 다시 받은 뒤 또 보내지 않는다
+  expect(posts()).toEqual([]);
+});
+
+test("긴 요약 — queued 2분 넘음 = PC 꺼짐 안내, 확인 RATE-LIMIT 은 실패가 아니다, 다른 글로 바꾸면 그 글의 상태", async () => {
+  JOB = job("queued", { created_at: new Date(Date.now() - 3 * 60_000).toISOString() });
+  const el = await show();
+  await dragTo(el, "s1");
+  expect(note(el)!.textContent).toBe("PC 앱이 꺼져 있거나 AI 연결이 안 되어 있어요. 켜지면 이어서 만들어요.");
+  JOB = job("running", { created_at: new Date(Date.now() - 3 * 60_000).toISOString() });
+  serve((url, m) => {
+    if (m === "POST" && url === "/api/jobs") return json(201, { id: "j1", session_id: "s-j1" });
+    if (url.startsWith("/api/jobs/")) return json(429, { code: "RATE-LIMIT", msg: "작업 확인이 이미 여러 개 진행 중이에요." });
+    if (url === "/api/collected?state=pending") return json(200, { ready: true, posts: PEND, counts: { pending: PEND.length, kept: 1 } });
+    return json(404, {});
+  });
+  await dragTo(el, "n2");
+  expect(note(el)!.textContent).toBe("PC에서 요약을 만드는 중이에요.");
+  expect(byText(reader(el), "button", "다시 만들기")).toHaveLength(0);
+  expect(jobs()).toEqual(longReq("s1", "n2"));
+});
+
+test("긴 요약 — NO-DEVICE 안내(다시 만들기 없음), long-short 안내(다시 만들기 없음)", async () => {
+  JOB_POST = () => json(409, { code: "NO-DEVICE", msg: "PC 연결과 에이전트 실행이 필요해요." });
+  const el = await show();
+  await dragTo(el, "s1");
+  expect(note(el)!.textContent).toBe("연결된 PC가 없어 요약을 만들 수 없어요.");
+  expect(byText(reader(el), "button", "다시 만들기")).toHaveLength(0);
+  expect(calls.some(c => c.url.startsWith("/api/jobs/"))).toBe(false);
+  JOB_POST = () => json(201, { id: "j1", session_id: "s-j1" });
+  JOB = job("failed", { reason_code: "long-short", terminal_at: new Date().toISOString() });
+  await dragTo(el, "n2");
+  expect(note(el)!.textContent).toBe("원문이 짧아 긴 요약을 만들지 않았어요.");
+  expect(byText(reader(el), "button", "다시 만들기")).toHaveLength(0);
+});
+
+test("긴 요약 — 그 밖 실패 = 다시 만들기, 누르면 같은 글 새 요청, 같은 글을 다시 끌어 놓기만으로는 안 보냄", async () => {
+  JOB = job("failed", { reason_code: "timeout", terminal_at: new Date().toISOString() });
+  const el = await show();
+  await dragTo(el, "s1");
+  expect(note(el)!.textContent).toBe("요약을 만들지 못했어요. 다시 만들기");
+  await dragTo(el, "s1");
+  expect(jobs()).toEqual(longReq("s1"));
+  JOB = job("needs_check");
+  await click(byText(reader(el), "button", "다시 만들기")[0]);
+  expect(jobs()).toEqual(longReq("s1", "s1"));
+  expect(note(el)!.textContent).toBe("요약을 만들지 못했어요. 다시 만들기");   // needs_check 도 실패
+  JOB = job("expired");
+  await click(byText(reader(el), "button", "다시 만들기")[0]);
+  expect(jobs()).toEqual(longReq("s1", "s1", "s1"));
+  expect(note(el)!.textContent).toBe("요약을 만들지 못했어요. 다시 만들기");   // expired 도 실패
+  JOB_POST = () => json(503, { code: "SWITCH-OFF", msg: "꺼져 있어요." });
+  await click(byText(reader(el), "button", "다시 만들기")[0]);
+  expect(note(el)!.textContent).toBe("요약을 만들지 못했어요. 다시 만들기");
+  expect(posts()).toEqual([]);
+});
+
+test("긴 요약 — 보관함 글은 보관함을 닫아도 끝난 뒤 다시 받아 채움", async () => {
+  HOLD = true;
+  const el = await show();
+  const d = el.querySelector("#collected details") as HTMLDetailsElement;
+  await act(async () => { d.open = true; d.dispatchEvent(new Event("toggle")); });
+  await flush(); await flush();
+  await dragTo(el, "k1");
+  expect(jobs()).toEqual(longReq("k1"));
+  await act(async () => { d.open = false; d.dispatchEvent(new Event("toggle")); });
+  await flush();
+  KEPT = KEPT.map(p => ({ ...p, ai: { ...(p.ai as P), ...LONG } }));
+  await act(async () => { release!(json(200, job("confirmed"))); });
+  await flush(); await flush();
+  expect(reader(el).querySelector("b")!.textContent).toBe("k1 작성자");   // 닫힌 보관함의 글도 읽기 판에 남는다
+  expect(text(reader(el), "dd")).toEqual(["지금 꼴 긴 요약", "다음 꼴 긴 요약"]);
+});
+
+test("긴 요약 — 다른 글로 갔다 돌아오면 목록을 먼저 다시 받아, 그 사이 끝난 요약이 있으면 새 요청 없이 보인다", async () => {
+  HOLD = true;
+  const el = await show();
+  await dragTo(el, "s1");
+  await dragTo(el, "n2");   // s1 의 기다림은 화면에서만 멈춘다
+  expect(note(el)!.textContent).toBe("PC에서 요약을 만드는 중이에요.");
+  PEND = PEND.map(p => (p.id === "s1" ? { ...p, ai: { ...(p.ai as P), ...LONG } } : p));   // 그 사이 PC 가 끝냈다
+  await dragTo(el, "s1");
+  await flush();
+  expect(jobs()).toEqual(longReq("s1", "n2"));
+  expect(text(reader(el), "dd")).toEqual(["지금 꼴 긴 요약", "다음 꼴 긴 요약"]);
+});
+
+test("긴 요약 한 칸(900 이하) — 펼치면 요청 + 펼친 자리에 상태, 접었다 다시 펴면 목록 확인부터(그 사이 요약이 생겼으면 요청 없음)", async () => {
+  oneCol(); HOLD = true;
+  const el = await show();
+  const s1 = () => row(el, "s1"), toggle = () => click(s1().querySelector("button[aria-expanded]"));
+  await toggle();
+  expect(jobs()).toEqual(longReq("s1"));
+  const n = s1().querySelector("[data-long]")!;
+  expect([n.textContent, n.getAttribute("role")]).toEqual(["PC에서 요약을 만드는 중이에요.", "status"]);
+  expect(s1().querySelector(".chip.o-ai")).toBeNull();
+  await toggle();   // 접기 = 기다림만 멈춘다
+  expect(s1().querySelector("[data-long]")).toBeNull();
+  PEND = PEND.map(p => (p.id === "s1" ? { ...p, ai: { ...(p.ai as P), ...LONG } } : p));
+  await toggle();
+  await flush();
+  expect(jobs()).toEqual(longReq("s1"));
+  expect(text(s1(), "dd")).toEqual(["지금 꼴 긴 요약", "다음 꼴 긴 요약"]);
+  expect(s1().querySelector("[data-long]")).toBeNull();
+  // 요약이 있는 글(u1)은 펼쳐도 요청이 없다
+  await click(row(el, "u1").querySelector("button[aria-expanded]"));
+  expect(jobs()).toEqual(longReq("s1"));
+  expect(posts()).toEqual([]);
 });

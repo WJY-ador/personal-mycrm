@@ -29,7 +29,7 @@ export function DigestBox({ d, fail, posts, pick, setPick }: Props) {
     <div className={css.box} role="region" aria-labelledby="digest-h" id="digest">
       <div className={css.head}><h4 id="digest-h">인박스 요약</h4>
         {g ? <><span className="chip o-ai">{AI_MARK}</span><span className={css.when}>{`${mdhm(g.made_at)} 기준 대기 ${g.input_n}건 요약`}</span></> : null}</div>
-      {!g ? <p className={css.newer} id="digest-none">{`아직 요약이 없어요. 대기 ${d.pending_n}건, 다음 동기화에서 만들어요.`}</p>
+      {!g ? <p className={css.newer} id="digest-none">아직 요약이 없어요. PC 앱에서 인박스 요약을 켜 두면 다음 동기화에서 만들어요.</p>
         : d.new_since > 0 ? <p className={css.newer} id="digest-new">{`요약 뒤 새로 ${d.new_since}건. 요약은 다음 동기화에서 갱신해요.`}</p> : null}
       {g ? <ul className={css.themes}>{g.themes.map((t, i) => {
         const n = pickPosts(all, d, { kind: "theme", i }).length, on = same(pick, { kind: "theme", i });

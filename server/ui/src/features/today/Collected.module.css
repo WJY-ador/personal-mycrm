@@ -41,6 +41,8 @@ button.face[draggable="true"]:active { cursor: grabbing; }
 .titleLine { margin: 0 0 var(--sp-4); font-weight: 600; overflow-wrap: anywhere; }
 .ai { color: var(--ink); }
 .aihead { margin: 0 0 var(--sp-3); color: var(--ai); font-size: var(--fs-2); }
+.long { margin: 0 0 var(--sp-4); }   /* 읽기 판 요약 만들기 상태 한 줄(요약 자리) */
+.long :global(button) { margin-left: var(--sp-2); }
 .kvrow { display: contents; }
 .sub { margin: var(--sp-4) 0 var(--sp-2); font-weight: 600; font-size: var(--fs-2); color: var(--muted); }
 .points { margin: 0; padding-left: var(--sp-8); }
