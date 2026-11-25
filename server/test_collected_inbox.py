@@ -10,7 +10,11 @@
 5. 묶음 버림(200 상한, skipped) · 일반 결정 한도에 세지 않는다
 6. 장치 판별 목록 GET /api/imports/decisions — 사용자 판별만 · 그 장치 항목만 · seq 커서·has_more · 인증·인자 오류
 7. 대화 op collected_post_decide(via mcp 이력) · 계정 삭제가 판별 표를 지운다 · 화면 견본(collected.sample.json) 대조
+10. 읽기 판 긴 요약 작업 collected_long(2026-11-25) — 접수, 열린 작업 재사용(한도 미산입), 남의·없는·휴지통 항목 404, 하루 한도, 결과 모양 오류,
+   ai_* 넷만 기록(판별된 항목에도, revision·이력 불변), confirmed 종료와 재전송, 실패 코드, 스위치 꺼짐 503, 작업 CHECK 확장,
+   kinds 없는 옛 폴은 임대받지 않음, MCP op collected_post_summarize
 """
+import uuid
 import asyncio
 import json
 import os
@@ -41,8 +45,8 @@ import imports  # noqa: E402
 import main  # noqa: E402
 from test_sample_shape import cmp  # noqa: E402
 
-MAIN, OTHER, AXU = "ci-main@example.com", "ci-other@example.com", "ci-axes@example.com"
-EMAILS = (MAIN, OTHER, AXU)
+MAIN, OTHER, AXU, LONG = "ci-main@example.com", "ci-other@example.com", "ci-axes@example.com", "ci-long@example.com"
+EMAILS = (MAIN, OTHER, AXU, LONG)
 H = {"origin": PUBLIC}
 FIELDS = [
     {"key": "channel", "label": "채널", "value_type": "select", "required": True, "options": list(imports.COLLECTED_CHANNELS)},
@@ -260,6 +264,7 @@ async def run():
     try:
         await body(A, B, d, ax)
         await axes_from_account(ax)
+        await long_jobs(B)
     finally:
         imports.LIMITS.clear()
         imports.LIMITS.update(lim)
@@ -435,6 +440,198 @@ async def body(A, B, d, ax):
     with db.tx() as c:
         assert c.execute("SELECT count(*) AS n FROM collected_states WHERE user_id=%s", (A,)).fetchone()["n"] == 0
     print("OK 7 대화 op(via mcp) · 화면 견본 대조(목록·판별·묶음 버림) · 계정 삭제가 판별 표를 지움")
+
+
+def _counter(uid, bucket):
+    with db.tx() as c:
+        r = c.execute("SELECT COALESCE(sum(n), 0) AS n FROM import_counters WHERE user_id=%s AND bucket=%s", (uid, bucket)).fetchone()
+    return int(r["n"])
+
+
+def _job(jid):
+    with db.tx() as c:
+        return c.execute("SELECT kind, status, reason_code, terminal_at FROM jobs WHERE id=%s", (jid,)).fetchone()
+
+
+def _data(uid, iid):
+    with db.tx() as c:
+        return c.execute("SELECT data FROM items WHERE user_id=%s AND id=%s", (uid, iid)).fetchone()["data"]
+
+
+async def long_jobs(B):
+    """10. 읽기 판 긴 요약 collected_long — 웹 접수 → 장치 임대·입력 → 결과(항목 ai_* 기록 + confirmed) · 실패 · 한도 · 스위치."""
+    L = db.user_by_email(LONG)["id"]
+    tok, dev_id, _ax = setup_user(L, axes=False)
+    d = Dev(tok, dev_id)
+    i1 = (await d.send("l1", ai={"grade": "signal", "summary": "합성 요약"}))["target_id"]
+    i2 = (await d.send("l2"))["target_id"]
+    hd = {"authorization": "Bearer " + tok}
+    poll_saved = dict(imports.POLL_LIMITS)
+    for k in imports.POLL_LIMITS:
+        imports.POLL_LIMITS[k] = 100000
+    new = lambda text: web("POST", "/api/jobs", {"kind": "collected_long", "text": text}, user=LONG)   # noqa: E731
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url=PUBLIC) as h:
+            async def lease(expect_id):
+                r = await h.get("/api/device/jobs", params={"wait": 0, "kinds": "converse,collected_long"}, headers=hd)
+                assert r.status_code == 200 and r.json()["kind"] == "collected_long" and r.json()["id"] == expect_id, r.text
+                gen = r.json()["lease"]["generation"]
+                r = await h.get(f"/api/device/jobs/{expect_id}/input", params={"lease_generation": gen}, headers=hd)
+                assert r.status_code == 200, r.text
+                return gen, r.json()
+
+            async def result(jid, b):
+                return await h.post(f"/api/device/jobs/{jid}/result", content=json.dumps(b, ensure_ascii=False).encode("utf-8"),
+                                    headers={**hd, "content-type": "application/json"})
+
+            # 작업 CHECK 확장(schema.sql 뒤 _WIDEN_CHECKS)
+            with db.tx() as c:
+                defs = {r["conname"]: r["d"] for r in c.execute(
+                    "SELECT conname, pg_get_constraintdef(oid) AS d FROM pg_constraint WHERE conrelid='jobs'::regclass "
+                    "AND conname IN ('jobs_kind_check','jobs_reason_code_check')").fetchall()}
+            assert "'collected_long'" in defs["jobs_kind_check"] and "'long-short'" in defs["jobs_reason_code_check"], defs
+
+            # 접수 · 재사용(같은 id, 한도 미산입) · 인자 오류 · 남의·없는 항목 404
+            r = await new(i1)
+            assert r.status_code == 201, r.text
+            j1 = r.json()["id"]
+            r = await new(i1)
+            assert r.status_code == 201 and r.json()["id"] == j1, r.text
+            assert _counter(L, "job_collected_long") == 1, "재사용은 하루 한도에 세지 않는다"
+            for bad in ("i_x", "합성 글자", "i_nothere0000"):
+                r = await new(bad)
+                assert r.status_code == (404 if bad.startswith("i_nothere") else 400), (bad, r.text)
+            expect("NOT-FOUND", db.job_create, B, "collected_long", i1)   # 남의 항목(B 는 수집 글 오브젝트와 장치가 있다)
+            expect("ARG-INVALID", db.job_create, L, "collected_long", i1, session_id=str(uuid.uuid4()))
+
+            # kinds 없는 옛 폴, collected_long 을 밝히지 않은 폴은 임대받지 않는다(queued 그대로) · 모르는 이름은 버린다
+            for params in ({"wait": 0}, {"wait": 0, "kinds": "converse,routine_ingest"}, {"wait": 0, "kinds": "collected_longx, ,nope"}):
+                r = await h.get("/api/device/jobs", params=params, headers=hd)
+                assert r.status_code == 204, (params, r.text)
+            assert _job(j1)["status"] == "queued"
+
+            # 임대 · 입력 = 항목 id · 실행 중에도 재사용
+            gen, inp = await lease(j1)
+            assert inp["text"] == i1, inp
+            assert (await new(i1)).json()["id"] == j1
+
+            # 결과 모양 오류(작업은 running 그대로)
+            ok = {"lease_generation": gen, "input_version": 1, "result_version": str(uuid.uuid4()),
+                  "collected_long": {"as_is": "지금 합성", "to_be": None, "ops": "운영 합성", "points": ["점 하나", "점 둘"]}, "model_meta": {}}
+            cl = ok["collected_long"]
+            for why, b in (("points 0", {**ok, "collected_long": {**cl, "points": []}}),
+                           ("points 13", {**ok, "collected_long": {**cl, "points": ["점"] * 13}}),
+                           ("point 301", {**ok, "collected_long": {**cl, "points": ["가" * 301]}}),
+                           ("as_is 1001", {**ok, "collected_long": {**cl, "as_is": "가" * 1001}}),
+                           ("url", {**ok, "collected_long": {**cl, "to_be": "합성 https://example.com/a"}}),
+                           ("mail", {**ok, "collected_long": {**cl, "ops": "합성 a@example.com"}}),
+                           ("path", {**ok, "collected_long": {**cl, "ops": "합성 ~/x"}}),
+                           ("빈 글", {**ok, "collected_long": {**cl, "as_is": " "}}),
+                           ("키 빠짐", {**ok, "collected_long": {k: v for k, v in cl.items() if k != "ops"}}),
+                           ("키 더함", {**ok, "extra": 1}),
+                           ("옛 꼴", {"lease_generation": gen, "input_version": 1, "result_version": str(uuid.uuid4()), "summary_text": "",
+                                     "changes": [], "blocked": [], "text_map": [], "model_meta": {}})):
+                r = await result(j1, b)
+                assert r.status_code == 400 and r.json()["code"] == "ARG-INVALID", (why, r.text)
+                assert "가가가" not in r.text and "example.com" not in r.text, ("오류에 값을 싣지 않는다", why)
+            assert _job(j1)["status"] == "running"
+            r = await result(j1, {**ok, "input_version": 2})
+            assert r.status_code == 409 and r.json()["code"] == "JOB-VERSION", r.text
+            r = await result(j1, {**ok, "lease_generation": gen + 1})
+            assert r.status_code == 409 and r.json()["code"] == "JOB-LEASE", r.text
+
+            # 판별(보관)된 항목에도 쓴다 · ai_* 넷만 · revision, 이력 불변 · null 은 그 키를 지운다
+            imports.collected_decide(L, i1, "kept")
+            with db.tx() as c:
+                c.execute("UPDATE items SET data = data || '{\"ai_to_be\": \"옛 값\"}'::jsonb WHERE user_id=%s AND id=%s", (L, i1))
+            rev0, h0 = item(L, i1)["revision"], hist(L, i1)
+            r = await result(j1, ok)
+            assert r.status_code == 200 and r.json() == {"status": "confirmed"}, r.text
+            dat = _data(L, i1)
+            assert dat["ai_as_is"] == "지금 합성" and dat["ai_ops"] == "운영 합성" and dat["ai_points"] == ["점 하나", "점 둘"], dat
+            assert "ai_to_be" not in dat and dat["ai_summary"] == "합성 요약" and dat["ai_grade"] == "signal", dat
+            assert item(L, i1)["revision"] == rev0 and hist(L, i1) == h0, "revision·이력 불변"
+            assert cs(L, i1)["state"] == "kept", "판별 그대로"
+            jj = _job(j1)
+            assert jj["status"] == "confirmed" and jj["terminal_at"] is not None, jj
+            st = db.job_get(L, j1)
+            assert st["status"] == "confirmed" and "result" not in st, st
+            with db.tx() as c:
+                inp_t, res_t = db._tmp_names(c)
+                assert not c.execute(f"SELECT 1 FROM {inp_t} WHERE job_id=%s", (j1,)).fetchone(), "임시 입력 정리"
+            r = await result(j1, ok)
+            assert r.status_code == 200 and r.json() == {"duplicate": True}, r.text
+            web_post = next(p for p in (await web("GET", "/api/collected?state=kept", user=LONG)).json()["posts"] if p["id"] == i1)
+            assert web_post["ai"]["as_is"] == "지금 합성" and web_post["ai"]["points"] == ["점 하나", "점 둘"], web_post
+
+            # 끝난 뒤 다시 요청 = 새 작업 · 실패 코드(long-short) · 모르는 코드 400
+            r = await new(i1)
+            j2 = r.json()["id"]
+            assert r.status_code == 201 and j2 != j1 and _counter(L, "job_collected_long") == 2
+            gen2, _ = await lease(j2)
+            r = await h.post(f"/api/device/jobs/{j2}/fail", json={"lease_generation": gen2, "reason_code": "long-nope"}, headers=hd)
+            assert r.status_code == 400 and r.json()["code"] == "ARG-INVALID", r.text
+            r = await h.post(f"/api/device/jobs/{j2}/fail", json={"lease_generation": gen2, "reason_code": "long-short"}, headers=hd)
+            assert r.status_code == 200 and r.json() == {"status": "failed"}, r.text
+            assert _job(j2)["reason_code"] == "long-short" and db.job_get(L, j2)["reason_code"] == "long-short"
+
+            # 결과 전에 항목이 휴지통에 가면 쓰지 않고 failed(long-not-found) · 휴지통 항목 접수 404
+            j3 = (await new(i2)).json()["id"]
+            gen3, _ = await lease(j3)
+            with db.tx() as c:
+                db._trash_rows(c, L, "items", [i2], "move")
+            r = await result(j3, {**ok, "lease_generation": gen3})
+            assert r.status_code == 200 and r.json() == {"status": "failed", "reason_code": "long-not-found"}, r.text
+            assert _job(j3)["reason_code"] == "long-not-found" and "ai_as_is" not in _data(L, i2)
+            assert (await new(i2)).status_code == 404
+
+            # 하루 한도(지금 3건) · 스위치 꺼짐 = 접수 503, 장치에 임대하지 않는다
+            assert _counter(L, "job_collected_long") == 3
+            imports.JOB_REQUEST_LIMITS["collected_long"] = 3
+            try:
+                r = await new(i1)
+                assert r.status_code == 429 and r.json()["code"] == "JOB-QUOTA" and r.json().get("resume_at"), r.text
+            finally:
+                imports.JOB_REQUEST_LIMITS["collected_long"] = 60
+            j4 = (await new(i1)).json()["id"]
+            os.environ["CRM_COLLECTED_LONG_ENABLED"] = "0"
+            try:
+                r = await new(i1)
+                assert r.status_code == 503 and r.json()["code"] == "SWITCH-OFF", r.text
+                r = await h.get("/api/device/jobs", params={"wait": 0, "kinds": "collected_long"}, headers=hd)
+                assert r.status_code == 204, ("꺼진 종류는 임대하지 않는다", r.text)
+            finally:
+                os.environ.pop("CRM_COLLECTED_LONG_ENABLED", None)
+            await lease(j4)
+
+        # MCP op collected_post_summarize(write, facade 전용) — 같은 작업(진행 중) 재사용 · 없는 항목 NOT-FOUND · 카탈로그와 등급표
+        from mcp.client import Client
+        import chat_mcp
+        import facade
+        cat = facade.load_catalog()
+        assert (cat["ops"]["collected_post_summarize"]["tier"], cat["ops"]["collected_post_summarize"].get("direct")) == ("write", False)
+        assert chat_mcp._PINNED_TIERS["collected_post_summarize"] == "write" and ("write", "collected_post_summarize") in chat_mcp.allowed_operations(cat)
+        assert "collected_post_summarize 로 부른다" in main.INSTRUCTIONS
+        saved_user = os.environ.get("CRM_DEV_USER")
+        os.environ["CRM_DEV_USER"] = LONG
+        try:
+            async with Client(main.mcp) as c:
+                assert "collected_post_summarize" not in {t.name for t in (await c.list_tools()).tools}, "facade 전용"
+                res = await c.call_tool("write", {"op": "collected_post_summarize", "params": {"item_id": i1}})
+                assert not res.is_error, res.content[0].text[:300]
+                v = res.structured_content
+                v = v.get("result", v) if isinstance(v, dict) and set(v) == {"result"} else v
+                if v is None:   # facade 는 결과를 글(JSON)로 돌려준다
+                    v = json.loads(res.content[0].text)
+                assert v == {"job_id": j4, "status": "running", "reason_code": None}, v
+                bad = await c.call_tool("write", {"op": "collected_post_summarize", "params": {"item_id": "i_nothere0000"}})
+                assert bad.is_error and "NOT-FOUND" in bad.content[0].text, bad.content[0].text[:200]
+        finally:
+            os.environ["CRM_DEV_USER"] = saved_user if saved_user is not None else MAIN
+    finally:
+        imports.POLL_LIMITS.clear()
+        imports.POLL_LIMITS.update(poll_saved)
+    print("OK 10 읽기 판 긴 요약(접수·재사용·404·한도·모양 오류·ai_* 기록과 revision 불변·confirmed·재전송·실패 코드·스위치 503·옛 폴 임대 없음·MCP op)")
 
 
 def main_():

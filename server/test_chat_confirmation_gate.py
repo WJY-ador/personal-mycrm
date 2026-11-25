@@ -137,11 +137,11 @@ class ChatConfirmationGateTests(unittest.TestCase):
         from chat_mcp import _PINNED_TIERS
         writes = {name for name, tier in _PINNED_TIERS.items() if tier == "write"}
         self.assertEqual(webchat.CHAT_WRITE_CARD_OPS, writes - {"pc_connect"})
-        self.assertEqual(len(webchat.CHAT_WRITE_CARD_OPS), 16)   # 축 한 장 내 판 axis_page_save(2026-11-22) 더함
+        self.assertEqual(len(webchat.CHAT_WRITE_CARD_OPS), 17)   # 축 한 장 내 판 axis_page_save(2026-11-22), 긴 요약 맡기기 collected_post_summarize(2026-11-25) 더함
         decides = {name for name, tier in _PINNED_TIERS.items() if tier in ("decide", "purge")}
         self.assertEqual(webchat.CHAT_APPROVABLE_OPS, decides)   # AI 하나로 A3: decide 20 + purge 1, 구조 추천(2026-11-18) decide 3 더함
         self.assertEqual(len(webchat.CHAT_APPROVABLE_OPS), 24)
-        self.assertEqual(len(webchat.CHAT_CARD_OPS), 40)
+        self.assertEqual(len(webchat.CHAT_CARD_OPS), 41)
         # A5: 늘 되돌릴 수 없음으로 보는 op 은 모두 카드 대상이다
         self.assertLessEqual(webchat.CHAT_IRREVERSIBLE_OPS, webchat.CHAT_APPROVABLE_OPS)
         self.assertEqual(webchat.CHAT_IRREVERSIBLE_OPS, {"trash_purge", "token_revoke", "pc_forget", "migration_token_send",
@@ -153,7 +153,8 @@ class ChatConfirmationGateTests(unittest.TestCase):
         # I R3(2026-11-11): every write card op is classified once — overwrite (current-state reader) or create only
         self.assertEqual(set(webchat._WRITE_CURRENT) | webchat._WRITE_CREATE_ONLY, set(webchat.CHAT_WRITE_CARD_OPS))
         self.assertFalse(set(webchat._WRITE_CURRENT) & webchat._WRITE_CREATE_ONLY)
-        self.assertEqual(webchat._WRITE_CREATE_ONLY, {"question_add", "record_add", "candidates_propose", "source_create"})
+        self.assertEqual(webchat._WRITE_CREATE_ONLY, {"question_add", "record_add", "candidates_propose", "source_create",
+                                                      "collected_post_summarize"})
 
     def test_unclassified_write_op_makes_no_card(self):
         """I R3: a write op with no current-state reader is not treated as a create; it is refused (fail closed)."""

@@ -2810,9 +2810,12 @@ class Web:
         return await run_in_threadpool(auth, request.headers.get("authorization", ""))
 
     async def api_device_jobs(self, request):
-        """GET /api/device/jobs?wait=0..30 — 롱폴. 200 {id,kind,session_ref,input_ref,input_version,definitions_version,lease:{generation,expires_at}}
-        · 204 없음 · 429 폴링 버킷·동시 1(Retry-After). 끊긴 연결엔 할당하지 않는다(1초마다 확인)."""
+        """GET /api/device/jobs?wait=0..30&kinds=a,b — 롱폴. 200 {id,kind,session_ref,input_ref,input_version,definitions_version,lease:{generation,expires_at}}
+        · 204 없음 · 429 폴링 버킷·동시 1(Retry-After). 끊긴 연결엔 할당하지 않는다(1초마다 확인).
+        kinds = 그 앱이 처리하는 작업 종류(쉼표 구분, 모르는 이름은 버린다). collected_long 은 kinds 에 있을 때만 받는다(db.job_assign)."""
         code = "EXC"
+        raw_kinds = request.query_params.get("kinds")
+        declared = None if raw_kinds is None else frozenset(k.strip() for k in raw_kinds[:200].split(",") if k.strip() in db.JOB_KINDS)
         try:
             dev = await self._device(request)
             if not self._poll_enter("device", dev["id"]):
@@ -2825,7 +2828,7 @@ class Web:
                     if await request.is_disconnected():
                         code = "GONE"
                         return Response(status_code=204, headers={"cache-control": "no-store"})
-                    job = await run_in_threadpool(db.job_assign, dev)
+                    job = await run_in_threadpool(db.job_assign, dev, declared)
                     if job:
                         code = "OK"
                         return JSONResponse(job, headers={"cache-control": "no-store"})

@@ -284,7 +284,8 @@ def test_outcome_skip(uid):
             c.execute("INSERT INTO chat_approvals (id,user_id,session_id,turn_id,op,params,preview,state,kind,expires_at,finished_at) "
                       "VALUES (%s,%s,%s,%s,%s,'{}','{}',%s,%s,clock_timestamp(),clock_timestamp()+make_interval(secs => %s))",
                       (aid, uid, sid, tid, op, st, kind, i))
-    assert webchat.OUTCOME_SKIP_OPS == {"item_route_exclude", "item_route_include", "definition_draft_discard", "axis_page_save"}
+    assert webchat.OUTCOME_SKIP_OPS == {"item_route_exclude", "item_route_include", "definition_draft_discard", "axis_page_save",
+                                        "collected_post_summarize"}
     assert webchat.OUTCOME_SKIP_OPS <= webchat.CHAT_CARD_OPS, "카드 자체는 그대로 만든다"
     with patch("webchat._active_devices", return_value={dev}), patch("webchat._require_consumed_session_consent"):
         turn = webchat.turn_create(uid, sid, "가짜 다음 턴", "route-screen-next", connected=lambda _d: True, capable=lambda _s: True)

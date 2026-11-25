@@ -839,7 +839,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   id                  uuid PRIMARY KEY,
   user_id             text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   session_id          uuid NOT NULL,
-  kind                text NOT NULL CHECK (kind IN ('converse','summarize_reading','routine_ingest')),
+  kind                text NOT NULL CHECK (kind IN ('converse','summarize_reading','routine_ingest','collected_long')),   -- collected_long = 읽기 판 긴 요약(2026-11-25). 옛 DB 는 db._WIDEN_CHECKS
   status              text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','leased','running','result_ready','confirmed','failed',
                                                                       'cancelled','expired','needs_check')),
   device_id           text,                       -- 임대한 장치(import_streams.id). 임대 전 NULL. FK 없음 — 옛 DB 재현 시험이 import_streams 를 지운다
@@ -851,7 +851,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   parent_result_version uuid,                     -- ②-b 재정리 작업이면 원 결과 버전. 옛 DB 는 init_schema
   attempts            integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),   -- 입력 조회 성공 수(PC 시도 기록)
   reason_code         text CHECK (reason_code IN ('output-not-json','output-shape','result-shape','timeout','cli-exit','login',
-                                                  'input-too-large')),
+                                                  'input-too-large','long-short','long-invalid','long-not-found','long-model')),   -- long-* = collected_long(2026-11-25)
   created_at          timestamptz NOT NULL DEFAULT now(),
   expires_at          timestamptz NOT NULL,       -- created_at + 24h(서버 시각). 연장 없음
   terminal_at         timestamptz,

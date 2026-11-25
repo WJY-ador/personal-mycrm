@@ -67,6 +67,7 @@ INSTRUCTIONS = """이 서버는 사용자의 「내 판단 대시보드」다. �
 - 사람(person_save)은 사용자가 말한 별칭 하나만 저장한다. 연락처·소속·SNS·그 사람의 말·평가는 넣지 않는다.
 - 수집 글(key collected_posts 오브젝트의 항목)은 연결 장치가 남이 쓴 공개 글을 담은 것이다. 원 URL(post_url), 제목 줄, 작성자 표시 이름, 날짜는 서버에 있고, 원문 본문은 사용자 PC 에만 있다. 수집 글은 사용자의 판단이 아니고 판단 근거가 아니다 — 후보나 기준의 근거로 쓰거나 내 글로 옮기지 않는다. ai_* 필드(ai_grade, ai_summary, ai_as_is, ai_to_be, ai_ops, ai_points)는 AI 가 만든 값이다 — 사용자의 말이나 원문 인용으로 다루지 않고, 꺼내기의 인용으로 쓰지 않는다.
 - 수집 글 보관, 버림은 사용자가 말할 때만 collected_post_decide 로 한다. 판별은 판단 확정이 아니고 근거가 아니다.
+- 수집 글의 긴 요약은 사용자가 요약을 만들어 달라고 할 때만 collected_post_summarize 로 부른다. 결과는 ai_* 필드(AI 값)이고 근거가 아니다.
 - 출처 요약/반응(source_reflection_save)은 사용자가 출처를 접한 뒤 한 자기 생각만 저장한다. 타인의 말·경험·생각을 옮기거나 다시 정리하지 않는다. 검토 완료는 판단 확정이 아니고 근거로 인용할 수 없다 — 사용자가 말할 때만 source_reflection_review 를 부른다.
 - 삭제는 휴지통이다(휴지통이 켜졌을 때). 내 글·항목(기준·결정·축·커스텀)·사람·읽고 든 생각·활동은 사용자가 지우라고 말할 때만 trash_move 로 옮긴다. 삭제 시각부터 168시간 안에 trash_restore 로 복원할 수 있고, 그 뒤엔 서버 정리 때 영구 삭제된다. trash_purge(영구 삭제 요청)는 되돌릴 수 없으니 사용자가 분명히 말할 때만 부른다. 휴지통 대상은 다른 도구에서 보이지 않는다. 휴지통이 켜지면 기준의 남기지 않기·되돌리기(item_decide exclude·pending)는 없다 — 남기지 않을 기준은 삭제한다.
 - 도구 다섯 개(find·read·write·decide·purge): find 로 할 일(op)을 찾고 그 등급 도구로 부른다. op 이름은 위 규칙의 도구 이름 그대로다. 확정·삭제는 read(op="decide_preview") 의 shown 을 고치지 않고 그대로 사용자에게 보여 주고, 사용자가 말한 뒤에만 decide·purge 에 그 bind 를 넣어 부른다. 이관(migration_*) 반영은 decide_preview 대신 migration_apply_preview 를 쓴다.
@@ -1078,6 +1079,20 @@ def collected_post_decide(item_id: Annotated[str, Field(description="수집 글 
     return imports.collected_decide(uid, item_id, state, None, via="mcp")
 
 
+def collected_post_summarize(item_id: Annotated[str, Field(description="수집 글 항목 ID (i_…, collected_posts 오브젝트의 항목)")],
+                             ctx: Context) -> dict:
+    """수집 글 하나의 긴 요약(ai_as_is, ai_to_be, ai_ops, ai_points)을 사용자 PC 에이전트에게 맡긴다 — 사용자가 그 글의 요약을 만들어 달라고 할 때만 부른다.
+    웹 읽기 판에서 글을 고를 때와 같은 작업(collected_long)이다. PC 앱이 켜져 있고 AI 연결이 있어야 끝난다(연결된 PC 가 없으면 NO-DEVICE).
+    같은 글의 진행 중 작업이 있으면 새로 만들지 않고 그 작업을 돌려준다. 결과는 AI 가 만든 값이다 — 사용자의 말이나 원문 인용으로 다루지 않고 근거로 쓰지 않는다.
+    휴지통·없는 항목·수집 글이 아닌 항목 = NOT-FOUND, 하루 한도 넘음 = JOB-QUOTA. 반환 {job_id, status}(queued·leased·running 이면 진행 중,
+    confirmed 면 그 항목의 ai_* 에 쓰였다, failed 면 reason_code). 끝난 값은 수집 글을 다시 읽어 본다."""
+    uid = uid_of(ctx)
+    db.write_gate("collected_post_summarize", {}, uid, quota=True)
+    out = db.job_create(uid, "collected_long", item_id)
+    j = db.job_get(uid, out["id"])
+    return {"job_id": j["id"], "status": j["status"], "reason_code": j["reason_code"]}
+
+
 def axis_overview_get(ctx: Context,
                       axis_id: Annotated[str, Field(description="축 항목 ID(i_…). 비우면 축 전체 목록(한 장 본문 없음), 주면 그 축 하나와 한 장 본문")] = "") -> dict:
     """내 축 보기(읽기, 저장 없음) — 축마다 코드, 이름, 키워드, 원하는 관점(description), 붙은 수집 글 수(대기 pending, 보관 kept, 전체 total),
@@ -1109,7 +1124,7 @@ def inbox_digest_get(ctx: Context) -> dict:
     return imports.inbox_digest(uid_of(ctx))
 
 
-COLLECTED_OPS = (collected_post_decide, axis_overview_get, axis_page_save, inbox_digest_get)
+COLLECTED_OPS = (collected_post_decide, collected_post_summarize, axis_overview_get, axis_page_save, inbox_digest_get)
 facade.PREVIEWS["inbox_decide"] = imports.inbox_decide_preview   # K2 — shown 빌더(install 이 PREVIEWS = hmac op 대칭을 본다)
 
 

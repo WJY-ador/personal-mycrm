@@ -5371,11 +5371,16 @@ def user_change_revision(uid, conn=None):
 # 운영 백업(pg_dump -n public) 밖. 상태 전이: queued →(장치 폴) leased →(입력 조회) running →(결과) result_ready →(②-b 확정) confirmed
 #   · running →(실패) failed · 임대 만료 → needs_check(재실행 없음) · 24h → expired · 웹 취소 → cancelled.
 # 스위치(kind 별) = 접수·할당·수신·확정 4곳. 꺼져도 만료·정리·취소는 돈다.
-JOB_KINDS = ("converse", "summarize_reading", "routine_ingest")
-JOB_SWITCH = {"converse": "CONVERSE_ENABLED", "summarize_reading": None, "routine_ingest": "ROUTINE_ENABLED"}   # None = 스위치 없음(②-d 전 늘 꺼짐)
+JOB_KINDS = ("converse", "summarize_reading", "routine_ingest", "collected_long")
+JOB_SWITCH = {"converse": "CONVERSE_ENABLED", "summarize_reading": None, "routine_ingest": "ROUTINE_ENABLED",
+              "collected_long": "COLLECTED_LONG_ENABLED"}   # None = 스위치 없음(②-d 전 늘 꺼짐)
 JOB_LIVE = ("queued", "leased", "running", "result_ready")
 JOB_TERMINAL = ("confirmed", "failed", "cancelled", "expired", "needs_check")
-JOB_REASON_CODES = ("output-not-json", "output-shape", "result-shape", "timeout", "cli-exit", "login", "input-too-large")
+JOB_REASON_CODES = ("output-not-json", "output-shape", "result-shape", "timeout", "cli-exit", "login", "input-too-large",
+                    # 읽기 판 긴 요약(2026-11-25) — 원문 짧음 · 출력 검증 실패 · PC feed 행 없음 · 모델 실패
+                    "long-short", "long-invalid", "long-not-found", "long-model")
+# 읽기 판 긴 요약(2026-11-25) — 작업 종류와 실패 코드 CHECK 를 정본 튜플로 넓힌다(_init_schema 의 _WIDEN_CHECKS 루프가 schema.sql 뒤에 돈다)
+_WIDEN_CHECKS += (("jobs", "jobs_kind_check", "kind", JOB_KINDS), ("jobs", "jobs_reason_code_check", "reason_code", JOB_REASON_CODES))
 JOB_TTL_HOURS = 24
 JOB_LEASE_SECONDS = 300
 JOB_TEXT_MAX_CP, JOB_TEXT_MAX_BYTES = 8000, 32 * 1024   # 코드포인트·UTF-8 바이트 각각
@@ -5595,12 +5600,20 @@ def job_create(uid, kind, text, session_id=None, input_kind=None, restack=None):
     if limit is not None and not _is_int(limit):
         raise CrmError("LIMIT-UNSET", "이 작업 종류의 한도 설정이 올바르지 않아요.", "운영자가 한도를 정할 때까지 기다리세요.")
     rs = _restack_arg(restack, text, session_id) if restack is not None else None
+    if kind == "collected_long" and (session_id or not imports._ITEM_ID_RE.match(text)):   # 읽기 판 긴 요약 — text = 수집 글 항목 id
+        raise CrmError("ARG-INVALID", "collected_long 의 text 는 수집 글 항목 id(i_…)이고 session_id 는 없어요.")
     sid = _job_uuid(session_id, gone=False) if session_id else _uuid.uuid4()
     jid = _uuid.uuid4()
     meta = {}
     with tx() as c:
         _user_lock(c, uid)
         _job_sweep(c)
+        if kind == "collected_long":   # 그 사용자의 휴지통 아닌 수집 글이어야 한다 · 같은 항목의 열린 작업이 있으면 그 작업을 돌려준다(한도를 세지 않는다)
+            if not _collected_item_live(c, uid, text):
+                raise CrmError("NOT-FOUND", "그 수집 글을 찾을 수 없어요.")
+            j0 = _long_open_job(c, uid, text)
+            if j0:
+                return {"id": str(j0["id"]), "session_id": str(j0["session_id"])}
         sess = None
         if kind == "converse":   # 잠금 순서 = users 행 → stack_sessions → jobs
             if session_id:
@@ -5703,10 +5716,14 @@ _ASSIGN = ("UPDATE jobs SET status='leased', device_id=%s, lease_generation=leas
            "AND b.status IN ('leased','running')) ORDER BY q.created_at, q.id LIMIT 1) RETURNING *")
 
 
-def job_assign(dev):
+JOB_DECLARED_KINDS = ("collected_long",)   # 폴이 kinds 로 처리한다고 밝힌 때만 임대하는 종류(2026-11-25) — 그 종류를 모르는 옛 앱엔 queued 로 남는다
+
+
+def job_assign(dev, declared=None):
     """장치 폴 1회 — 켜진 종류의 queued 하나를 원자 할당(사용자 행 잠금으로 직렬화). 같은 세션에 leased·running 이 있으면 그 세션은 건너뛴다
-    (같은 스레드 동시 resume 금지). 없으면 None. 반환 = 장치 응답 모양."""
-    kinds = [k for k in JOB_KINDS if job_switch_on(k, dev["user_id"])]
+    (같은 스레드 동시 resume 금지). 없으면 None. 반환 = 장치 응답 모양.
+    declared = 폴의 kinds 쿼리(그 앱이 처리하는 종류, None = 안 보냄). JOB_DECLARED_KINDS 는 declared 에 있을 때만 임대한다. 다른 종류 규칙은 그대로."""
+    kinds = [k for k in JOB_KINDS if job_switch_on(k, dev["user_id"]) and (k not in JOB_DECLARED_KINDS or k in (declared or ()))]
     if not kinds:
         return None
     uid = dev["user_id"]
@@ -5815,6 +5832,8 @@ def job_result(dev, job_id, body):
     jid = _job_uuid(job_id)
     if isinstance(body, dict) and "envelope" in body:
         return _job_result_stack(dev, jid, body)
+    if isinstance(body, dict) and "collected_long" in body:
+        return _job_result_long(dev, jid, body)
     rv = _job_result_shape(body)
     with tx() as c:
         j = _job_dev_row(c, dev, jid)
@@ -5827,6 +5846,8 @@ def job_result(dev, job_id, body):
             raise _job_lease()
         if body["input_version"] != j["input_version"]:
             raise CrmError("JOB-VERSION", "입력 버전이 맞지 않아요.", "그 결과는 버리세요.")
+        if j["kind"] == "collected_long":   # 긴 요약 결과는 collected_long 키로만 받는다
+            raise CrmError("ARG-INVALID", "collected_long 작업의 결과는 collected_long 키로 보내요.")
         if not job_switch_on(j["kind"], dev["user_id"], c):
             raise _job_off()
         c.execute(f"INSERT INTO {res} (job_id,user_id,result_version,summary_text,changes,blocked,text_map,model_meta) "
@@ -5835,6 +5856,113 @@ def job_result(dev, job_id, body):
                    Jsonb(body["model_meta"])))
         c.execute("UPDATE jobs SET status='result_ready' WHERE id=%s", (jid,))
     return {"status": "result_ready"}
+
+
+# ── 읽기 판 긴 요약 collected_long (2026-11-25) ─────────────────────────
+# 입력 = 수집 글 항목 id(임시 입력 text). PC 가 그 글의 feed 행 long 을 쓰거나 원문으로 구독 CLI 를 불러 만든다(agent/jobs.py).
+# 결과 = {lease_generation, input_version, result_version, collected_long: {as_is, to_be, ops, points}, model_meta}.
+# 받으면 같은 트랜잭션에서 그 항목의 ai_as_is, ai_to_be, ai_ops, ai_points 만 쓰고 작업을 confirmed(종료)로 둔다 — result_ready 에 남기지 않는다.
+# 사용자 판별(kept, dropped)이 된 항목에도 쓴다(AI 값이라 판단이 아니다). 항목 revision 은 올리지 않는다(열린 화면의 판별 CONFLICT 방지,
+# 이력 줄도 없다 — 사용자 동작이 아니다). 사용자 변경 표식(트리거)은 그대로 올라 화면이 새로 받는다.
+_LONG_RESULT_KEYS = frozenset({"lease_generation", "input_version", "result_version", "collected_long", "model_meta"})
+_LONG_KEYS = (("as_is", "ai_as_is"), ("to_be", "ai_to_be"), ("ops", "ai_ops"), ("points", "ai_points"))
+
+
+def _collected_item_live(c, uid, item_id):
+    """그 사용자의 수집 글 항목(적용·미보관 collected_posts 오브젝트, 휴지통 아님)이면 행, 아니면 None."""
+    import imports
+    return _one(c, "SELECT i.id, i.object_id FROM items i JOIN object_defs o ON o.user_id=i.user_id AND o.id=i.object_id "
+                   "WHERE i.user_id=%s AND i.id=%s AND i.revision > 0 AND i.trashed_at IS NULL "
+                   "AND o.key=%s AND o.revision > 0 AND o.archived_at IS NULL", (uid, item_id, imports.COLLECTED_OBJECT_KEY))
+
+
+def _long_open_job(c, uid, item_id):
+    """같은 항목의 열린(queued, leased, running) collected_long 작업 하나 또는 None. 작업 행엔 본문이 없어 임시 입력과 잇는다."""
+    inp, _res = _tmp_names(c)
+    return _one(c, f"SELECT j.id, j.session_id FROM jobs j JOIN {inp} t ON t.user_id=j.user_id AND t.job_id=j.id "
+                   "WHERE j.user_id=%s AND j.kind='collected_long' AND j.status IN ('queued','leased','running') AND t.text=%s "
+                   "ORDER BY j.created_at, j.id LIMIT 1", (uid, item_id))
+
+
+def _long_shape(body):
+    """collected_long 결과 모양 검사(트랜잭션 전) → (result_version, {as_is, to_be, ops, points}).
+    상한 = 장치 수집 글 계약과 같다(imports.COLLECTED_AI_TEXT, COLLECTED_AI_POINTS, COLLECTED_AI_POINT_CP). 글마다 계약 차단 꼴(URL, 메일, 경로) 금지."""
+    import imports
+    bad = lambda why: CrmError("ARG-INVALID", f"collected_long 결과: {why}",   # noqa: E731 — 값은 넣지 않는다
+                               "{lease_generation, input_version, result_version, collected_long: {as_is, to_be, ops, points}, model_meta} 꼴로 보내세요.")
+    if set(body) != _LONG_RESULT_KEYS:
+        raise bad("키")
+    if not (_is_int(body["lease_generation"]) and _is_int(body["input_version"])):
+        raise bad("lease_generation, input_version 은 정수")
+    try:
+        rv = _uuid.UUID(body["result_version"]) if isinstance(body["result_version"], str) else None
+    except ValueError:
+        rv = None
+    if rv is None:
+        raise bad("result_version 은 UUID")
+    if not isinstance(body["model_meta"], dict):
+        raise bad("model_meta 는 객체")
+    v = body["collected_long"]
+    if not isinstance(v, dict) or set(v) != {k for k, _f in _LONG_KEYS}:
+        raise bad("collected_long 키는 as_is, to_be, ops, points")
+    pts = v["points"]
+    if not isinstance(pts, list) or not 1 <= len(pts) <= imports.COLLECTED_AI_POINTS:
+        raise bad(f"points 는 1~{imports.COLLECTED_AI_POINTS}개")
+    try:
+        for k in ("as_is", "to_be", "ops"):
+            if v[k] is not None:
+                imports._text(v[k], k, imports.COLLECTED_AI_TEXT[k])
+        for i, t in enumerate(pts):
+            imports._text(t, f"points[{i}]", imports.COLLECTED_AI_POINT_CP)
+    except CrmError as e:   # 장치 계약 검사(CONTRACT-INVALID, 필드 경로와 규칙만)를 작업 결과 오류로
+        raise bad(e.message) from None
+    return rv, {"as_is": v["as_is"], "to_be": v["to_be"], "ops": v["ops"], "points": list(pts)}
+
+
+def _job_result_long(dev, jid, body):
+    """collected_long 결과 — 임대(running, 장치, 세대, 만료 전) → JOB-LEASE, input_version → JOB-VERSION, 스위치 → SWITCH-OFF.
+    항목 ai_* 넷 쓰기 + confirmed 한 트랜잭션. 쓸 수 있는 필드만 쓴다(사용자가 지웠거나 꼴이 다른 필드는 건너뛴다). null 은 그 키를 지운다.
+    재전송: 이미 confirmed 이고 같은 장치, 같은 세대면 {duplicate: true}(임시 본문이 지워져 result_version 은 대조할 수 없다).
+    그새 항목이 휴지통에 갔거나 없어졌으면 쓰지 않고 failed(long-not-found)로 끝낸다."""
+    _rv, val = _long_shape(body)
+    uid = dev["user_id"]
+    with tx() as c:
+        _user_lock(c, uid)
+        j = _job_dev_row(c, dev, jid)
+        if j["kind"] != "collected_long":
+            raise CrmError("ARG-INVALID", "collected_long 결과는 collected_long 작업에만 보내요.")
+        if j["status"] == "confirmed" and j["device_id"] == dev["id"] and j["lease_generation"] == body["lease_generation"]:
+            return {"duplicate": True}
+        if j["status"] != "running" or not _lease_ok(j, dev, body["lease_generation"]):
+            raise _job_lease()
+        if body["input_version"] != j["input_version"]:
+            raise CrmError("JOB-VERSION", "입력 버전이 맞지 않아요.", "그 결과는 버리세요.")
+        if not job_switch_on(j["kind"], uid, c):
+            raise _job_off()
+        inp, _res = _tmp_names(c)
+        t = _one(c, f"SELECT text FROM {inp} WHERE job_id=%s", (jid,))
+        it = t and _collected_item_live(c, uid, t["text"])
+        if not it:
+            c.execute("UPDATE jobs SET status='failed', reason_code='long-not-found', terminal_at=now() WHERE id=%s", (jid,))
+            _job_sweep(c)
+            return {"status": "failed", "reason_code": "long-not-found"}
+        byk = {f["key"]: f for f in _fields(c, uid, it["object_id"])}
+        put, drop = {}, []
+        for k, fk in _LONG_KEYS:
+            f = byk.get(fk)
+            if f is None or f["value_type"] == "reference":
+                continue
+            if val[k] is None:
+                drop.append(fk)
+            elif not _value_error(f, val[k]):
+                put[fk] = val[k]
+            elif fk == "ai_points" and f["value_type"] == "text":   # 요점 필드를 글자 하나로 바꾼 사용자 — 줄로 이어 쓴다(_post_out 이 글자도 읽는다)
+                put[fk] = "\n".join(val[k])
+        c.execute("UPDATE items SET data = (COALESCE(data, '{}'::jsonb) - %s::text[]) || %s WHERE user_id=%s AND id=%s",
+                  (drop, Jsonb(put), uid, it["id"]))
+        c.execute("UPDATE jobs SET status='confirmed', terminal_at=now() WHERE id=%s", (jid,))
+        _job_sweep(c)
+    return {"status": "confirmed"}
 
 
 def _confirm_stale(msg):

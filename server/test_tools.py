@@ -9068,7 +9068,9 @@ def test_pr2b_stack_b1():
     imports.device_connect(U, "합성 b1")   # 접수 = 연결 장치 1 이상(NO-DEVICE). 남(O)은 세션 검사(NOT-FOUND)가 먼저
     TXT = "합성 입력 STACKTEXT — 일반 테이블에 남으면 안 된다"
     with _job_switch("CONVERSE_ENABLED"):
-        assert all(v is None for v in imports.JOB_REQUEST_LIMITS.values()) and set(imports.JOB_REQUEST_LIMITS) == set(db.JOB_KINDS)
+        assert set(imports.JOB_REQUEST_LIMITS) == set(db.JOB_KINDS)
+        assert imports.JOB_REQUEST_LIMITS["collected_long"] == 60   # 읽기 판 긴 요약(2026-11-25)만 하루 60 — 나머지는 무제한
+        assert all(v is None for k, v in imports.JOB_REQUEST_LIMITS.items() if k != "collected_long")
         for kind, ik in (("nope", None), ("converse", "nope"), ("routine_ingest", "converse")):
             _pr2b_err(lambda: db.job_create(U, kind, TXT, input_kind=ik), "ARG-INVALID")
         saved = imports.JOB_REQUEST_LIMITS.pop("converse")
