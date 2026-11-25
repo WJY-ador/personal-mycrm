@@ -424,6 +424,10 @@
       "required": false
     },
     {
+      "path": "guides/12-terms.md",
+      "required": false
+    },
+    {
       "path": "sample-data/candidates.json",
       "required": true
     },

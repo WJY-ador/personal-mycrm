@@ -89,14 +89,17 @@ ACTIONS = ("confirm", "exclude", "pending", "edit", "edit_confirm")
 # Render 는 레포 루트에서 빌드·실행한다(render.yaml 에 rootDir 없음) — rootDir=server 면 guides/ 가 안 올라간다.
 GUIDES_DIR = Path(env("GUIDES_DIR") or Path(__file__).parent.parent / "guides")
 HELP_FILES = {"start": "09-hosted-start.md", "words": "10-words.md"}
-_HELP_ANCHORS = {**{f: f"#{k}" for k, f in HELP_FILES.items()}, "11-privacy.md": "/privacy"}
+_HELP_ANCHORS = {**{f: f"#{k}" for k, f in HELP_FILES.items()}, "11-privacy.md": "/privacy", "12-terms.md": "/terms"}
 # 개인정보 처리방침 /privacy — 정본은 guides/11-privacy.md. help_get(MCP)에는 넣지 않는다(HELP_FILES 밖).
 # 권리 행사 경로는 대시보드 「문의」 하나. 문안의 {{CONTACT_LINE}} 은 env CRM_CONTACT(선택)가 있으면 보조 메일 한 줄, 없으면 빈 줄로 바꾼다(레포에 연락처를 적지 않는다).
 PRIVACY_FILE = "11-privacy.md"
+# 약관 /terms — 정본은 guides/12-terms.md(기능별 자세한 설명). /privacy 와 같은 렌더러. help_get 에는 넣지 않는다. 파일이 없으면 /terms 503.
+TERMS_FILE = "12-terms.md"
 # 처리방침(·약관) 버전 — 첫 20줄 머리글 `vN · 날짜` 에서 뽑아 db.CONSENT_VERSIONS 에(/privacy·화면 표시용, 쓰기 게이트 없음). terms 는 파일이 있을 때만.
-CONSENT_FILES = {"privacy": PRIVACY_FILE, "terms": "12-terms.md"}
+CONSENT_FILES = {"privacy": PRIVACY_FILE, "terms": TERMS_FILE}
 _VERSION_RE = re.compile(r"^`v(\d+) · ")   # 줄 머리 고정 — 본문 중간의 예시(`v9`)는 머리글이 아니다
-_PRIVACY_ANCHORS = {**{f: f"/help#{k}" for k, f in HELP_FILES.items()}, PRIVACY_FILE: "#privacy"}
+_PRIVACY_ANCHORS = {**{f: f"/help#{k}" for k, f in HELP_FILES.items()}, PRIVACY_FILE: "#privacy", TERMS_FILE: "/terms"}
+_TERMS_ANCHORS = {**{f: f"/help#{k}" for k, f in HELP_FILES.items()}, PRIVACY_FILE: "/privacy", TERMS_FILE: "#terms"}
 
 # ── 화면 자산(배경 루프·데모·테마 토글) ─────────────────
 # 허용 목록만 서빙한다. 요청 name 은 이 dict 키 조회만 — 경로를 잇지 않는다. 그림 만드는 법: tools/start-visuals/README.md
@@ -477,6 +480,13 @@ def render_privacy(md: str) -> str:
     body, toc, h1 = md_to_html(md, "privacy", _PRIVACY_ANCHORS)
     return _doc_page("개인정보 처리방침", _toc_block("privacy", toc, h1, _PRIVACY_ANCHORS),
                      f'<section class="doc" id="privacy">{body}</section>', '<a href="/help">도움말</a>')
+
+
+def render_terms(md: str) -> str:
+    """약관 페이지 전체(12). 처리방침과 같은 렌더러 — 모든 글자를 escape 한다."""
+    body, toc, h1 = md_to_html(md, "terms", _TERMS_ANCHORS)
+    return _doc_page("약관", _toc_block("terms", toc, h1, _TERMS_ANCHORS),
+                     f'<section class="doc" id="terms">{body}</section>', '<a href="/help">도움말</a> · <a href="/privacy">개인정보 처리방침</a>')
 
 
 # ── PC 앱 설치 /download (2026-10-30 설치 페이지 가안 A) ─────────────────────
@@ -1336,6 +1346,7 @@ class Web:
         if self.dev:
             self.origins |= {"http://127.0.0.1:8800", "http://localhost:8800", f"http://127.0.0.1:{p.port or 8800}", f"http://localhost:{p.port or 8800}"}
         self.load_help(GUIDES_DIR)
+        self.load_terms(GUIDES_DIR)
         self.load_consent(GUIDES_DIR)
         if not self.guides:
             print(f"[web] 도움말 문서가 없어요({GUIDES_DIR} 에 {' · '.join(HELP_FILES.values())}) — /help 503, help_get 오류", flush=True)
@@ -1352,6 +1363,14 @@ class Web:
         except OSError:
             md = None
         self.privacy_html = render_privacy(md.replace("{{CONTACT_LINE}}", privacy_contact_line())) if md else None
+
+    def load_terms(self, d: Path):
+        """약관 페이지(/terms)를 시작 때 한 번 읽는다. 파일이 없거나 못 읽으면 terms_html 이 None — /terms 503(기동은 막지 않는다)."""
+        try:
+            md = (d / TERMS_FILE).read_text(encoding="utf-8")
+        except OSError:
+            md = None
+        self.terms_html = render_terms(md) if md else None
 
     def load_consent(self, d: Path):
         """처리방침(·약관) 버전을 시작 때 한 번 읽어 db 에 넣는다(/privacy·화면 표시용)."""
@@ -1481,6 +1500,12 @@ class Web:
         if not self.privacy_html:
             return _page("처리방침을 찾지 못했어요", "<p>서버에 처리방침 문서가 없어요. 운영자에게 알려 주세요.</p>", 503)
         return _html_resp(self.privacy_html.replace("<!--nav-->", self._nav(request), 1), headers={"cache-control": "no-store"})
+
+    async def terms(self, request):
+        """약관(기능별 자세한 설명). /privacy 와 같다 — 로그인 불필요, DB 를 건드리지 않는다."""
+        if not self.terms_html:
+            return _page("약관을 찾지 못했어요", "<p>서버에 약관 문서가 없어요. 운영자에게 알려 주세요.</p>", 503)
+        return _html_resp(self.terms_html.replace("<!--nav-->", self._nav(request), 1), headers={"cache-control": "no-store"})
 
     async def download(self, request):
         """PC 앱 설치. /help 와 같다 — 로그인 불필요. 플래그(조직 기능 설정 download_public, 캐시)·UA 마다 달라서 그때그때 그린다.
@@ -3652,6 +3677,7 @@ class Web:
             Route("/app/assets/{name}", self.ui_asset),   # React 화면 묶음 — manifest 허용 목록만
             Route("/help", self.help),
             Route("/privacy", self.privacy),
+            Route("/terms", self.terms),
             Route("/download", self.download),
             Route("/consent", self.consent),
             Route("/assets/{name}", self.asset),
