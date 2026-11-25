@@ -934,10 +934,17 @@ def cmd_serve_jobs(ctx: Ctx, a) -> int:
             return "error"
         return "ok" if isinstance(info, dict) and info.get("stream_id") == sid else "error"
 
+    # 긴 요약(collected_long) — feed 입력 파일·되쓰기 여부·로컬 저장소. 저장소는 작업마다 워커 스레드에서 연다(sqlite 스레드 제약)
+    feed_cfg = (cfg.get("adapters") or {}).get("feed") or {}
+    feed = None
+    if feed_cfg.get("enabled") and isinstance(feed_cfg.get("input_path"), str) and feed_cfg["input_path"]:
+        feed = jobs.FeedLong(os.path.expanduser(feed_cfg["input_path"]), feed_cfg.get("write_back") is True,
+                             lambda: _store.Store(ctx.paths))
+
     def make_worker(stopping, abort):
         client = (ctx.jobs_client_factory or jobs.Client)(server, token)
         return jobs.Worker(client, adapter, jobs.JsonState.for_paths(ctx.paths), sleep=lambda s: abort.wait(s),
-                           stopping=stopping, abort=abort)
+                           stopping=stopping, abort=abort, feed=feed)
 
     try:
         res = jobs.serve_jobs(lock_path=ctx.paths.lock("jobs"), authenticate=authenticate, make_worker=make_worker,

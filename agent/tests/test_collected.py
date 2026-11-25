@@ -553,5 +553,100 @@ class ConfigCollectedTest(unittest.TestCase):
             adapters.get("kakao").check_config({"enabled": True})
 
 
+class WriteLongFeedTest(unittest.TestCase):
+    """긴 요약 되쓰기(collected_long) — 그 id 마지막 행의 long 키 하나만 바꾸고 다른 줄은 원래 바이트 그대로."""
+
+    LONG = {"asis": "합성 지금", "tobe": None, "ops": "합성 방법", "points": ["합성 요점"], "at": "2026-11-25T10:00:00+09:00",
+            "model": "claude-synth-1", "by": "mycrm-agent"}
+
+    def setUp(self):
+        self.th = TempHome()
+        self.path = os.path.join(self.th.root, "feed-queue.jsonl")
+
+    def tearDown(self):
+        self.th.cleanup()
+
+    def write(self, lines):
+        with open(self.path, "wb") as f:
+            f.write(b"".join(lines))
+
+    def read(self):
+        with open(self.path, "rb") as f:
+            return f.read().splitlines(keepends=True)
+
+    def test_only_long_of_last_row_changes(self):
+        row = feed_row(1)
+        del row["long"]
+        old = json.dumps(dict(row, summary="옛 행"), ensure_ascii=False).encode() + b"\n"
+        other = json.dumps(feed_row(2), ensure_ascii=True).encode() + b"\r\n"
+        last = json.dumps(row, ensure_ascii=False).encode()                         # 마지막 줄 줄바꿈 없음
+        self.write([old, other, b"{not json\n", last])
+        os.chmod(self.path, 0o644)
+        self.assertEqual(C.write_long_feed(self.path, "FEED0001", self.LONG), {"result": "written", "retried": 0,
+                                                                                    "row": None})
+        got = self.read()
+        self.assertEqual(got[:3], [old, other, b"{not json\n"])
+        self.assertFalse(got[3].endswith(b"\n"))
+        self.assertEqual(json.loads(got[3]), dict(row, long=self.LONG))
+        self.assertEqual(list(json.loads(got[3]))[:len(row)], list(row))             # 키 순서 그대로
+        if os.name != "nt":
+            self.assertEqual(os.stat(self.path).st_mode & 0o777, 0o644)
+
+    def test_existing_valid_long_kept(self):
+        line = json.dumps(feed_row(1), ensure_ascii=False).encode() + b"\n"
+        self.write([line])
+        r = C.write_long_feed(self.path, "FEED0001", self.LONG)
+        self.assertEqual((r["result"], r["row"]), ("kept-existing", feed_row(1)))     # 호출자가 그 행 값을 쓴다
+        self.assertEqual(self.read(), [line])
+
+    def test_invalid_long_replaced_and_missing(self):
+        self.write([json.dumps(feed_row(1, long={"asis": "x", "points": []}), ensure_ascii=False).encode() + b"\n"])
+        self.assertEqual(C.write_long_feed(self.path, "FEED0001", self.LONG)["result"], "written")
+        self.assertEqual(json.loads(self.read()[0])["long"], self.LONG)
+        before = self.read()
+        self.assertEqual(C.write_long_feed(self.path, "FEED0009", self.LONG)["result"], "missing")
+        self.assertEqual(self.read(), before)
+
+    def test_concurrent_change_retried_once(self):
+        row = feed_row(1)
+        del row["long"]
+        self.write([json.dumps(row, ensure_ascii=False).encode() + b"\n"])
+        extra = json.dumps(feed_row(2), ensure_ascii=False).encode() + b"\n"
+
+        def other_writer(attempt):              # 대시보드가 첫 시도 중에 한 줄 더한 상황(원자 교체)
+            if attempt == 0:
+                with open(self.path, "rb") as f:
+                    data = f.read()
+                tmp = self.path + ".other"
+                with open(tmp, "wb") as f:
+                    f.write(data + extra)
+                os.replace(tmp, self.path)
+        r = C.write_long_feed(self.path, "FEED0001", self.LONG, before_replace=other_writer)
+        self.assertEqual(r, {"result": "written", "retried": 1, "row": None})
+        got = self.read()
+        self.assertEqual(json.loads(got[0])["long"], self.LONG)
+        self.assertEqual(got[1], extra)
+
+    def test_changed_again_writes_nothing(self):
+        row = feed_row(1)
+        del row["long"]
+        self.write([json.dumps(row, ensure_ascii=False).encode() + b"\n"])
+
+        def touch(attempt):
+            with open(self.path, "ab") as f:
+                f.write(b"\n")
+        with self.assertRaises(C.FileChanged):
+            C.write_long_feed(self.path, "FEED0001", self.LONG, before_replace=touch)
+        self.assertNotIn("long", json.loads(self.read()[0]))
+
+    def test_long_of(self):
+        self.assertEqual(C.long_of(feed_row(1)), {"as_is": "합성 asis", "to_be": "합성 tobe", "ops": "합성 ops",
+                                                  "points": ["점 하나", "점 둘"]})
+        self.assertIsNone(C.long_of(feed_row(1, long={"asis": "x"})))
+        self.assertIsNone(C.long_of(feed_row(1, long="문자열")))
+        got = C.long_of(feed_row(1, long={"points": ["메일 a@example.invalid 참고"]}))
+        self.assertEqual(got["points"], ["메일 ‹메일› 참고"])
+
+
 if __name__ == "__main__":
     unittest.main()

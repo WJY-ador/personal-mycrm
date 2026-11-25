@@ -17,6 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 from agent import jobs
+from agent.adapters import collected as C
 from agent.tests.helpers import TOKEN, TempHome
 
 TOKEN_B = "imp_is_6b6b6b6b6b6b6b6b6b6b6b6b.tok_Synth02." + "T" * 43
@@ -1159,6 +1160,371 @@ class LiveApiTest(LiveBase):
         rl = [o for o in outs if o["outcome"] == "rate-limit"]
         self.assertTrue(rl, outs)
         self.assertGreater(rl[0]["retry_in"], 0)
+
+
+# ── 수집 글 긴 요약(collected_long, 구현계획 2026-11-25 3절) ─────────────────────
+LONG_ITEM = "i_SynthLong01"                  # 서버 수집 글 항목 ID 꼴
+LONG_BODY = "합성 본문 SYNTH-LONG-BODY 문장. " * 40          # 300자 넘는 원문(본문)
+LONG_TEXT = "합성 짧은 글 SYNTH-LONG-TEXT"
+
+
+def _long_row(rid="FEED0001", **over):
+    r = {"id": rid, "status": "pending", "source": "reddit", "collected_at": "2026-11-25T09:00:00+09:00",
+         "text": LONG_TEXT, "body": LONG_BODY, "summary": "합성 AI 요약"}
+    r.update(over)
+    return r
+
+
+def _model_out(inner, model="claude-synth-1"):
+    """claude -p --output-format json 바깥 꼴. inner = 안쪽 문자열 또는 객체."""
+    result = inner if isinstance(inner, str) else json.dumps(inner, ensure_ascii=False)
+    return json.dumps({"result": result, "session_id": "fake-session-0001", "model": model}).encode("utf-8")
+
+
+GOOD_LONG = {"as_is": "합성 지금 상황", "to_be": "합성 바뀐 모습", "ops": None, "points": ["합성 요점 하나", "합성 요점 둘"]}
+
+
+class MockRunner:
+    """모의 실행기 — 서브프로세스 없이 정해진 (rc, stdout, stderr) 를 돌려준다. 받은 표준 입력·시간 제한을 남긴다."""
+
+    def __init__(self, rc=0, out=None, err=b""):
+        self.rc, self.out, self.err = rc, _model_out(GOOD_LONG) if out is None else out, err
+        self.calls = []
+
+    def __call__(self, argv, *, stdin_bytes, env, cwd, timeout):
+        self.calls.append({"argv": list(argv), "stdin": stdin_bytes, "timeout": timeout})
+        return self.rc, self.out, self.err
+
+
+class FakeStore:
+    """dedupe_keys_for_target 만 흉내 — 연 스레드·닫힘을 남긴다."""
+
+    def __init__(self, mapping, log):
+        self.mapping, self.log = mapping, log
+        self.log.append(("open", threading.get_ident()))
+
+    def dedupe_keys_for_target(self, adapter, target_id):
+        assert adapter == "feed"
+        return list(self.mapping.get(target_id, []))
+
+    def close(self):
+        self.log.append(("close", threading.get_ident()))
+
+
+class CollectedLongTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.feed_path = os.path.join(self.th.root, "feed-queue.jsonl")
+        self.store_log = []
+
+    def write_feed(self, rows):
+        with open(self.feed_path, "wb") as f:
+            for r in rows:
+                f.write(json.dumps(r, ensure_ascii=False).encode("utf-8") + b"\n")
+
+    def feed_bytes(self):
+        with open(self.feed_path, "rb") as f:
+            return f.read()
+
+    def long_worker(self, runner=None, write_back=True, mapping=None, feed=True):
+        runner = runner or MockRunner()
+        mapping = {LONG_ITEM: ["feed:FEED0001"]} if mapping is None else mapping
+        fl = jobs.FeedLong(self.feed_path, write_back, lambda: FakeStore(mapping, self.store_log)) if feed else None
+        clock = VClock()
+        adapter = jobs.ClaudeAdapter(jobs.fake_cli(), fake=True, exec_runner=runner)
+        w = jobs.Worker(jobs.Client(self.srv.url, TOKEN, wait=1), adapter, jobs.MemoryState(),
+                        monotonic=clock.now, sleep=clock.sleep, today=lambda: "2026-11-25",
+                        wall=lambda: 1795000000.0, feed=fl)
+        w.runner = runner
+        return w
+
+    def assert_no_source(self):
+        for r in self.srv.log:
+            self.assertNotIn(b"SYNTH-LONG-BODY", r["raw"])
+            self.assertNotIn(b"SYNTH-LONG-TEXT", r["raw"])
+
+    def fail_case(self, expect, **kw):
+        jid = self.srv.create(kind="collected_long", text=LONG_ITEM)
+        w = self.long_worker(**kw)
+        out = w.poll_once()
+        self.assertEqual((out["outcome"], out["reason_code"]), ("failed", expect))
+        self.assertEqual(self.srv.requests("result"), [])
+        self.assertEqual(self.srv.requests("fail")[0]["body"], {"lease_generation": 1, "reason_code": expect})
+        self.assertEqual(self.srv.status(jid), "failed")
+        self.assert_no_source()
+        return w
+
+    def test_generate_writes_back_and_sends(self):
+        other = _long_row("FEED0002", body=None)
+        self.write_feed([_long_row(), other])
+        with open(self.feed_path, "rb") as f:
+            other_line = f.read().splitlines(keepends=True)[1]
+        os.chmod(self.feed_path, 0o644)
+        jid = self.srv.create(kind="collected_long", text=LONG_ITEM)
+        w = self.long_worker()
+        out = w.poll_once()
+        self.assertEqual((out["outcome"], out["write"]), ("result-sent", "written"))
+        self.assertEqual(self.srv.status(jid), "result_ready")
+        self.assertEqual(len(w.runner.calls), 1)
+        call = w.runner.calls[0]
+        self.assertEqual(call["timeout"], jobs.LONG_CLI_TIMEOUT)
+        self.assertEqual(call["stdin"].decode("utf-8"), LONG_BODY[:jobs.LONG_MAX_SOURCE])   # body 우선
+        self.assertIn(jobs.PROMPTS["collected_long"], call["argv"])
+        for flag in ("--tools", "--strict-mcp-config", "--max-turns"):
+            self.assertIn(flag, call["argv"])
+        res = self.srv.jobs[jid]["result"]
+        self.assertEqual(set(res), {"lease_generation", "input_version", "result_version", "collected_long", "model_meta"})
+        self.assertEqual(res["collected_long"], GOOD_LONG)
+        self.assertEqual(res["model_meta"], {"tool": "claude-cli", "model": "claude-synth-1", "duration_ms":
+                                             res["model_meta"]["duration_ms"]})
+        lines = self.feed_bytes().splitlines(keepends=True)
+        self.assertEqual(lines[1], other_line)                                    # 다른 행 바이트 그대로
+        row = json.loads(lines[0])
+        self.assertEqual(row["long"], {"asis": "합성 지금 상황", "tobe": "합성 바뀐 모습", "ops": None,
+                                       "points": ["합성 요점 하나", "합성 요점 둘"], "at": "2026-11-18T20:06:40+09:00",
+                                       "model": "claude-synth-1", "by": "mycrm-agent"})
+        self.assertEqual({k: v for k, v in row.items() if k != "long"}, _long_row())   # long 키 하나만 바뀜
+        if os.name != "nt":
+            self.assertEqual(stat.S_IMODE(os.stat(self.feed_path).st_mode), 0o644)
+        self.assertEqual(w.state.attempts("2026-11-25"), 1)
+        self.assertEqual([e for e, _ in self.store_log], ["open", "close"])
+        self.assert_no_source()
+
+    def test_existing_long_reused_without_model(self):
+        long = {"asis": "기존 지금", "tobe": None, "ops": "기존 방법", "points": ["기존 요점"], "model": "old-model-1"}
+        self.write_feed([_long_row(long=long)])
+        before = self.feed_bytes()
+        jid = self.srv.create(kind="collected_long", text=LONG_ITEM)
+        w = self.long_worker()
+        out = w.poll_once()
+        self.assertEqual((out["outcome"], out["write"]), ("result-sent", "reused"))
+        self.assertEqual(w.runner.calls, [])
+        self.assertEqual(w.state.attempts("2026-11-25"), 0)
+        res = self.srv.jobs[jid]["result"]
+        self.assertEqual(res["collected_long"], {"as_is": "기존 지금", "to_be": None, "ops": "기존 방법",
+                                                 "points": ["기존 요점"]})
+        self.assertEqual(res["model_meta"], {"tool": "feed-long", "model": "old-model-1", "duration_ms": 0})
+        self.assertEqual(self.feed_bytes(), before)
+
+    def test_long_without_points_is_not_reused(self):
+        self.write_feed([_long_row(long={"asis": "점 없는 옛 요약", "points": []})])
+        w = self.long_worker()
+        self.srv.create(kind="collected_long", text=LONG_ITEM)
+        self.assertEqual(w.poll_once()["outcome"], "result-sent")
+        self.assertEqual(len(w.runner.calls), 1)
+
+    def test_text_used_when_no_body(self):
+        text = "합성 텍스트만 SYNTH-LONG-TEXT " * 30
+        self.write_feed([_long_row(body=None, text=text)])
+        w = self.long_worker()
+        self.srv.create(kind="collected_long", text=LONG_ITEM)
+        self.assertEqual(w.poll_once()["outcome"], "result-sent")
+        self.assertEqual(w.runner.calls[0]["stdin"].decode("utf-8"), text)
+
+    def test_short_source_not_run(self):
+        self.write_feed([_long_row(body=None, text="가" * (jobs.LONG_MIN_SOURCE - 1))])
+        w = self.fail_case("long-short")
+        self.assertEqual(w.runner.calls, [])
+        self.assertEqual(w.state.attempts("2026-11-25"), 0)
+
+    def test_write_back_off_leaves_file(self):
+        self.write_feed([_long_row()])
+        before = self.feed_bytes()
+        jid = self.srv.create(kind="collected_long", text=LONG_ITEM)
+        w = self.long_worker(write_back=False)
+        out = w.poll_once()
+        self.assertEqual((out["outcome"], out["write"]), ("result-sent", "off"))
+        self.assertEqual(self.feed_bytes(), before)
+        self.assertEqual(self.srv.jobs[jid]["result"]["collected_long"], GOOD_LONG)
+
+    def test_write_back_file_changed_still_sends(self):
+        self.write_feed([_long_row()])
+        jid = self.srv.create(kind="collected_long", text=LONG_ITEM)
+        w = self.long_worker()
+        real = C.write_long_feed
+
+        def busy(path, rid, long_row, **_kw):
+            def touch(attempt):                       # 다른 프로그램이 매번 끼어 쓴다
+                with open(path, "ab") as f:
+                    f.write(b"\n")
+            return real(path, rid, long_row, before_replace=touch)
+        C.write_long_feed = busy
+        try:
+            out = w.poll_once()
+        finally:
+            C.write_long_feed = real
+        self.assertEqual((out["outcome"], out["write"]), ("result-sent", "file-changed"))
+        self.assertNotIn("long", json.loads(self.feed_bytes().splitlines()[0]))
+        self.assertEqual(self.srv.status(jid), "result_ready")
+
+    def test_long_appeared_meanwhile_row_value_sent(self):
+        """모델이 도는 사이 대시보드가 그 행에 긴 요약을 만들었다 — 덮지 않고 서버에도 그 행 값을 보낸다(앱과 웹이 같은 값)."""
+        self.write_feed([_long_row()])
+        made = {"asis": "대시보드 지금", "tobe": None, "ops": "대시보드 방법", "points": ["대시보드 요점"],
+                "model": "board-model-1"}
+        test = self
+
+        class Meanwhile(MockRunner):
+            def __call__(self, argv, **kw):
+                test.write_feed([_long_row(long=made)])
+                return super().__call__(argv, **kw)
+        jid = self.srv.create(kind="collected_long", text=LONG_ITEM)
+        w = self.long_worker(runner=Meanwhile())
+        out = w.poll_once()
+        self.assertEqual((out["outcome"], out["write"]), ("result-sent", "kept-existing"))
+        self.assertEqual(len(w.runner.calls), 1)
+        res = self.srv.jobs[jid]["result"]
+        self.assertEqual(res["collected_long"], {"as_is": "대시보드 지금", "to_be": None, "ops": "대시보드 방법",
+                                                 "points": ["대시보드 요점"]})
+        self.assertEqual(res["collected_long"], C.long_of(json.loads(self.feed_bytes())))   # 서버로 간 값 = 행 값
+        self.assertEqual(res["model_meta"], {"tool": "feed-long", "model": "board-model-1", "duration_ms": 0})
+        self.assertEqual(json.loads(self.feed_bytes())["long"], made)                         # 행은 그대로
+
+    def test_invalid_outputs(self):
+        cases = [
+            {"as_is": "가" * 1001, "points": ["a"]},                       # 상한 넘김
+            {"as_is": "a", "to_be": None, "ops": None},                    # points 없음
+            {"points": []},                                                # 점 0개
+            {"points": ["가" * 301]},                                      # 점 상한
+            {"points": ["a"] * 13},                                        # 점 13개
+            {"points": ["a"], "extra": "x"},                               # 모르는 키
+            {"points": ["a", 3]},                                          # 점 꼴
+            {"points": ["a"], "ops": 5},                                   # 칸 꼴
+            "요약입니다(JSON 아님)",
+            ["a"],
+        ]
+        for inner in cases:
+            with self.subTest(inner=str(inner)[:40]):
+                self.write_feed([_long_row()])
+                w = self.fail_case("long-invalid", runner=MockRunner(out=_model_out(inner)))
+                self.assertNotIn("long", json.loads(self.feed_bytes()))     # 검증 실패면 되쓰지 않는다
+                self.assertEqual(len(w.runner.calls), 1)
+
+    def test_fenced_json_and_masking(self):
+        self.write_feed([_long_row()])
+        inner = "```json\n" + json.dumps({"points": ["참고 https://example.invalid/x 문장"], "to_be": "합성"},
+                                         ensure_ascii=False) + "\n```"
+        jid = self.srv.create(kind="collected_long", text=LONG_ITEM)
+        w = self.long_worker(runner=MockRunner(out=_model_out(inner)))
+        self.assertEqual(w.poll_once()["outcome"], "result-sent")
+        got = self.srv.jobs[jid]["result"]["collected_long"]
+        self.assertEqual(got, {"as_is": None, "to_be": "합성", "ops": None, "points": ["참고 ‹링크› 문장"]})
+
+    def test_model_failures(self):
+        for runner in (MockRunner(out=b"not json"), MockRunner(rc=2, out=b""),
+                       MockRunner(out=json.dumps({"result": "x", "is_error": True}).encode())):
+            with self.subTest():
+                self.write_feed([_long_row()])
+                self.fail_case("long-model", runner=runner)
+
+    def test_not_found(self):
+        self.write_feed([_long_row()])
+        for kw in ({"mapping": {}}, {"feed": False}, {"mapping": {LONG_ITEM: ["feed:FEED9999"]}}):
+            with self.subTest(kw=list(kw)):
+                w = self.fail_case("long-not-found", **kw)
+                self.assertEqual(w.runner.calls, [])
+
+    def test_bad_item_id_and_missing_file(self):
+        self.srv.create(kind="collected_long", text="../FEED0001")
+        w = self.long_worker()
+        self.assertEqual(w.poll_once()["reason_code"], "long-not-found")
+        self.assertEqual(self.store_log, [])                        # 꼴이 틀린 ID 는 저장소도 열지 않는다
+        self.srv.create(kind="collected_long", text=LONG_ITEM)      # feed 파일 없음
+        self.assertEqual(w.poll_once()["reason_code"], "long-not-found")
+
+    def test_lone_surrogate_source(self):
+        self.write_feed([_long_row()])
+        with open(self.feed_path, "wb") as f:
+            f.write(json.dumps(_long_row(body="\ud83d" + LONG_BODY)).encode("ascii") + b"\n")
+        w = self.long_worker()
+        self.srv.create(kind="collected_long", text=LONG_ITEM)
+        self.assertEqual(w.poll_once()["outcome"], "result-sent")
+        self.assertTrue(w.runner.calls[0]["stdin"].decode("utf-8").startswith("�"))
+        self.assertTrue(self.feed_bytes().isascii())                # 원래 줄 꼴(ASCII 이스케이프) 그대로
+
+    def test_real_store_in_worker_thread(self):
+        """상주 실행처럼 Worker 를 만든 스레드와 다른 스레드에서 처리 — 저장소를 작업마다 그 스레드에서 연다."""
+        from agent import store as _store
+        self.seed_store()
+        self.write_feed([_long_row()])
+        jid = self.srv.create(kind="collected_long", text=LONG_ITEM)
+        w = self.long_worker()
+        w.feed = jobs.FeedLong(self.feed_path, True, lambda: _store.Store(self.th.paths))
+        box = {}
+        t = threading.Thread(target=lambda: box.update(out=w.poll_once()))
+        t.start()
+        t.join(10)
+        self.assertEqual(box["out"]["outcome"], "result-sent")
+        self.assertEqual(self.srv.status(jid), "result_ready")
+
+    def test_non_string_ids_in_feed_skipped(self):
+        self.write_feed([{"id": ["FEED0001"]}, {"id": {"x": 1}}, _long_row()])
+        w = self.long_worker()
+        self.srv.create(kind="collected_long", text=LONG_ITEM)
+        self.assertEqual(w.poll_once()["outcome"], "result-sent")
+
+    def seed_store(self):
+        from agent import store as _store
+        st = _store.Store(self.th.paths)
+        st.conn.execute("INSERT INTO events(adapter,dedupe_key,kind,original_id,created_at) "
+                        "VALUES('feed','feed:FEED0001','collected_post','o_synth1','2026-11-25')")
+        st.conn.execute("INSERT INTO revisions(original_id,revision,projection_sha,idempotency_key,request_sha,status,"
+                        "target_id,created_at,updated_at) VALUES('o_synth1','v_synth1','p','k1','s','accepted',?,"
+                        "'2026-11-25','2026-11-25')", (LONG_ITEM,))
+        st.close()
+
+    def test_cli_serve_jobs_passes_feed(self):
+        """cli `serve --jobs` — config 의 feed(입력 경로·write_back)와 로컬 저장소가 워커 스레드의 긴 요약까지 닿는다."""
+        from agent import cli, config as _config
+        from agent.tests.helpers import STREAM_ID, MemoryKeyStore, run_cli
+        self.seed_store()
+        self.write_feed([_long_row()])
+        cfg = _config.load(self.th.paths)
+        cfg.update(source_instance_id=STREAM_ID, server_url=self.srv.url)
+        cfg["adapters"]["feed"].update(enabled=True, input_path=self.feed_path, write_back=True)
+        _config.save(self.th.paths, cfg)
+        ks = MemoryKeyStore()
+        ks.set(_config.token_account(STREAM_ID), TOKEN)
+
+        class Device:
+            def __call__(self, server, token, timeout=30):
+                return self
+
+            def device(self):
+                return {"stream_id": STREAM_ID}
+
+        srv = self.srv
+
+        class StopAfter(MockRunner):          # 작업 하나 처리 뒤 다음 폴 = 401 → 워커 멈춤
+            def __call__(self, argv, **kw):
+                srv.poll_script.append((401, {"code": "AUTH-INVALID"}, None))
+                return super().__call__(argv, **kw)
+        mr = StopAfter()
+        jid = self.srv.create(kind="collected_long", text=LONG_ITEM)
+        code, out = run_cli(["--home", self.th.home, "serve", "--jobs"], ks_factory=lambda service: ks,
+                            uploader_factory=Device(), jobs_serve_kw={"grace": 2},
+                            jobs_adapter_factory=lambda runner: jobs.ClaudeAdapter(jobs.fake_cli(), fake=True,
+                                                                                    exec_runner=mr))
+        self.assertEqual(code, cli.EXIT_HALT)
+        self.assertIn('"write": "written"', out)
+        self.assertEqual(self.srv.status(jid), "result_ready")
+        self.assertEqual(self.srv.jobs[jid]["result"]["collected_long"], GOOD_LONG)
+        self.assertEqual(json.loads(self.feed_bytes())["long"]["by"], "mycrm-agent")
+        self.assertNotIn("SYNTH-LONG", out)
+
+    def test_poll_sends_kinds(self):
+        """폴에 처리하는 종류(kinds)를 붙인다 — 서버는 kinds 에 collected_long 이 있는 폴에만 그 작업을 임대한다."""
+        w = self.long_worker()
+        self.assertEqual(w.poll_once()["outcome"], "idle")
+        q = self.srv.requests("poll")[0]["query"]
+        self.assertEqual(q["kinds"], [",".join(jobs.KINDS)])
+        self.assertIn("collected_long", q["kinds"][0].split(","))
+        self.assertEqual(q["wait"], ["1"])
+
+    def test_log_line_keeps_write_code_only(self):
+        line = json.loads(jobs._log_line({"event": "poll", "outcome": "result-sent", "write": "file-changed",
+                                          "body": "SYNTH-LONG-BODY"}))
+        self.assertEqual(line, {"event": "poll", "outcome": "result-sent", "write": "file-changed"})
 
 
 if __name__ == "__main__":

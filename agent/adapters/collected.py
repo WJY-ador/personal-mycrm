@@ -604,3 +604,74 @@ def write_back_feed(path: str, changes: dict, *, before_replace=None) -> dict:
         _replace_keep_mode(real, new, mode)
         return out
     raise FileChanged("feed input changed while writing back")     # 도달하지 않음
+
+
+# ---- feed 긴 요약 되쓰기(collected_long, 구현계획 2026-11-25 3절) ----------------------------
+# 웹·MCP 요청으로 PC 가 만든 긴 요약을 feed 입력 파일의 그 id 마지막 행 long 키에 쓴다. 쓰는 방식은 write_back_feed 와 같다
+# (원자 교체·원래 권한 유지·읽은 뒤 파일이 바뀌었으면 한 번 다시 읽어 재시도). 바꾸는 것은 그 행의 long 키 하나뿐이다.
+LONG_BY = "mycrm-agent"
+LONG_WRITTEN, LONG_KEPT, LONG_MISSING = "written", "kept-existing", "missing"
+
+
+def long_of(row) -> dict | None:
+    """행의 long → 서버로 보낼 긴 요약 {as_is, to_be, ops, points}(ai_of 와 같은 가림·자름). 점이 하나도 없으면 None."""
+    if not isinstance(row, dict):
+        return None
+    ai = ai_of({"long": row.get("long")}) or {}
+    if not ai.get("points"):
+        return None
+    return {"as_is": ai.get("as_is"), "to_be": ai.get("to_be"), "ops": ai.get("ops"), "points": list(ai["points"])}
+
+
+def _plan_long(data: bytes, rid: str, long_row: dict):
+    """(새 바이트 | None, 결과 코드, 행). 그 id 의 마지막 행에 이미 유효한 long 이 있으면 덮지 않는다."""
+    lines = data.splitlines(keepends=True)
+    last = None
+    for i, line in enumerate(lines):
+        if not line.strip() or len(line) > MAX_LINE_BYTES:
+            continue
+        try:
+            row = json.loads(line.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            continue
+        if isinstance(row, dict) and row.get("id") == rid:
+            last = (i, row)
+    if last is None:
+        return None, LONG_MISSING, None
+    i, row = last
+    if long_of(row) is not None:
+        return None, LONG_KEPT, row     # 그 사이 대시보드가 먼저 만들었다 — 건드리지 않는다(호출자가 그 행 값을 쓴다)
+    row["long"] = dict(long_row)
+    line = lines[i]
+    eol = line[len(line.rstrip(b"\r\n")):]
+    lines[i] = _dump_like(row, line) + eol
+    return b"".join(lines), LONG_WRITTEN, None
+
+
+def write_long_feed(path: str, rid: str, long_row: dict, *, before_replace=None) -> dict:
+    """rid 마지막 행의 long 키만 long_row 로 바꾼다. 반환 {result: written|kept-existing|missing, retried, row}.
+    row = kept-existing 일 때 이미 유효한 long 이 있는 그 행(그 밖엔 None).
+    파일을 못 읽으면 OSError, 재시도 뒤에도 파일이 바뀌면 FileChanged(아무것도 쓰지 않음).
+    before_replace: 시험용 — 계획을 세운 뒤 바뀜 확인 직전에 부른다."""
+    if not isinstance(rid, str) or not rid or not isinstance(long_row, dict):
+        raise ValueError("long write")
+    real = os.path.realpath(path)
+    retried = 0
+    for attempt in (0, 1):
+        sig = _file_sig(real)
+        mode = os.stat(real).st_mode
+        with open(real, "rb") as f:
+            data = f.read()
+        new, result, row = _plan_long(data, rid, long_row)
+        if new is None:
+            return {"result": result, "retried": retried, "row": row}
+        if before_replace is not None:
+            before_replace(attempt)
+        if _file_sig(real) != sig:
+            if attempt == 0:
+                retried = 1
+                continue
+            raise FileChanged("feed input changed while writing long")
+        _replace_keep_mode(real, new, mode)
+        return {"result": result, "retried": retried, "row": None}
+    raise FileChanged("feed input changed while writing long")     # 도달하지 않음
