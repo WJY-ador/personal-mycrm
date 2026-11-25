@@ -22,6 +22,7 @@ _APPROVABLE_OPS = frozenset({
     "record_add", "record_attach", "record_title_set", "candidates_propose", "definition_propose",
     "item_propose", "person_save", "source_create", "source_reflection_save", "collected_post_decide",
     "axis_page_save",   # 축 한 장 내 판(2026-11-22) write 카드 — 만든 id 없음(_CREATED_OPS 밖)
+    "collected_post_summarize",   # 읽기 판 긴 요약 맡기기(2026-11-25) write 카드 — 만든 id 없음(_CREATED_OPS 밖)
 })
 # Only a confirmed write card may carry `created` ({key: id}, at most 2 keys). Values must match the
 # server generators listed in server/webchat.py _CREATED_ID_RE: db.new_id = prefix_ + 11 urlsafe chars,

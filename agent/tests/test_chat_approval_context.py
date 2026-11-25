@@ -70,10 +70,10 @@ class ApprovalOutcomesContextTest(unittest.TestCase):
                   "record_add", "record_attach", "record_title_set", "candidates_propose", "definition_propose",
                   "item_propose", "person_save", "source_create", "source_reflection_save"}
         self.assertEqual(c._CREATED_OPS, writes)
-        self.assertEqual(len(c._APPROVABLE_OPS), 40)
-        for op in ("collected_post_decide", "axis_page_save"):
+        self.assertEqual(len(c._APPROVABLE_OPS), 41)
+        for op in ("collected_post_decide", "axis_page_save", "collected_post_summarize"):
             self.assertIn(op, c._APPROVABLE_OPS)                    # write 카드(만든 id 없음 — _CREATED_OPS 밖)
-        self.assertEqual(c._APPROVABLE_OPS - writes - {"collected_post_decide", "axis_page_save"}, {
+        self.assertEqual(c._APPROVABLE_OPS - writes - {"collected_post_decide", "axis_page_save", "collected_post_summarize"}, {
             "record_edit", "record_provenance_set", "candidate_decide", "definition_apply", "definition_archive",
             "definition_restore", "item_decide", "person_delete", "source_reflection_review",
             "source_reflection_delete", "inbox_decide", "trash_move", "trash_restore", "feedback_send",

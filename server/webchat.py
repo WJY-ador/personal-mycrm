@@ -122,7 +122,9 @@ APPROVAL_SESSION_LIMIT = 100
 # agent/chat.py normalize_approval_outcomes 가 모르는 op 를 받으면 턴이 APPROVAL-OUTCOMES 로 실패해, 그 세션의 다음 턴이 전부 막힌다.
 # 카드 생성, 확정, 취소는 서버 쪽이라 그대로다. 지우는 때: 이 op 들을 아는 앱이 최소 지원 버전이 된 뒤.
 # 축 한 장 내 판 저장(axis_page_save, 2026-11-22)도 같은 이유로 뺀다 — 0.1.9 이하 앱이 모른다.
-OUTCOME_SKIP_OPS = frozenset({"item_route_exclude", "item_route_include", "definition_draft_discard", "axis_page_save"})
+# 읽기 판 긴 요약 맡기기(collected_post_summarize, 2026-11-25)도 같은 이유로 뺀다 — 0.1.10 이하 앱이 모른다.
+OUTCOME_SKIP_OPS = frozenset({"item_route_exclude", "item_route_include", "definition_draft_discard", "axis_page_save",
+                              "collected_post_summarize"})
 # F8: /api/chat/mcp 본문(바이트). 기록 쓰기 상한 64 KiB(db.py) + JSON 봉투, 이스케이프 여유. 실제 글 상한은 db 쓰기 상한이 정한다.
 # 바깥 main.BodyLimit(256 KiB)과 PC 브리지 한 줄(256 KiB) 안이다. grant, 동의 경로는 CONSENT_BODY_MAX(4 KiB) 그대로
 CHAT_MCP_BODY_MAX = 96 * 1024
@@ -171,6 +173,7 @@ _WRITE_LABELS = {
     "source_reflection_save": {"source_id": "출처 ID", "kind": "종류", "body": "본문", "reflection_id": "읽고 든 생각 ID",
                                "expected_revision": "판"},
     "collected_post_decide": {"item_id": "수집 글 ID", "state": "판별"},
+    "collected_post_summarize": {"item_id": "수집 글 ID"},
     "axis_page_save": {"axis_id": "축 ID", "markdown": "한 장 본문", "expected_updated_at": "내 판 시각"},
 }
 
@@ -1194,7 +1197,8 @@ _WRITE_VALUES = {
 _NOW, _AFTER = "지금", "바뀐 뒤"
 _TARGET_MISSING = {"대상": "찾을 수 없어요"}
 _TARGET_TRASHED = {"대상": "휴지통에 있어요"}
-_WRITE_CREATE_ONLY = frozenset({"question_add", "record_add", "candidates_propose", "source_create"})
+_WRITE_CREATE_ONLY = frozenset({"question_add", "record_add", "candidates_propose", "source_create",
+                                "collected_post_summarize"})   # 긴 요약 맡기기 = 새 PC 작업(덮을 지금 상태 없음, 2026-11-25)
 
 
 def _cur_layout(c, uid, n):

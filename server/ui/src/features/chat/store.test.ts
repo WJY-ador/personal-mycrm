@@ -6,9 +6,13 @@ import { mk, NODEV, pv, st, T } from "../../test/chat";
 
 const all = import.meta.glob(["../../**/*.{ts,tsx}", "!../../**/*.test.{ts,tsx}", "!../../test/**"], { query: "?raw", import: "default", eager: true }) as Record<string, string>;
 
-test("서버 접점 한 곳 — 작업·쌓기 API 는 chatApi 밖에서 부르지 않는다 · 브라우저 저장소 0 · 고정 문구 한 곳", () => {
-  const hits = Object.entries(all).filter(([p, s]) => !/(^\.\/|\/chat\/)chatApi\.ts$/.test(p) && /\/api\/(jobs|stack\/)/.test(s)).map(([p]) => p);
+test("서버 접점 각 한 곳 — 작업 API 는 shared/jobsApi 밖, 쌓기 API 는 chatApi 밖에서 부르지 않는다 · 브라우저 저장소 0 · 고정 문구 한 곳", () => {
+  const JOBS = /\/shared\/jobsApi\.ts$/, STACK = /(^\.\/|\/chat\/)chatApi\.ts$/;
+  const hits = Object.entries(all).filter(([p, s]) => (!JOBS.test(p) && /\/api\/jobs/.test(s)) || (!STACK.test(p) && /\/api\/stack\//.test(s))).map(([p]) => p);
   expect(hits).toEqual([]);
+  // 빈 검사 방지 — 두 접점이 실제로 그 주소를 부른다
+  expect(Object.entries(all).filter(([p, s]) => JOBS.test(p) && s.includes("/api/jobs")).length).toBe(1);
+  expect(Object.entries(all).filter(([p, s]) => STACK.test(p) && s.includes("/api/stack/")).length).toBe(1);
   expect(storeSrc).not.toMatch(/Storage/);
   expect(Object.values(all).filter(s => s.includes(NODEV)).length).toBe(1);
   expect(Object.values(all).join("\n")).not.toContain("실행 가능");

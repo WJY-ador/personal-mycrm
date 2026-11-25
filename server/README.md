@@ -78,6 +78,7 @@ WorkOS 대시보드 등록은 DCR 클라이언트라 Redirect URI 가 필요 없
 ## 운영 — 처리방침·일일 한도·사용 집계
 
 - **처리방침 버전** = `guides/11-privacy.md` 머리글 `` `vN · 날짜` ``(첫 20줄). 서버 시작 때 읽어 `/privacy` 에 쓴다. 운영(비DEV)은 처리방침 문서가 없거나 못 읽거나 버전 머리글이 없거나 둘 이상이면 뜨지 않는다.
+- **약관 버전** = `guides/12-terms.md` 머리글(같은 꼴, 첫 20줄). 파일이 있을 때만 읽고 표시용이다(쓰기 게이트, 새 동의 없음). 파일이 있는데 못 읽거나 머리글이 없거나 둘 이상이면 운영(비DEV)은 뜨지 않는다.
 - **필수 동의 없음**(2026-10-19 v3 부터, 현행 v6 — 시행일은 릴리스 때 머리글에 채운다): 서비스 제공 처리는 계약 이행(개인정보 보호법 제15조①4호), 구조 분석(개수·종류)은 정당한 이익(①6호)으로 보고 처리방침 「처리 근거」 표로 공개한다. 동의 화면·재동의·쓰기 차단이 없다. 시작 화면에 「시작하면 개인정보 처리방침이 적용돼요」 한 줄. 처리방침을 바꾸면 버전·날짜를 올려 공개하고 지인에게 공지만 한다. `GET /consent` 는 옛 링크용 302 `/app`. 옛 `agreements` 행은 이력으로 남는다(새로 쓰지 않음).
 - **v5 요약**(PR B): 표시 이름 필수(실명 아님·다른 이용자와 운영자 화면에 안 보임, 처리 근거 계약 이행) · 사람 = 별칭 이름표만 · 출처 요약/반응 = 내 생각만(검토 완료 ≠ 판단 확정, 인용 근거 아님) · 삭제 절차(「개인정보 요청」 문의에 요청 문구만 → 접수 10일 안 통지 → 7일 유예 → 삭제, 유예 중 취소) · contact 1년 보관 · 재가입 = 새 계정(연결 없음). 필수 동의 게이트는 여전히 없다.
 - **v6 요약**(board 이전 PR): 연결 장치(토큰 90일·검증값만) · 활동(원문은 PC, 서버엔 행동·날짜·처음 수집한 날·별칭·HMAC 식별자·관계, 처리 근거 계약 이행) · 승인 대기(30일, 승인 전엔 기록 아님) · PC 에서 원문 열기 · 무인 요약(기본 꺼짐, 구독 CLI 전송은 위탁 표 밖) · AI 생성 표시 유지 · 운영자 화면엔 사람·출처·활동 대상 관계도 값·개수 0(v5 약속 유지) · 삭제 범위에 새 표. 「board 이전 예외」 문구는 넣지 않는다.
@@ -259,6 +260,14 @@ DATABASE_URL=… .venv/bin/python migrate_cli.py close  <명세.json> --user <ui
 - **웹 경로**(세션 + Origin): `POST /api/jobs` `{kind, text, session_id?}` → 201 `{id, session_id}`(text 8,000 코드포인트·32KiB 각각, `PAYLOAD-LIMIT`) · `GET /api/jobs/<id>?wait=0..30`(본인만, result_ready 면 `result`) · `POST /api/jobs/<id>/cancel`(멱등, 스위치 무관) · `POST /api/jobs/<id>/confirm` = 확인 1번(②-b, 아래 절).
 - **스위치**(`envnames.SWITCHES`, 기본 꺼짐 — 운영 env 는 원작자 확인 뒤): `CRM_CONVERSE_ENABLED`(converse) · `CRM_ROUTINE_ENABLED`(routine_ingest). 접수·할당·결과 수신·확정 4곳에서 본다. 꺼져도 만료·정리·취소는 돈다. `summarize_reading` 은 ②-d 전 스위치가 없어 늘 꺼짐.
 - **한도**(`imports.py`, LIMITS 옆): 접수 하루(KST) `JOB_REQUEST_LIMITS` — **K3 원작자 결정(2026-10-22): 작업 종류별 일일 한도 없음 = `None`**(카운터 `job_<kind>` 는 관측용으로 센다). `None` 의 뜻은 등록된 작업 종류의 일일 요청 한도에만 — 키가 빠진 종류·숫자 아닌 값 = 설정 누락 503 `LIMIT-UNSET`(fail-closed), 모르는 kind = 400. 숫자를 넣으면 넘을 때 429 `JOB-QUOTA` + `resume_at` · 살아 있는 작업 사용자당 20(`JOBS_OPEN_MAX`, **가안** — 원작자 결정 남음, 429 `JOB-LIMIT`). 폴링은 별도 버킷 `POLL_LIMITS` — 장치 분당 4·사용자 분당 12(장치 폴 + 웹 상태 확인 합산), 동시 롱폴 장치 1·사용자 웹 2(`POLL_CONCURRENT`, 서버 프로세스 메모리), 429 에 `Retry-After`. `/input`·`/result`·`/fail` 은 기존 장치 요청 버킷(장치 분당 10·사용자 30). PC 시도 수는 `jobs.attempts` 에 남고 시도 한도는 PC 가 센다.
+- **수집 글 긴 요약**(`collected_long`, 2026-11-25): 웹 읽기 판(`POST /api/jobs {kind:"collected_long", text:<수집 글 항목 id>}`)과 MCP op `collected_post_summarize`(write, 인자 `item_id`, 반환 `{job_id, status, reason_code}`)가 같은 작업을 만든다. PC 에이전트가 그 글의 긴 요약 `{as_is, to_be, ops, points}` 를 만들어 돌려준다(`agent/README.md` 11절).
+  - **스위치**: `CRM_COLLECTED_LONG_ENABLED`, 조직 설정 기본 켬(프로필 권한 없음). 접수, 할당, 결과 수신 곳에서 본다(꺼지면 503 `SWITCH-OFF`).
+  - **한도**: 접수 하루(KST) 60, 사용자 기준(`JOB_REQUEST_LIMITS["collected_long"]`, 넘으면 429 `JOB-QUOTA`). 같은 항목의 열린(queued, leased, running) 작업이 있으면 새로 만들지 않고 그 작업을 돌려주며 한도를 세지 않는다.
+  - **접수**: `text` 는 항목 id 꼴만 받고 `session_id` 는 없다. 그 사용자의 휴지통 아닌 수집 글 항목이 아니면 404 `NOT-FOUND`. 입력(항목 id)은 다른 종류와 같이 임시 보관한다. 원문은 서버에 없다.
+  - **장치 폴 `kinds` 쿼리**: `GET /api/device/jobs?wait=…&kinds=a,b`(쉼표 구분, 그 앱이 처리하는 종류, 모르는 이름은 버린다). `collected_long` 은 `kinds` 에 그 이름이 있는 폴에만 임대한다. `kinds` 가 없는 옛 앱에는 임대하지 않아 `queued` 로 남는다(웹 화면은 2분 넘게 queued 면 PC 꺼짐 안내를 보인다). 다른 종류의 임대 규칙은 그대로.
+  - **결과**: `POST …/result` `{lease_generation, input_version, result_version, collected_long:{as_is, to_be, ops, points}, model_meta}`. 모양 검사(`as_is`, `to_be`, `ops` 각 1000자 이하 문자열 또는 null, `points` 1~12개 각 300자, 장치 수집 글 계약의 차단 꼴 금지) 뒤 같은 트랜잭션에서 그 항목의 `ai_as_is`, `ai_to_be`, `ai_ops`, `ai_points` 만 쓰고 작업을 바로 `confirmed` 로 둔다(`result_ready` 에 남지 않는다). 사용자 판별(kept, dropped)이 된 항목에도 쓴다(AI 값이라 판단이 아니다). 항목 `revision` 은 올리지 않고 이력 줄도 남기지 않는다(열린 화면의 판별 충돌 방지). 이 종류의 결과는 `collected_long` 키로만 받고, 같은 키를 다른 종류가 보내면 400. 같은 결과 재전송 = 200 `{duplicate:true}`. 그새 항목이 휴지통에 갔거나 없어졌으면 쓰지 않고 `failed`(`long-not-found`)로 끝낸다.
+  - **실패 코드**: `long-short`, `long-invalid`, `long-not-found`, `long-model` 넷이 `POST …/fail` 의 `reason_code` 허용 목록과 `jobs.reason_code` CHECK 에 더해졌다(옛 DB 는 `db._WIDEN_CHECKS`). 웹 `GET /api/jobs/<id>` 가 `reason_code` 를 돌려준다.
+  - **MCP**: 사용자가 요약을 만들어 달라고 할 때만 부른다. 결과는 `ai_*` 값이고 근거가 아니다(서버 지시문 한 줄).
 - **계정 삭제**: `db.DELETE_TABLES` 에 `jobs`(입력원 앞) + 임시 보관 명시 삭제(`user_delete`·삭제 CLI ③ 앞). 임시 보관은 schema.sql 밖이라 정적 목록 대조에 들어가지 않는다.
 - **로컬 시험 서버**(J3): `DATABASE_URL=postgresql://localhost/crm_test_jobs CRM_DEV=1 CRM_DEV_USER=<합성@example.com> CRM_CONVERSE_ENABLED=1 PORT=8807 .venv/bin/python main.py` — 스위치는 그 프로세스 env 에만. 장치 토큰 = `imports.device_connect(uid, 라벨)["token"]`(시험 DB). 웹 쓰기 Origin = `http://127.0.0.1:8800`(DEV 허용 목록).
 
@@ -320,7 +329,7 @@ DATABASE_URL=… .venv/bin/python migrate_cli.py close  <명세.json> --user <ui
 - **시험**: `test_route.py`(순수 판정, DB 없음), `test_route_flow.py`(합성 PG — backfill, 훅, 장치 승인과 옛 개정, 휴지통, 빼기와 되돌리기, budget 과 매일 정리, ROUTE-LOCKED, route 뺀 적용과 보관, profile, 훅 실패 격리, 옛 DB 이전).
 - **한계**: 자동 분류 항목에는 아직 연결(기록의 붙일 곳, 다른 항목의 관계)을 걸 수 없다 — 원문이 바뀌면 그 항목이 지워질 수 있어서다. 연결은 원문 기록에 건다. 연결이 붙은 released 항목은 sync 가 지우거나 다시 가져가지 않는다(released 그대로).
 - **한계**: 빼기는 단위를 머리 글자(unit_key)로 기억한다. 원문의 머리 글자를 고치면 다른 단위가 되어 다시 들어올 수 있고, 같은 머리 글자 단락끼리는 빼기가 이어진다(같은 기록의 첫째 단락, 같은 원본의 새 판).
-- **한계**: 웹 대화는 빼기, 되돌리기, 초안 버리기 카드의 확정 여부를 다음 턴에 모델에게 전달하지 않는다(옛 PC 앱 0.1.7 호환, `webchat.OUTCOME_SKIP_OPS`). 확정 결과는 화면 카드에만 보인다.
+- **한계**: 웹 대화는 빼기, 되돌리기, 초안 버리기 카드의 확정 여부를 다음 턴에 모델에게 전달하지 않는다(옛 PC 앱 0.1.7 호환, `webchat.OUTCOME_SKIP_OPS`). 읽기 판 긴 요약 맡기기 카드(`collected_post_summarize`)도 같은 목록에 있다(0.1.10 이하 앱이 모른다). 확정 결과는 화면 카드에만 보인다.
 - **되돌림**: 표와 CHECK 값은 추가만이다. 자동 분류를 모르는 옛 서버로 되돌리면 자동 분류 항목은 보통 항목으로 보이고 잠금이 없다(행은 남는다). 자동 분류를 끄려면 route 를 뺀 정의를 적용한다.
 
 ## 운영 — 웹 「대화」(구독 AI 채팅, PR 1 전송 골격)
@@ -366,6 +375,7 @@ DATABASE_URL=… .venv/bin/python migrate_cli.py close  <명세.json> --user <ui
   문서 정본은 guides 이고 서버는 읽기만 한다. 대시보드 바닥(`app.html` 뼈대)·`start.html` 하단에 [도움말].
 - 보안 헤더(웹 HTML 응답만 — MCP·JSON·/health 제외): `nosniff`·`X-Frame-Options: DENY`·`Referrer-Policy: same-origin`·CSP `frame-ancestors 'none'; base-uri 'none'; object-src 'none'; script-src 'self'` — `/app` 도 같다(인라인 스크립트 0, 화면 = 외부 묶음, 해시 없음 — R5b-2b). `'unsafe-inline'`·`'unsafe-eval'` 은 넣지 않는다.
 - 개인정보 처리방침 `GET /privacy`(로그인 불필요, DB 안 건드림): 정본 `guides/11-privacy.md` 를 /help 와 같은 렌더러·보안 헤더로. 권리 행사 경로는 대시보드 계정 메뉴 「문의 보내기」. 문안의 `{{CONTACT_LINE}}` 은 env `CRM_CONTACT`(선택 — 보조 메일, 레포에 적지 않는다)가 있으면 메일 한 줄로, 없으면 빈 문자열로 바꾼다. help_get 에는 안 들어간다. 문서가 없으면 503. 링크는 `start.html` 하단·`app.html` 푸터·/help 하단.
+- 약관 `GET /terms`(로그인 불필요, DB 안 건드림): 정본 `guides/12-terms.md`(기능별 자세한 설명)를 /privacy 와 같은 렌더러, 보안 헤더로. help_get 에는 안 들어간다. 문서가 없으면 503(기동은 막지 않음). 링크는 처리방침 2절.
 
 ## 경계
 - 사용자 결정: AuthKit JWT(RS256, iss·exp·aud 검증) 의 `sub` 우선. 처음 연결 땐 userinfo 의 검증된 이메일로 같은 이메일 = 한 사용자. `email` 클레임은 토큰에 없다.

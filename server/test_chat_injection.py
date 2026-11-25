@@ -154,6 +154,7 @@ class ChatInjectionTests(unittest.TestCase):
             "source_reflection_save": {"source_id": self.source["id"], "kind": "reaction", "body": "주입된 생각"},
             "collected_post_decide": {"item_id": "i_AAAAAAAAAAA", "state": "dropped"},
             "axis_page_save": {"axis_id": "i_AAAAAAAAAAA", "markdown": "주입된 한 장", "expected_updated_at": ""},
+            "collected_post_summarize": {"item_id": "i_AAAAAAAAAAA"},
         }
 
     def finish_turn_and_get_outcomes(self):
@@ -740,7 +741,7 @@ class ChatInjectionTests(unittest.TestCase):
         block = re.search(r"export const OP_NAME: Record<string, string> = \{(.*?)\};", text_ts, re.S)
         self.assertIsNotNone(block)
         ui_ops = set(re.findall(r"(?:^|[\s,{])([a-z_]+):\s*\"", block.group(1)))
-        self.assertEqual(len(webchat.CHAT_CARD_OPS), 40)   # 구조 추천(2026-11-18) decide 3, 축 한 장 내 판(2026-11-22) write 1 더함
+        self.assertEqual(len(webchat.CHAT_CARD_OPS), 41)   # 구조 추천(2026-11-18) decide 3, 축 한 장 내 판(2026-11-22) write 1, 긴 요약 맡기기(2026-11-25) write 1 더함
         self.assertEqual(ui_ops, set(webchat.CHAT_CARD_OPS))
         self.assertEqual(agent_ops, set(webchat.CHAT_CARD_OPS))
 

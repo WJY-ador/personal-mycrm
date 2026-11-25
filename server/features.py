@@ -53,6 +53,9 @@ FEATURES = (
     Feature("download_public", "DOWNLOAD_PUBLIC", "설치 파일 공개 링크", "/download 직링크 보이기", "org"),
     # 앱 하나 자동 연결(2026-11-13 명세 1.4) — 사용자 쪽 오류를 운영자 문의(kind bug, via auto)로 자동 접수. 기본 켜짐, 사용자별 끄기 없음
     Feature("auto_cases", "AUTO_CASES_ENABLED", "오류 자동 Case", "앱, PC 에이전트, 웹의 오류를 문의로 자동 접수", "org", True),
+    # 읽기 판 긴 요약(2026-11-25) — 고른 수집 글의 긴 요약을 내 PC 에이전트로 만들기. 기본 켜짐, 모두에게(프로필 권한 없음)
+    Feature("collected_long", "COLLECTED_LONG_ENABLED", "읽기 판 긴 요약", "읽기 판에서 고른 수집 글의 긴 요약을 내 PC 에이전트로 만들기",
+            "org", True),
 )
 BY_KEY = {f.key: f for f in FEATURES}
 BY_ENV = {f.env: f for f in FEATURES}

@@ -63,7 +63,7 @@ test("주제 누르기 = 그 글만, 다시 누르기 = 풀림 · 축 칩 = 그 
 test("요약 없음 = 한 줄(대기 수) + 축 칩은 그대로 · 못 불러오면 한 줄, 인박스는 보인다", async () => {
   DIG = () => json(200, { ...WITH(), digest: null, new_since: 3 });
   let el = await show();
-  expect(el.querySelector("#digest-none")!.textContent).toBe("아직 요약이 없어요. 대기 3건, 다음 동기화에서 만들어요.");
+  expect(el.querySelector("#digest-none")!.textContent).toBe("아직 요약이 없어요. PC 앱에서 인박스 요약을 켜 두면 다음 동기화에서 만들어요.");
   expect(el.querySelector("#digest .chip.o-ai")).toBeNull();
   expect(text(el, "#digest [role=group] button")).toHaveLength(1);
   hideScreen(); queryClient.clear();

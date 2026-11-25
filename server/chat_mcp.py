@@ -39,6 +39,7 @@ _PINNED_TIERS = {
     "candidates_propose": "write", "definition_propose": "write", "item_propose": "write",
     "person_save": "write", "source_create": "write", "source_reflection_save": "write", "pc_connect": "write",
     "collected_post_decide": "write", "axis_overview_get": "read",   # 축 보기(2026-11-18 축 잇기)
+    "collected_post_summarize": "write",   # 읽기 판 긴 요약 작업 맡기기(2026-11-25)
     "axis_page_save": "write", "inbox_digest_get": "read",   # 축 한 장 내 판, 인박스 요약(2026-11-22)
     "routine_board_get": "read", "routine_board_detail_get": "read",   # 첫 화면 루틴판(2026-11-21)
     "structure_profile_get": "read",   # 구조 추천(2026-11-18) — 빼기, 되돌리기, 초안 버리기는 확인 카드(decide)

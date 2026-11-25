@@ -552,6 +552,13 @@ async def test_web():
                              "제28조의8", PRIVACY_HEAD, 'href="/help"', 'href="/login"', "--accent: #6F401B"):
                     assert word in r.text, word
                 assert "{{CONTACT" not in r.text and "「개인정보 요청」" in r.text and 'href="/app"' not in r.text and "|---|" not in r.text and "**" not in r.text
+                # 약관 /terms(2026-11-25): 처리방침 2절에서 링크, 로그인 없이 200, 같은 렌더러, 09·11 링크는 /help#start·/privacy
+                assert 'href="/terms"' in r.text, "처리방침에서 약관으로"
+                r = await h.get("/terms")
+                assert r.status_code == 200 and r.headers.get("cache-control") == "no-store", r.status_code
+                for word in ("대시보드 약관", 'id="terms"', "9000자", "300자", "하루 60건", 'href="/privacy"', 'href="/help#start"', 'href="/login"'):
+                    assert word in r.text, word
+                assert 'href="/app"' not in r.text and "**" not in r.text
                 real_contact, real_privacy = os.environ.get("CRM_CONTACT"), site.privacy_html
                 try:
                     os.environ["CRM_CONTACT"] = '<b>x</b> [y](javascript:alert(1))'
@@ -580,18 +587,21 @@ async def test_web():
                 for ok in ('href="https://example.com/a"', 'href="#words"', 'href="notes/a.md"', "[버튼]"):
                     assert ok in hb, (ok, hb)
                 assert hb.count('href="#words"') == 2 and "<table>" in hb, hb
-                real_guides, real_help, real_privacy = site.guides, site.help_html, site.privacy_html
+                real_guides, real_help, real_privacy, real_terms = site.guides, site.help_html, site.privacy_html, site.terms_html
                 site.load_help(Path("/nonexistent-guides"))
+                site.load_terms(Path("/nonexistent-guides"))
                 try:
                     r = await h.get("/help")
                     assert r.status_code == 503 and "도움말" in r.text, r.status_code
                     r = await h.get("/privacy")
                     assert r.status_code == 503 and "처리방침" in r.text, r.status_code
+                    r = await h.get("/terms")
+                    assert r.status_code == 503 and "약관" in r.text, r.status_code
                     async with Client(main.mcp) as mc:
                         miss = await mc.call_tool("help_get", {"topic": "all"})
                     assert miss.is_error and "HELP-MISSING" in miss.content[0].text, miss
                 finally:
-                    site.guides, site.help_html, site.privacy_html = real_guides, real_help, real_privacy
+                    site.guides, site.help_html, site.privacy_html, site.terms_html = real_guides, real_help, real_privacy, real_terms
                 r = await h.get("/login", params={"fresh": "1"})
                 assert r.status_code == 302 and parse_qs(urlparse(r.headers["location"]).query)["prompt"] == ["login"], r.headers
                 assert (await h.get("/api/state")).status_code == 401
@@ -9068,7 +9078,9 @@ def test_pr2b_stack_b1():
     imports.device_connect(U, "합성 b1")   # 접수 = 연결 장치 1 이상(NO-DEVICE). 남(O)은 세션 검사(NOT-FOUND)가 먼저
     TXT = "합성 입력 STACKTEXT — 일반 테이블에 남으면 안 된다"
     with _job_switch("CONVERSE_ENABLED"):
-        assert all(v is None for v in imports.JOB_REQUEST_LIMITS.values()) and set(imports.JOB_REQUEST_LIMITS) == set(db.JOB_KINDS)
+        assert set(imports.JOB_REQUEST_LIMITS) == set(db.JOB_KINDS)
+        assert imports.JOB_REQUEST_LIMITS["collected_long"] == 60   # 읽기 판 긴 요약(2026-11-25)만 하루 60 — 나머지는 무제한
+        assert all(v is None for k, v in imports.JOB_REQUEST_LIMITS.items() if k != "collected_long")
         for kind, ik in (("nope", None), ("converse", "nope"), ("routine_ingest", "converse")):
             _pr2b_err(lambda: db.job_create(U, kind, TXT, input_kind=ik), "ARG-INVALID")
         saved = imports.JOB_REQUEST_LIMITS.pop("converse")

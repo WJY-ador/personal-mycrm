@@ -148,7 +148,8 @@ POLL_WAIT_MAX = 30                                                # 롱폴 최�
 # 사용자 하루 접수 한도(작업 종류별). K3 원작자 결정(2026-10-22): 일일 한도 없음 → None = 무제한(카운터 job_<kind> 는 관측용으로 센다).
 # None 의 뜻은 여기 등록된 작업 종류의 일일 요청·시도 한도에만 — 키가 빠진 종류 = 설정 누락 LIMIT-UNSET(fail-closed), 모르는 kind = ARG-INVALID.
 # 분당 버킷·폴링·진행 중 상한·임시 용량·기록 보관 한도(db.DAILY_LIMITS)에는 이 뜻을 옮기지 않는다.
-JOB_REQUEST_LIMITS = {"summarize_reading": None, "converse": None, "routine_ingest": None}
+# collected_long(읽기 판 긴 요약, 2026-11-25) = 하루 60(사용자 기준). 같은 항목의 열린 작업 재사용은 세지 않는다(db.job_create)
+JOB_REQUEST_LIMITS = {"summarize_reading": None, "converse": None, "routine_ingest": None, "collected_long": 60}
 # PC 시도(입력 조회 성공 = CLI 시작 직전) 기록은 jobs.attempts. 실제 CLI 재시도는 PC 가 결과 model_meta 에 따로 싣는다
 JOBS_OPEN_MAX = 20                                                # 사용자당 살아 있는 작업(queued·leased·running·result_ready) — 가안(원작자 결정 남음)
 JOB_BUCKETS = ("poll",) + tuple("job_" + k for k in JOB_REQUEST_LIMITS)   # import_counters.bucket 추가 열거

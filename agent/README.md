@@ -334,10 +334,10 @@ python3 -m unittest discover -s agent/tests   # 키트 루트에서. Keychain·l
 - **폴 주기**: 정상 = 롱폴 30초(소켓 여유 포함 최대 45초, `jobs.MAX_POLL_PERIOD_SEC`). CLI 실행 중(최대 5분)·서버 오류 대기(최대 15분)·429(최대 1시간) 동안은 폴하지 않습니다.
 
 동작:
-- **받기**: `GET /api/device/jobs?wait=30` 롱폴. 폴링 시작 간격 15초 이상(장치 분당 4). 서버가 429 를 주면 `Retry-After`(없으면 60초, 최대 1시간)를 지키고, 서버 오류·스위치 꺼짐·네트워크 오류면 30초부터 최대 15분까지 늘려 기다립니다. 토큰이 거절되면(401·폐기) 멈춥니다.
+- **받기**: `GET /api/device/jobs?wait=30&kinds=<처리하는 종류, 쉼표 구분>` 롱폴(`kinds` 계약은 아래 수집 글 긴 요약 항목). 폴링 시작 간격 15초 이상(장치 분당 4). 서버가 429 를 주면 `Retry-After`(없으면 60초, 최대 1시간)를 지키고, 서버 오류·스위치 꺼짐·네트워크 오류면 30초부터 최대 15분까지 늘려 기다립니다. 토큰이 거절되면(401·폐기) 멈춥니다.
 - **임대**: 작업마다 서버가 준 임대 세대를 입력 조회(`…/input?lease_generation=N`)·결과·실패에 그대로 싣습니다. 임대는 5분입니다. 서버가 409(`JOB-LEASE`·`JOB-VERSION`)나 410(`JOB-GONE` — 만료·삭제·취소)을 주면 그 작업을 버리고 다시 실행하지 않습니다.
 - **결과 전송**: 연결이 끊기면 **같은 내용(같은 결과 버전)** 으로 다시 보냅니다. 모델은 다시 돌리지 않습니다. 429 면 임대가 남아 있는 동안만 `Retry-After` 를 지켜 다시 보냅니다. 끝내 못 보내면 버리고, 서버가 임대 만료 뒤 「확인 필요」로 남깁니다(중복 실행 없음).
-- **실패 전송**: 사유 코드 하나만 보냅니다 — `output-not-json`·`output-shape`·`result-shape`·`timeout`·`cli-exit`·`login`·`input-too-large`. 입력·모델 출력·오류 문구는 보내지 않습니다.
+- **실패 전송**: 사유 코드 하나만 보냅니다 — `output-not-json`·`output-shape`·`result-shape`·`timeout`·`cli-exit`·`login`·`input-too-large`, 수집 글 긴 요약은 여기에 `long-not-found`, `long-short`, `long-model`, `long-invalid` 넷이 더 있습니다. 입력·모델 출력·오류 문구는 보내지 않습니다.
 - **입력 제한**: 8,000 코드포인트 **그리고** UTF-8 32KiB. 넘으면 실행하지 않고 `input-too-large` 로 끝냅니다.
 - **동시 1**: 한 프로세스는 한 번에 작업 하나, 한 홈에는 작업 프로세스 하나(잠금 `locks/jobs.lock` — 예약 실행의 `run` 잠금과 다른 이름이라 서로 막지 않습니다).
 - **CLI 격리**: `--tools ""` · `--strict-mcp-config --mcp-config '{"mcpServers":{}}'` · `--setting-sources project` · `--permission-mode dontAsk` · `--max-turns 1` · `--output-format json`, 같은 대화는 `--resume`. 최소 환경변수, 빈 작업 폴더(`jobs-work/`), 입력은 표준 입력으로만. 토큰·HMAC 키·대응표는 넘기지 않습니다.
@@ -352,6 +352,19 @@ python3 -m unittest discover -s agent/tests   # 키트 루트에서. Keychain·l
 - **서버 응답**: 입력·정의 조회가 요청 속도 한도(429)에 걸리면 임대 안에서 `Retry-After` 를 지켜 다시 받습니다(서버가 처리 전에 거절하므로 안전). 서버가 결과를 다시 검사해 거절하면(400 `CONTRACT-INVALID` — 예: 없는 항목을 대상으로) 모델을 다시 돌리지 않고 바로 `result-shape` 실패로 끝냅니다(5분 기다려 「확인 필요」가 되지 않게). 서버가 409(정의 바뀜 `JOB-DEFS`·버전·임대)를 주면 버립니다.
 - **같은 대화 한 번에 하나**: 같은 대화(session_ref)의 CLI 는 동시에 돌지 않습니다. 앞 실행이 남아 있으면 이 작업 임대 안(최소 1분 실행 시간을 남기고)에서 기다리고, 못 기다리면 입력도 받지 않고 넘깁니다(서버가 임대 만료 뒤 「확인 필요」로 남김).
 - **끝났는지 모를 때**(CLI 시간 초과): 실패를 보내지 않고 그 대화를 임대 만료(5분)까지 잠가 둡니다 — 서버는 「확인 필요」로 남기고, 같은 대화가 겹쳐 이어지지 않습니다.
+
+**수집 글 긴 요약(`jobs.py` `_process_long` — kind `collected_long`)**: 웹 읽기 판이나 대화(MCP `collected_post_summarize`)가 요청한 수집 글 하나의 긴 요약(`as_is`, `to_be`, `ops`, `points`)을 PC 에서 만듭니다.
+- **폴 `kinds` 계약**: 폴은 `kinds=converse,summarize_reading,routine_ingest,collected_long`(`jobs.KINDS`)을 붙입니다. 서버는 `collected_long` 을 `kinds` 에 그 이름이 있는 폴에만 임대합니다. `kinds` 를 안 보내는 옛 앱에는 임대하지 않아 그 작업은 `queued` 로 남습니다. 다른 종류의 임대 규칙은 그대로입니다.
+- **입력**: 입력 조회가 주는 `text` = 수집 글 항목 id(서버 항목 id, `i_…`). 원문은 서버에서 오지 않습니다.
+- **행 찾기**: 로컬 저장소의 `dedupe_keys_for_target("feed", 항목 id)` 로 feed 원천 id 를 찾고, feed 입력 파일에서 그 id 의 마지막 행을 읽습니다. `feed` 어댑터가 꺼져 있거나 입력 경로가 없으면 행을 못 찾는 것으로 봅니다.
+- **기존 long 재사용**: 행에 유효한 `long`(`points` 1개 이상)이 이미 있으면 모델을 부르지 않고 그 값을 보냅니다(`model_meta.duration_ms` 0).
+- **모델 입력**: 없으면 원문(행의 `body`, 없으면 `text`) 앞 9000자를 구독 CLI 에 1회 넘깁니다. 시간 제한 150초. 원문이 300자 미만이면 모델을 부르지 않고 `long-short` 로 끝냅니다.
+- **모델 격리**: 4절, 이 절 CLI 격리 항목과 같습니다(도구, MCP 끔, 1턴, 최소 환경변수, 빈 작업 폴더, 입력은 표준 입력, 토큰 안 넘김). 원문은 PC 밖으로 나가지 않고, 서버로는 요약 네 칸과 모델 정보만 갑니다.
+- **출력 검사**: JSON 객체 하나, 키는 `as_is`, `to_be`, `ops`, `points` 뿐. `as_is`, `to_be`, `ops` 는 각 1000자 이하 문자열 또는 `null`, `points` 는 1~12개이고 각 300자 이하. 수집 글 AI 문장과 같은 가림과 검사를 거친 뒤에도 차단 꼴이 남은 칸이 있으면 일부만 빼고 보내지 않고 실패입니다.
+- **되쓰기**: 모델로 만들었고 `feed.write_back` 이 켜져 있으면 feed 입력 파일의 그 id 마지막 행의 `long` 키만 `write_back_feed` 와 같은 방식(원자 교체, 원래 권한 유지, 읽은 뒤 파일이 바뀌었으면 한 번 다시 읽어 재시도)으로 씁니다. `long` = `{asis, tobe, ops, points, at, model, by: "mycrm-agent"}`. 그 사이 행에 유효한 `long` 이 생겼으면 덮지 않고 그 값을 서버에 보냅니다(앱과 웹이 같은 값). `write_back` 이 꺼져 있으면 파일에 쓰지 않습니다. 되쓰기가 실패해도(파일 바뀜, 쓰기 불가) 서버에는 결과를 보냅니다.
+- **보내는 꼴**: `{lease_generation, input_version, result_version, collected_long:{as_is, to_be, ops, points}, model_meta}`.
+- **실패 코드 넷**: `long-not-found` = feed 행을 못 찾음(행 없음, feed 꺼짐, 읽기 실패 전부), `long-short` = 원문 300자 미만, `long-model` = 구독 CLI 실패 전부(로그인, 종료 오류, 시간 초과), `long-invalid` = 출력 꼴이나 상한 위반. 종료 신호로 CLI 를 끊어 끝났는지 모르면 실패를 보내지 않고, 서버가 임대 만료 뒤 확인 필요(`needs_check`)로 남깁니다.
+- 실 CLI 는 `MYCRM_JOBS_ALLOW_REAL_CLI` 조건 그대로입니다. 시험은 모의 실행기만 씁니다.
 
 PC 에 남는 것: `jobs-state.json`(현재 사용자만 읽기·쓰기, 판 2 — 판 1 파일은 읽을 때 올림) = 진행 중 작업의 임대 세대·대화 참조·임대 만료 시각 · 날짜별 시도 수·재실행 수 · 대화 참조 → CLI 세션 ID 대응. **입력·결과·프롬프트·정의 본문은 저장하지 않습니다**(메모리에서만 다룸). CLI 세션 ID 는 서버로 보내지 않습니다. 서버에 가는 결과의 모델 정보는 도구 이름·모델 이름·걸린 시간·CLI 실행 횟수뿐입니다.
 
