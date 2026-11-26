@@ -701,6 +701,7 @@ def _migrate_board_import(c):
             c.execute(f"ALTER TABLE item_links ADD COLUMN {col} text")
         if not _has_constraint(c, "item_links", fk):
             c.execute(f"ALTER TABLE item_links ADD CONSTRAINT {fk} FOREIGN KEY (user_id, {col}) REFERENCES {table}(user_id, id)")
+    _widen_record_link_keys(c)
     if not _has_constraint(c, "item_links", "ck_item_links_target"):
         # 옛 이름 없는 대상 CHECK(3열 num_nonnulls) 는 이름을 가정하지 않고 정의로 찾는다(PR① 선례). 같은 트랜잭션 — 의미는 추가만
         for r in c.execute("SELECT conname FROM pg_constraint WHERE conrelid = 'item_links'::regclass AND contype = 'c' "
@@ -939,6 +940,20 @@ def _migrate_pc_connect(c):
               "WHERE pending_token_id IS NOT NULL")
     if not _has_col(c, "desktop_handoffs", "loopback"):   # CLI --browser 코드 표식(옛 행 = 앱 코드)
         c.execute("ALTER TABLE desktop_handoffs ADD COLUMN loopback boolean NOT NULL DEFAULT false")
+
+
+def _widen_record_link_keys(c):
+    """기록 출발 관계 key CHECK 를 RECORD_LINK_KEYS 로 넓힌다(2026-11-26 topics). 옛 DB 는 이름 없는 CHECK(source_record_id IS NULL OR
+    field_key IN …)라 이름을 가정하지 않고 정의로 찾아 지운다 — field_key 를 보는 CHECK 는 이것 하나다. 값만 더한다(기존 행 그대로, 멱등)."""
+    r = _one(c, "SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint WHERE conrelid = 'item_links'::regclass "
+                "AND conname = 'ck_item_links_record_key'")
+    if r and all(f"'{v}'" in r["d"] for v in RECORD_LINK_KEYS):
+        return
+    for x in c.execute("SELECT conname FROM pg_constraint WHERE conrelid = 'item_links'::regclass AND contype = 'c' "
+                       "AND pg_get_constraintdef(oid) LIKE '%%field_key%%'").fetchall():
+        c.execute(f'ALTER TABLE item_links DROP CONSTRAINT "{x["conname"]}"')
+    c.execute("ALTER TABLE item_links ADD CONSTRAINT ck_item_links_record_key CHECK (source_record_id IS NULL OR field_key IN ("
+              + ",".join(repr(v) for v in RECORD_LINK_KEYS) + "))")
 
 
 def _widen_check(c, t, name, col, vals):
@@ -2081,7 +2096,7 @@ TARGET_KINDS = ("item", "record", "candidate", "person", "source", "activity")  
 ITEM_ACTIONS = ("apply", "confirm", "exclude", "pending", "archive", "restore", "discard")
 ITEM_DECISIONS = {"confirm": "confirmed", "exclude": "excluded", "pending": "pending"}
 ITEM_RETIRED = ("exclude", "pending")   # 휴지통 스위치 켜짐이면 미지원(ACTION-RETIRED) — 꺼짐이면 기존 동작
-RECORD_LINK_KEYS = ("attach_to", "axes")
+RECORD_LINK_KEYS = ("attach_to", "axes", "topics")   # topics = 주제 잇기(2026-11-26, imports._topic_link 만 쓴다 — record_attach 는 받지 않는다)
 DEFAULT_PROMOTION = {"confirmed_claims_min": 2, "claim_field": "evidence_claims", "distinct_events_min": 0,
                      "event_field": None, "event_claim_field": None}
 DEFAULT_CLAIM_FIELD = {"key": "evidence_claims", "label": "근거 판단", "value_type": "reference", "required": False,
@@ -3050,7 +3065,7 @@ def _replace_item_links(c, uid, item_id, object_id, links):
 
 
 def record_links(uid, record_ids=None):
-    """기록 출발 관계(attach_to·axes). 출발 글·대상 항목·대상 후보(부모 글)가 휴지통이면 뺀다 — 같은 쿼리의 JOIN."""
+    """기록 출발 관계(attach_to·axes·topics). 출발 글·대상 항목·대상 후보(부모 글)가 휴지통이면 뺀다 — 같은 쿼리의 JOIN."""
     sql = ("SELECT l.source_record_id AS record_id,l.field_key,l.target_item_id,l.target_record_id,l.target_candidate_id FROM item_links l "
            "JOIN records s ON s.user_id=l.user_id AND s.id=l.source_record_id AND s.trashed_at IS NULL "
            "LEFT JOIN items t ON t.user_id=l.user_id AND t.id=l.target_item_id "
@@ -3476,6 +3491,13 @@ def item_get(uid, item_id):
                       "AND i.trashed_at IS NULL)) AND (r.id IS NULL OR (r.deleted_at IS NULL AND r.trashed_at IS NULL)) ORDER BY l.id",
                    (uid, item_id))
         out["incoming"] = [_iso(r) for r in inc]
+        # 주제 잇기(2026-11-26) — 이 항목에 주제(field_key topics)로 붙은 기록을 날짜순 한 줄기로(오래된 것 먼저). on = 원본 날짜(없으면
+        # 원본 시각·만든 시각의 KST 날짜). 휴지통·지운 기록은 뺀다. 주제 연결이 없으면 빈 목록
+        out["thread"] = [_iso(r) for r in _all(
+            c, "SELECT r.id AS record_id, r.title, r.body, COALESCE(r.source_date, (COALESCE(r.source_created_at, r.created) "
+               "AT TIME ZONE 'Asia/Seoul')::date)::text AS \"on\" FROM item_links l JOIN records r ON r.user_id=l.user_id AND r.id=l.source_record_id "
+               "WHERE l.user_id=%s AND l.target_item_id=%s AND l.field_key='topics' AND r.deleted_at IS NULL AND r.trashed_at IS NULL "
+               "ORDER BY 4, r.created, r.id", (uid, item_id))]
         out["history"] = [_iso(r) for r in _all(c, "SELECT id,action,prev_revision,prev_state,event_meta,at FROM item_history "
                                                    "WHERE user_id=%s AND item_id=%s ORDER BY id", (uid, item_id))]
         import stack_service

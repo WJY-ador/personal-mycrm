@@ -399,7 +399,7 @@ CREATE TABLE IF NOT EXISTS item_links (
   source_item_id      text,                         -- 출발은 item 또는 record 중 정확히 하나
   source_object_id    text,
   source_record_id    text,
-  field_key           text NOT NULL,                -- item 출발: field_defs 키 · record 출발: attach_to | axes (서버 검증)
+  field_key           text NOT NULL,                -- item 출발: field_defs 키 · record 출발: attach_to | axes | topics (서버 검증)
   target_item_id      text,
   target_record_id    text,
   target_candidate_id text,
@@ -410,7 +410,8 @@ CREATE TABLE IF NOT EXISTS item_links (
   PRIMARY KEY (user_id, id),
   CHECK ((source_item_id IS NOT NULL AND source_object_id IS NOT NULL AND source_record_id IS NULL)
       OR (source_item_id IS NULL AND source_object_id IS NULL AND source_record_id IS NOT NULL)),
-  CHECK (source_record_id IS NULL OR field_key IN ('attach_to','axes')),
+  -- 기록 출발 관계 key(db.RECORD_LINK_KEYS). 옛 DB 의 이름 없는 CHECK 는 init_schema 가 정의로 찾아 지우고 이 이름으로 다시 만든다(topics 2026-11-26)
+  CONSTRAINT ck_item_links_record_key CHECK (source_record_id IS NULL OR field_key IN ('attach_to','axes','topics')),
   -- 대상 열 정확히 하나. 옛 DB 의 이름 없는 3열 CHECK(item_links_check2)는 init_schema 가 정의로 찾아 지우고 이 이름으로 다시 만든다
   CONSTRAINT ck_item_links_target CHECK (num_nonnulls(target_item_id, target_record_id, target_candidate_id,
                                                       target_person_id, target_source_id, target_activity_id) = 1),

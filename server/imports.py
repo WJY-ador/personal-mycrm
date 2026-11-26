@@ -20,6 +20,7 @@ import hmac as _hmac
 import json
 import re
 import secrets
+import unicodedata
 import zlib
 
 from psycopg.types.json import Jsonb
@@ -97,7 +98,15 @@ INBOX_DIGEST = db.DIGEST_TV
 INBOX_DIGEST_SOURCE = "인박스 요약"
 DIGEST_THEMES_MAX, DIGEST_NAME_CP, DIGEST_LINE_CP, DIGEST_URLS_MAX, DIGEST_INPUT_MAX = 7, 20, 80, 60, 60
 DIGEST_URL_CP = 300   # 요약의 post_url 하나(agent/contract.py 와 같은 상한, 2026-11-22 메인)
-SERVER_FEATURES = ("axis_codes",)   # 장치 GET /api/imports/device 의 features — 그 사용자에게 코드 있는 축 항목이 있을 때만 싣는다
+# 장치 GET /api/imports/device 의 features. axis_codes = 그 사용자에게 코드 있는 축 항목이 있을 때만, topics = key topics 오브젝트가 있을 때만(서로 독립)
+SERVER_FEATURES = ("axis_codes", "topics")
+# 주제 잇기(2026-11-26) — 세션 정리 묶음의 topic(이름 한 줄)대로 그 기록을 사용자 오브젝트 key topics 의 항목에 붙인다(수집 글처럼 key 로 찾는다,
+# 자동으로 만들지 않는다). 이름이 같은 항목(_topic_key 로 비교)이 있으면 거기에 이어 붙이고, 없으면 항목을 새로 만든다(ingest_kind inbox).
+# 연결은 기록 출발 item_links(field_key topics) — attach_to 와 따로 둔다(record_attach 가 attach_to 를 통째로 덮어써도 남는다).
+# 오브젝트가 없거나, 같은 이름 항목이 휴지통·보관이거나, 항목을 만들 수 없으면 연결 없이 기록만 남는다(응답 topic_dropped, 오류 아님)
+TOPIC_OBJECT_KEY = "topics"
+TOPIC_LINK_FIELD = "topics"
+TOPIC_MAX_CP = 40
 # 수집 글(collected_post) — 서버가 담는 자리 = 사용자 계정의 커스텀 오브젝트 key collected_posts(S2, 자동으로 만들지 않는다).
 # 장치가 덮는 필드 키(DEVICE_FIELDS)만 쓴다. 사용자가 지웠거나 꼴이 다른 필드는 건너뛰고, 필수 둘(COLLECTED_REQUIRED)이 없으면 OBJECT-MISSING.
 COLLECTED_OBJECT_KEY = "collected_posts"
@@ -187,7 +196,7 @@ COMMON = ("contract", "schema_revision", "source_instance_id", "original_id", "r
           "transform_version", "policy_revision")
 # 종류별 (필수, 선택) 추가 키
 KIND_KEYS = {
-    "self_text": (("body",), ("title", "source_created_at", "source_date", "activity_ref", "generation", "axis_code", "digest")),   # axis_code = axis-page/1 만, digest = inbox-digest/1 만
+    "self_text": (("body",), ("title", "source_created_at", "source_date", "activity_ref", "generation", "axis_code", "digest", "topic")),   # axis_code = axis-page/1 만, digest = inbox-digest/1 만, topic = session-wrap/1 만
     "activity": (("action", "state", "occurred_on", "observed_on", "provider", "raw_id"), ("people", "axes")),   # observed_on = 필수 키·null 허용
     "self_summary": (("body", "generation"), ("title", "source_created_at", "source_date")),
     "collected_post": (("raw_id", "channel", "collected_on", "title", "state"),
@@ -534,23 +543,39 @@ def validate(req: dict) -> dict:
                 raise _bad("axis_code", "required")
             if not isinstance(req["axis_code"], str) or not AXIS_CODE_RE.match(req["axis_code"]):
                 raise _bad("axis_code", "format")
-            for k in ("activity_ref", "generation", "digest"):
+            for k in ("activity_ref", "generation", "digest", "topic"):
                 if k in req:
                     raise _bad(k, "unknown_field")
         elif tv == INBOX_DIGEST:   # 인박스 요약 — digest 필수, 활동 연결·생성 신고·축 코드 없음(서버가 AI 요약으로 판정한다)
             if "digest" not in req:
                 raise _bad("digest", "required")
             _digest(req["digest"])
-            for k in ("activity_ref", "generation", "axis_code"):
+            for k in ("activity_ref", "generation", "axis_code", "topic"):
                 if k in req:
                     raise _bad(k, "unknown_field")
         else:
             for k in ("axis_code", "digest"):
                 if k in req:
                     raise _bad(k, "unknown_field")
+            if "topic" in req:   # 주제 이름 — 세션 정리 묶음만
+                if tv != SESSION_WRAP:
+                    raise _bad("topic", "unknown_field")
+                _topic(req["topic"])
     else:
         _generation(kind, req["generation"])
     return req
+
+
+def _topic(v):
+    """session-wrap/1 의 topic — 주제 이름 한 줄, 1~40자, 줄바꿈·제어 문자 없음. URL·이메일·경로 꼴 금지(_text 와 같은 규칙)."""
+    _text(v, "topic", TOPIC_MAX_CP, single_line=True)
+    if any(unicodedata.category(ch) == "Cc" for ch in v):
+        raise _bad("topic", "control_char")
+
+
+def _topic_key(name: str) -> str:
+    """주제 이름 비교 열쇠 — NFC, 앞뒤 공백 빼기, 연속 공백 하나로, 대소문자 무시(casefold)."""
+    return " ".join(unicodedata.normalize("NFC", name or "").split()).casefold()
 
 
 def _digest(d):
@@ -606,6 +631,8 @@ def projection(req: dict) -> dict:
             out["axis_code"] = req["axis_code"]
         if "digest" in req:
             out["digest"] = req["digest"]
+        if "topic" in req:   # 키가 없으면 옛 해시 그대로
+            out["topic"] = req["topic"]
     else:
         out["generation"] = req["generation"]
     return out
@@ -620,6 +647,8 @@ def _pending_payload(req: dict) -> dict:
             p["axis_code"] = req["axis_code"]
         if "digest" in req:
             p["digest"] = req["digest"]
+        if "topic" in req:
+            p["topic"] = req["topic"]
     else:
         p["generation"] = req["generation"]
     return p
@@ -1721,8 +1750,13 @@ def submit(authorization: str, idempotency_key_header: str, raw: bytes) -> tuple
                 return 201, _deleted_resp(e, "trash", False)
         else:
             e = _auto_approve(c, uid, _receive_self(c, dev, req, latest, current, req_sha, proj_sha))
+            if "topic" in req and e["state"] == "applied":   # 주제를 붙이지 못한 수(오류 아님). 바로 기록이 된 전송에만
+                req["_topic_dropped"] = 0 if _one(c, "SELECT 1 AS x FROM item_links WHERE user_id=%s AND source_record_id=%s AND field_key=%s",
+                                                  (uid, e["target_record_id"], TOPIC_LINK_FIELD)) else 1
         c.execute("UPDATE import_streams SET last_used_at=now() WHERE user_id=%s AND id=%s", (uid, dev["id"]))
         out = _resp(e, False)
+        if "_topic_dropped" in req:
+            out["topic_dropped"] = req.pop("_topic_dropped")
         if "_axis_codes_dropped" in req:   # 축 코드 중 그 사용자의 축 항목에 없어 버린 수(오류 아님). 축을 맞춰 본 전송에만
             out["axis_codes_unknown"] = req.pop("_axis_codes_dropped")
         return 201, out
@@ -1736,14 +1770,14 @@ def device_self(authorization: str) -> dict:
     with tx() as c:
         r = _one(c, "SELECT token_expires_at FROM import_streams WHERE user_id=%s AND id=%s", (dev["user_id"], dev["id"]))
         axes = live_axes(c, dev["user_id"])
-        coded = _has_coded_axes(c, dev["user_id"])
+        feats = {"axis_codes": _has_coded_axes(c, dev["user_id"]), "topics": _topic_obj(c, dev["user_id"]) is not None}
     # 정책 axes = 저장값이 아니라 지금 계정의 축 항목 전부(agent 의 POLICY-AXIS 검사가 그대로 통과한다). 판 = 저장 판 + 축 집합 지문
     # features(2026-11-18) = 이 서버가 받는 선택 기능. axis_codes 는 코드 있는 축 항목이 있을 때만 — 없으면 앱은 옛 경로(축 없음) 그대로 보낸다
-    # (축 없는 계정의 수집 글을 다시 올리지 않는다). 옛 앱은 이 키를 모른다(무시)
+    # (축 없는 계정의 수집 글을 다시 올리지 않는다). topics(2026-11-26)는 주제 오브젝트가 있을 때만 — 없으면 앱은 주제 줄을 본문에 둔다. 옛 앱은 이 키를 모른다(무시)
     return {"stream_id": dev["id"], "label": dev["label"], "policy": {**(dev["policy"] or {}), "axes": axes},
             "policy_revision": wire_revision(dev["policy_revision"], axes),
             "hmac_namespace": dev["hmac_namespace"], "token_expires_at": _j(r["token_expires_at"]),
-            "features": list(SERVER_FEATURES) if coded else []}
+            "features": [f for f in SERVER_FEATURES if feats[f]]}
 
 
 def _has_coded_axes(c, uid) -> bool:
@@ -1921,6 +1955,8 @@ def _approve_in(c, uid, e, by="user") -> str:
     # 자동 분류(2026-11-18) — 새 기록과 밀려난 옛 개정 기록을 함께 맞춘다(옛 개정의 자동 분류 항목은 빠진다). savepoint 안, 실패해도 승인은 그대로
     olds = [r["target_record_id"] for r in _all(c, "SELECT DISTINCT target_record_id FROM import_entries WHERE user_id=%s AND stream_id=%s "
                                                    "AND original_id=%s AND target_record_id IS NOT NULL", (uid, e["stream_id"], e["original_id"]))]
+    if p.get("transform_version") == SESSION_WRAP:
+        _topic_link(c, uid, rid, p.get("topic"), [x for x in olds if x != rid])
     db._route_hook(c, uid, sorted({rid, *olds}))
     if p.get("transform_version") == INBOX_DIGEST:
         _digest_store(c, uid, rid, p["digest"])
@@ -2013,6 +2049,42 @@ def _axis_page_link(c, uid, rid, code):
                 db._insert_link(c, uid, {"field_key": "axes", "target_kind": "item", "target_id": item}, source_record=rid)
         except CrmError:
             pass
+
+
+def _topic_obj(c, uid):
+    """주제 오브젝트(key topics, 적용·미보관) {id, revision} 또는 None."""
+    return _one(c, "SELECT id, revision FROM object_defs WHERE user_id=%s AND key=%s AND revision > 0 AND archived_at IS NULL",
+                (uid, TOPIC_OBJECT_KEY))
+
+
+def _topic_link(c, uid, rid, name, olds):
+    """세션 정리 기록 rid → 주제 항목 연결(field_key topics). 같은 묶음의 옛 판 기록(olds)의 주제 연결은 먼저 뗀다 — 현재 판만 주제에 붙는다.
+    이름이 같은 항목(_topic_key, 먼저 만든 것)에 붙이고, 없으면 수집 글 항목과 같은 길(제안 → 적용, 장치 수집 모드, ingest_kind inbox)로
+    항목을 만든다(제목 = 받은 이름 그대로, 본문 빈 값). 같은 이름 항목이 휴지통·보관뿐이면 붙이지 않는다. 오브젝트가 없거나 항목을 만들 수
+    없으면(사용자가 더한 필수 필드 등) 연결만 빠지고 기록은 남는다(savepoint). 반환 붙였나."""
+    if olds:
+        c.execute("DELETE FROM item_links WHERE user_id=%s AND field_key=%s AND source_record_id = ANY(%s)", (uid, TOPIC_LINK_FIELD, olds))
+    od = name and _topic_obj(c, uid)
+    if not od:
+        return False
+    want = _topic_key(name)
+    same = [r for r in _all(c, "SELECT id, title, archived_at, trashed_at FROM items WHERE user_id=%s AND object_id=%s AND revision > 0 "
+                               "ORDER BY created_at, id", (uid, od["id"])) if _topic_key(r["title"]) == want]
+    item = next((r["id"] for r in same if r["archived_at"] is None and r["trashed_at"] is None), None)
+    if item is None and same:
+        return False
+    try:
+        with c.transaction():
+            if item is None:
+                with db.device_ingest_mode():
+                    pr = db.item_propose(uid, od["id"], od["revision"], None, 0, None, name, "", {}, [])
+                    db.item_decide(uid, pr["item_id"], 0, pr["proposal_id"], "apply")
+                item = pr["item_id"]
+                c.execute("UPDATE items SET ingest_kind=%s WHERE user_id=%s AND id=%s", (COLLECTED_INGEST, uid, item))
+            db._insert_link(c, uid, {"field_key": TOPIC_LINK_FIELD, "target_kind": "item", "target_id": item}, source_record=rid)
+    except CrmError:
+        return False
+    return True
 
 
 def inbox_approve(uid: str, import_id: str) -> dict:

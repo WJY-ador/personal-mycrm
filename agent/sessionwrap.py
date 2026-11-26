@@ -16,6 +16,10 @@
   (붙은 조사도 함께 가린다 — 폴더 이름이 새지 않게). 가린 수는 collect 반환 redacted 와, 서버가 승인 때 센 기록 메타에만 남는다.
 - URL·이메일이 있거나 길이 한도를 넘으면 계약 검증에서 격리된다(보내지 않는다) — 지금 규칙 그대로.
 - 장치 허용 규칙에 session-wrap/1 이 없으면 아무것도 만들지 않는다(skipped=policy) — 웹 「연결 장치」에서 「세션 정리」를 켠다.
+- 주제 줄(2026-11-26 주제 잇기): 묶음 본문에서 줄 처음이 `주제:` 인 첫 줄(코드 울타리 밖)의 콜론 뒤 글자(앞뒤 공백 뺌)를 주제 이름으로
+  fields topic 에 싣고 그 줄은 본문에서 뺀다. 서버는 같은 이름의 주제 항목에 이 기록을 이어 붙인다. 이름이 계약(contract.check_topic: 1~40자
+  한 줄, 제어 문자·URL·경로 꼴 없음)에 안 맞거나, 줄을 빼면 본문이 비거나, 서버 features 에 topics 가 없으면(옛 서버, 주제 오브젝트 없는 계정)
+  줄을 본문에 그대로 둔다(axis_codes 와 같은 방식).
 """
 from __future__ import annotations
 
@@ -23,7 +27,7 @@ import datetime as _dt
 import os
 import re
 
-from . import jcs, runner as _runner
+from . import contract, jcs, runner as _runner
 
 TRANSFORM = "session-wrap/1"
 ADAPTER = "session-wrap"
@@ -35,6 +39,8 @@ _H1 = re.compile(r"^#[ \t]+\S")
 _RULE = re.compile(r"^-{3,}[ \t]*$")
 _FENCE = re.compile(r"^[ \t]{0,3}(```|~~~)")
 _DROP = re.compile(r"^[ \t]*(?:[-*][ \t]+)?→[ \t]*남긴[ \t]*곳[ \t]*[:：]")
+_TOPIC = re.compile(r"^주제:(.*)$")
+TOPICS_FEATURE = "topics"             # 서버 features(GET /api/imports/device) — 주제 오브젝트가 있는 계정에만 실린다
 PATH_MASK = "‹경로›"                  # 서버 imports.SESSION_WRAP_PATH_MASK 와 같은 문자열(서버는 승인 때 개수만 센다)
 # 경로 덩어리 — 계약 차단 규칙(contract._BLOCK_PATTERNS path)의 접두를 모두 덮고 앞 경계는 더 넓다(영숫자·._/~- 뒤만 아니면).
 # 그래서 가린 결과는 path 규칙에 걸리지 않는다(시험이 본다). UNC 는 계약처럼 앞 경계 없이.
@@ -91,6 +97,32 @@ def parse(text: str) -> list:
     return out
 
 
+def split_topic(body: str):
+    """묶음 본문 → (주제 이름 또는 None, 그 줄을 뺀 본문). 줄 처음이 `주제:` 인 첫 줄만 본다(코드 울타리 안 제외).
+    이름이 계약에 안 맞거나 줄을 빼면 본문이 비면 (None, 본문 그대로)."""
+    lines, fence = body.split("\n"), None
+    for i, line in enumerate(lines):
+        if fence is not None:
+            if line.strip().startswith(fence):
+                fence = None
+            continue
+        m = _FENCE.match(line)
+        if m:
+            fence = m.group(1)
+            continue
+        t = _TOPIC.match(line)
+        if not t:
+            continue
+        name = t.group(1).strip()
+        rest = "\n".join(lines[:i] + lines[i + 1:]).strip("\n")
+        try:
+            contract.check_topic(name)
+        except contract.ContractError:
+            return None, body
+        return (name, rest) if rest.strip() else (None, body)
+    return None, body
+
+
 def list_files(folder: str) -> list:
     """폴더 바로 아래의 (날짜, 파일 이름, 실경로) — 날짜 이름 .md 만. 숨김·심링크·폴더 밖 실경로·하위 폴더 제외."""
     root = os.path.realpath(folder)
@@ -125,6 +157,7 @@ def collect(st, cfg: dict, counts: dict | None = None) -> dict:
         return out
     counts = counts if counts is not None else _runner.new_counts()
     execution = "attended" if cfg.get("_execution") == "attended" else "unattended"
+    topics_on = TOPICS_FEATURE in (cfg.get("server_features") or [])
     for folder in sc.get("folders") or []:
         if not (isinstance(folder, str) and os.path.isabs(folder) and os.path.isdir(folder)):
             out["missing_folders"] += 1             # 폴더 하나가 없어도 나머지는 계속한다
@@ -151,11 +184,16 @@ def collect(st, cfg: dict, counts: dict | None = None) -> dict:
                 seen[title] = n + 1
                 out["blocks"] += 1
                 key = jcs.sha256_hex([TRANSFORM, root, fn, title, n])   # 중복 기준은 가리기 전 제목(PC 대응표만)
+                topic, body = split_topic(body) if topics_on else (None, body)
                 t, n1 = redact_paths(title)
                 b, n2 = redact_paths(body)
                 out["redacted"] += n1 + n2
                 fields = {"title": t, "body": b, "source_date": date}
+                if topic is not None:
+                    fields["topic"] = topic
+                ident = " ".join(str(fields.get(k) or "") for k in ("title", "body", "topic"))   # 계정 식별자 대조에 주제 이름도
                 if _runner.stage_self_text(st, cfg, adapter_name=ADAPTER, dedupe_key=key, fingerprint=key, kind="self_text",
-                                           transform_version=TRANSFORM, execution=execution, fields=fields, counts=counts):
+                                           transform_version=TRANSFORM, execution=execution, fields=fields, counts=counts,
+                                           identity_text=ident):
                     out["staged"] += 1
     return out

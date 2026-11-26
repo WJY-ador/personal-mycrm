@@ -7,12 +7,16 @@
    unknown·generated·ai(인용 불가) · resolved_by auto · 대기 0 · 같은 원천 새 개정 = 새 기록·현재 판 이동(승인 경로와 같다) · 같은 내용 = noop
 2. 기록 일일 한도 = 대기로 남음(잃지 않음) → auto_approve_pending 이 한도가 풀린 뒤 승인
 3. 스위치 꺼짐(비상 끄기) = 대기로 남음 → 켠 뒤 auto_approve_pending 이 승인 · 옛 개정 대기는 승인하지 않는다
+4. 주제 잇기(2026-11-26) — session-wrap/1 topic: 주제 오브젝트 없음 = topic_dropped 1(기록은 남음) · 오브젝트가 생기면 features topics(축과 독립)
+   · 새 주제 = 항목 생성(ingest_kind inbox, 자동 분류 표시 없음) · 같은 이름(NFC, 공백, 대소문자) = 같은 항목에 이어 붙기 · 개정으로 주제 바뀜 =
+   현재 판만 새 주제 · 휴지통 주제 = 붙이지 않음 · record_attach(attach_to)가 주제 연결을 지우지 않음 · 기록 한도 대기 → 승인 때 붙음 · item_get thread 날짜순
 """
 import asyncio
 import json
 import os
 import secrets
 import sys
+import unicodedata
 import urllib.parse
 from pathlib import Path
 
@@ -164,6 +168,95 @@ async def body(uid, dev, tok):
     assert (e["state"], e["resolved_by"]) == ("applied", "auto") and rec(uid, e["target_record_id"])["body"] == "합성 꺼짐 본문 둘."
     assert imports.inbox_count(uid) == 0
     print("OK 3 스위치 꺼짐 = 대기(비상 끄기) → 켠 뒤 승인 · 옛 개정 대기는 닫힘")
+    await topics(uid, dev, tok)
+
+
+def topic_links(uid, rid):
+    return [ln["target_id"] for ln in db.record_links(uid, [rid]) if ln["field_key"] == "topics"]
+
+
+def topic_items(uid, oid):
+    with db.tx() as c:
+        return c.execute("SELECT id, title, ingest_kind, trashed_at FROM items WHERE user_id=%s AND object_id=%s AND revision > 0 "
+                         "ORDER BY created_at, id", (uid, oid)).fetchall()
+
+
+async def topics(uid, dev, tok):
+    # ── 4. 주제 잇기 ──
+    sw = dict(transform="session-wrap/1")
+    r = await post(tok, req(dev, topic="합성 주제", **sw))
+    assert r["state"] == "applied" and r["topic_dropped"] == 1 and topic_links(uid, r["target_id"]) == [], "오브젝트 없음 = 기록만"
+    assert "topics" not in imports.device_self("Bearer " + tok)["features"]
+    q = db.definition_propose(uid, None, 0, {"key": imports.TOPIC_OBJECT_KEY, "label": "주제", "semantic_kind": "collection", "fields": []})
+    db.definition_apply(uid, q["object_id"], q["proposal_id"], 0)
+    oid = q["object_id"]
+    assert imports.device_self("Bearer " + tok)["features"] == ["topics"], "축 항목 없이도 topics 는 실린다"
+    # 새 주제 = 항목 하나. 날짜를 거꾸로 보내 thread 가 날짜순인지 본다
+    a = req(dev, topic="합성 주제", source_date="2026-11-20", title="합성 셋째 날", **sw)
+    r1 = await post(tok, a)
+    assert r1["topic_dropped"] == 0, r1
+    its = topic_items(uid, oid)
+    assert [(x["title"], x["ingest_kind"]) for x in its] == [("합성 주제", "inbox")], its
+    tid = its[0]["id"]
+    assert topic_links(uid, r1["target_id"]) == [tid]
+    full = db.item_get(uid, tid)
+    assert not full.get("auto_routed"), "자동 분류 표시 없음"
+    # 같은 이름(연속 공백, NFD, 대소문자) = 같은 항목에 이어 붙기
+    r2 = await post(tok, req(dev, topic="합성  주제", source_date="2026-11-18", title="합성 첫째 날", **sw))
+    r3 = await post(tok, req(dev, topic=unicodedata.normalize("NFD", "합성 주제"), source_date="2026-11-19", title="합성 둘째 날", **sw))
+    assert topic_links(uid, r2["target_id"]) == topic_links(uid, r3["target_id"]) == [tid] and len(topic_items(uid, oid)) == 1
+    rc = await post(tok, req(dev, topic="Topic Case", **sw))
+    rc2 = await post(tok, req(dev, topic="topic case", **sw))
+    assert topic_links(uid, rc["target_id"]) == topic_links(uid, rc2["target_id"]) and len(topic_items(uid, oid)) == 2
+    th = db.item_get(uid, tid)["thread"]
+    assert [(x["title"], x["on"]) for x in th] == [("합성 첫째 날", "2026-11-18"), ("합성 둘째 날", "2026-11-19"),
+                                                   ("합성 셋째 날", "2026-11-20")], th
+    assert th[0]["body"] and th[0]["record_id"] == r2["target_id"]
+    assert db.item_get(uid, topic_items(uid, oid)[1]["id"])["thread"][0]["on"] == "2026-11-12"
+    # 다른 변환에 topic = 계약 위반
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url=PUBLIC) as h:
+        b = req(dev, topic="합성 주제")
+        bad = await h.post("/api/imports", content=json.dumps(b, ensure_ascii=False).encode("utf-8"), headers={
+            "content-type": "application/json", "authorization": "Bearer " + tok,
+            "idempotency-key": imports.idempotency_key(b["source_instance_id"], b["original_id"], b["revision"])})
+    assert bad.status_code == 400 and bad.json()["code"] == "CONTRACT-INVALID" and "topic" in bad.json()["msg"], bad.text
+    # 개정으로 주제 바뀜 = 현재 판 기록만 새 주제에(옛 판 기록의 주제 연결은 떨어진다)
+    a2 = req(dev, original=a["original_id"], prev=a["revision"], topic="합성 다른 주제", source_date="2026-11-20", title="합성 셋째 날", **sw)
+    r4 = await post(tok, a2)
+    new = [x["id"] for x in topic_items(uid, oid) if x["title"] == "합성 다른 주제"]
+    assert r4["topic_dropped"] == 0 and len(new) == 1 and topic_links(uid, r4["target_id"]) == new
+    assert topic_links(uid, r1["target_id"]) == [] and len(db.item_get(uid, tid)["thread"]) == 2
+    # 주제 줄을 뺀 개정 = 현재 판은 주제 없음(topic 키 없음 → topic_dropped 키도 없음)
+    a3 = req(dev, original=a["original_id"], prev=a2["revision"], source_date="2026-11-20", title="합성 셋째 날", body="합성 주제 없는 판.", **sw)
+    r5 = await post(tok, a3)
+    assert "topic_dropped" not in r5 and topic_links(uid, r5["target_id"]) == [] and topic_links(uid, r4["target_id"]) == []
+    # record_attach(attach_to) 는 주제 연결을 지우지 않는다
+    db.record_attach(uid, r2["target_id"], attach_to=[])
+    assert topic_links(uid, r2["target_id"]) == [tid]
+    # 휴지통 주제 = 붙이지 않는다(새로 만들지도 않는다)
+    os.environ["CRM_TRASH_ENABLED"] = "1"
+    try:
+        db.trash_move(uid, "item", new[0], db.item_get(uid, new[0])["revision"])
+    finally:
+        os.environ.pop("CRM_TRASH_ENABLED", None)
+    r6 = await post(tok, req(dev, topic="합성 다른 주제", **sw))
+    assert r6["topic_dropped"] == 1 and topic_links(uid, r6["target_id"]) == [] and len(topic_items(uid, oid)) == 3
+    # 기록 일일 한도 = 대기(topic_dropped 없음) → 한도가 풀린 회차 승인 때 붙는다
+    saved = dict(db.DAILY_LIMITS)
+    with db.tx() as c:
+        n_rec = c.execute(f"SELECT count(*) AS n FROM records WHERE user_id=%s AND COALESCE(received_at, created) >= {db._KST_TODAY} "
+                          "AND ingest_kind <> 'board_migration'", (uid,)).fetchone()["n"]
+    db.DAILY_LIMITS.update(records=n_rec)
+    try:
+        p = await post(tok, req(dev, topic="합성 주제", body="합성 한도 뒤 주제 본문.", **sw))
+        assert p["state"] == "pending" and "topic_dropped" not in p, p
+    finally:
+        db.DAILY_LIMITS.clear()
+        db.DAILY_LIMITS.update(saved)
+    assert imports.auto_approve_pending() == 1
+    assert topic_links(uid, entry(uid, p["import_id"])["target_record_id"]) == [tid]
+    print("OK 4 주제 잇기(오브젝트 없음 dropped · features 독립 · 새 주제 · 이름 정규화 이어 붙기 · 다른 변환 거절 · 개정 이동 · "
+          "attach_to 와 따로 · 휴지통 · 한도 대기 뒤 붙음 · thread 날짜순)")
 
 
 def main_():

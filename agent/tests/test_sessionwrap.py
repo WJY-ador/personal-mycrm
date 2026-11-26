@@ -222,5 +222,67 @@ class CollectTest(unittest.TestCase):
             srv.close()
 
 
+
+class TopicTest(unittest.TestCase):
+    """주제 줄(2026-11-26) — 서버 features 에 topics 가 있으면 첫 `주제:` 줄을 본문에서 빼 topic 으로. 꼴이 안 맞거나 옛 서버면 본문 그대로."""
+    setUp, tearDown, write, pending, go = CollectTest.setUp, CollectTest.tearDown, CollectTest.write, CollectTest.pending, CollectTest.go
+
+    def go_topics(self, features=("topics",)):
+        self.cfg["server_features"] = list(features)   # 앱이 서버에서 받아 저장한 값 — 저장, 읽기 검증(KNOWN_FEATURES)을 거친다
+        _config.save(self.th.paths, self.cfg)
+        return self.go()
+
+    def test_config_keeps_topics_feature(self):
+        self.cfg["server_features"] = ["axis_codes", "topics"]
+        _config.save(self.th.paths, self.cfg)
+        self.assertEqual(_config.load(self.th.paths)["server_features"], ["axis_codes", "topics"])
+
+    def test_line_moves_to_topic(self):
+        self.write("2030-01-02.md", "## 합성 제목\n합성 첫 문단.\n주제:  합성 주제 하나  \n주제: 두 번째 줄은 본문에 남는다\n합성 끝 문단.")
+        self.assertEqual(self.go_topics()["staged"], 1)
+        (o,) = self.pending()
+        self.assertEqual(o["topic"], "합성 주제 하나")
+        self.assertEqual(o["body"], "합성 첫 문단.\n주제: 두 번째 줄은 본문에 남는다\n합성 끝 문단.")
+        contract.validate(o)
+
+    def test_bad_shape_stays_in_body(self):
+        cases = ["## 합성 긴 이름\n문단.\n주제: " + "가" * 41,
+                 "## 합성 빈 이름\n문단.\n주제:   ",
+                 "## 합성 경로 이름\n문단.\n주제: ~/합성/폴더",
+                 "## 합성 탭 이름\n문단.\n주제: 합성\t주제",
+                 "## 합성 앞 공백\n문단.\n  주제: 줄 처음이 아니다",
+                 "## 합성 울타리\n```\n주제: 울타리 안\n```\n문단.",
+                 "## 합성 본문 없음\n주제: 합성 주제"]
+        self.write("2030-01-02.md", "\n\n".join(cases))
+        r = self.go_topics()
+        objs = self.pending()
+        self.assertEqual((r["blocks"], len(objs)), (7, 7))
+        for o in objs:
+            self.assertNotIn("topic", o, o["title"])
+            self.assertIn("주제:", o["body"].replace("‹경로›", ""), o["title"])
+            contract.validate(o)
+
+    def test_old_server_keeps_line(self):
+        self.write("2030-01-02.md", "## 합성 제목\n문단.\n주제: 합성 주제")
+        self.go_topics(features=("axis_codes",))
+        (o,) = self.pending()
+        self.assertNotIn("topic", o)
+        self.assertEqual(o["body"], "문단.\n주제: 합성 주제")
+
+    def test_topic_contract(self):
+        base = {"contract": contract.CONTRACT, "schema_revision": contract.SCHEMA_REVISION, "source_instance_id": "is_" + "0" * 24,
+                "original_id": "o_" + "1" * 32, "revision": "v_" + "2" * 32, "previous_revision": None, "kind": "self_text",
+                "execution": "attended", "transform_version": "session-wrap/1", "policy_revision": 1, "body": "합성 본문."}
+        self.assertEqual(contract.validate({**base, "topic": "가" * 40})["topic"], "가" * 40)
+        for bad in ("가" * 41, "", "합성\n주제", "합성\u2028주제", "합성\x07주제", "https://example.invalid/x", 3):
+            with self.assertRaises(contract.ContractError):
+                contract.validate({**base, "topic": bad})
+        for tv in ("self-text/1", "axis-page/1"):
+            extra = {"axis_code": "A"} if tv == "axis-page/1" else {}
+            with self.assertRaises(contract.ContractError) as cm:
+                contract.validate({**base, "transform_version": tv, "topic": "합성 주제", **extra})
+            self.assertEqual((cm.exception.code, cm.exception.field), ("UNKNOWN-FIELD", "topic"))
+
+
 if __name__ == "__main__":
     unittest.main()

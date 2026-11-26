@@ -11,6 +11,7 @@ import datetime as _dt
 import hashlib
 import json
 import re
+import unicodedata
 
 from . import jcs
 
@@ -61,6 +62,9 @@ TRANSFORMS = {
 }
 AXIS_PAGE_TRANSFORM = "axis-page/1"
 INBOX_DIGEST_TRANSFORM = "inbox-digest/1"
+# 주제 잇기(2026-11-26) — session-wrap/1 의 선택 키 topic(주제 이름 한 줄, 1~40자). 서버 imports._topic 과 같은 판정
+SESSION_WRAP_TRANSFORM = "session-wrap/1"
+MAX_TOPIC_CODEPOINTS = 40
 # 변환 버전별 허용 행동·제공자(activity 만)
 TRANSFORM_ACTIVITY = {
     "board-likes/1": {"actions": ("like",), "providers": ("sns",)},
@@ -87,7 +91,7 @@ KIND_FIELDS = {
     },
     "self_text": {
         "required": ("body",),
-        "optional": ("title", "source_created_at", "source_date", "activity_ref", "generation", "axis_code", "digest"),
+        "optional": ("title", "source_created_at", "source_date", "activity_ref", "generation", "axis_code", "digest", "topic"),
     },
     "self_summary": {
         "required": ("body", "generation"),
@@ -483,6 +487,18 @@ def _validate_self_text(o: dict) -> None:
         _validate_inbox_digest(o["digest"])
     elif "digest" in o:
         raise ContractError("UNKNOWN-FIELD", "digest")
+    if "topic" in o:   # 주제 이름 — 세션 정리 묶음만. 한 줄(줄 구분 문자 포함), 제어 문자 없음
+        if o["transform_version"] != SESSION_WRAP_TRANSFORM:
+            raise ContractError("UNKNOWN-FIELD", "topic")
+        check_topic(o["topic"])
+
+
+def check_topic(v) -> None:
+    """주제 이름 검사(sessionwrap 이 줄을 뺄지 정할 때도 쓴다) — 실패 = ContractError."""
+    _check_single_line(v, "topic", MAX_TOPIC_CODEPOINTS)
+    _scan_strings(v, "topic")
+    if any(unicodedata.category(ch) == "Cc" or ch in "\u2028\u2029" for ch in v):
+        raise ContractError("CONTROL-CHAR", "topic")
 
 
 # 수집 인박스 요약(inbox-digest/1, 2026-11-22 명세 4-5) — digest = {themes:[{name, line, post_urls[]}], input_n, made_at}.
