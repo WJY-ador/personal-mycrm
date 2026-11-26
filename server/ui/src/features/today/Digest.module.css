@@ -10,7 +10,7 @@ button.theme { display: flex; align-items: baseline; gap: var(--sp-4); width: 10
   justify-content: flex-start; white-space: normal; }
 .themes li:first-child button.theme { border-top: 0; }
 button.theme b { flex: none; font-weight: 700; }
-.line { flex: 1 1 auto; min-width: 0; color: var(--ink); overflow-wrap: anywhere; }
+.line { flex: 1 1 auto; min-width: 0; color: var(--ink); overflow-wrap: anywhere; font-size: var(--read-fs-sm); line-height: var(--read-lh-sm); }   /* AI 주제 한 줄 = 읽는 글 */
 .n { flex: none; font-family: var(--mono); font-size: var(--fs-1); }
 button.theme:hover, button.theme:focus-visible { background: var(--card); }
 button.theme[aria-pressed="true"] { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
@@ -24,5 +24,5 @@ button.ax[aria-pressed="true"] { background: var(--accent-soft); border-color: v
 @media (max-width: 767px) {
   .box { padding: var(--sp-5); }
   button.theme { flex-wrap: wrap; gap: var(--sp-1) var(--sp-3); }
-  .line { flex-basis: 100%; order: 3; }
+  .line { flex-basis: 100%; order: 3; font-size: var(--fs-4); }   /* 좁은 화면 읽기 글자 16px 아래로 내리지 않는다 */
 }

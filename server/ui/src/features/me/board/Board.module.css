@@ -26,6 +26,7 @@
 .body { margin: var(--sp-4) 0 0; padding-left: calc(20px + var(--sp-4)); }
 .st { margin: 0; font-size: var(--fs-2); line-height: 1.55; overflow-wrap: anywhere; }
 .prose { font-family: var(--prose); }
+.st.prose { font-size: var(--read-fs-sm); line-height: var(--read-lh-sm); }   /* 소제목 전문 = 읽는 글(2026-11-26). 제목, 출처 줄은 그대로 */
 .by { margin: var(--sp-2) 0 0; font-size: var(--fs-1); color: var(--muted); }
 .ai { margin: var(--sp-4) 0 0; padding: var(--sp-3) var(--sp-4); background: var(--ai-bg); border-radius: var(--r-3); font-size: var(--fs-2); line-height: 1.55; color: var(--ink); }
 .from { margin: var(--sp-3) 0 0; padding-left: calc(20px + var(--sp-4)); font-size: var(--fs-1); color: var(--muted); }
@@ -42,5 +43,6 @@
 @media (max-width: 767px) {
   .grid { grid-template-columns: minmax(0, 1fr); row-gap: var(--sp-8); }
   .links { display: none; }
+  .st.prose { font-size: var(--fs-4); }   /* 좁은 화면 읽기 글자 16px 아래로 내리지 않는다 */
 }
 @media (prefers-reduced-motion: reduce) { .src, .out, .src > *, .out > *, .ln { transition: none; } }

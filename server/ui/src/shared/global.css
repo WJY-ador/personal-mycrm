@@ -336,6 +336,7 @@ dialog::backdrop { background: rgba(31, 41, 55, .4); }
 dialog .dh { display: flex; justify-content: space-between; align-items: start; gap: var(--sp-5); padding: var(--sp-6) var(--sp-8); border-bottom: 1px solid var(--line); }
 dialog .dh b { font-size: var(--fs-4); }
 dialog .db { padding: var(--sp-6) var(--sp-8); max-height: 72vh; overflow: auto; }
+.recdlg .doc { font-size: var(--read-fs); line-height: var(--read-lh); max-width: var(--read-measure); }   /* 원문 모달 본문 = 읽기 토큰(2026-11-26) */
 .foot { color: var(--soft); font-size: var(--fs-1); padding: var(--sp-3) var(--sp-9) 2.4rem; }
 
 /* 출처 · 확정 전 재검토 (Q4) */

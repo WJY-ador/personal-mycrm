@@ -12,7 +12,7 @@
 .nums { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-5); font-size: var(--fs-2); color: var(--muted); }
 .nums b { font-family: var(--mono); font-weight: 600; color: var(--ink); }
 .has { margin-left: auto; }
-.h { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-4); margin: 0 0 var(--sp-3); font-size: var(--fs-5); overflow-wrap: anywhere; }
+.h { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-4); margin: 0 0 var(--sp-3); font-size: var(--fs-7); overflow-wrap: anywhere; }
 .h .code { font-size: var(--fs-4); color: var(--muted); }
 .h + .nums .has { margin-left: 0; }
 .fold { margin-top: var(--sp-5); border-top: 1px solid var(--line); padding-top: var(--sp-4); }
@@ -22,17 +22,17 @@
 .kw { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin: 0 0 var(--sp-4); }
 .kl { font-size: var(--fs-1); font-weight: 600; color: var(--muted); margin-right: var(--sp-2); }
 .kw :global(.chip) { white-space: normal; overflow-wrap: anywhere; }
-.body { white-space: pre-wrap; font-size: var(--fs-3); line-height: 1.7; margin: 0; overflow-wrap: anywhere; }
+.body { white-space: pre-wrap; font-size: var(--read-fs); line-height: var(--read-lh); max-width: var(--read-measure); margin: 0; overflow-wrap: anywhere; }
 .item { min-width: 0; }
 /* 한 장 */
-.ai { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); align-items: baseline; margin: 0 0 var(--sp-5); padding: var(--sp-3) var(--sp-5);
+.ai { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); align-items: baseline; max-width: var(--read-measure); margin: 0 0 var(--sp-5); padding: var(--sp-3) var(--sp-5);
   font-size: var(--fs-2); color: var(--ai); background: var(--ai-bg); border-radius: var(--r-3); border: 1px dashed var(--cand-line); }
 .when { font-family: var(--mono); font-size: var(--fs-1); color: var(--muted); }
-.doc { font-size: var(--fs-3); line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); min-width: 0; }
+.doc { font-size: var(--read-fs); line-height: var(--read-lh); max-width: var(--read-measure); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); min-width: 0; }
 .doc > *, .seg > * { margin: 0; }
 .doc > * + *, .seg > * + * { margin-top: var(--sp-5); }
-.doc h3 { font-size: var(--fs-4); font-weight: 700; line-height: 1.4; }
-.doc h4 { font-size: var(--fs-3); font-weight: 700; line-height: 1.4; }
+.doc h3 { font-size: var(--fs-5); font-weight: 700; line-height: 1.4; }   /* 위계: 페이지 제목 .h > h3 > 읽기 글자(--read-fs). h4 는 읽기 글자 크기에 굵게 */
+.doc h4 { font-size: var(--read-fs); font-weight: 700; line-height: 1.4; }
 .seg > * + :is(h3, h4), .doc > * + .seg:has(> :is(h3, h4):first-child) { margin-top: var(--sp-8); }
 .seg > :is(h3, h4) + * { margin-top: var(--sp-3); }
 /* 내 판 머리 — AI 표시 대신(실선, 기본 글색) */
@@ -74,5 +74,5 @@
   .ct tr { display: flex; flex-direction: column; border-top: 1px solid var(--line); }
   .ct th, .ct td { border-top: 0; padding: var(--sp-2) var(--sp-3); }
   .ebox { font-size: 16px; }
-  .h { font-size: var(--fs-4); }
+  .h { font-size: var(--fs-6); }
 }

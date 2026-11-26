@@ -31,13 +31,15 @@ button.face[draggable="true"]:active { cursor: grabbing; }
 .top { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-3); font-size: var(--fs-1); }
 .author { font-weight: 600; color: var(--ink); font-size: var(--fs-2); }
 .date { color: var(--muted); }
-.line { display: block; margin-top: var(--sp-1); font-size: var(--fs-2); line-height: 1.45; overflow-wrap: anywhere; }
+.line { display: block; margin-top: var(--sp-1); font-size: var(--read-fs-sm); line-height: var(--read-lh-sm); overflow-wrap: anywhere; }
 .aitag { margin-right: var(--sp-2); }
 .acts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-2); padding-top: var(--sp-2); }
 @media (min-width: 768px) {
   .row .acts :global(button) { min-height: 28px; padding: 0 var(--sp-4); }
 }
-.detail { margin-top: var(--sp-4); padding: var(--sp-5) var(--sp-6); background: var(--ai-bg); border-radius: var(--r-3); font-size: var(--fs-3); }
+.detail { margin-top: var(--sp-4); padding: var(--sp-5) var(--sp-6); background: var(--ai-bg); border-radius: var(--r-3); font-size: var(--read-fs); line-height: var(--read-lh);
+  max-width: var(--read-measure); }
+.detail :global(dl.kv) { font-size: inherit; }   /* 요약 넷(as-is, to-be, 운영)의 글은 읽기 글자로. 라벨(dt)은 전역 작은 글자 그대로 */
 .titleLine { margin: 0 0 var(--sp-4); font-weight: 600; overflow-wrap: anywhere; }
 .ai { color: var(--ink); }
 .aihead { margin: 0 0 var(--sp-3); color: var(--ai); font-size: var(--fs-2); }
@@ -76,5 +78,6 @@ button.face[draggable="true"]:active { cursor: grabbing; }
 }
 @media (max-width: 767px) {
   .row { grid-template-columns: minmax(0, 1fr); }
+  .line { font-size: var(--fs-4); }   /* 좁은 화면 읽기 글자 16px 아래로 내리지 않는다 */
   .row .acts { padding: 0 var(--sp-3) var(--sp-2); margin-left: calc(-1 * var(--sp-6) - 1px); }
 }
