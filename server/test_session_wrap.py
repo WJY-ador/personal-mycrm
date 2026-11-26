@@ -11,6 +11,8 @@
 3b) MCP inbox_decide(facade 전용 D): decide_preview shown · bind 규칙 · 승인 = 같은 기록 꼴 + 가린 경로 수 메타 · 제외 · 스위치·표시 이름 관문
 4) 화면 표시 0: /api/state·/api/records·/api/journal·/api/inbox·/api/trash 응답 · 코어 정의(web.core_schema·service_schema)에 decision_owner 없음
 5) 옛 DB 업그레이드(records.decision_owner 없음 → 열·CHECK, 옛 행 NULL · 멱등)
+6) 주제 잇기(2026-11-26) 계약 — topic 은 session-wrap/1 만, 1~40자 한 줄, 제어 문자·URL·경로 꼴 거절 · 투영에 들어감(없으면 옛 해시)
+   · 옛 DB 의 이름 없는 기록 출발 key CHECK → ck_item_links_record_key(topics 포함, 멱등). 흐름은 test_inbox_auto 4
 """
 import asyncio
 import json
@@ -387,6 +389,40 @@ def test_upgrade(uid):
     ok("옛 DB 업그레이드(records.decision_owner 열·CHECK, 옛 행 NULL · 멱등)")
 
 
+def test_topic(uid):
+    base = _req("is_" + "0" * 24)
+    def bad(why, **kw):
+        try:
+            imports.validate({**base, **kw})
+        except db.CrmError as e:
+            assert e.code == "CONTRACT-INVALID" and "topic" in e.message and why in e.message, (why, e.message)
+            return
+        raise AssertionError(f"topic {why} 가 통과했어요")
+    assert imports.validate({**base, "topic": "가" * 40})["topic"] == "가" * 40
+    bad("too_long", topic="가" * 41)
+    bad("empty", topic=" ")
+    bad("single_line", topic="합성\n주제")
+    bad("control_char", topic="합성\t주제")
+    bad("string_required", topic=3)
+    bad("path_not_allowed", topic="~/합성")
+    bad("url_not_allowed", topic="https://example.com/x")
+    bad("unknown_field", transform_version="self-text/1", topic="합성 주제")
+    bad("unknown_field", transform_version="axis-page/1", axis_code="A", topic="합성 주제")
+    p0, p1 = imports.projection(base), imports.projection({**base, "topic": "합성 주제"})
+    assert "topic" not in p0 and p1["topic"] == "합성 주제"
+    # 옛 DB — 기록 출발 key CHECK 가 이름 없이 attach_to·axes 만 → init_schema 가 topics 를 더한 이름 붙은 CHECK 로
+    with db.tx() as c:
+        c.execute("ALTER TABLE item_links DROP CONSTRAINT ck_item_links_record_key")
+        c.execute("ALTER TABLE item_links ADD CHECK (source_record_id IS NULL OR field_key IN ('attach_to','axes'))")
+    db.init_schema()
+    db.init_schema()   # 멱등
+    with db.tx() as c:
+        ds = [r["d"] for r in c.execute("SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint WHERE conrelid='item_links'::regclass "
+                                         "AND contype='c' AND pg_get_constraintdef(oid) LIKE '%%field_key%%'").fetchall()]
+    assert len(ds) == 1 and all(f"'{k}'" in ds[0] for k in db.RECORD_LINK_KEYS), ds
+    ok("주제 계약 — session-wrap/1 만 · 1~40자 한 줄 · 제어 문자, URL, 경로 거절 · 투영(없으면 옛 해시) · 옛 DB key CHECK 넓히기(멱등)")
+
+
 async def run():
     db.init_schema()
     cleanup()
@@ -400,6 +436,7 @@ async def run():
         await test_inbox_decide(uid)
         await test_no_display(uid, trashed)
         test_upgrade(uid)
+        test_topic(uid)
     finally:
         cleanup()
         db.close()

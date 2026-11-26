@@ -9,7 +9,7 @@ export type Edge = { node: GNode; rel: string; dir: "out" | "in" };
 
 const ORDER = ["journal", "q", "cand", "item", "refl", "person", "source", "activity"];
 export const CAP = { wide: [25, 40], narrow: [12, 18] } as const;
-const RECLINK_LABEL: Record<string, string> = { attach_to: "붙는 곳", axes: "축" };
+const RECLINK_LABEL: Record<string, string> = { attach_to: "붙는 곳", axes: "축", topics: "주제" };
 const LINK_KIND: Record<string, string> = { record: "journal", candidate: "cand", item: "item", person: "person", source: "source", activity: "activity" };
 const KIND_NAME: Record<string, string> = { journal: "내 글", q: "질문", refl: "읽고 든 생각", person: "사람", source: "출처", activity: "활동" };
 const CAND_NAME: Record<string, string> = { pending: "검토할 판단", confirmed: "확정한 판단", excluded: "남기지 않은 판단" };
