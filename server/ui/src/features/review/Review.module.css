@@ -21,7 +21,7 @@
    그래서 포커스 윤곽(outline-offset --sp-4) 안에 들어오지 않는다. 간격 = 위 카드 margin-bottom 과 겹치는 margin-top(--sp-10 두 배) */
 .item + .item { margin-top: calc(var(--sp-10) * 2); }
 .item + .item::before { content: ""; position: absolute; left: 0; right: 0; top: calc(-1 * var(--sp-10)); border-top: 1px solid var(--line); }
-.lead { font-size: var(--fs-2); color: var(--muted); margin: 0 0 var(--sp-6); }
+.lead { font-size: var(--fs-3); color: var(--muted); margin: 0 0 var(--sp-6); }
 .lead:empty { margin: 0; }
 .lead { scroll-margin-top: var(--sp-8); }   /* 결정 뒤 이 줄로 스크롤할 때 위 여백 */
 /* 판단 문장 — 상자 없이. 질문은 라벨, 문장은 화면에서 가장 큰 글(머리글 날짜 1.6rem 보다 크게, 좁은 화면은 아래 1.3rem > 날짜 1.25rem) */
@@ -49,14 +49,14 @@
 .src :global(.doc p) { margin-bottom: var(--sp-7); }
 .src :global(.doc .h) { font-weight: 500; font-size: var(--fs-4); }
 .src :global(.doc .dim) { font-family: var(--serif); }   /* 불러오는 중 같은 화면 안내는 글이 아니라 안내 — 고딕 */
-.warn { background: var(--fail-bg); border-radius: var(--r-4); padding: var(--sp-5) var(--sp-6); font-size: var(--fs-2); margin-bottom: var(--sp-4); }
+.warn { background: var(--fail-bg); border-radius: var(--r-4); padding: var(--sp-5) var(--sp-6); font-size: var(--fs-3); margin-bottom: var(--sp-4); }
 .warn b { font-weight: 500; }
-.note { background: var(--warn-bg); border-radius: var(--r-4); padding: var(--sp-4) var(--sp-6); font-size: var(--fs-2); margin-bottom: var(--sp-4); }
+.note { background: var(--warn-bg); border-radius: var(--r-4); padding: var(--sp-4) var(--sp-6); font-size: var(--fs-3); margin-bottom: var(--sp-4); }
 .fold { margin-top: var(--sp-8); }
 .src :global(details.tech) { margin-top: var(--sp-4); }
 
 /* 남길지 정하기 — 상자 없이. 결정 버튼 둘은 같은 색, 순서(남기기, 남기지 않기)와 폭만 다르다(D2). 설명 한 문장(.dest)은 목록 머리에 한 번 */
-.dest { font-size: var(--fs-2); color: var(--muted); margin: var(--sp-2) 0 0; line-height: 1.6; }
+.dest { font-size: var(--fs-3); color: var(--muted); margin: var(--sp-2) 0 0; line-height: 1.6; }
 .act .decide { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: var(--sp-5); }
 .act .decide button { min-height: 44px; font-size: var(--fs-3); font-weight: 500; background: transparent; color: var(--ink);
   border: 1px solid color-mix(in srgb, var(--ink) 30%, transparent); }
@@ -71,7 +71,7 @@
 .edit textarea { display: block; width: 100%; font: inherit; font-size: var(--fs-4); line-height: 1.6; padding: var(--sp-5); border: 1px solid var(--line); border-radius: var(--r-3); background: var(--card); color: var(--ink); }
 .edit :global(.acts) { grid-template-columns: 1fr; margin-top: var(--sp-4); }
 .edit :global(button.primary) { font-weight: 500; }
-.status { font-size: var(--fs-2); color: var(--muted); margin: var(--sp-4) 0 0; }
+.status { font-size: var(--fs-3); color: var(--muted); margin: var(--sp-4) 0 0; }
 .act :global(.blocked) { font-weight: 500; }
 .status:empty, .act :global(.blocked):empty { margin: 0; }
 

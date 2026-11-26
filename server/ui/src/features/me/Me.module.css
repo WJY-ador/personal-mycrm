@@ -58,6 +58,8 @@
 .sec { margin-top: var(--sp-7); }
 .sec h3 { display: flex; gap: var(--sp-3); align-items: baseline; margin: 0 0 var(--sp-3); font-size: var(--fs-3); }
 .solo { max-width: 860px; }
+/* 기록 상세 본문(전역 .doc) — 읽기 글자, 행간, 글 단 폭(2026-11-26) */
+.solo :global(.doc) { font-size: var(--read-fs); line-height: var(--read-lh); max-width: var(--read-measure); }
 @media (max-width: 1099px) {
   .lens.three { grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); }
   .lens.three > .groups { grid-column: 2; }
