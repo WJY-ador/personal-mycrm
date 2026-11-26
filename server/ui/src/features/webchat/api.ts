@@ -1,5 +1,5 @@
 // 웹 「대화」 서버 접점 — /api/chat/* (server/webchat.py 계약). 출력은 SSE(EventSource) — 브라우저가 끊기면 Last-Event-ID 로 이어 받는다.
-import { getJSON, postJSON } from "../../shared/api";
+import { deleteJSON, getJSON, postJSON } from "../../shared/api";
 
 export type Capability = { provider: "claude" | "codex" | "fake"; models: Array<string | null> };
 // allowed_providers = 이 PC 에 서 있는 허용이 있는 공급자(대화 하나로 J, JD1) — 있으면 PC 허용 창 단계를 건너뛴다(낡을 수 있어 세션 생성이 CONSENT_REQUIRED 면 허용 흐름으로)
@@ -11,7 +11,8 @@ export type DeviceCapability = { device_id: string; connected: boolean; agent_ve
 // no_link 새 앱인데 연결(공급자 인증)된 AI 없음, ready 고를 모델 있음
 export type Setup = "none" | "offline" | "no_provider" | "no_link" | "ready";
 export type Capabilities = { devices: DeviceCapability[]; setup?: Setup };
-export type Session = { session_id: string; status: string; device_id: string; connected?: boolean; provider: string | null; model: string | null; binding_version: number; created_at?: string; last_at?: string };
+export type Session = { session_id: string; status: string; device_id: string; connected?: boolean; provider: string | null; model: string | null; binding_version: number; created_at?: string; last_at?: string;
+  first_text?: string | null };   // first_text = 목록에만 — 그 대화 첫 내 말 앞 40자(줄바꿈은 공백), 없으면 null
 export type SessionList = { sessions: Session[] };
 // PC 허용(grant) — POST 로 요청, GET 으로 상태를 읽는다(세션이 아직 없어 SSE 대신 1~2초 간격 조회). prompt = PC 동의 창: none 아직, open 떠 있음, done 서명됨, closed 승인 없이 끝남, declined PC 앱이 허용하지 않음을 알림
 export type GrantState = "pending" | "approved" | "consumed" | "expired";
@@ -32,6 +33,8 @@ export const webchatApi = {
     postJSON<Session>("/api/chat/sessions", { operation: "new", device_id, provider, model, client_session_id }),
   grant: (device_id: string, provider: string, model: string | null, request_id: string) => postJSON<Grant>("/api/chat/grants", { device_id, provider, model, request_id }),
   grantStatus: (request_id: string) => getJSON<Grant>(`/api/chat/grants/${encodeURIComponent(request_id)}`),
+  // 지난 대화 지우기 — 본인 것만(남의 것 404), 도는 턴이 있으면 409 TURN-BUSY. 턴, 메시지, 확인 카드가 함께 지워진다
+  remove: (sid: string) => deleteJSON<{ session_id: string; deleted: boolean; was_active: boolean }>(`/api/chat/sessions/${encodeURIComponent(sid)}`),
   messages: (sid: string) => getJSON<{ messages: Message[] }>(`/api/chat/sessions/${encodeURIComponent(sid)}/messages`),
   turn: (sid: string, text: string, client_turn_id: string) => postJSON<TurnRes>(`/api/chat/sessions/${encodeURIComponent(sid)}/turns`, { text, client_turn_id }),
   stop: (sid: string) => postJSON<{ turn_id: string | null }>(`/api/chat/sessions/${encodeURIComponent(sid)}/stop`, {}),

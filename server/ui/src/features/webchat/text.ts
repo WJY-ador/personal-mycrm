@@ -40,9 +40,19 @@ export const GRANT_CANCEL = "그만 기다리기";
 
 // 지난 대화
 export const HISTORY = "지난 대화";
+export const CHAT_TAB = "대화";   // 패널 머리글 탭 둘 = 대화, 지난 대화
+export const VIEWS = "대화 보기";
 export const NEW_CHAT = "새 대화";
 export const HISTORY_EMPTY = "지난 대화가 없어요.";
-export const HISTORY_NOTE = "대화 기록은 서버에 30일 보관한 뒤 지워져요. 지난 대화는 읽기만 할 수 있어요.";
+export const HISTORY_NOTE = "대화 기록은 서버에 30일 보관한 뒤 지워져요. 그 전에 직접 지울 수도 있어요. 지난 대화는 읽기만 할 수 있어요.";
+export const PAST_UNTITLED = "보낸 글이 없는 대화";   // first_text 가 없을 때(턴 없음, 메시지가 먼저 지워짐)
+// 지난 대화 지우기 — 줄 안에서 한 번 확인. 휴지통 없음(대화 기록은 30일 뒤 지워지는 기록)
+export const DEL = "지우기";
+export const DEL_ASK = "이 대화를 지워요. 되돌릴 수 없어요.";
+export const DEL_CANCEL = "취소";
+export const DEL_BUSY = "지우는 중";
+export const DEL_ERR: Record<string, string> = { "TURN-BUSY": "답이 끝난 뒤 지울 수 있어요.", "NOT-FOUND": "이미 지워졌거나 찾을 수 없는 대화예요." };
+export const delErrText = (e: { code: string; msg: string }) => DEL_ERR[e.code] || ERR[e.code] || e.msg || "지우지 못했어요. 다시 해 보세요.";
 export const HISTORY_NOW = "지금 대화";
 export const PAST_NOTE = "지난 대화예요. 읽기만 할 수 있어요. 이어서 말하려면 새 대화를 시작하세요.";
 export const PAST_EMPTY = "이 대화에는 남은 메시지가 없어요.";

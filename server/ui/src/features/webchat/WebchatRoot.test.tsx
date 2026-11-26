@@ -10,7 +10,7 @@ import { ApiFail } from "../../shared/api";
 import type { Approval } from "./api";
 import { STATE_POLL_MS, WebchatStore } from "./store";
 import { WebchatRoot } from "./WebchatRoot";
-import { AI_NEED_CLI, AI_UNLINKED, CHAT_LIMIT, CHAT_OPEN_HERE, CHAT_STATE, ERR, EMPTY, END, GRANT, HISTORY_NOTE, MORE_MODELS, OP_NAME, PC_OFF, PC_ON, PICK, PICK_LOADING, PICK_SWITCH, TITLE, WAITING } from "./text";
+import { AI_NEED_CLI, AI_UNLINKED, CHAT_LIMIT, CHAT_OPEN_HERE, CHAT_STATE, DEL_ASK, DEL_ERR, ERR, EMPTY, END, GRANT, HISTORY_NOTE, PAST_UNTITLED, MORE_MODELS, OP_NAME, PC_OFF, PC_ON, PICK, PICK_LOADING, PICK_SWITCH, TITLE, WAITING } from "./text";
 
 let el: HTMLDivElement, nav: HTMLSpanElement, root: Root;
 beforeEach(() => {
@@ -38,6 +38,7 @@ function mk() {
     messages: vi.fn(async () => ({ messages: [] })),
     turn: vi.fn(async () => ({ turn_id: "ct_1", status: "running", created: true })),
     stop: vi.fn(async () => ({ turn_id: "ct_1" })),
+    remove: vi.fn(async (id: string) => ({ session_id: id, deleted: true, was_active: false })),
     approvals: vi.fn(async () => ({ approvals: [] })),
     confirmApproval: vi.fn(async () => ({ status: "confirmed" as const, result: { updated: 1, record: { title: "changed" } } })),
     cancelApproval: vi.fn(async () => ({ status: "cancelled" as const })),
@@ -296,6 +297,75 @@ test("지난 대화 목록 = 보관 안내 한 줄 + 세션 목록 · 열면 읽
   expect(aside().querySelector("textarea")).toBeNull();
   await act(async () => { btn("새 대화", aside().querySelector("[data-past-foot]")!).click(); });
   expect(aside().querySelector("textarea")).toBeTruthy();
+});
+
+test("머리글 탭 둘(대화, 지난 대화) — .tab 꼴, 고른 탭만 aria-current, 누르면 view 전환", async () => {
+  const { s } = mk();
+  await open(s);
+  const tabs = () => [...aside().querySelectorAll("nav[aria-label='대화 보기'] button")] as HTMLButtonElement[];
+  expect(tabs().map(b => [b.textContent, b.className, b.getAttribute("aria-current")])).toEqual([["대화", "tab on", "page"], ["지난 대화", "tab", null]]);
+  await act(async () => { tabs()[1].click(); }); await flush();
+  expect(s.view).toBe("history");
+  expect(tabs().map(b => b.getAttribute("aria-current"))).toEqual([null, "page"]);
+  expect(aside().querySelector("[aria-label='지난 대화']")).toBeTruthy();
+  expect(aside().querySelector("textarea")).toBeNull();
+  await act(async () => { tabs()[0].click(); }); await flush();
+  expect(s.view).toBe("chat");
+  expect(aside().querySelector("textarea")).toBeTruthy();
+  expect(aside().querySelector("[aria-pressed]")).toBeNull();   // 옛 [지난 대화] 누름 버튼은 없다
+});
+
+test("지난 대화 줄: 첫 말 한 줄, [지우기]는 여는 버튼 밖, 확인 펼침과 취소, 실패 문구는 그 줄, 지우면 줄이 빠진다", async () => {
+  const { s } = mk();
+  await open(s);
+  const row = (id: string, first_text: string | null) => ({ session_id: id, status: "closed", device_id: "is_1", provider: "claude", model: "opus", binding_version: 2, created_at: "2026-11-09T01:00:00Z", first_text });
+  s.api.sessions = vi.fn(async () => ({ sessions: [row("cs_0", "가짜 첫 말 한 줄"), row("cs_9", null)] }));
+  await act(async () => { btn("지난 대화").click(); }); await flush();
+  const items = () => [...aside().querySelectorAll("[aria-label='지난 대화'] li")] as HTMLLIElement[];
+  expect(items().map(li => li.querySelector("button")!.textContent)).toEqual([expect.stringContaining("가짜 첫 말 한 줄"), expect.stringContaining(PAST_UNTITLED)]);
+  expect(aside().querySelectorAll("button button").length).toBe(0);   // 버튼 안에 버튼 없음
+  await act(async () => { btn("지우기", items()[0]).click(); });
+  expect(items()[0].textContent).toContain(DEL_ASK);
+  expect(btn("지우기", items()[1]).disabled).toBe(false);
+  await act(async () => { btn("취소", items()[0]).click(); });
+  expect(items()[0].textContent).not.toContain(DEL_ASK);
+  expect(s.api.remove).not.toHaveBeenCalled();
+
+  let fail: (e: unknown) => void = () => {};
+  s.api.remove = vi.fn(() => new Promise<{ session_id: string; deleted: boolean; was_active: boolean }>((_, rej) => { fail = rej; }));
+  await act(async () => { btn("지우기", items()[0]).click(); });
+  await act(async () => { btn("지우기", items()[0]).click(); });   // 확인 안의 [지우기]
+  expect([...items()[0].querySelectorAll("button")].every(b => b.disabled)).toBe(true);   // 지우는 중 = 그 줄 잠금
+  expect(btn("지우기", items()[1]).disabled).toBe(true);   // 한 번에 한 줄
+  await act(async () => { fail(new ApiFail({ code: "TURN-BUSY", msg: "", status: 409 })); }); await flush();
+  expect(items()[0].querySelector("[role=alert]")?.textContent).toBe(DEL_ERR["TURN-BUSY"]);
+  expect(items().length).toBe(2);
+
+  s.api.remove = vi.fn(async (id: string) => ({ session_id: id, deleted: true, was_active: false }));
+  await act(async () => { btn("지우기", items()[1]).click(); });
+  expect(items()[0].querySelector("[role=alert]")).toBeNull();
+  await act(async () => { btn("지우기", items()[1]).click(); }); await flush();
+  expect(s.api.remove).toHaveBeenCalledWith("cs_9");
+  expect(items().map(li => li.querySelector("button")!.textContent)).toEqual([expect.stringContaining("가짜 첫 말 한 줄")]);
+});
+
+test("지금 대화를 지우면 빈 새 대화(입력 칸), 지난 대화 화면에서 [지우기]", async () => {
+  const { s, fire } = mk();
+  s.api.sessions = vi.fn(async () => ({ sessions: [{ session_id: "cs_1", status: "active", device_id: "is_1", provider: "fake", model: null, binding_version: 2, created_at: "2026-11-09T01:00:00Z", first_text: "지금 대화 첫 말" }] }));
+  await open(s);
+  fire("turn", { turn_id: "ct_1", text: "지금 대화 첫 말" });
+  fire("done", { turn_id: "ct_1", seq: 1, data: {} });
+  expect(s.sid).toBe("cs_1");
+  await act(async () => { btn("지난 대화").click(); }); await flush();
+  const li = aside().querySelector("[aria-label='지난 대화'] li") as HTMLLIElement;
+  expect(li.textContent).toContain("지금 대화");
+  s.api.remove = vi.fn(async (id: string) => ({ session_id: id, deleted: true, was_active: true }));
+  await act(async () => { btn("지우기", li).click(); });
+  await act(async () => { btn("지우기", li).click(); }); await flush();
+  expect(s.api.remove).toHaveBeenCalledWith("cs_1");
+  expect([s.sid, s.view]).toEqual(["", "chat"]);
+  expect(aside().querySelector("textarea")).toBeTruthy();
+  expect(aside().textContent).not.toContain("지금 대화 첫 말");
 });
 
 // 보안 검토 1: 무장 지연과 해제를 실제 시간 없이 본다(store.now, store.later 주입)

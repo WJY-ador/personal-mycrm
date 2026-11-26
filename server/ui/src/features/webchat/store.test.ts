@@ -4,7 +4,7 @@ import { expect, test, vi } from "vitest";
 import { ApiFail } from "../../shared/api";
 import type { Capabilities, Es, Grant } from "./api";
 import { CAPS_REFRESH_GAP_MS, MODEL_KEY, STATE_POLL_MS, WebchatStore, chatState, choiceKey, pastTurns, type Saved } from "./store";
-import { EMPTY, END, ERR, GRANT, REPLACED, TEXT_MAX, TRIMMED, errText } from "./text";
+import { DEL_ERR, EMPTY, END, ERR, GRANT, REPLACED, TEXT_MAX, TRIMMED, errText } from "./text";
 
 class FakeEs implements Es {
   onmessage = null; onerror = null; closed = false;
@@ -37,6 +37,7 @@ function mk(active = true) {
     messages: vi.fn(async () => ({ messages: [] })),
     turn: vi.fn(async () => ({ turn_id: "ct_1", status: "running", created: true })),
     stop: vi.fn(async () => ({ turn_id: "ct_1" })),
+    remove: vi.fn(async (id: string) => ({ session_id: id, deleted: true, was_active: false })),
     approvals: vi.fn(async () => ({ approvals: [] })),
     confirmApproval: vi.fn(async () => ({ status: "confirmed" as const, result: {} })),
     cancelApproval: vi.fn(async () => ({ status: "cancelled" as const })),
@@ -340,6 +341,65 @@ test("지난 대화: 목록 = 세션 목록 · 끝난 대화 = messages 로 읽�
   expect(s.api.resume).toHaveBeenLastCalledWith("cs_1");
   s.newChat();
   expect([s.sid, s.readOnly, s.turns, s.view]).toEqual(["", false, [], "chat"]);
+});
+
+test("지난 대화 지우기: 확인을 펼친 줄만 지운다, 취소, 지우는 중 잠금, 실패 문구는 그 줄, 열어 본 지난 대화 = 목록에 남음, 지금 대화 = 빈 새 대화", async () => {
+  const { s, es } = mk();
+  await s.toggle(true);
+  const row = (id: string, status = "closed") => ({ session_id: id, status, device_id: "is_1", provider: "claude", model: "opus", binding_version: 2, created_at: "2026-11-09T01:00:00Z", first_text: "가짜 첫 말" });
+  s.api.sessions = vi.fn(async () => ({ sessions: [row("cs_1", "active"), row("cs_0"), row("cs_9")] }));
+  await s.openHistory(true);
+  await s.deletePast("cs_9");
+  expect(s.api.remove).not.toHaveBeenCalled();   // 확인 없이 지우지 않는다
+  s.askDelete("cs_9");
+  expect(s.delAsk).toBe("cs_9");
+  s.cancelDelete();
+  expect([s.delAsk, s.past.length]).toEqual(["", 3]);
+
+  const gate = deferred<{ session_id: string; deleted: boolean; was_active: boolean }>();
+  s.api.remove = vi.fn(() => gate.promise);
+  s.askDelete("cs_9");
+  const p = s.deletePast("cs_9");
+  expect(s.delBusy).toBe("cs_9");
+  s.askDelete("cs_0"); s.cancelDelete();   // 지우는 중에는 다른 줄 확인, 취소가 듣지 않는다
+  expect(s.delAsk).toBe("cs_9");
+  void s.deletePast("cs_9");
+  expect(s.api.remove).toHaveBeenCalledTimes(1);   // 두 번 눌러도 한 번
+  gate.resolve({ session_id: "cs_9", deleted: true, was_active: false });
+  await p;
+  expect([s.delBusy, s.delAsk, s.past.map(x => x.session_id), s.view, s.sid]).toEqual(["", "", ["cs_1", "cs_0"], "history", "cs_1"]);
+
+  s.api.remove = vi.fn(async () => { throw new ApiFail({ code: "TURN-BUSY", msg: "서버 문구", status: 409 }); });
+  s.askDelete("cs_1");
+  await s.deletePast("cs_1");
+  expect([s.delError, s.delAsk, s.past.length, s.sid]).toEqual([{ id: "cs_1", text: DEL_ERR["TURN-BUSY"] }, "", 2, "cs_1"]);
+  s.api.remove = vi.fn(async () => { throw new ApiFail({ code: "", msg: "", status: 500 }); });
+  s.askDelete("cs_0");
+  expect(s.delError).toBeNull();   // 다른 줄 확인을 펼치면 앞 실패 문구는 걷힌다
+  await s.deletePast("cs_0");
+  expect(s.delError).toEqual({ id: "cs_0", text: "지우지 못했어요. 다시 해 보세요." });
+
+  s.api.messages = vi.fn(async () => ({ messages: [] }));
+  await s.openPast(s.past[1]);   // 열어 본 지난 대화를 지우면 목록으로(읽기 전용 화면을 떼고)
+  expect([s.sid, s.readOnly]).toEqual(["cs_0", true]);
+  await s.openHistory(true);
+  s.api.remove = vi.fn(async (id: string) => ({ session_id: id, deleted: true, was_active: false }));
+  s.askDelete("cs_0");
+  await s.deletePast("cs_0");
+  expect([s.sid, s.readOnly, s.view]).toEqual(["", false, "history"]);
+
+  s.api.sessions = vi.fn(async () => ({ sessions: [row("cs_1", "active")] }));
+  await s.openPast({ ...row("cs_1", "active") });   // 지금 대화를 다시 이어 받은 뒤 지운다
+  expect([s.sid, s.readOnly]).toEqual(["cs_1", false]);
+  es.closed = false;
+  await s.openHistory(true);
+  s.input = "쓰던 글";
+  const capsBefore = calls(s.api.capabilities).length;
+  s.askDelete("cs_1");
+  await s.deletePast("cs_1");
+  expect([s.sid, s.readOnly, s.view, s.turns, s.past, s.input]).toEqual(["", false, "chat", [], [], "쓰던 글"]);
+  expect(es.closed).toBe(true);   // 지운 대화의 SSE 를 닫는다
+  expect(calls(s.api.capabilities).length).toBe(capsBefore + 1);   // 빈 새 대화 — 고를 모델을 다시 읽는다
 });
 
 test("pastTurns: turn_status 끝 문구 · 사용자 글만 있는 턴", () => {

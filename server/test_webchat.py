@@ -57,7 +57,7 @@ from agent import chat as agent_chat  # noqa: E402
 from agent import wsclient  # noqa: E402
 
 EMAILS = ("wc-a@example.com", "wc-b@example.com", "wc-rate@example.com", "wc-del@example.com", "wc-rev@example.com",
-          "wc-permit@example.com", "wc-permit-b@example.com", "wc-link@example.com")
+          "wc-permit@example.com", "wc-permit-b@example.com", "wc-link@example.com", "wc-delchat@example.com")
 N = 0
 
 
@@ -2854,6 +2854,126 @@ def test_switch_runtime(srv, ub, tok_b2, sid_b):
     ok("실행 중 스위치 꺼짐: 장치 WS close 1013 · SSE 끝")
 
 
+def test_delete(srv, ub):
+    """지난 대화 지우기(2026-11-26) — 목록 first_text, DELETE 본인 것만, 남의 것 404, 도는 턴 409, 지금 대화 지우기,
+    cascade(턴, 메시지, 이벤트, 확인 카드), 장치 turn.stop, 지운 턴 이벤트 ack 없음, 지운 대화 SSE 404, 지운 id 로 도구 호출 거절."""
+    u = db.user_by_email("wc-delchat@example.com")["id"]
+    a = imports.device_connect(u, "del pc")
+    dev, tok = a["device"]["id"], a["token"]
+    pc = PC(srv, tok)
+    time.sleep(0.2)
+
+    def new(h, cid):
+        r = h.post("/api/chat/sessions", json={"operation": "new", "device_id": dev, "provider": "fake", "model": None, "client_session_id": cid})
+        assert r.status_code == 201, r.text
+        return r.json()["session_id"]
+
+    def turn(h, sid, text, ctid, finish=True):
+        r = h.post(f"/api/chat/sessions/{sid}/turns", json={"text": text, "client_turn_id": ctid})
+        assert r.status_code == 201, r.text
+        tid = r.json()["turn_id"]
+        assert pc.wait(lambda m: m["type"] == "turn.start" and m["turn_id"] == tid)
+        if finish:
+            pc.event(tid, 1, "delta", {"text": "가짜 답"})
+            pc.event(tid, 2, "done", {})
+            assert pc.ack(tid) == 1 and pc.ack(tid) == 2
+        return tid
+
+    with web(srv, u) as h:
+        s1 = new(h, "del-1")
+        t1 = turn(h, s1, "첫 줄 가짜 문장\n\n둘째 줄 " + "가" * 60, "del-t1")
+        turn(h, s1, "두 번째 턴 글", "del-t2")
+        t1b = rows("SELECT id FROM chat_turns WHERE session_id=%s ORDER BY created_at DESC, id DESC LIMIT 1", (s1,))[0]["id"]
+        with db.tx() as c:   # 확인 카드 — 대기 하나, 끝난 것 하나
+            for st, fin in (("pending", "NULL"), ("confirmed", "now()")):
+                c.execute("INSERT INTO chat_approvals (id,user_id,session_id,turn_id,op,params,preview,state,expires_at,finished_at) "
+                          f"VALUES (%s,%s,%s,%s,'record_add','{{}}','{{}}',%s, now() + interval '10 minutes', {fin})",
+                          (webchat._id("ca"), u, s1, t1, st))
+        s2 = new(h, "del-2")   # s1 은 닫힘, s2 = 지금 대화(턴 없음)
+        s0 = webchat._id("cs")   # 메시지가 먼저 지워진 대화(턴만 남음)
+        with db.tx() as c:
+            c.execute("INSERT INTO chat_sessions (id,user_id,device_id,status,created_at) VALUES (%s,%s,%s,'closed', now() - interval '1 day')", (s0, u, dev))
+            c.execute("INSERT INTO chat_turns (id,session_id,client_turn_id,status,ended_at) VALUES (%s,%s,'del-t0','done',now())", (webchat._id("ct"), s0))
+        lst = {x["session_id"]: x for x in h.get("/api/chat/sessions").json()["sessions"]}
+        assert lst[s1]["first_text"] == ("첫 줄 가짜 문장 둘째 줄 " + "가" * 60)[:40], lst[s1]
+        assert len(lst[s1]["first_text"]) == 40 and "\n" not in lst[s1]["first_text"]
+        assert lst[s2]["first_text"] is None and lst[s0]["first_text"] is None, (lst[s2], lst[s0])
+        assert {"session_id", "status", "device_id", "provider", "model", "binding_version", "created_at", "last_at", "connected"} <= set(lst[s1])
+        ok("목록 first_text: 첫 턴의 내 말 앞 40자, 줄바꿈은 공백, 턴 없음과 메시지 없음 = null, 기존 키 그대로")
+
+        assert rows("SELECT display_name FROM users WHERE id=%s", (u,))[0]["display_name"] is None   # 표시 이름 관문을 지나지 않는다(아래 200)
+        with web(srv, u, origin=False) as h2:
+            r = h2.delete(f"/api/chat/sessions/{s1}")
+            assert r.status_code == 403 and r.json()["code"] == "ORIGIN", r.text
+        with web(srv) as h2:
+            assert h2.delete(f"/api/chat/sessions/{s1}").status_code == 401
+        with web(srv, ub) as h2:
+            r = h2.delete(f"/api/chat/sessions/{s1}")
+            assert r.status_code == 404 and r.json()["code"] == "NOT-FOUND", r.text
+        assert h.delete("/api/chat/sessions/cs_" + "0" * 24).status_code == 404
+        assert rows("SELECT count(*) AS n FROM chat_sessions WHERE id=%s", (s1,))[0]["n"] == 1
+        ok("지우기 관문: 대화 쓰기 경로와 같다, Origin 없음 403, 로그인 없음 401, 남의 것과 없는 것 404(지우지 않음)")
+
+        r = h.delete(f"/api/chat/sessions/{s1}")
+        assert r.status_code == 200 and r.json() == {"session_id": s1, "deleted": True, "was_active": False}, r.text
+        for tbl in ("chat_turns", "chat_messages", "chat_approvals"):
+            assert rows(f"SELECT count(*) AS n FROM {tbl} WHERE session_id=%s", (s1,))[0]["n"] == 0, tbl
+        assert rows("SELECT count(*) AS n FROM chat_events WHERE turn_id=%s", (t1,))[0]["n"] == 0
+        stop = pc.wait(lambda m: m["type"] == "turn.stop")
+        assert stop and stop["turn_id"] == t1b, stop
+        pc.event(t1b, 3, "delta", {"text": "늦은 조각"})
+        assert pc.ack(t1b, 1.0) is None, "지운 턴의 이벤트 = ack 없음(foreign)"
+        sse = SSE(srv, u, s1)
+        assert sse.status == 404
+        sse.close()
+        assert h.get(f"/api/chat/sessions/{s1}/messages").status_code == 404
+        assert s1 not in {x["session_id"] for x in h.get("/api/chat/sessions").json()["sessions"]}
+        ok("지난 대화 지우기: 표시 이름 없이도 200, 턴과 메시지와 이벤트와 확인 카드(대기 포함) cascade, 장치에 마지막 턴 turn.stop, 늦은 이벤트 ack 없음, SSE와 messages 404")
+
+        t2 = turn(h, s2, "도는 턴", "del-t3", finish=False)
+        r = h.delete(f"/api/chat/sessions/{s2}")
+        assert r.status_code == 409 and r.json()["code"] == "TURN-BUSY" and r.json()["msg"] == "답이 끝난 뒤 지울 수 있어요.", r.text
+        assert rows("SELECT status FROM chat_sessions WHERE id=%s", (s2,))[0]["status"] == "active"
+        pc.event(t2, 1, "done", {})
+        assert pc.ack(t2) == 1
+        r = h.delete(f"/api/chat/sessions/{s2}")
+        assert r.status_code == 200 and r.json()["was_active"] is True, r.text
+        assert not [x for x in h.get("/api/chat/sessions").json()["sessions"] if x["status"] == "active"]
+        s3 = new(h, "del-3")
+        assert rows("SELECT status FROM chat_sessions WHERE id=%s", (s3,))[0]["status"] == "active"
+        ok("지금 대화: 도는 턴 409 TURN-BUSY(그대로 둠), 끝난 뒤 지우면 활성 대화 없음, 다음 새 대화는 새로 만든다")
+    pc.close()
+
+    # 지운 대화의 id 로는 도구 호출, 공급자 실행 허가가 나지 않는다(지우기 전에는 난다)
+    caps = [{"provider": "claude", "models": ["sonnet"]}]
+    pc = PC(srv, tok, capabilities=caps)
+    try:
+        pc.send({"type": "hello", "agent_version": "0.1.7", "providers": ["claude"], "capabilities_version": 2, "capabilities": caps,
+                 "ai_links": {"claude": "linked"}})
+        end = time.monotonic() + 5
+        while time.monotonic() < end and not rows("SELECT 1 FROM chat_provider_permits WHERE user_id=%s", (u,)):
+            time.sleep(0.05)
+        with web(srv, u) as h:
+            r = h.post("/api/chat/sessions", json={"operation": "new", "device_id": dev, "provider": "claude", "model": "sonnet",
+                                                   "client_session_id": "del-claude"})
+            assert r.status_code == 201, r.text
+            sc = r.json()["session_id"]
+            tc = "ct_" + secrets.token_hex(12)
+            with db.tx() as c:
+                c.execute("INSERT INTO chat_turns (id,session_id,client_turn_id) VALUES (%s,%s,'del-launch')", (tc, sc))
+            dv = imports.authenticate("Bearer " + tok)
+            assert webchat._chat_launch_authorization(dv, "Bearer " + tok, sc, tc)["authorized"] is True
+            webchat._chat_mcp_scope(dv, "Bearer " + tok, sc, tc)   # 지우기 전 = 통과
+            with db.tx() as c:
+                c.execute("UPDATE chat_turns SET status='stopped', ended_at=now() WHERE id=%s", (tc,))
+            assert h.delete(f"/api/chat/sessions/{sc}").status_code == 200
+            assert _code(lambda: webchat._chat_launch_authorization(dv, "Bearer " + tok, sc, tc)) == "CONSENT_REQUIRED"
+            assert _code(lambda: webchat._chat_mcp_scope(dv, "Bearer " + tok, sc, tc)) == "CONSENT_REQUIRED"
+        ok("지운 대화의 세션, 턴 id: launch-authorization, 도구 호출 범위 모두 거절(CONSENT_REQUIRED)")
+    finally:
+        pc.close()
+
+
 def test_purge(ua_del):
     u = ua_del
     dev = imports.device_connect(u, "purge pc")["device"]["id"]
@@ -2935,6 +3055,7 @@ def main_():
         test_switch_runtime(srv, ub, b2["token"], sid_b)
         test_silence(srv, ua, tok_a, dev_a)
         test_revoke(srv, ua, tok_a, dev_a, sid_a)
+        test_delete(srv, ub)
     test_purge(db.user_by_email("wc-del@example.com")["id"])
     cleanup()
     switch(False)
