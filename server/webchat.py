@@ -5,7 +5,8 @@
 
 웹(쿠키 세션 · POST 는 Origin 검사):
   POST /api/chat/sessions {device_id?}              → {session_id, status, device_id, connected}
-  GET  /api/chat/sessions                           → {sessions:[…], connected}
+  GET  /api/chat/sessions                           → {sessions:[…, first_text], connected}
+  DELETE /api/chat/sessions/{id}                    → {session_id, deleted, was_active}. 본인 것만(404), 도는 턴 409 TURN-BUSY, 확인 카드까지 cascade
   GET  /api/chat/sessions/{id}/messages?after=<turn_id> → {messages:[…]} (턴 단위 — after 턴 뒤의 메시지)
   POST /api/chat/sessions/{id}/turns {text, client_turn_id} → {turn_id, status, created} · 409 TURN-BUSY · 같은 client_turn_id = 같은 턴
   POST /api/chat/sessions/{id}/stop                 → {turn_id, status} (실행 중 턴 없으면 turn_id null)
@@ -100,6 +101,7 @@ HTTP = {"SWITCH-OFF": 503, "UNAUTHORIZED": 401, "ORIGIN": 403, "NOT-FOUND": 404,
         "TEXT-LIMIT": 413, "RATE-LIMIT": 429, "AUTH-INVALID": 401, "TOKEN-EXPIRED": 401, "TOKEN-REVOKED": 401,
         "AUTH-BLOCKED": 403, "MCP-ERROR": 400}
 HTTP.update({"APPROVAL-STALE": 409, "APPROVAL-CLOSED": 409, "APPROVAL-CONFIRM-AGAIN": 409})
+FIRST_TEXT_CHARS = 40                 # 지난 대화 목록의 첫 내 말 앞부분(코드포인트, 줄바꿈은 공백)
 
 # AI 하나로 A3(2026-11-12): 사용자가 MCP 로 하는 확정, 삭제 op 은 대화에서도 전부 확인 카드로 연다 — decide 등급 전부와 purge(trash_purge).
 # 판정은 이름 나열이 아니라 등급(chat_mcp._PINNED_TIERS)이다. 바로 실행은 계속 막는다(chat_mcp.validate_call). 카드 문구는 서버가 만든다(A4):
@@ -1112,9 +1114,38 @@ def session_resume(uid: str, sid: str):
     return _session_out(s)
 
 
+def _first_text(body):
+    """첫 user 메시지 → 목록 한 줄(앞 FIRST_TEXT_CHARS 자, 줄바꿈은 공백). 없거나 빈 글이면 None."""
+    if not isinstance(body, str):
+        return None
+    line = re.sub(r"[\r\n]+", " ", body).strip()
+    return line[:FIRST_TEXT_CHARS] or None
+
+
 def sessions_list(uid: str) -> list:
+    """최근 50. 줄마다 first_text = 그 대화 첫 턴의 내 말 앞부분(메시지가 지워졌거나 턴이 없으면 None). 본문은 앞 200자만 읽는다."""
     with tx() as c:
-        return [_session_out(s) for s in _all(c, "SELECT * FROM chat_sessions WHERE user_id=%s ORDER BY created_at DESC, id LIMIT 50", (uid,))]
+        rows = _all(c, "SELECT s.*, (SELECT left(m.body, 200) FROM chat_messages m JOIN chat_turns t ON t.id=m.turn_id "
+                       "WHERE m.session_id=s.id AND m.role='user' ORDER BY t.created_at, t.id LIMIT 1) AS first_body "
+                       "FROM chat_sessions s WHERE s.user_id=%s ORDER BY s.created_at DESC, s.id LIMIT 50", (uid,))
+        return [{**_session_out(s), "first_text": _first_text(s["first_body"])} for s in rows]
+
+
+def session_delete(uid: str, sid: str) -> dict:
+    """대화 하나 지우기(2026-11-26) — 본인 것만(아니면 NOT-FOUND). 도는 턴이 있으면 TURN-BUSY(지우기 안에서 턴을 끝내지 않는다).
+    지금 대화(active)도 지운다 — 그 사용자의 활성 대화가 없어지고 다음 새 대화가 새로 만든다. 턴, 메시지, 이벤트, 확인 카드(대기 포함)는 FK cascade.
+    이미 실행된 확인 카드의 변경은 그대로다. 반환 {session_id, deleted, was_active, last_turn_id}(last_turn_id = 장치에 turn.stop 을 보낼 턴)."""
+    with tx() as c:
+        _user_lock(c, uid)   # 잠금 순서 = users → chat_sessions — turn_create, 확인 카드, session_new 와 직렬
+        s = _one(c, "SELECT * FROM chat_sessions WHERE id=%s AND user_id=%s FOR UPDATE", (sid, uid))
+        if not s:
+            raise CrmError("NOT-FOUND", "그 대화를 찾을 수 없어요.")
+        if _one(c, "SELECT 1 FROM chat_turns WHERE session_id=%s AND status='running'", (sid,)):
+            raise CrmError("TURN-BUSY", "답이 끝난 뒤 지울 수 있어요.", "답이 끝나거나 중지한 뒤 다시 지우세요.")
+        last = _one(c, "SELECT id FROM chat_turns WHERE session_id=%s ORDER BY created_at DESC, id DESC LIMIT 1", (sid,))
+        c.execute("DELETE FROM chat_sessions WHERE id=%s", (sid,))
+    return {"session_id": sid, "deleted": True, "was_active": s["status"] == "active", "last_turn_id": last["id"] if last else None,
+            "device_id": s["device_id"]}
 
 
 # 잠금 순서(모든 경로 같음): users(_user_lock) → chat_sessions(FOR NO KEY UPDATE) → chat_turns(FOR UPDATE).
@@ -2034,6 +2065,7 @@ class Routes:
         u = self.usage
         return [
             Route("/api/chat/sessions", u("web:chat_sessions", self.sessions), methods=["GET", "POST"]),
+            Route("/api/chat/sessions/{sid}", u("web:chat_session_delete", self.session_delete), methods=["DELETE"]),
             Route("/api/chat/capabilities", u("web:chat_capabilities", self.capabilities)),
             Route("/api/chat/sessions/{sid}/messages", u("web:chat_messages", self.messages)),
             Route("/api/chat/sessions/{sid}/approvals", u("web:chat_approvals", self.approvals)),
@@ -2120,6 +2152,23 @@ class Routes:
             return JSONResponse({"sessions": rows}, headers={"cache-control": "no-store"})
         except CrmError as e:
             return _err(e)
+
+    async def session_delete(self, request):
+        """DELETE /api/chat/sessions/{sid} — 대화의 기존 쓰기 경로와 같은 검사(스위치 503 → 세션 401 → Origin 403) → 지우기. write_gate 는 지나지 않는다.
+        404 남의 것과 없는 것, 409 TURN-BUSY 도는 턴. SSE 는 따로 닫지 않는다(세션 끝 길과 같다 — 지운 대화의 재접속은 404).
+        장치가 붙어 있으면 마지막 턴에 turn.stop — 서버가 이미 끝낸 턴을 장치가 아직 돌리는 경우(중지 때 끊김) 지운 뒤엔 이벤트가 foreign 이라 멈춤 신호를 못 받는다."""
+        uid, err = await self._gate(request, post=True)
+        if err:
+            return err
+        try:
+            r = await run_in_threadpool(session_delete, uid, request.path_params["sid"])
+        except CrmError as e:
+            return _err(e)
+        d = hub.dev(uid, r["device_id"])
+        if d and r["last_turn_id"]:
+            await d.send({"type": "turn.stop", "turn_id": r["last_turn_id"]})
+        return JSONResponse({"session_id": r["session_id"], "deleted": True, "was_active": r["was_active"]},
+                            headers={"cache-control": "no-store"})
 
     async def capabilities(self, request):
         uid, err = await self._gate(request)

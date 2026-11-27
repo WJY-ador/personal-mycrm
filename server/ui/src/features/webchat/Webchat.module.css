@@ -7,8 +7,10 @@
 .panel[hidden] { display: none; }
 :global(body.webchat-open) { padding-right: 420px; }
 .head { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-5) var(--sp-6) var(--sp-4); border-bottom: 1px solid var(--line); }
-.head h3 { margin: 0 auto 0 0; font-size: var(--fs-3); white-space: nowrap; }
-.head button[aria-pressed="true"] { color: var(--accent); }
+.head h3 { margin: 0; font-size: var(--fs-3); white-space: nowrap; }
+/* 머리글 탭 둘(대화, 지난 대화) — 껍데기 탭(.tab) 겉모양 그대로. 머리글 아래 선에 붙여 고른 탭이 본문과 이어 보이게 */
+.views { display: flex; gap: var(--sp-1); margin: 0 auto calc(-1 * var(--sp-4)) 0; align-self: flex-end; }
+.views .tab { min-height: 0; }
 .info { padding: var(--sp-3) var(--sp-6); border-bottom: 1px solid var(--line); background: var(--paper); }
 .info p { margin: 0; font-size: var(--fs-1); line-height: 1.45; color: var(--muted); overflow-wrap: anywhere; }
 .info p[role="status"]:empty { display: none; }
@@ -87,6 +89,13 @@
 .pastWhen { font-size: var(--fs-2); font-variant-numeric: tabular-nums; }
 .pastModel { font-size: var(--fs-1); color: var(--muted); }
 .pastNow { margin-left: auto; font-size: var(--fs-1); color: var(--accent); }
+/* 줄 = 여는 버튼 + 그 옆 [지우기]. 확인과 실패 문구는 그 줄 아래 칸 전체 */
+.pastRow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-2); align-items: center; }
+.pastRow > .note, .pastAsk { grid-column: 1 / -1; }
+.pastText { order: 1; flex: 1 1 100%; min-width: 0; font-size: var(--read-fs-sm); line-height: var(--read-lh-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pastNone { color: var(--muted); }
+.pastAsk { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-3); justify-content: flex-end; }
+.pastAsk p { margin: 0 auto 0 0; font-size: var(--fs-2); color: var(--ink); }
 /* 상태 줄 · 입력 칸 */
 .line { margin: 0; padding: var(--sp-3) var(--sp-6); border-top: 1px solid var(--line); min-height: 1.9em; font-size: var(--fs-1); color: var(--muted); }
 .line:empty { min-height: 0; padding: 0; border-top: 0; }
