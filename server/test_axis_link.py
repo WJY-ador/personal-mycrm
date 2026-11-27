@@ -339,7 +339,7 @@ async def run():
     print("OK 5 축 보기(건수·최신 한 장·본문은 하나 물을 때·격리·코드 없는 축 · 웹 = 같은 함수) · 목록 f.axes 필터·축 칩 · 인박스 축 코드")
 
     # ── 6. 장치 features · 정책 이관 ──
-    assert imports.device_self("Bearer " + tok)["features"] == ["axis_codes"]
+    assert imports.device_self("Bearer " + tok)["features"] == ["axis_codes", "wrap_axes"]
     assert imports.device_self("Bearer " + btok)["features"] == [], "코드 있는 축이 없으면 앱은 옛 경로 그대로"
     old = [t for t in imports.TRANSFORMS if t not in ("axis-page/1", "inbox-digest/1")]   # inbox-digest/1 = v4(2026-11-22)
     assert set(old) == set(imports.ALL_BEFORE_V2)

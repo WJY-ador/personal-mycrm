@@ -66,6 +66,25 @@ test("축 화면 — 머리 · 한 장(AI 초안 한 줄 + 시각, 렌더러, �
   expect(calls.filter(c => c.method !== "GET")).toEqual([]);
 });
 
+test("축의 주제(2026-11-27) — 한 장 아래 절 · 제목, 글 수, 마지막 날짜 · 누르면 주제 항목 페이지 · 서버 순서 · 0개면 절 없음", async () => {
+  const TP = [{ item_id: "i_t2", title: "합성 늦은 주제", records: 1, last_on: "2026-11-21" },
+    { item_id: "i_t1", title: "합성 이른 주제", records: 3, last_on: "2026-11-20" }, { item_id: "i_t0", title: "합성 빈 주제", records: 0, last_on: null }];
+  OVR = () => json(200, { ready: true, axes: [{ ...OV().axes[0], topics: TP }, { ...OV().axes[1], topics: [] }] });
+  const el = await showMe("#_me/axis/a1", S());
+  const sec = el.querySelector('[aria-labelledby="axis-topics-h"]')!;
+  expect(sec.querySelector("h3")!.textContent).toBe("주제");
+  expect(sec.querySelector(".count")!.textContent).toBe("3");
+  const cards = [...sec.querySelectorAll("li a")];
+  expect(cards.map(a => a.getAttribute("href"))).toEqual(["#_me/obj/topics/i_t2", "#_me/obj/topics/i_t1", "#_me/obj/topics/i_t0"]);
+  expect(cards[0].textContent).toBe("합성 늦은 주제글 1편11월 21일");
+  expect(cards[2].textContent).toBe("합성 빈 주제글 0편");
+  const order = [...el.querySelectorAll("section")].map(x => x.id || x.getAttribute("aria-labelledby"));
+  expect(order.indexOf("axis-doc")).toBeLessThan(order.indexOf("axis-topics-h"));
+  hideMe(); queryClient.clear();
+  const el2 = await showMe("#_me/axis/a2", S());
+  expect(el2.querySelector('[aria-labelledby="axis-topics-h"]')).toBeNull();
+});
+
 test("접힌 「원하는 관점과 키워드」 — 키워드 칩 + 기존 항목 상세(삭제 버튼 그대로)", async () => {
   const el = await showMe("#_me/axis/a1", { ...S(), switches: { trash: true } });
   const fold = el.querySelector("details")!;

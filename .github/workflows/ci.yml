@@ -382,6 +382,17 @@ jobs:
           PY
           python server/test_axis_link.py
 
+      - name: "④-x2 축 > 주제 > 하위 목록 시험 (test_axis_topic.py)"
+        env:
+          DATABASE_URL: postgresql://postgres:crm@localhost:5432/crm_test_axis_topic
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:crm@localhost:5432/crm", autocommit=True) as c:
+              c.execute("CREATE DATABASE crm_test_axis_topic")
+          PY
+          python server/test_axis_topic.py
+
       # 첫 화면 루틴판(2026-11-21) — 블록 설정 p 검증 · 집계(세 열, 줄 배치, since, missing) · 한판 상세 · 웹 경로 · 견본 대조 · MCP read op(합성 PG).
       # 시작 가드가 crm_test* 를 보므로 전용 DB 를 만들고 이 단계에만 DATABASE_URL 을 덮어쓴다(다른 단계 env 불변)
       - name: "④-y 루틴판 시험 (test_routine_board.py)"

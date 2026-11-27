@@ -31,7 +31,8 @@ MAX_SESSION_WRAP_FOLDERS = 20   # 세션 정리 폴더 수 상한
 
 # 서버 선택 기능(GET /api/imports/device 의 features) 중 이 앱이 아는 것. axis_codes = 수집 글 축을 코드로 보낸다(2026-11-18)
 # topics = 세션 정리 묶음의 주제 줄을 topic 으로 보낸다(2026-11-26, sessionwrap)
-KNOWN_FEATURES = ("axis_codes", "topics")
+# wrap_axes = 세션 정리 묶음의 축 줄을 axis_codes 로 보낸다(2026-11-27, sessionwrap) — 수집 글 axis_codes 와 따로(옛 서버는 세션 정리의 axis_codes 를 거절한다)
+KNOWN_FEATURES = ("axis_codes", "topics", "wrap_axes")
 
 _ACCOUNT_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 # 키 공간 ID — 요청엔 안 들어가고 Keychain 항목 이름에만 쓴다. 서버 표시 형식이 미정이라 안전 문자만 본다

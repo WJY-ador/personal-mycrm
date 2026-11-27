@@ -1,7 +1,7 @@
 // 항목 상세 — 코드·제목·본문(굵게)·필드 + 동작 + 연결. 제목·본문을 누르면 인라인 편집(둘 다 한 칸에서, [저장] 1번 — 서버 item_edit:
 // 제안+적용 한 트랜잭션). 실패 문구는 서버 msg·action 그대로. 확정 기준의 문장을 고쳐도 확정은 유지(서버 규칙).
 // 자동 분류 항목(auto_routed, 2026-11-18) = 머리에 자동 분류 표시, 고치기 없음, 근거 원문(RouteSrc), 동작은 [빼기]만(Acts).
-// 주제 항목(오브젝트 key topics, 2026-11-26) = 연결 앞에 붙은 글 한 줄기(Thread — 날짜, 제목, 본문).
+// 주제 항목(오브젝트 key topics, 2026-11-26) = 연결 앞에 붙은 글 한 줄기(Thread — 날짜, 제목, 본문)와, 그 글에서 나온 항목의 오브젝트별 절(2026-11-27).
 import { mdhm } from "../../shared/date";
 import { rich } from "../../shared/rich";
 import { Acts } from "./Acts";
@@ -36,7 +36,7 @@ export function ItemDetail({ W, r, lens, trashOn }: { W: World; r: Extract<Row, 
       <FieldRows W={W} it={x} />
       {x.auto_routed ? <RouteSrc id={x.id} at={x.updated_at} /> : null}
       <Acts W={W} r={r} trashOn={trashOn} />
-      {x.revision > 0 && defById(W, x.object_id)?.key === "topics" ? <Thread id={x.id} /> : null}
+      {x.revision > 0 && defById(W, x.object_id)?.key === "topics" ? <Thread W={W} id={x.id} /> : null}
       <Conn W={W} kind="item" id={x.id} lens={lens} />
     </>
   );
