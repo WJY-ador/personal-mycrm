@@ -284,5 +284,75 @@ class TopicTest(unittest.TestCase):
             self.assertEqual((cm.exception.code, cm.exception.field), ("UNKNOWN-FIELD", "topic"))
 
 
+class AxisLineTest(unittest.TestCase):
+    """축 줄(2026-11-27 축 > 주제) — 서버 features 에 wrap_axes 가 있으면 첫 `축:` 줄(코드 1~2개)을 본문에서 빼 axis_codes 로.
+    주제 줄과 따로 본다. 꼴이 안 맞거나 옛 서버(wrap_axes 없음, 수집 글 axis_codes 만)면 본문 그대로."""
+    setUp, tearDown, write, pending, go = CollectTest.setUp, CollectTest.tearDown, CollectTest.write, CollectTest.pending, CollectTest.go
+    go_topics = TopicTest.go_topics
+
+    def test_with_topic_line(self):
+        self.write("2030-01-02.md", "## 합성 제목\n합성 첫 문단.\n주제: 합성 주제\n축: B-1, C\n축: D\n합성 끝 문단.")
+        self.assertEqual(self.go_topics(features=("axis_codes", "topics", "wrap_axes"))["staged"], 1)
+        (o,) = self.pending()
+        self.assertEqual((o["topic"], o["axis_codes"]), ("합성 주제", ["B-1", "C"]))
+        self.assertEqual(o["body"], "합성 첫 문단.\n축: D\n합성 끝 문단.")
+        contract.validate(o)
+
+    def test_axis_line_only(self):
+        self.write("2030-01-02.md", "## 합성 제목\n축:A\n합성 문단.\n주제: 합성 주제")
+        self.go_topics(features=("wrap_axes",))   # 주제 기능 없음 = 주제 줄은 본문에, 축 줄만 뺀다
+        (o,) = self.pending()
+        self.assertEqual(o["axis_codes"], ["A"])
+        self.assertNotIn("topic", o)
+        self.assertEqual(o["body"], "합성 문단.\n주제: 합성 주제")
+        contract.validate(o)
+
+    def test_bad_shape_stays_in_body(self):
+        cases = ["## 합성 셋\n문단.\n축: A, B, C",
+                 "## 합성 소문자\n문단.\n축: a",
+                 "## 합성 빈 값\n문단.\n축:   ",
+                 "## 합성 빈 칸\n문단.\n축: A,",
+                 "## 합성 중복\n문단.\n축: A, A",
+                 "## 합성 긴 코드\n문단.\n축: ABCDEFGHIJK",
+                 "## 합성 공백 구분\n문단.\n축: A B",
+                 "## 합성 앞 공백\n문단.\n  축: A",
+                 "## 합성 울타리\n```\n축: A\n```\n문단.",
+                 "## 합성 본문 없음\n축: A"]
+        self.write("2030-01-02.md", "\n\n".join(cases))
+        r = self.go_topics(features=("wrap_axes",))
+        objs = self.pending()
+        self.assertEqual((r["blocks"], len(objs)), (10, 10))
+        for o in objs:
+            self.assertNotIn("axis_codes", o, o["title"])
+            self.assertIn("축:", o["body"], o["title"])
+            contract.validate(o)
+
+    def test_old_server_keeps_line(self):
+        self.write("2030-01-02.md", "## 합성 제목\n문단.\n축: A")
+        self.go_topics(features=("axis_codes", "topics"))   # 옛 서버 = 수집 글 axis_codes 표시만(세션 정리 axis_codes 를 거절한다)
+        (o,) = self.pending()
+        self.assertNotIn("axis_codes", o)
+        self.assertEqual(o["body"], "문단.\n축: A")
+
+    def test_config_keeps_wrap_axes_feature(self):
+        self.cfg["server_features"] = ["axis_codes", "topics", "wrap_axes"]
+        _config.save(self.th.paths, self.cfg)
+        self.assertEqual(_config.load(self.th.paths)["server_features"], ["axis_codes", "topics", "wrap_axes"])
+
+    def test_axis_codes_contract(self):
+        base = {"contract": contract.CONTRACT, "schema_revision": contract.SCHEMA_REVISION, "source_instance_id": "is_" + "0" * 24,
+                "original_id": "o_" + "1" * 32, "revision": "v_" + "2" * 32, "previous_revision": None, "kind": "self_text",
+                "execution": "attended", "transform_version": "session-wrap/1", "policy_revision": 1, "body": "합성 본문."}
+        self.assertEqual(contract.validate({**base, "axis_codes": ["A", "B-1"]})["axis_codes"], ["A", "B-1"])
+        for bad in ([], ["A", "B", "C"], ["a"], ["A", "A"], ["A" * 11], "A", [1]):
+            with self.assertRaises(contract.ContractError):
+                contract.validate({**base, "axis_codes": bad})
+        for tv in ("self-text/1", "axis-page/1"):
+            extra = {"axis_code": "A"} if tv == "axis-page/1" else {}
+            with self.assertRaises(contract.ContractError) as cm:
+                contract.validate({**base, "transform_version": tv, "axis_codes": ["A"], **extra})
+            self.assertEqual((cm.exception.code, cm.exception.field), ("UNKNOWN-FIELD", "axis_codes"))
+
+
 if __name__ == "__main__":
     unittest.main()

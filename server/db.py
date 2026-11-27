@@ -3453,6 +3453,36 @@ def item_proposals(uid):
         return _items_query(c, uid, "revision = 0 AND draft_id IS NOT NULL AND trashed_at IS NULL", [])
 
 
+# 기록의 날짜(원본 날짜, 없으면 원본 시각·만든 시각의 KST 날짜) — 주제의 글 한 줄기·하위 목록·축의 주제 목록이 같은 식을 쓴다(records 별칭 r)
+RECORD_ON_SQL = "COALESCE(r.source_date, (COALESCE(r.source_created_at, r.created) AT TIME ZONE 'Asia/Seoul')::date)"
+CHILD_SUMMARY_FIELDS, CHILD_SUMMARY_CP = 3, 300
+
+
+def _topic_children(c, uid, item_id):
+    """주제 하위 목록(2026-11-27 축 > 주제 2절) — 이 항목에 주제(topics)로 붙은 기록에서 자동 분류(item_routes routed)로 나온 항목.
+    오브젝트 순(정의 만든 순) → 기록 날짜 → 기록 안 위치 순. 각 줄 {item_id, title, on, object_id, object_label, summary}.
+    summary = 그 오브젝트의 글자(text) 필드 가운데 값이 있는 것 앞 3개 {key, label, text(300자까지)}. 휴지통·보관 항목, 지운·휴지통 기록,
+    보관한 오브젝트는 뺀다. 새로 저장하지 않는다(출처 행에서 계산)."""
+    rows = _all(c, f"SELECT i.id AS item_id, i.title, i.data, i.object_id, o.label AS object_label, {RECORD_ON_SQL}::text AS \"on\" "
+                   "FROM item_links l JOIN records r ON r.user_id=l.user_id AND r.id=l.source_record_id "
+                   "JOIN item_routes ir ON ir.user_id=r.user_id AND ir.record_id=r.id AND ir.state='routed' "
+                   "JOIN items i ON i.user_id=ir.user_id AND i.id=ir.item_id AND i.revision > 0 AND i.archived_at IS NULL AND i.trashed_at IS NULL "
+                   "JOIN object_defs o ON o.user_id=i.user_id AND o.id=i.object_id AND o.archived_at IS NULL "
+                   "WHERE l.user_id=%s AND l.target_item_id=%s AND l.field_key='topics' AND r.deleted_at IS NULL AND r.trashed_at IS NULL "
+                   "ORDER BY o.created_at, o.id, 6, r.created, r.id, ir.start_pos NULLS LAST, i.id", (uid, item_id))
+    texts = {}
+    for oid in dict.fromkeys(r["object_id"] for r in rows):
+        texts[oid] = [f for f in _fields(c, uid, oid) if f["value_type"] == "text"]
+    out = []
+    for r in rows:
+        d = r["data"] or {}
+        summary = [{"key": f["key"], "label": f["label"], "text": d[f["key"]][:CHILD_SUMMARY_CP]} for f in texts[r["object_id"]]
+                   if isinstance(d.get(f["key"]), str) and d[f["key"]].strip()][:CHILD_SUMMARY_FIELDS]
+        out.append({"item_id": r["item_id"], "title": r["title"], "on": r["on"], "object_id": r["object_id"],
+                    "object_label": r["object_label"], "summary": summary})
+    return out
+
+
 def item_get(uid, item_id):
     """항목 하나 + 관계 대상 요약 + 들어오는 관계 + 이력 + 승격 상태. 웹 서랍용."""
     with tx() as c:
@@ -3494,10 +3524,10 @@ def item_get(uid, item_id):
         # 주제 잇기(2026-11-26) — 이 항목에 주제(field_key topics)로 붙은 기록을 날짜순 한 줄기로(오래된 것 먼저). on = 원본 날짜(없으면
         # 원본 시각·만든 시각의 KST 날짜). 휴지통·지운 기록은 뺀다. 주제 연결이 없으면 빈 목록
         out["thread"] = [_iso(r) for r in _all(
-            c, "SELECT r.id AS record_id, r.title, r.body, COALESCE(r.source_date, (COALESCE(r.source_created_at, r.created) "
-               "AT TIME ZONE 'Asia/Seoul')::date)::text AS \"on\" FROM item_links l JOIN records r ON r.user_id=l.user_id AND r.id=l.source_record_id "
-               "WHERE l.user_id=%s AND l.target_item_id=%s AND l.field_key='topics' AND r.deleted_at IS NULL AND r.trashed_at IS NULL "
-               "ORDER BY 4, r.created, r.id", (uid, item_id))]
+            c, f"SELECT r.id AS record_id, r.title, r.body, {RECORD_ON_SQL}::text AS \"on\" FROM item_links l JOIN records r ON r.user_id=l.user_id "
+               "AND r.id=l.source_record_id WHERE l.user_id=%s AND l.target_item_id=%s AND l.field_key='topics' AND r.deleted_at IS NULL "
+               "AND r.trashed_at IS NULL ORDER BY 4, r.created, r.id", (uid, item_id))]
+        out["children"] = _topic_children(c, uid, item_id) if out["thread"] else []
         out["history"] = [_iso(r) for r in _all(c, "SELECT id,action,prev_revision,prev_state,event_meta,at FROM item_history "
                                                    "WHERE user_id=%s AND item_id=%s ORDER BY id", (uid, item_id))]
         import stack_service

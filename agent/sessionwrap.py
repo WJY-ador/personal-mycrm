@@ -20,6 +20,10 @@
   fields topic 에 싣고 그 줄은 본문에서 뺀다. 서버는 같은 이름의 주제 항목에 이 기록을 이어 붙인다. 이름이 계약(contract.check_topic: 1~40자
   한 줄, 제어 문자·URL·경로 꼴 없음)에 안 맞거나, 줄을 빼면 본문이 비거나, 서버 features 에 topics 가 없으면(옛 서버, 주제 오브젝트 없는 계정)
   줄을 본문에 그대로 둔다(axis_codes 와 같은 방식).
+- 축 줄(2026-11-27 축 > 주제): 줄 처음이 `축:` 인 첫 줄(코드 울타리 밖)의 콜론 뒤를 쉼표로 나눈 코드 1~2개(contract.check_session_axis_codes)를
+  fields axis_codes 에 싣고 그 줄은 본문에서 뺀다. 서버는 그 기록과, 함께 온 주제 항목에 같은 축을 잇는다. 꼴이 안 맞거나, 줄을 빼면 본문이 비거나,
+  서버 features 에 wrap_axes 가 없으면(옛 서버, 코드 있는 축 없는 계정) 줄을 본문에 그대로 둔다. 수집 글의 axis_codes 표시는 보지 않는다
+  (그 표시만 있는 옛 서버는 세션 정리의 axis_codes 를 거절한다). 주제 줄과 따로 본다(어느 하나만 있어도 된다).
 """
 from __future__ import annotations
 
@@ -40,7 +44,9 @@ _RULE = re.compile(r"^-{3,}[ \t]*$")
 _FENCE = re.compile(r"^[ \t]{0,3}(```|~~~)")
 _DROP = re.compile(r"^[ \t]*(?:[-*][ \t]+)?→[ \t]*남긴[ \t]*곳[ \t]*[:：]")
 _TOPIC = re.compile(r"^주제:(.*)$")
+_AXIS = re.compile(r"^축:(.*)$")
 TOPICS_FEATURE = "topics"             # 서버 features(GET /api/imports/device) — 주제 오브젝트가 있는 계정에만 실린다
+AXIS_FEATURE = "wrap_axes"            # 서버 features — 세션 정리 axis_codes 를 받는 서버가, 코드 있는 축 항목이 있는 계정에만 싣는다
 PATH_MASK = "‹경로›"                  # 서버 imports.SESSION_WRAP_PATH_MASK 와 같은 문자열(서버는 승인 때 개수만 센다)
 # 경로 덩어리 — 계약 차단 규칙(contract._BLOCK_PATTERNS path)의 접두를 모두 덮고 앞 경계는 더 넓다(영숫자·._/~- 뒤만 아니면).
 # 그래서 가린 결과는 path 규칙에 걸리지 않는다(시험이 본다). UNC 는 계약처럼 앞 경계 없이.
@@ -97,9 +103,9 @@ def parse(text: str) -> list:
     return out
 
 
-def split_topic(body: str):
-    """묶음 본문 → (주제 이름 또는 None, 그 줄을 뺀 본문). 줄 처음이 `주제:` 인 첫 줄만 본다(코드 울타리 안 제외).
-    이름이 계약에 안 맞거나 줄을 빼면 본문이 비면 (None, 본문 그대로)."""
+def _split_line(body: str, pat, parse):
+    """묶음 본문 → (값 또는 None, 그 줄을 뺀 본문). 줄 처음이 pat 인 첫 줄만 본다(코드 울타리 안 제외). parse(콜론 뒤 글자) → 값,
+    계약에 안 맞으면 ContractError. 안 맞거나 줄을 빼면 본문이 비면 (None, 본문 그대로)."""
     lines, fence = body.split("\n"), None
     for i, line in enumerate(lines):
         if fence is not None:
@@ -110,17 +116,38 @@ def split_topic(body: str):
         if m:
             fence = m.group(1)
             continue
-        t = _TOPIC.match(line)
+        t = pat.match(line)
         if not t:
             continue
-        name = t.group(1).strip()
         rest = "\n".join(lines[:i] + lines[i + 1:]).strip("\n")
         try:
-            contract.check_topic(name)
+            value = parse(t.group(1))
         except contract.ContractError:
             return None, body
-        return (name, rest) if rest.strip() else (None, body)
+        return (value, rest) if rest.strip() else (None, body)
     return None, body
+
+
+def _topic_name(raw: str) -> str:
+    name = raw.strip()
+    contract.check_topic(name)
+    return name
+
+
+def _axis_codes(raw: str) -> list:
+    codes = [c.strip() for c in raw.split(",")]
+    contract.check_session_axis_codes(codes)
+    return codes
+
+
+def split_topic(body: str):
+    """묶음 본문 → (주제 이름 또는 None, 그 줄을 뺀 본문). 첫 `주제:` 줄만. 이름이 계약에 안 맞거나 줄을 빼면 본문이 비면 (None, 본문 그대로)."""
+    return _split_line(body, _TOPIC, _topic_name)
+
+
+def split_axes(body: str):
+    """묶음 본문 → (축 코드 목록 또는 None, 그 줄을 뺀 본문). 첫 `축:` 줄만, 쉼표로 나눈 코드 1~2개. 안 맞으면 (None, 본문 그대로)."""
+    return _split_line(body, _AXIS, _axis_codes)
 
 
 def list_files(folder: str) -> list:
@@ -157,7 +184,8 @@ def collect(st, cfg: dict, counts: dict | None = None) -> dict:
         return out
     counts = counts if counts is not None else _runner.new_counts()
     execution = "attended" if cfg.get("_execution") == "attended" else "unattended"
-    topics_on = TOPICS_FEATURE in (cfg.get("server_features") or [])
+    feats = cfg.get("server_features") or []
+    topics_on, axes_on = TOPICS_FEATURE in feats, AXIS_FEATURE in feats
     for folder in sc.get("folders") or []:
         if not (isinstance(folder, str) and os.path.isabs(folder) and os.path.isdir(folder)):
             out["missing_folders"] += 1             # 폴더 하나가 없어도 나머지는 계속한다
@@ -185,12 +213,15 @@ def collect(st, cfg: dict, counts: dict | None = None) -> dict:
                 out["blocks"] += 1
                 key = jcs.sha256_hex([TRANSFORM, root, fn, title, n])   # 중복 기준은 가리기 전 제목(PC 대응표만)
                 topic, body = split_topic(body) if topics_on else (None, body)
+                codes, body = split_axes(body) if axes_on else (None, body)
                 t, n1 = redact_paths(title)
                 b, n2 = redact_paths(body)
                 out["redacted"] += n1 + n2
                 fields = {"title": t, "body": b, "source_date": date}
                 if topic is not None:
                     fields["topic"] = topic
+                if codes is not None:
+                    fields["axis_codes"] = codes
                 ident = " ".join(str(fields.get(k) or "") for k in ("title", "body", "topic"))   # 계정 식별자 대조에 주제 이름도
                 if _runner.stage_self_text(st, cfg, adapter_name=ADAPTER, dedupe_key=key, fingerprint=key, kind="self_text",
                                            transform_version=TRANSFORM, execution=execution, fields=fields, counts=counts,

@@ -4,9 +4,11 @@ import { useQuery } from "@tanstack/react-query";
 import { getJSON, postJSON } from "./api";
 
 // 화면이 쓰는 꼴(AxisSum·AxisPage). 서버 응답 꼴(Raw*)은 아래 axesApi 한 곳에서만 바꾼다 — 서버 꼴이 바뀌면 여기만 고친다.
+// 축의 주제(2026-11-27 축 > 주제) — 주제 항목 id, 이름, 붙은 글 수, 마지막 날짜(YYYY-MM-DD, 글이 없으면 null). 마지막 날짜 늦은 순(서버 순서)
+export type AxisTopic = { item_id: string; title: string; records: number; last_on: string | null };
 export type AxisSum = {
   item_id: string; code: string | null; title: string; body: string; keywords: string[];
-  pending: number; kept: number; total: number; page: { record_id: string; updated_at: string } | null;
+  pending: number; kept: number; total: number; page: { record_id: string; updated_at: string } | null; topics: AxisTopic[];
 };
 export type AxesOverview = { axes: AxisSum[] };
 // 한 장(2026-11-22 구현계획 2절) — 내 판이 있으면 markdown = 내 판(서버가 내 판을 먼저 읽는다). mine = 내 판 기록(없으면 null).
@@ -18,14 +20,14 @@ export type AxisPage = { record_id: string; updated_at: string; markdown: string
 type RawPage = { record_id: string; title: string | null; at: string | null; ai: boolean; notice: string; body?: string;
   mine?: AxisMine | null; ai_newer?: boolean; ai_body?: string };   // ai_body = 내 판이 있을 때 최신 AI 초안 본문(at = 그 AI 초안 시각)
 export type RawAxis = { id: string; code: string | null; title: string | null; keywords: string[]; description: string;
-  counts: { pending: number; kept: number; total: number }; page: RawPage | null };
+  counts: { pending: number; kept: number; total: number }; page: RawPage | null; topics?: AxisTopic[] };
 export type RawAxes = { ready: boolean; axes: RawAxis[] };
 
 const enc = encodeURIComponent;
 export const AXES_QK = ["axes", "overview"] as const;
 const sum = (a: RawAxis): AxisSum => ({ item_id: a.id, code: a.code, title: a.title || "", body: a.description || "", keywords: a.keywords || [],
   pending: a.counts?.pending || 0, kept: a.counts?.kept || 0, total: a.counts?.total || 0,
-  page: a.page ? { record_id: a.page.record_id, updated_at: a.page.at || "" } : null });
+  page: a.page ? { record_id: a.page.record_id, updated_at: a.page.at || "" } : null, topics: a.topics || [] });
 export const axesApi = {
   overview: async (): Promise<AxesOverview> => ({ axes: ((await getJSON<RawAxes>("/api/axes")).axes || []).map(sum) }),
   // 한 장 = 그 축의 최신 한 장 기록 본문. 없으면 null(실패 아님)

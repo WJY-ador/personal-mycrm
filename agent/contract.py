@@ -65,6 +65,8 @@ INBOX_DIGEST_TRANSFORM = "inbox-digest/1"
 # 주제 잇기(2026-11-26) — session-wrap/1 의 선택 키 topic(주제 이름 한 줄, 1~40자). 서버 imports._topic 과 같은 판정
 SESSION_WRAP_TRANSFORM = "session-wrap/1"
 MAX_TOPIC_CODEPOINTS = 40
+# 축 잇기(2026-11-27) — session-wrap/1 의 선택 키 axis_codes(축 코드 1~2개). 서버 imports._session_axis_codes 와 같은 판정
+MAX_SESSION_AXIS_CODES = 2
 # 변환 버전별 허용 행동·제공자(activity 만)
 TRANSFORM_ACTIVITY = {
     "board-likes/1": {"actions": ("like",), "providers": ("sns",)},
@@ -91,7 +93,8 @@ KIND_FIELDS = {
     },
     "self_text": {
         "required": ("body",),
-        "optional": ("title", "source_created_at", "source_date", "activity_ref", "generation", "axis_code", "digest", "topic"),
+        "optional": ("title", "source_created_at", "source_date", "activity_ref", "generation", "axis_code", "digest", "topic",
+                     "axis_codes"),
     },
     "self_summary": {
         "required": ("body", "generation"),
@@ -491,6 +494,19 @@ def _validate_self_text(o: dict) -> None:
         if o["transform_version"] != SESSION_WRAP_TRANSFORM:
             raise ContractError("UNKNOWN-FIELD", "topic")
         check_topic(o["topic"])
+    if "axis_codes" in o:   # 축 코드 — 세션 정리 묶음만. 1~2개, 수집 글 axis_codes 와 같은 꼴
+        if o["transform_version"] != SESSION_WRAP_TRANSFORM:
+            raise ContractError("UNKNOWN-FIELD", "axis_codes")
+        check_session_axis_codes(o["axis_codes"])
+
+
+def check_session_axis_codes(codes) -> None:
+    """세션 정리 축 코드 검사(sessionwrap 이 줄을 뺄지 정할 때도 쓴다) — 1~2개, 각 [A-Z0-9-] 1~10자, 중복 금지. 실패 = ContractError."""
+    _check_axis_codes(codes)
+    if not codes:
+        raise ContractError("MISSING", "axis_codes")
+    if len(codes) > MAX_SESSION_AXIS_CODES:
+        raise ContractError("TOO-MANY", "axis_codes")
 
 
 def check_topic(v) -> None:

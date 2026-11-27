@@ -18,8 +18,10 @@ test("서버 꼴 → 화면 꼴(axesApi 한 곳)", async () => {
   reply(sample.overview);
   const o = await axesApi.overview();
   expect(o.axes[0]).toEqual({ item_id: "i_axis_a", code: "A", title: "견본 축 하나", body: "견본 관점 문장", keywords: ["견본어", "sample"],
-    pending: 3, kept: 1, total: 5, page: { record_id: "r_page_a", updated_at: "2026-11-18T05:00:00+00:00" } });
+    pending: 3, kept: 1, total: 5, page: { record_id: "r_page_a", updated_at: "2026-11-18T05:00:00+00:00" },
+    topics: [{ item_id: "i_topic_a", title: "견본 주제", records: 3, last_on: "2026-11-20" }] });
   expect(o.axes[1].page).toBeNull();
+  expect(o.axes[1].topics).toEqual([]);
   reply(sample.one);
   expect(await axesApi.page("i_axis_a")).toEqual({ record_id: "r_page_a", updated_at: "2026-11-18T05:00:00+00:00", markdown: sample.one.axes[0].page.body,
     mine: sample.one.axes[0].page.mine, ai_newer: true, ai: { at: "2026-11-18T05:00:00+00:00", markdown: sample.one.axes[0].page.ai_body } });
