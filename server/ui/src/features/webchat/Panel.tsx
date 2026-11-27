@@ -1,4 +1,4 @@
-// 패널 — 머리글(지난 대화, 새 대화, 닫기) · 대화 정보 한 줄(읽기 전용) · 메시지 목록 또는 지난 대화 목록 · 상태 한 줄 · 입력 칸 하나(모델 고르기 옆).
+// 패널 — 머리글(탭 둘인 대화와 지난 대화, 새 대화, 닫기) · 대화 정보 한 줄(읽기 전용) · 메시지 목록 또는 지난 대화 목록 · 상태 한 줄 · 입력 칸 하나(모델 고르기 옆).
 // 도구 허용 범위, 확인 규칙, 보관 기간은 서버가 정한다. 화면은 보여 주기만 한다(계획 결정 8). Enter = 보내기, Shift+Enter = 줄바꿈, Esc = 닫기.
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { Sprout } from "../../shared/Sprout";
@@ -10,7 +10,7 @@ import { GrantWait } from "./GrantWait";
 import { History } from "./History";
 import { choiceKey, type WebchatStore } from "./store";
 import { TurnView } from "./TurnView";
-import { BUSY_NEW, EMPTY, HISTORY, KEEP, NEW_CHAT, PAST_EMPTY, PAST_NOTE, PC_OFF, PC_ON, TITLE, TOOLS_ONLY, TRIMMED, modelLabel } from "./text";
+import { BUSY_NEW, CHAT_TAB, EMPTY, HISTORY, KEEP, NEW_CHAT, PAST_EMPTY, PAST_NOTE, PC_OFF, PC_ON, TITLE, TOOLS_ONLY, TRIMMED, VIEWS, modelLabel } from "./text";
 import css from "./Webchat.module.css";
 
 export function Panel({ s, inRef }: { s: WebchatStore; inRef: RefObject<HTMLTextAreaElement | null> }) {
@@ -46,7 +46,11 @@ export function Panel({ s, inRef }: { s: WebchatStore; inRef: RefObject<HTMLText
     <aside className={css.panel} id="webchat" hidden={!s.open} aria-label={TITLE}
       onKeyDown={e => { if (e.key === "Escape") void s.toggle(false); }}>
       <header className={css.head}><h3>{TITLE}</h3>
-        <button type="button" className="tertiary" aria-pressed={s.view === "history"} onClick={() => void s.openHistory()}>{HISTORY}</button>
+        <nav className={css.views} aria-label={VIEWS}>{([["chat", CHAT_TAB], ["history", HISTORY]] as const).map(([v, label]) => {
+          const on = s.view === v;   // 탭 줄(나, 오늘)과 같은 꼴 — .tab, .on, aria-current. 동작은 view 전환 그대로
+          return <button key={v} type="button" className={`tab${on ? " on" : ""}`} aria-current={on ? "page" : undefined}
+            onClick={() => { if (!on) void s.openHistory(v === "history"); }}>{label}</button>;
+        })}</nav>
         <button type="button" className="secondary" disabled={busy} title={busy ? BUSY_NEW : NEW_CHAT} onClick={() => s.newChat()}>{NEW_CHAT}</button>
         <button type="button" className="tertiary" onClick={() => void s.toggle(false)}>닫기</button></header>
       <div className={css.info} aria-label="대화 정보">

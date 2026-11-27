@@ -9,7 +9,7 @@ import { apiErr } from "../../shared/api";
 import { reportError } from "../../shared/report";
 import { webchatApi, type Capabilities, type Setup, type Es, type Grant, type Message, type Session, type WebchatApi } from "./api";
 import type { Approval } from "./api";
-import { AI_UNLINKED, BUSY_NEW, PAST_END, REPLACED, TEXT_MAX, TRIMMED, endText, errText } from "./text";
+import { AI_UNLINKED, BUSY_NEW, PAST_END, REPLACED, TEXT_MAX, TRIMMED, delErrText, endText, errText } from "./text";
 import { splitModels } from "./models";
 
 export type Tool = { name: string; input?: unknown; ok?: boolean; summary?: string };
@@ -64,6 +64,8 @@ export class WebchatStore {
   choice: Choice | null = null; pickerOpen = false; pendingPick: Choice | null = null;
   grant: Grant | null = null; grantNote: GrantNote = ""; grantText = "";
   view: "chat" | "history" = "chat"; past: Session[] = []; pastLoading = false; pastError = "";
+  // 지난 대화 지우기 — delAsk = 확인을 펼친 줄, delBusy = 지우는 중인 줄(그 줄 버튼 잠금), delError = 실패 문구를 띄운 줄과 문구
+  delAsk = ""; delBusy = ""; delError: { id: string; text: string } | null = null;
   approvals: Approval[] = []; approvalsLoading = false; approvalsError = ""; approvalAction = ""; approvalLine = ""; approvalBad = false;
   approvalResult: { id: string; result: unknown } | null = null;
   approvalArmed = "";   // A5: 되돌릴 수 없는 카드의 첫 확인을 누른 카드 id — 정말 실행을 한 번 더 눌러야 서버로 간다
@@ -222,10 +224,28 @@ export class WebchatStore {
   async openHistory(on = this.view !== "history") {
     this.view = on ? "history" : "chat"; this.pickerOpen = false; this.emit();
     if (!on) return;
-    this.pastLoading = true; this.pastError = ""; this.emit();
+    this.pastLoading = true; this.pastError = ""; this.delAsk = ""; this.delError = null; this.emit();
     try { this.past = (await this.api.sessions()).sessions; }
     catch (e) { this.past = []; this.pastError = errText(apiErr(e)); }
     finally { this.pastLoading = false; this.emit(); }
+  }
+
+  // 줄마다 [지우기] → 그 줄 안에서 한 번 확인 → 지운다. 한 번에 한 줄만 지운다
+  askDelete(id: string) { if (this.delBusy) return; this.delAsk = id; this.delError = null; this.emit(); }
+  cancelDelete() { if (this.delBusy) return; this.delAsk = ""; this.emit(); }
+  async deletePast(id: string) {
+    if (this.delBusy || this.delAsk !== id) return;
+    this.delBusy = id; this.delError = null; this.emit();
+    try {
+      await this.api.remove(id);
+      this.past = this.past.filter(p => p.session_id !== id); this.delAsk = "";
+      if (this.sid === id) {   // 열어 본 지난 대화 = 목록에 그대로, 지금 대화 = 빈 새 대화(서버에 활성 대화가 없어졌다)
+        const live = !this.readOnly;
+        this.detach();
+        if (live) { this.view = "chat"; void this.loadCapabilities(); }
+      }
+    } catch (e) { this.delAsk = ""; this.delError = { id, text: delErrText(apiErr(e)) }; }
+    finally { this.delBusy = ""; this.emit(); }
   }
 
   async openPast(s: Session) {
